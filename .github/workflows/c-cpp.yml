@@ -11,15 +11,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Build code
-      run: |
-        sudo apt-get install arm-none-eabi-gcc cmake make
-        cd src
-        mkdir build
-        cd build
-        cmake ..
-        make -j2
-        cd ..
-        make
+      - name: Install ARM toolchain + build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            arm-none-eabi-gcc \
+            arm-none-eabi-binutils \
+            cmake \
+            make
+
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+          cmake ..
+          make -j2
+          cd ..
+          make
+
+
+
+
+
