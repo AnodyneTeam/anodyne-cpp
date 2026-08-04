@@ -55,6 +55,14 @@ target_include_directories(first.elf PRIVATE
 # ------------------------------------------------------------
 # Link options
 # ------------------------------------------------------------
+set_target_properties(first.elf PROPERTIES
+    OUTPUT_NAME "first"
+    SUFFIX ".elf"
+)
+set_property(TARGET first.elf PROPERTY
+    WIN32_EXECUTABLE FALSE
+)
+
 target_link_options(first.elf PRIVATE "")
 target_link_options(first.elf PRIVATE
     -mcpu=arm7tdmi
