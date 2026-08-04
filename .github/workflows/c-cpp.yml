@@ -47,6 +47,7 @@ jobs:
           dir toolchain
           dir toolchain/bin
           Add-Content $env:GITHUB_PATH "${{ github.workspace }}/toolchain/bin"
+          set PATH=%PATH%;${{ github.workspace }}/toolchain/bin
           cd src
           mkdir build
           cd build
