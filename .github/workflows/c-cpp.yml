@@ -7,7 +7,7 @@ on:
     branches: [ "master" ]
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,9 +20,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-          gcc-arm-none-eabi \
-          cmake \
-          make
+            gcc-arm-none-eabi \
+            cmake \
+            make
 
       - name: Build
         run: |
@@ -32,7 +32,29 @@ jobs:
           cmake ..
           make -j2
 
+  build-windows:
+    runs-on: windows-latest
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
+      - name: Install MSYS2 + ARM toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >
+            mingw-w64-x86_64-arm-none-eabi-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-make
 
-
+      - name: Build (MSYS2 shell)
+        shell: msys2 {0}
+        run: |
+          cd src
+          mkdir build
+          cd build
+          cmake -G "Unix Makefiles" ..
+          make -j2
