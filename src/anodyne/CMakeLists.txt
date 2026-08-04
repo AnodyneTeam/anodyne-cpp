@@ -22,18 +22,32 @@ set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 # ------------------------------------------------------------
 # Executable target
 # ------------------------------------------------------------
-add_executable(first.elf
+add_library(first_obj OBJECT
     ${SOURCES}platform/gba/sys/syscalls.c
     ${SOURCES}platform/gba/sys/gba_crt0.s
     anodyne.c
     dialog_manager.c
 )
 
+add_custom_command(
+    OUTPUT first.elf
+    COMMAND arm-none-eabi-gcc
+        -mcpu=arm7tdmi -mthumb -mthumb-interwork
+        -Wl,-Map,first.map
+        -Wl,--gc-sections
+        -specs=nano.specs
+        -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
+        $<TARGET_OBJECTS:first_obj>
+        "$<TARGET_FILE:tonc>"
+        -lc
+        -o first.elf
+    DEPENDS first_obj tonc
+)
 
 # ------------------------------------------------------------
 # Compile options
 # ------------------------------------------------------------
-target_compile_options(first.elf PRIVATE
+target_compile_options(first_obj PRIVATE
     -mcpu=arm7tdmi
     -mtune=arm7tdmi
     -mthumb
@@ -43,53 +57,27 @@ target_compile_options(first.elf PRIVATE
     -D__GBA__
 )
 
-target_compile_options(first.elf PRIVATE
+target_compile_options(first_obj PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-std=gnu11 -O3 -Wall>
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
 )
 
-target_include_directories(first.elf PRIVATE
+target_include_directories(first_obj PRIVATE
     "${LIBTONC_DIR}/include"
-)
-
-# ------------------------------------------------------------
-# Link options
-# ------------------------------------------------------------
-target_link_options(first.elf PRIVATE "")
-target_link_options(first.elf PRIVATE
-    -mcpu=arm7tdmi
-    -mtune=arm7tdmi
-    -mthumb
-    -mthumb-interwork
-    -Wl,-Map,first.map
-    -Wl,--gc-sections
-    -specs=nano.specs
-    -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
-)
-# Make sure this target is NOT treated as a Windows executable
-set_target_properties(first.elf PROPERTIES
-    OUTPUT_NAME "first"
-    SUFFIX ".elf"
-    LINKER_LANGUAGE C
-    WIN32_EXECUTABLE FALSE
-)
-
-set_property(TARGET first.elf PROPERTY
-    LINK_EXECUTABLE "arm-none-eabi-gcc <FLAGS> <OBJECTS> -o <TARGET>"
 )
 
 
 # ------------------------------------------------------------
 # Link libraries (IMPORTANT: libtonc must be here, not in link options)
 # ------------------------------------------------------------
-target_link_libraries(first.elf PRIVATE
+target_link_libraries(first_obj PRIVATE
     -Wl,--start-group
         "$<TARGET_FILE:tonc>"
         c
     -Wl,--end-group
 )
-add_dependencies(first.elf gbafix)
-add_dependencies(first.elf tonc)
+add_dependencies(first_obj gbafix)
+add_dependencies(first_obj tonc)
 
 # ------------------------------------------------------------
 # Build .gba ROM
