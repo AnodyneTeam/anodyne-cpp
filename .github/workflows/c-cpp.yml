@@ -13,14 +13,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Download and extract GBDK
-      run: |
-        cd ..
-        wget https://github.com/gbdk-2020/gbdk-2020/releases/download/4.5.0/gbdk-linux64.tar.gz
-        tar -xzf gbdk-linux64.tar.gz
-
     - name: Build code
       run: |
+        sudo apt-get install arm-none-eabi-gcc cmake make
         cd src
         mkdir build
         cd build

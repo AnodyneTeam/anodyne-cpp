@@ -4,10 +4,6 @@ cd build
 cmake ..
 make -j2
 
-#./build/Anodyne
-./CompileContent
+./tools/CompileContent
 cd ..
-make
-~/Downloads/mGBA-0.10.5-appimage-x64.appimage anodyne.gb
-
-
+~/Downloads/mGBA-0.10.5-appimage-x64.appimage build/anodyne/first.gba
