@@ -55,6 +55,7 @@ target_include_directories(first.elf PRIVATE
 # ------------------------------------------------------------
 # Link options
 # ------------------------------------------------------------
+target_link_options(first.elf PRIVATE "")
 target_link_options(first.elf PRIVATE
     -mcpu=arm7tdmi
     -mtune=arm7tdmi
