@@ -41,13 +41,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build
+      - name: Clone ARM toolchain
         run: |
           git clone https://github.com/AnodyneTeam/arm-none-eabi-win32.git toolchain
           dir toolchain
           dir toolchain/bin
-          Add-Content $env:GITHUB_PATH "${{ github.workspace }}/toolchain/bin"
-          set PATH=%PATH%;${{ github.workspace }}/toolchain/bin
+          echo "${{ github.workspace }}/toolchain/bin" >> $env:GITHUB_PATH
+
+      - name: Build
+        run: |
           cd src
           mkdir build
           cd build
