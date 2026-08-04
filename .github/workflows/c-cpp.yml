@@ -8,17 +8,31 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: build code
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libsdl2-dev cmake
-        cd src
-        mkdir build
-        cd build
-        cmake ..
-        make -j2
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain + build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+          gcc-arm-none-eabi \
+          cmake \
+          make
+
+      - name: Build
+        run: |
+          cd src
+          mkdir build
+          cd build
+          cmake ..
+          make -j2
+
+
+
+
+

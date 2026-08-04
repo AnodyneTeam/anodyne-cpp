@@ -1,0 +1,3 @@
+[submodule "src/3rdParty/libtonc"]
+	path = src/3rdParty/libtonc
+	url = https://github.com/AnodyneTeam/libtonc.git

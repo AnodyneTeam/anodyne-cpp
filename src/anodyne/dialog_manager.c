@@ -4,7 +4,7 @@
 
 bool dialog_manager_init(struct dialog_manager* dm, const struct binary_blob* pData)
 {
-
+    return true;
 }
 
 void dialog_manager_free(struct dialog_manager* dm)
