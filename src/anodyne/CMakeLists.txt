@@ -10,90 +10,66 @@ set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
 set(OBJCOPY arm-none-eabi-objcopy)
 set(OBJDUMP arm-none-eabi-objdump)
 
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
 set(SOURCEDIR "${CMAKE_SOURCE_DIR}")
 set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 
 # ------------------------------------------------------------
-# Common sources
+# Sources
 # ------------------------------------------------------------
 set(FIRST_SOURCES
-    ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
-    ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
+    ${SOURCES}platform/gba/sys/syscalls.c
+    ${SOURCES}platform/gba/sys/gba_crt0.s
     anodyne.c
     dialog_manager.c
 )
 
 # ------------------------------------------------------------
-# Linux / UNIX: normal executable, let CMake drive GCC
+# STATIC library (bulletproof)
 # ------------------------------------------------------------
-if(UNIX AND NOT WIN32)
-    add_executable(first.elf ${FIRST_SOURCES})
+add_library(first_lib STATIC ${FIRST_SOURCES})
 
-    target_compile_options(first.elf PRIVATE
-        -mcpu=arm7tdmi -mtune=arm7tdmi
-        -mthumb -mthumb-interwork
-        -ffunction-sections -fdata-sections
-        -D__GBA__
-        $<$<COMPILE_LANGUAGE:C>:-std=gnu11 -O3 -Wall>
-        $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
-    )
+target_compile_options(first_lib PRIVATE
+    -mcpu=arm7tdmi
+    -mtune=arm7tdmi
+    -mthumb
+    -mthumb-interwork
+    -ffunction-sections
+    -fdata-sections
+    -D__GBA__
+    $<$<COMPILE_LANGUAGE:C>:-std=gnu11 -O3 -Wall>
+    $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
+)
 
-    target_include_directories(first.elf PRIVATE
-        "${LIBTONC_DIR}/include"
-    )
+target_include_directories(first_lib PRIVATE
+    "${LIBTONC_DIR}/include"
+)
 
-    target_link_options(first.elf PRIVATE
-        -mcpu=arm7tdmi -mtune=arm7tdmi
-        -mthumb -mthumb-interwork
-        -Wl,-Map,first.map
-        -Wl,--gc-sections
+add_dependencies(first_lib gbafix tonc)
+
+# ------------------------------------------------------------
+# Manual link step (STATIC LIB = no OBJECT issues)
+# ------------------------------------------------------------
+add_custom_command(
+    OUTPUT first.elf
+    COMMAND arm-none-eabi-gcc
+        -mcpu=arm7tdmi -mthumb -mthumb-interwork
+        -Wl,-Map,first.map -Wl,--gc-sections
         -specs=nano.specs
         -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
-    )
-
-    target_link_libraries(first.elf PRIVATE
+        "$<TARGET_FILE:first_lib>"
         "$<TARGET_FILE:tonc>"
-        c
-    )
+        -lc
+        -o first.elf
+    DEPENDS first_lib tonc
+)
 
-    add_dependencies(first.elf gbafix tonc)
-
-# ------------------------------------------------------------
-# Windows: OBJECT library + manual link to avoid PE flags
-# ------------------------------------------------------------
-else() # WIN32
-    add_library(first_obj OBJECT ${FIRST_SOURCES})
-
-    target_compile_options(first_obj PRIVATE
-        -mcpu=arm7tdmi -mtune=arm7tdmi
-        -mthumb -mthumb-interwork
-        -ffunction-sections -fdata-sections
-        -D__GBA__
-        $<$<COMPILE_LANGUAGE:C>:-std=gnu11 -O3 -Wall>
-        $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
-    )
-
-    target_include_directories(first_obj PRIVATE
-        "${LIBTONC_DIR}/include"
-    )
-
-    add_dependencies(first_obj gbafix tonc)
-
-    add_custom_command(
-        OUTPUT first.elf
-        COMMAND arm-none-eabi-gcc
-            -mcpu=arm7tdmi -mthumb -mthumb-interwork
-            -Wl,-Map,first.map -Wl,--gc-sections
-            -specs=nano.specs
-            -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
-            $<TARGET_OBJECTS:first_obj>
-            "$<TARGET_FILE:tonc>" -lc -o first.elf
-        DEPENDS first_obj tonc
-    )
-endif()
+add_custom_target(elf DEPENDS first.elf)
 
 # ------------------------------------------------------------
-# .gba and dump (shared)
+# Build .gba ROM
 # ------------------------------------------------------------
 add_custom_command(
     OUTPUT first.gba
@@ -104,6 +80,9 @@ add_custom_command(
 
 add_custom_target(rom ALL DEPENDS first.gba)
 
+# ------------------------------------------------------------
+# Build dump
+# ------------------------------------------------------------
 add_custom_command(
     OUTPUT first.dump
     COMMAND ${OBJDUMP} -h -C -S first.elf > first.dump
@@ -112,6 +91,9 @@ add_custom_command(
 
 add_custom_target(dump DEPENDS first.dump)
 
+# ------------------------------------------------------------
+# Clean extras
+# ------------------------------------------------------------
 set_property(DIRECTORY PROPERTY ADDITIONAL_CLEAN_FILES
     "first.gba" "first.dump" "first.map"
 )
