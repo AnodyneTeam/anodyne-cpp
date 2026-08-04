@@ -16,7 +16,7 @@ set(OBJDUMP arm-none-eabi-objdump)
 # Paths
 # ------------------------------------------------------------
 set(SOURCEDIR "${CMAKE_SOURCE_DIR}")
-set(LIBTONC_DIR "/home/snake/dev/libtonc")
+set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 
 
 # ------------------------------------------------------------
@@ -71,7 +71,7 @@ target_link_options(first.elf PRIVATE
 # ------------------------------------------------------------
 target_link_libraries(first.elf PRIVATE
     -Wl,--start-group
-        "${LIBTONC_DIR}/lib/libtonc.a"
+        "$<TARGET_FILE:tonc>"
         c
     -Wl,--end-group
 )
