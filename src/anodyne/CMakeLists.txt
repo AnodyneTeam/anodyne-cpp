@@ -1,5 +1,3 @@
-
-
 # ------------------------------------------------------------
 # Toolchain
 # ------------------------------------------------------------
@@ -18,22 +16,22 @@ set(OBJDUMP arm-none-eabi-objdump)
 set(SOURCEDIR "${CMAKE_SOURCE_DIR}")
 set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 
-
 # ------------------------------------------------------------
-# Executable target
+# Sources
 # ------------------------------------------------------------
-add_executable(first.elf
-    ${SOURCES}platform/gba/sys/syscalls.c
-    ${SOURCES}platform/gba/sys/gba_crt0.s
+set(FIRST_SOURCES
+    ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
+    ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
     anodyne.c
     dialog_manager.c
 )
 
+# ------------------------------------------------------------
+# STATIC library
+# ------------------------------------------------------------
+add_library(first_lib STATIC ${FIRST_SOURCES})
 
-# ------------------------------------------------------------
-# Compile options
-# ------------------------------------------------------------
-target_compile_options(first.elf PRIVATE
+target_compile_options(first_lib PRIVATE
     -mcpu=arm7tdmi
     -mtune=arm7tdmi
     -mthumb
@@ -41,42 +39,44 @@ target_compile_options(first.elf PRIVATE
     -ffunction-sections
     -fdata-sections
     -D__GBA__
-)
-
-target_compile_options(first.elf PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-std=gnu11 -O3 -Wall>
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
 )
 
-target_include_directories(first.elf PRIVATE
+target_include_directories(first_lib PRIVATE
     "${LIBTONC_DIR}/include"
 )
 
-# ------------------------------------------------------------
-# Link options
-# ------------------------------------------------------------
-target_link_options(first.elf PRIVATE
-    -mcpu=arm7tdmi
-    -mtune=arm7tdmi
-    -mthumb
-    -mthumb-interwork
-    -Wl,-Map,first.map
-    -Wl,--gc-sections
-    -specs=nano.specs
-    -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
-)
+add_dependencies(first_lib gbafix tonc)
 
 # ------------------------------------------------------------
-# Link libraries (IMPORTANT: libtonc must be here, not in link options)
+# Manual link step
 # ------------------------------------------------------------
-target_link_libraries(first.elf PRIVATE
-    -Wl,--start-group
+add_custom_command(
+    OUTPUT first.elf
+    COMMAND arm-none-eabi-gcc
+        -mcpu=arm7tdmi -mthumb -mthumb-interwork
+        -Wl,-Map,first.map -Wl,--gc-sections
+        -specs=nano.specs
+        -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
+        "$<TARGET_FILE:first_lib>"
         "$<TARGET_FILE:tonc>"
-        c
-    -Wl,--end-group
+        -lc
+        -o first.elf
+    DEPENDS first_lib tonc
 )
-add_dependencies(first.elf gbafix)
-add_dependencies(first.elf tonc)
+
+add_custom_target(elf DEPENDS first.elf)
+
+# ------------------------------------------------------------
+# CMake launcher script for gbafix (cross‑platform)
+# ------------------------------------------------------------
+file(WRITE ${CMAKE_BINARY_DIR}/run_gbafix.cmake
+"
+execute_process(
+    COMMAND \"${CMAKE_BINARY_DIR}/gbafix\" first.gba -tFIRST -c00
+)
+")
 
 # ------------------------------------------------------------
 # Build .gba ROM
@@ -84,8 +84,8 @@ add_dependencies(first.elf tonc)
 add_custom_command(
     OUTPUT first.gba
     COMMAND ${OBJCOPY} -O binary first.elf first.gba
-    COMMAND $<TARGET_FILE:gbafix> first.gba -tFIRST -c00
-    DEPENDS first.elf
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/run_gbafix.cmake
+    DEPENDS first.elf gbafix
 )
 
 add_custom_target(rom ALL DEPENDS first.gba)
