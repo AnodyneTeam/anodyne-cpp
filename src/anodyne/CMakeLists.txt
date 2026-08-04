@@ -20,8 +20,8 @@ set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 # Sources
 # ------------------------------------------------------------
 set(FIRST_SOURCES
-    ${SOURCES}platform/gba/sys/syscalls.c
-    ${SOURCES}platform/gba/sys/gba_crt0.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
+    ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
     anodyne.c
     dialog_manager.c
 )
