@@ -75,6 +75,8 @@ target_link_libraries(first.elf PRIVATE
         c
     -Wl,--end-group
 )
+add_dependencies(first.elf gbafix)
+add_dependencies(first.elf tonc)
 
 # ------------------------------------------------------------
 # Build .gba ROM
