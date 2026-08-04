@@ -44,7 +44,9 @@ jobs:
       - name: Build
         run: |
           git clone https://github.com/AnodyneTeam/arm-none-eabi-win32.git toolchain
-          echo "${{ github.workspace }}/toolchain/bin" >> $env:GITHUB_PATH
+          dir toolchain
+          dir toolchain/bin
+          Add-Content $env:GITHUB_PATH "${{ github.workspace }}/toolchain/bin"
           cd src
           mkdir build
           cd build
