@@ -55,14 +55,6 @@ target_include_directories(first.elf PRIVATE
 # ------------------------------------------------------------
 # Link options
 # ------------------------------------------------------------
-set_target_properties(first.elf PROPERTIES
-    OUTPUT_NAME "first"
-    SUFFIX ".elf"
-)
-set_property(TARGET first.elf PROPERTY
-    WIN32_EXECUTABLE FALSE
-)
-
 target_link_options(first.elf PRIVATE "")
 target_link_options(first.elf PRIVATE
     -mcpu=arm7tdmi
@@ -74,6 +66,18 @@ target_link_options(first.elf PRIVATE
     -specs=nano.specs
     -T${SOURCEDIR}/anodyne/platform/gba/sys/gba_cart.ld
 )
+# Make sure this target is NOT treated as a Windows executable
+set_target_properties(first.elf PROPERTIES
+    OUTPUT_NAME "first"
+    SUFFIX ".elf"
+    LINKER_LANGUAGE C
+    WIN32_EXECUTABLE FALSE
+)
+
+set_property(TARGET first.elf PROPERTY
+    LINK_EXECUTABLE "arm-none-eabi-gcc <FLAGS> <OBJECTS> -o <TARGET>"
+)
+
 
 # ------------------------------------------------------------
 # Link libraries (IMPORTANT: libtonc must be here, not in link options)
