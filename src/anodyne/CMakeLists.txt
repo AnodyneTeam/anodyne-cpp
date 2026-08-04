@@ -27,7 +27,7 @@ set(FIRST_SOURCES
 )
 
 # ------------------------------------------------------------
-# STATIC library (bulletproof)
+# STATIC library
 # ------------------------------------------------------------
 add_library(first_lib STATIC ${FIRST_SOURCES})
 
@@ -50,7 +50,7 @@ target_include_directories(first_lib PRIVATE
 add_dependencies(first_lib gbafix tonc)
 
 # ------------------------------------------------------------
-# Manual link step (STATIC LIB = no OBJECT issues)
+# Manual link step
 # ------------------------------------------------------------
 add_custom_command(
     OUTPUT first.elf
@@ -69,13 +69,23 @@ add_custom_command(
 add_custom_target(elf DEPENDS first.elf)
 
 # ------------------------------------------------------------
+# CMake launcher script for gbafix (cross‑platform)
+# ------------------------------------------------------------
+file(WRITE ${CMAKE_BINARY_DIR}/run_gbafix.cmake
+"
+execute_process(
+    COMMAND \"${CMAKE_BINARY_DIR}/gbafix\" first.gba -tFIRST -c00
+)
+")
+
+# ------------------------------------------------------------
 # Build .gba ROM
 # ------------------------------------------------------------
 add_custom_command(
     OUTPUT first.gba
     COMMAND ${OBJCOPY} -O binary first.elf first.gba
-    COMMAND $<TARGET_FILE:gbafix> first.gba -tFIRST -c00
-    DEPENDS first.elf
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/run_gbafix.cmake
+    DEPENDS first.elf gbafix
 )
 
 add_custom_target(rom ALL DEPENDS first.gba)
