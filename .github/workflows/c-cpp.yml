@@ -41,18 +41,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install MSYS2 + ARM toolchain
-        uses: msys2/setup-msys2@v2
-        with:
-          update: true
-          install: >
-            mingw-w64-x86_64-arm-none-eabi-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-make
-
-      - name: Build (MSYS2 shell)
-        shell: msys2 {0}
+      - name: Build
         run: |
+          git clone https://github.com/AnodyneTeam/arm-none-eabi-win32.git toolchain
+          echo "${{ github.workspace }}/toolchain/bin" >> $env:GITHUB_PATH
           cd src
           mkdir build
           cd build
