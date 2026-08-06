@@ -153,6 +153,11 @@ struct RGBATile final
         }
         return true;
     }
+
+    bool EqualsHFlip(const RGBATile& other) const;
+    bool EqualsVFlip(const RGBATile& other) const;
+    bool EqualsHVFlip(const RGBATile& other) const;
+
 };
 
 struct RGBATileHash
@@ -202,7 +207,13 @@ private:
     Array2D<RGBATile> mTiles;
 };
 
-struct TileDedupResult
+struct DedupEntry final
+{
+    uint32_t newIndex = 0;
+    uint8_t flipFlags = 0; // bit0 = H, bit1 = V
+};
+
+struct TileDedupResult final
 {
     TileDedupResult()
         : tilesUnique(8, 8)
@@ -210,10 +221,10 @@ struct TileDedupResult
 
     }
     TileSet tilesUnique;
-    std::vector<uint32_t> remap8toUnique;
+    std::vector<DedupEntry> remap8toUnique;
 };
 
-struct TileSplitResult
+struct TileSplitResult final
 {
     TileSplitResult()
      : tiles8x8(8, 8)
@@ -242,7 +253,7 @@ private:
                               const TileSplitResult& split,
                               Array2D<uint32_t>& outMap8);
     void Apply8x8Remap(Array2D<uint32_t>& map8,
-                                const std::vector<uint32_t>& remap8toUnique);
+                                const std::vector<DedupEntry>& remap8toUnique);
 
     Array2D<uint32_t> mMap16;
     TileSet mTileSet16;

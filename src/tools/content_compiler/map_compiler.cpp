@@ -9,6 +9,61 @@
 #include <unordered_set>
 #include <unordered_map>
 
+bool RGBATile::EqualsHFlip(const RGBATile& other) const
+{
+    const uint32_t w = mData.Width();
+    const uint32_t h = mData.Height();
+
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            const RGBA& a = mData.Get(x, y);
+            const RGBA& b = other.mData.Get(w - 1 - x, y);
+            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool RGBATile::EqualsVFlip(const RGBATile& other) const
+{
+    const uint32_t w = mData.Width();
+    const uint32_t h = mData.Height();
+
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            const RGBA& a = mData.Get(x, y);
+            const RGBA& b = other.mData.Get(x, h - 1 - y);
+            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a)
+                return false;
+        }
+    }
+    return true;
+}
+
+bool RGBATile::EqualsHVFlip(const RGBATile& other) const
+{
+    const uint32_t w = mData.Width();
+    const uint32_t h = mData.Height();
+
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            const RGBA& a = mData.Get(x, y);
+            const RGBA& b = other.mData.Get(w - 1 - x, h - 1 - y);
+            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a)
+                return false;
+        }
+    }
+    return true;
+}
+
+
 bool load_png_to_vector(const char* filename,
                         std::vector<RGBA>& outPixels,
                         unsigned& width,
@@ -171,18 +226,16 @@ TileSplitResult TileSet::Make8x8WithRemap() const
 
     return result;
 }
-
 TileDedupResult TileSet::Deduplicate() const
 {
     TileDedupResult result;
-
-    std::unordered_map<RGBATile, uint32_t, RGBATileHash> uniqueMap;
-    std::vector<RGBATile> uniqueTiles;
 
     const uint32_t tilesX = mTiles.Width();
     const uint32_t tilesY = mTiles.Height();
 
     result.remap8toUnique.resize(tilesX * tilesY);
+
+    std::vector<RGBATile> uniqueTiles;
 
     for (uint32_t ty = 0; ty < tilesY; ++ty)
     {
@@ -191,17 +244,43 @@ TileDedupResult TileSet::Deduplicate() const
             const RGBATile& tile = mTiles.Get(tx, ty);
             uint32_t oldIndex = ty * tilesX + tx;
 
-            auto it = uniqueMap.find(tile);
-            if (it == uniqueMap.end())
+            bool found = false;
+
+            for (uint32_t i = 0; i < uniqueTiles.size(); ++i)
+            {
+                const RGBATile& u = uniqueTiles[i];
+
+                if (tile == u)
+                {
+                    result.remap8toUnique[oldIndex] = { i, 0 };
+                    found = true;
+                    break;
+                }
+                if (tile.EqualsHFlip(u))
+                {
+                    result.remap8toUnique[oldIndex] = { i, 1 };
+                    found = true;
+                    break;
+                }
+                if (tile.EqualsVFlip(u))
+                {
+                    result.remap8toUnique[oldIndex] = { i, 2 };
+                    found = true;
+                    break;
+                }
+                if (tile.EqualsHVFlip(u))
+                {
+                    result.remap8toUnique[oldIndex] = { i, 3 };
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
             {
                 uint32_t newIndex = uniqueTiles.size();
-                uniqueMap[tile] = newIndex;
                 uniqueTiles.push_back(tile);
-                result.remap8toUnique[oldIndex] = newIndex;
-            }
-            else
-            {
-                result.remap8toUnique[oldIndex] = it->second;
+                result.remap8toUnique[oldIndex] = { newIndex, 0 };
             }
         }
     }
@@ -215,6 +294,7 @@ TileDedupResult TileSet::Deduplicate() const
 
     return result;
 }
+
 
 
 bool MapCompiler::Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath)
@@ -267,7 +347,7 @@ void MapCompiler::Build8x8Map(const Array2D<uint32_t>& map16,
 }
 
 void MapCompiler::Apply8x8Remap(Array2D<uint32_t>& map8,
-                                const std::vector<uint32_t>& remap8toUnique)
+                                const std::vector<DedupEntry>& remap)
 {
     const uint32_t w = map8.Width();
     const uint32_t h = map8.Height();
@@ -277,8 +357,12 @@ void MapCompiler::Apply8x8Remap(Array2D<uint32_t>& map8,
         for (uint32_t x = 0; x < w; ++x)
         {
             uint32_t oldIndex = map8.Get(x, y);
-            uint32_t newIndex = remap8toUnique[oldIndex];
-            map8.Set(x, y, newIndex);
+            const DedupEntry& e = remap[oldIndex];
+
+            // Pack flip flags into upper bits if needed
+            uint32_t packed = (e.flipFlags << 16) | e.newIndex;
+
+            map8.Set(x, y, packed);
         }
     }
 }
@@ -302,7 +386,9 @@ void MapCompiler::Compile(const std::string& mapName)
     SaveMapAsPNG(mapName + "_8x8", map8, dedup.tilesUnique);
 }
 
-void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet)
+void MapCompiler::SaveMapAsPNG(const std::string& pngName,
+                               Array2D<uint32_t>& map,
+                               TileSet& tileSet)
 {
     const uint32_t mapWidthTiles  = map.Width();
     const uint32_t mapHeightTiles = map.Height();
@@ -315,7 +401,6 @@ void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& ma
 
     std::vector<RGBA> outPixels(outWidth * outHeight);
 
-    // Flatten tileset info
     const uint32_t tilesX = tileSet.GetTiles().Width();
     const uint32_t tilesY = tileSet.GetTiles().Height();
 
@@ -323,19 +408,25 @@ void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& ma
     {
         for(uint32_t mx = 0; mx < mapWidthTiles; ++mx)
         {
-            uint32_t tileIndex = map.Get(mx, my);
+            uint32_t entry = map.Get(mx, my);
+
+            uint32_t tileIndex = entry & 0xFFFF;
+            uint32_t flipH     = (entry >> 16) & 1;
+            uint32_t flipV     = (entry >> 17) & 1;
 
             uint32_t tx = tileIndex % tilesX;
             uint32_t ty = tileIndex / tilesX;
 
             const RGBATile& tile = tileSet.GetTiles().Get(tx, ty);
 
-            // Copy tile pixels into output image
             for(uint32_t y = 0; y < tileHeight; ++y)
             {
                 for(uint32_t x = 0; x < tileWidth; ++x)
                 {
-                    const RGBA& src = tile.mData.Get(x, y);
+                    uint32_t srcX = flipH ? (tileWidth  - 1 - x) : x;
+                    uint32_t srcY = flipV ? (tileHeight - 1 - y) : y;
+
+                    const RGBA& src = tile.mData.Get(srcX, srcY);
 
                     uint32_t outX = mx * tileWidth  + x;
                     uint32_t outY = my * tileHeight + y;
@@ -346,7 +437,6 @@ void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& ma
         }
     }
 
-    // Convert RGBA vector -> raw bytes for LodePNG
     std::vector<uint8_t> raw(outWidth * outHeight * 4);
     for(size_t i = 0; i < outPixels.size(); ++i)
     {
