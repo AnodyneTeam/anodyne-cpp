@@ -26,6 +26,36 @@ static void dialog_manager_test(void)
 }
 */
 
+void CopyMapRegionToBG0(int mapX, int mapY)
+{
+    // map is 100×140
+    const int MAP_W = 100;
+    const int MAP_H = 140;
+
+    // BG0 is 32×32
+    const int VIEW_W = 32;
+    const int VIEW_H = 32;
+
+    for (int y = 0; y < VIEW_H; y++)
+    {
+        for (int x = 0; x < VIEW_W; x++)
+        {
+            int srcX = mapX + x;
+            int srcY = mapY + y;
+
+            // clamp to map bounds
+            if (srcX < 0) srcX = 0;
+            if (srcY < 0) srcY = 0;
+            if (srcX >= MAP_W) srcX = MAP_W - 1;
+            if (srcY >= MAP_H) srcY = MAP_H - 1;
+
+            uint16_t tile = gMapData[srcY * MAP_W + srcX];
+
+            se_mem[31][y * VIEW_W + x] = tile;
+        }
+    }
+}
+
 
 int main()
 {
@@ -44,8 +74,44 @@ int main()
     memcpy16(tile_mem, gTilesetData, sizeof(gTilesetData) / 2);
 
     // --- Map (uint16_t entries) ---
-    memcpy16(se_mem[31], gMapData, sizeof(gMapData) / 2);
+   // memcpy16(se_mem[31], gMapData, sizeof(gMapData) / 2);
+
+   /// for (int i = 0; i < 1024; i++)
+    //    se_mem[31][i] = 5;
+
+    CopyMapRegionToBG0(20, 40);
+
+
     #endif
 
-    while(1);
+    int camX = 20;
+    int camY = 40;
+
+    int scrollTimer = 0;
+
+    while (1)
+    {
+        key_poll();
+
+        scrollTimer++;
+        if (scrollTimer >= 6000)
+        {
+            scrollTimer = 0;
+
+            if (key_is_down(KEY_LEFT))  camX--;
+            if (key_is_down(KEY_RIGHT)) camX++;
+            if (key_is_down(KEY_UP))    camY--;
+            if (key_is_down(KEY_DOWN))  camY++;
+
+            // clamp
+            if (camX < 0) camX = 0;
+            if (camY < 0) camY = 0;
+            if (camX > 100 - 32) camX = 100 - 32;
+            if (camY > 140 - 32) camY = 140 - 32;
+
+            CopyMapRegionToBG0(camX, camY);
+        }
+    }
+
 }
+
