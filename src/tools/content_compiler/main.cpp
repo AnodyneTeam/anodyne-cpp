@@ -189,9 +189,18 @@ std::vector<uint16_t> ConvertMapToGBA(const Array2D<uint32_t>& map)
     {
         for (uint32_t x = 0; x < w; ++x)
         {
-            uint32_t idx = map.Get(x, y);
+            uint32_t packed = map.Get(x, y);
 
-            uint16_t entry = (uint16_t)(idx & 0x3FF); // 8bpp → palette bank ignored
+            uint16_t tileIndex = packed & 0xFFFF;
+            TileVariant variant = (TileVariant)((packed >> 16) & 0xFF);
+
+            uint16_t hflip = (variant == VAR_H || variant == VAR_HV) ? 1 : 0;
+            uint16_t vflip = (variant == VAR_V || variant == VAR_HV) ? 1 : 0;
+
+            uint16_t entry =
+                (tileIndex & 0x03FF) |   // GBA tile index (0–1023)
+                (hflip << 10)        |   // bit 10 = H flip
+                (vflip << 11);           // bit 11 = V flip
 
             out[pos++] = entry;
         }
@@ -199,6 +208,8 @@ std::vector<uint16_t> ConvertMapToGBA(const Array2D<uint32_t>& map)
 
     return out;
 }
+
+
 
 void SaveMapGBA(const std::string& headerName,
                 const std::vector<uint16_t>& map,
@@ -237,7 +248,9 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
                        contentPaths.GetMapTilesetPath(mapName));
 
     if (!ret.success)
+    {
         return;
+    }
 
     auto palette = ExtractPaletteFromTileSet(ret.tiles8x8);
     SavePaletteGBA(mapName + "_palette.h", palette);
@@ -246,6 +259,8 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     SaveTileSetGBA(mapName + "_tiles.h", tiles);
 
     SaveMapGBA(mapName + "_map.h", ConvertMapToGBA(ret.map8), ret.map8.Width(), ret.map8.Height());
+
+    printf("Map compilation complete: %s\n", mapName.c_str());
 }
 
 

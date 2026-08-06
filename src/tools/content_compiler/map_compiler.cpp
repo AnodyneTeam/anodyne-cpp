@@ -228,13 +228,6 @@ TileSplitResult TileSet::Make8x8WithRemap() const
     return result;
 }
 
-enum TileVariant : uint8_t
-{
-    VAR_IDENTITY = 0,
-    VAR_H        = 1,
-    VAR_V        = 2,
-    VAR_HV       = 3,
-};
 
 static RGBA GetPixelVariant(const RGBATile& tile,
                             uint32_t x, uint32_t y,

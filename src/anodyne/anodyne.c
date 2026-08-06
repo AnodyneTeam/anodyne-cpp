@@ -28,34 +28,31 @@ static void dialog_manager_test(void)
 
 void CopyMapRegionToBG0(int mapX, int mapY)
 {
-    // map is 100×140
     const int MAP_W = 100;
     const int MAP_H = 140;
 
-    // BG0 is 32×32
     const int VIEW_W = 32;
     const int VIEW_H = 32;
 
     for (int y = 0; y < VIEW_H; y++)
     {
+        int srcY = mapY + y;
+        if (srcY < 0) srcY = 0;
+        if (srcY >= MAP_H) srcY = MAP_H - 1;
+
         for (int x = 0; x < VIEW_W; x++)
         {
             int srcX = mapX + x;
-            int srcY = mapY + y;
-
-            // clamp to map bounds
             if (srcX < 0) srcX = 0;
-            if (srcY < 0) srcY = 0;
             if (srcX >= MAP_W) srcX = MAP_W - 1;
-            if (srcY >= MAP_H) srcY = MAP_H - 1;
 
+            // ROW-MAJOR INDEXING — THIS IS THE IMPORTANT PART
             uint16_t tile = gMapData[srcY * MAP_W + srcX];
 
             se_mem[31][y * VIEW_W + x] = tile;
         }
     }
 }
-
 
 int main()
 {

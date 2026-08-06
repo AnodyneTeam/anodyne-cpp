@@ -183,6 +183,15 @@ struct RGBATileHash
     }
 };
 
+
+enum TileVariant : uint8_t
+{
+    VAR_IDENTITY = 0,
+    VAR_H        = 1,
+    VAR_V        = 2,
+    VAR_HV       = 3,
+};
+
 struct TileSplitResult;
 struct TileDedupResult;
 
