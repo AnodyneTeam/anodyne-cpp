@@ -81,17 +81,19 @@ int main()
 
     #endif
 
-    int camX = 20;
-    int camY = 40;
+    int camX = 8*10;
+    int camY = 8*10;
 
-    int scrollTimer = 0;
+    int lastTileX = -1;
+    int lastTileY = -1;
 
     while (1)
     {
         key_poll();
-
+        static int scrollTimer = 0;
         scrollTimer++;
-        if (scrollTimer >= 6000)
+
+        if (scrollTimer >= 120)
         {
             scrollTimer = 0;
 
@@ -99,16 +101,37 @@ int main()
             if (key_is_down(KEY_RIGHT)) camX++;
             if (key_is_down(KEY_UP))    camY--;
             if (key_is_down(KEY_DOWN))  camY++;
+        }
 
-            // clamp
-            if (camX < 0) camX = 0;
-            if (camY < 0) camY = 0;
-            if (camX > 100 - 32) camX = 100 - 32;
-            if (camY > 140 - 32) camY = 140 - 32;
+        // clamp in pixels
+        int mapWpx = 100 * 8;
+        int mapHpx = 140 * 8;
 
-            CopyMapRegionToBG0(camX, camY);
+        if (camX < 0) camX = 0;
+        if (camY < 0) camY = 0;
+        if (camX > mapWpx - 240) camX = mapWpx - 240;
+        if (camY > mapHpx - 160) camY = mapHpx - 160;
+
+        // compute tile + subpixel offsets
+        int tileX = camX >> 3;
+        int tileY = camY >> 3;
+
+        int subX = camX & 7;
+        int subY = camY & 7;
+
+        // scroll inside the tile
+        REG_BG0HOFS = subX;
+        REG_BG0VOFS = subY;
+
+        // update tile window only when needed
+        if (tileX != lastTileX || tileY != lastTileY)
+        {
+            CopyMapRegionToBG0(tileX, tileY);
+            lastTileX = tileX;
+            lastTileY = tileY;
         }
     }
+
 
 }
 
