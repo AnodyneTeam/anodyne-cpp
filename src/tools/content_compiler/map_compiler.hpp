@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdio.h>
 #include <array>
+#include <stdint.h>
 
 template<typename T>
 class Array2D final
