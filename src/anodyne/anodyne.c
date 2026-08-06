@@ -30,6 +30,10 @@ int main(void)
 	tte_write("#{P:72,64}");		// Goto (72, 64).
 	tte_write("hello");		// Print "Hello world!"
 
+    // pal_bg_mem
+    
+
+    
 	while(1);
 
     return 0;
