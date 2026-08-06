@@ -5,8 +5,13 @@
 #include "dialog_manager.h"
 #include "tonc.h"
 
-//#include "../build/STREET_palette.h"
-//#include "../build/STREET_tiles.h"
+//#define HAVE_DATA
+
+#ifdef HAVE_DATA
+#include "../build/STREET_palette.h"
+#include "../build/STREET_tiles.h"
+#include "../build/STREET_map.h"
+#endif
 
 /*
 static void dialog_manager_test(void)
@@ -25,13 +30,22 @@ static void dialog_manager_test(void)
 int main()
 {
     REG_DISPCNT = DCNT_MODE0 | DCNT_BG0;
+    REG_BG1CNT = 1;
+    REG_BG2CNT = 0;
+    REG_BG3CNT = 0;
 
     REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_8BPP | BG_REG_32x32;
 
-//    memcpy16(pal_bg_mem, gTilesetPalette, 256 / 2);
- //   memcpy16(tile_mem, gTilesetData, sizeof(gTilesetData));
+    #ifdef HAVE_DATA
+    // --- Palette (256 halfwords) ---
+    memcpy16(pal_bg_mem, gTilesetPalette, 256);
 
-    // memcpy16(se_mem[31], gTilemap, mapSize);
+    // --- Tiles (8bpp, byte data → halfword count) ---
+    memcpy16(tile_mem, gTilesetData, sizeof(gTilesetData) / 2);
+
+    // --- Map (uint16_t entries) ---
+    memcpy16(se_mem[31], gMapData, sizeof(gMapData) / 2);
+    #endif
 
     while(1);
 }

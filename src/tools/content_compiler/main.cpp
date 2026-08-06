@@ -177,6 +177,55 @@ void SaveTileSetGBA(const std::string& headerName,
     fclose(f);
 }
 
+std::vector<uint16_t> ConvertMapToGBA(const Array2D<uint32_t>& map)
+{
+    const uint32_t w = map.Width();
+    const uint32_t h = map.Height();
+
+    std::vector<uint16_t> out(w * h);
+
+    size_t pos = 0;
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            uint32_t idx = map.Get(x, y);
+
+            uint16_t entry = (uint16_t)(idx & 0x3FF); // 8bpp → palette bank ignored
+
+            out[pos++] = entry;
+        }
+    }
+
+    return out;
+}
+
+void SaveMapGBA(const std::string& headerName,
+                const std::vector<uint16_t>& map,
+                uint32_t width,
+                uint32_t height)
+{
+    FILE* f = fopen(headerName.c_str(), "w");
+    if (!f)
+        return;
+
+    fprintf(f, "// Auto-generated GBA tilemap\n");
+    fprintf(f, "// %u x %u tiles\n\n", width, height);
+
+    fprintf(f, "const unsigned short gMapData[%u] = {\n", width * height);
+
+    for (size_t i = 0; i < map.size(); ++i)
+    {
+        fprintf(f, "    0x%04X%s\n",
+                map[i],
+                (i + 1 == map.size() ? "" : ","));
+    }
+
+    fprintf(f, "};\n");
+
+    fclose(f);
+}
+
 // ------------------------------------------------------------
 // MAP COMPILATION
 // ------------------------------------------------------------
@@ -195,6 +244,8 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
 
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
     SaveTileSetGBA(mapName + "_tiles.h", tiles);
+
+    SaveMapGBA(mapName + "_map.h", ConvertMapToGBA(ret.map8), ret.map8.Width(), ret.map8.Height());
 }
 
 
