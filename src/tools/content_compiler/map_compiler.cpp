@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <unordered_set>
-
+#include <unordered_map>
 
 bool load_png_to_vector(const char* filename,
                         std::vector<RGBA>& outPixels,
@@ -172,6 +172,50 @@ TileSplitResult TileSet::Make8x8WithRemap() const
     return result;
 }
 
+TileDedupResult TileSet::Deduplicate() const
+{
+    TileDedupResult result;
+
+    std::unordered_map<RGBATile, uint32_t, RGBATileHash> uniqueMap;
+    std::vector<RGBATile> uniqueTiles;
+
+    const uint32_t tilesX = mTiles.Width();
+    const uint32_t tilesY = mTiles.Height();
+
+    result.remap8toUnique.resize(tilesX * tilesY);
+
+    for (uint32_t ty = 0; ty < tilesY; ++ty)
+    {
+        for (uint32_t tx = 0; tx < tilesX; ++tx)
+        {
+            const RGBATile& tile = mTiles.Get(tx, ty);
+            uint32_t oldIndex = ty * tilesX + tx;
+
+            auto it = uniqueMap.find(tile);
+            if (it == uniqueMap.end())
+            {
+                uint32_t newIndex = uniqueTiles.size();
+                uniqueMap[tile] = newIndex;
+                uniqueTiles.push_back(tile);
+                result.remap8toUnique[oldIndex] = newIndex;
+            }
+            else
+            {
+                result.remap8toUnique[oldIndex] = it->second;
+            }
+        }
+    }
+
+    // Build deduped tileset
+    result.tilesUnique = TileSet(mTileWidth, mTileHeight);
+    result.tilesUnique.mTiles.Resize(uniqueTiles.size(), 1);
+
+    for (uint32_t i = 0; i < uniqueTiles.size(); ++i)
+        result.tilesUnique.mTiles.Get(i, 0) = uniqueTiles[i];
+
+    return result;
+}
+
 
 bool MapCompiler::Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath)
 {
@@ -222,6 +266,23 @@ void MapCompiler::Build8x8Map(const Array2D<uint32_t>& map16,
     }
 }
 
+void MapCompiler::Apply8x8Remap(Array2D<uint32_t>& map8,
+                                const std::vector<uint32_t>& remap8toUnique)
+{
+    const uint32_t w = map8.Width();
+    const uint32_t h = map8.Height();
+
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            uint32_t oldIndex = map8.Get(x, y);
+            uint32_t newIndex = remap8toUnique[oldIndex];
+            map8.Set(x, y, newIndex);
+        }
+    }
+}
+
 
 void MapCompiler::Compile(const std::string& mapName)
 {
@@ -232,7 +293,13 @@ void MapCompiler::Compile(const std::string& mapName)
     Array2D<uint32_t> map8;
     Build8x8Map(mMap16, split16To8, map8);
 
-    SaveMapAsPNG(mapName + "_8x8", map8, split16To8.tiles8x8);
+    uint32_t oldCount = split16To8.tiles8x8.GetTiles().Width() * split16To8.tiles8x8.GetTiles().Height();
+    TileDedupResult dedup = split16To8.tiles8x8.Deduplicate();
+    printf("Deduplicated 8x8 tiles: %zu unique tiles (was %u)\n", dedup.tilesUnique.GetTiles().Width() * dedup.tilesUnique.GetTiles().Height(), oldCount);
+    Apply8x8Remap(map8, dedup.remap8toUnique);
+
+
+    SaveMapAsPNG(mapName + "_8x8", map8, dedup.tilesUnique);
 }
 
 void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet)

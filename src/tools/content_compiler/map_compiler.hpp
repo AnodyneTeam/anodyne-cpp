@@ -179,6 +179,7 @@ struct RGBATileHash
 };
 
 struct TileSplitResult;
+struct TileDedupResult;
 
 class TileSet final
 {
@@ -191,12 +192,25 @@ public:
     }
 
     TileSplitResult Make8x8WithRemap() const;
+    TileDedupResult Deduplicate() const;
+
     uint32_t GetTileWidth() const { return mTileWidth; }
     uint32_t GetTileHeight() const { return mTileHeight; }
 private:
     uint32_t mTileWidth = 0;
     uint32_t mTileHeight = 0;
     Array2D<RGBATile> mTiles;
+};
+
+struct TileDedupResult
+{
+    TileDedupResult()
+        : tilesUnique(8, 8)
+    {
+
+    }
+    TileSet tilesUnique;
+    std::vector<uint32_t> remap8toUnique;
 };
 
 struct TileSplitResult
@@ -227,6 +241,8 @@ private:
     void Build8x8Map(const Array2D<uint32_t>& map16,
                               const TileSplitResult& split,
                               Array2D<uint32_t>& outMap8);
+    void Apply8x8Remap(Array2D<uint32_t>& map8,
+                                const std::vector<uint32_t>& remap8toUnique);
 
     Array2D<uint32_t> mMap16;
     TileSet mTileSet16;
