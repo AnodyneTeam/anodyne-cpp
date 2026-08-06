@@ -2,9 +2,8 @@
 #include <set>
 #include <sstream>
 
-bool DialogCompiler::Load(const std::string &path, const std::string &langCode)
+bool DialogCompiler::Load(const std::string &fullPath)
 {
-    const std::string fullPath = path + "/dialogue_" + langCode + ".txt";
     printf("Path = %s\n", fullPath.c_str());
 
     std::ifstream textStream(fullPath.c_str(), std::ios::in);
