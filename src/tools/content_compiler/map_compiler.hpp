@@ -162,6 +162,8 @@ public:
     bool Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath);
     void Compile(const std::string& mapName);
 private:
+    void SaveOGMapAsPNG(const std::string& mapName);
+
     Array2D<uint32_t> mMap;
     TileSet mTileSet16;
 };

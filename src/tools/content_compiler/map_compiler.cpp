@@ -132,6 +132,13 @@ bool MapCompiler::Load(const std::string& mapBGCSVPath, const std::string& mapTi
 
 void MapCompiler::Compile(const std::string& mapName)
 {
+    SaveOGMapAsPNG(mapName);
+
+    
+}
+
+void MapCompiler::SaveOGMapAsPNG(const std::string& mapName)
+{
     const uint32_t mapWidthTiles  = mMap.Width();
     const uint32_t mapHeightTiles = mMap.Height();
 
