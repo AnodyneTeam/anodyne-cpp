@@ -190,7 +190,7 @@ class TileSet final
 {
 public:
     TileSet(uint32_t tileWidth, uint32_t tileHeight);
-    bool Load(const std::string& pngPath);
+    bool Load(const std::string& pngPath, size_t& coloursCount);
     const Array2D<RGBATile>& GetTiles() const
     {
         return mTiles;
@@ -210,7 +210,7 @@ private:
 struct DedupEntry final
 {
     uint32_t newIndex = 0;
-    uint8_t flipFlags = 0; // bit0 = H, bit1 = V
+    uint8_t  variant = 0; // TileVariant
 };
 
 struct TileDedupResult final
@@ -236,6 +236,20 @@ struct TileSplitResult final
     std::vector<std::array<uint32_t,4>> remap16to8;
 };
 
+struct MapCompileResult final
+{
+    MapCompileResult()
+        : tiles8x8(8, 8)
+    {
+
+    }
+    bool success = false;
+    uint32_t m8x8TileCountBeforeDeDupe = 0;
+    size_t mTileSetColoursCount = 0;
+    Array2D<uint32_t> map8;
+    TileSet tiles8x8;
+};
+
 class MapCompiler final
 {
 public:
@@ -245,8 +259,8 @@ public:
 
     }
 
-    bool Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath);
-    void Compile(const std::string& mapName);
+    MapCompileResult Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& mapTilesetPath);
+
 private:
     void SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet);
     void Build8x8Map(const Array2D<uint32_t>& map16,
@@ -254,6 +268,8 @@ private:
                               Array2D<uint32_t>& outMap8);
     void Apply8x8Remap(Array2D<uint32_t>& map8,
                                 const std::vector<DedupEntry>& remap8toUnique);
+
+    void SaveTileSetAsPNG(const std::string& pngName, const TileSet& tileSet);
 
     Array2D<uint32_t> mMap16;
     TileSet mTileSet16;

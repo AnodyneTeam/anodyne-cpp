@@ -20,13 +20,18 @@ static void CompileDialog(ContentPaths& contentPaths)
 static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
 {
     MapCompiler mc;
-    if (mc.Load(contentPaths.GetMapBGCSVPath(mapName), contentPaths.GetMapTilesetPath(mapName)))
+    MapCompileResult ret = mc.Load(mapName, contentPaths.GetMapBGCSVPath(mapName), contentPaths.GetMapTilesetPath(mapName));
+    if (!ret.success)
     {
-        mc.Compile(mapName);
+        printf("Map OVER!\n");
     }
     else
     {
-        printf("Map OVER!\n");
+        printf("Map %s compiled successfully: %u 8x8 tiles deduplicated to %u, %u colours\n", 
+            mapName.c_str(), 
+            ret.m8x8TileCountBeforeDeDupe, 
+            ret.tiles8x8.GetTiles().Width() * ret.tiles8x8.GetTiles().Height(), 
+            ret.mTileSetColoursCount);
     }
 }
 
