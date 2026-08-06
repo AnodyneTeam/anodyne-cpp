@@ -223,6 +223,9 @@ void SaveMapGBA(const std::string& headerName,
     fprintf(f, "// Auto-generated GBA tilemap\n");
     fprintf(f, "// %u x %u tiles\n\n", width, height);
 
+    fprintf(f, "const unsigned int gMapWidth  = %u;\n", width);
+    fprintf(f, "const unsigned int gMapHeight = %u;\n\n", height);
+
     fprintf(f, "const unsigned short gMapData[%u] = {\n", width * height);
 
     for (size_t i = 0; i < map.size(); ++i)
@@ -283,7 +286,9 @@ int main(int argc, char **argv)
     ContentPaths contentPaths("../../old/Content");
 
     //CompileDialog(contentPaths);
-    CompileMap(contentPaths, "STREET");
+    //CompileMap(contentPaths, "STREET");
+//    CompileMap(contentPaths, "OVERWORLD");
+    CompileMap(contentPaths, "CLIFF");
 
     return 0;
 }

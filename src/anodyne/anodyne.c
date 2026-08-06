@@ -8,9 +8,16 @@
 //#define HAVE_DATA
 
 #ifdef HAVE_DATA
+/*
 #include "../build/STREET_palette.h"
 #include "../build/STREET_tiles.h"
 #include "../build/STREET_map.h"
+*/
+
+#include "../build/CLIFF_palette.h"
+#include "../build/CLIFF_tiles.h"
+#include "../build/CLIFF_map.h"
+
 #endif
 
 /*
@@ -25,11 +32,11 @@ static void dialog_manager_test(void)
     dialog_manager_free(&dm);
 }
 */
-
+#ifdef HAVE_DATA
 void CopyMapRegionToBG0(int mapX, int mapY)
 {
-    const int MAP_W = 100;
-    const int MAP_H = 140;
+    const int MAP_W = gMapWidth;
+    const int MAP_H = gMapHeight;
 
     const int VIEW_W = 32;
     const int VIEW_H = 32;
@@ -53,6 +60,7 @@ void CopyMapRegionToBG0(int mapX, int mapY)
         }
     }
 }
+#endif
 
 int main()
 {
@@ -102,10 +110,10 @@ int main()
             if (key_is_down(KEY_UP))    camY--;
             if (key_is_down(KEY_DOWN))  camY++;
         }
-
+#ifdef HAVE_DATA
         // clamp in pixels
-        int mapWpx = 100 * 8;
-        int mapHpx = 140 * 8;
+        int mapWpx = gMapWidth * 8;
+        int mapHpx = gMapHeight * 8;
 
         if (camX < 0) camX = 0;
         if (camY < 0) camY = 0;
@@ -130,8 +138,9 @@ int main()
             lastTileX = tileX;
             lastTileY = tileY;
         }
-    }
+#endif
 
+    }
 
 }
 
