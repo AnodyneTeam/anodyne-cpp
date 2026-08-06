@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdio.h>
+#include <array>
 
 template<typename T>
 class Array2D final
@@ -132,8 +133,52 @@ struct RGBATile final
     {
         mData.Resize(width, height);
     }
+
     Array2D<RGBA> mData;
+
+    bool operator==(const RGBATile& other) const
+    {
+        if (mData.Width() != other.mData.Width()) return false;
+        if (mData.Height() != other.mData.Height()) return false;
+
+        for (uint32_t y = 0; y < mData.Height(); ++y)
+        {
+            for (uint32_t x = 0; x < mData.Width(); ++x)
+            {
+                const RGBA& a = mData.Get(x, y);
+                const RGBA& b = other.mData.Get(x, y);
+                if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a)
+                    return false;
+            }
+        }
+        return true;
+    }
 };
+
+struct RGBATileHash
+{
+    size_t operator()(const RGBATile& tile) const
+    {
+        size_t h = 0;
+        for (uint32_t y = 0; y < tile.mData.Height(); ++y)
+        {
+            for (uint32_t x = 0; x < tile.mData.Width(); ++x)
+            {
+                const RGBA& p = tile.mData.Get(x, y);
+                uint32_t packed =
+                    (uint32_t(p.r) << 24) |
+                    (uint32_t(p.g) << 16) |
+                    (uint32_t(p.b) << 8)  |
+                    (uint32_t(p.a));
+
+                h ^= std::hash<uint32_t>()(packed) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+        }
+        return h;
+    }
+};
+
+struct TileSplitResult;
 
 class TileSet final
 {
@@ -144,10 +189,26 @@ public:
     {
         return mTiles;
     }
+
+    TileSplitResult Make8x8WithRemap() const;
+    uint32_t GetTileWidth() const { return mTileWidth; }
+    uint32_t GetTileHeight() const { return mTileHeight; }
 private:
     uint32_t mTileWidth = 0;
     uint32_t mTileHeight = 0;
     Array2D<RGBATile> mTiles;
+};
+
+struct TileSplitResult
+{
+    TileSplitResult()
+     : tiles8x8(8, 8)
+    {
+
+    }
+
+    TileSet tiles8x8;
+    std::vector<std::array<uint32_t,4>> remap16to8;
 };
 
 class MapCompiler final
@@ -162,8 +223,11 @@ public:
     bool Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath);
     void Compile(const std::string& mapName);
 private:
-    void SaveOGMapAsPNG(const std::string& mapName);
+    void SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet);
+    void Build8x8Map(const Array2D<uint32_t>& map16,
+                              const TileSplitResult& split,
+                              Array2D<uint32_t>& outMap8);
 
-    Array2D<uint32_t> mMap;
+    Array2D<uint32_t> mMap16;
     TileSet mTileSet16;
 };

@@ -110,12 +110,75 @@ bool TileSet::Load(const std::string &pngPath)
     return true;
 }
 
+TileSplitResult TileSet::Make8x8WithRemap() const
+{
+    TileSplitResult result;
+    result.tiles8x8 = TileSet(8, 8);
+
+    const uint32_t oldTilesX = mTiles.Width();
+    const uint32_t oldTilesY = mTiles.Height();
+
+    const uint32_t newTilesX = oldTilesX * 2;
+    const uint32_t newTilesY = oldTilesY * 2;
+
+    result.tiles8x8.mTiles.Resize(newTilesX, newTilesY);
+
+    result.remap16to8.resize(oldTilesX * oldTilesY);
+
+    for (uint32_t ty = 0; ty < oldTilesY; ++ty)
+    {
+        for (uint32_t tx = 0; tx < oldTilesX; ++tx)
+        {
+            const uint32_t oldIndex = ty * oldTilesX + tx;
+
+            std::array<uint32_t,4> subTiles;
+
+            uint32_t baseX = tx * 2;
+            uint32_t baseY = ty * 2;
+
+            subTiles[0] = (baseY + 0) * newTilesX + (baseX + 0); // top-left
+            subTiles[1] = (baseY + 0) * newTilesX + (baseX + 1); // top-right
+            subTiles[2] = (baseY + 1) * newTilesX + (baseX + 0); // bottom-left
+            subTiles[3] = (baseY + 1) * newTilesX + (baseX + 1); // bottom-right
+
+            result.remap16to8[oldIndex] = subTiles;
+
+            // Now actually split the tile
+            const RGBATile& oldTile = mTiles.Get(tx, ty);
+
+            for (uint32_t sy = 0; sy < 2; ++sy)
+            {
+                for (uint32_t sx = 0; sx < 2; ++sx)
+                {
+                    uint32_t newTx = baseX + sx;
+                    uint32_t newTy = baseY + sy;
+
+                    RGBATile& newTile = result.tiles8x8.mTiles.Get(newTx, newTy);
+                    newTile.SetSize(8, 8);
+
+                    for (uint32_t y = 0; y < 8; ++y)
+                    {
+                        for (uint32_t x = 0; x < 8; ++x)
+                        {
+                            const RGBA& p = oldTile.mData.Get(sx*8 + x, sy*8 + y);
+                            newTile.mData.Set(x, y, p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+
 bool MapCompiler::Load(const std::string& mapBGCSVPath, const std::string& mapTilesetPath)
 {
     CsvMap csvMap;
 
    
-    if (!csvMap.Load(mapBGCSVPath, mMap))
+    if (!csvMap.Load(mapBGCSVPath, mMap16))
     {
         printf("Failed to load map CSV: %s\n", mapBGCSVPath.c_str());
         return false;
@@ -130,20 +193,55 @@ bool MapCompiler::Load(const std::string& mapBGCSVPath, const std::string& mapTi
     return true;
 }
 
-void MapCompiler::Compile(const std::string& mapName)
+void MapCompiler::Build8x8Map(const Array2D<uint32_t>& map16,
+                              const TileSplitResult& split,
+                              Array2D<uint32_t>& outMap8)
 {
-    SaveOGMapAsPNG(mapName);
+    const uint32_t w16 = map16.Width();
+    const uint32_t h16 = map16.Height();
 
-    
+    const uint32_t w8 = w16 * 2;
+    const uint32_t h8 = h16 * 2;
+
+    outMap8.Resize(w8, h8);
+
+    for (uint32_t my = 0; my < h16; ++my)
+    {
+        for (uint32_t mx = 0; mx < w16; ++mx)
+        {
+            uint32_t tile16 = map16.Get(mx, my);
+
+            const auto& sub = split.remap16to8[tile16];
+
+            // Write 4 tiles into the 8×8 map
+            outMap8.Set(mx*2 + 0, my*2 + 0, sub[0]); // TL
+            outMap8.Set(mx*2 + 1, my*2 + 0, sub[1]); // TR
+            outMap8.Set(mx*2 + 0, my*2 + 1, sub[2]); // BL
+            outMap8.Set(mx*2 + 1, my*2 + 1, sub[3]); // BR
+        }
+    }
 }
 
-void MapCompiler::SaveOGMapAsPNG(const std::string& mapName)
-{
-    const uint32_t mapWidthTiles  = mMap.Width();
-    const uint32_t mapHeightTiles = mMap.Height();
 
-    const uint32_t tileWidth  = 16;
-    const uint32_t tileHeight = 16;
+void MapCompiler::Compile(const std::string& mapName)
+{
+    SaveMapAsPNG(mapName + "_16x16", mMap16, mTileSet16);
+
+    TileSplitResult split16To8 = mTileSet16.Make8x8WithRemap();
+
+    Array2D<uint32_t> map8;
+    Build8x8Map(mMap16, split16To8, map8);
+
+    SaveMapAsPNG(mapName + "_8x8", map8, split16To8.tiles8x8);
+}
+
+void MapCompiler::SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet)
+{
+    const uint32_t mapWidthTiles  = map.Width();
+    const uint32_t mapHeightTiles = map.Height();
+
+    const uint32_t tileWidth  = tileSet.GetTileWidth();
+    const uint32_t tileHeight = tileSet.GetTileHeight();
 
     const uint32_t outWidth  = mapWidthTiles  * tileWidth;
     const uint32_t outHeight = mapHeightTiles * tileHeight;
@@ -151,19 +249,19 @@ void MapCompiler::SaveOGMapAsPNG(const std::string& mapName)
     std::vector<RGBA> outPixels(outWidth * outHeight);
 
     // Flatten tileset info
-    const uint32_t tilesX = mTileSet16.GetTiles().Width();
-    const uint32_t tilesY = mTileSet16.GetTiles().Height();
+    const uint32_t tilesX = tileSet.GetTiles().Width();
+    const uint32_t tilesY = tileSet.GetTiles().Height();
 
     for(uint32_t my = 0; my < mapHeightTiles; ++my)
     {
         for(uint32_t mx = 0; mx < mapWidthTiles; ++mx)
         {
-            uint32_t tileIndex = mMap.Get(mx, my);
+            uint32_t tileIndex = map.Get(mx, my);
 
             uint32_t tx = tileIndex % tilesX;
             uint32_t ty = tileIndex / tilesX;
 
-            const RGBATile& tile = mTileSet16.GetTiles().Get(tx, ty);
+            const RGBATile& tile = tileSet.GetTiles().Get(tx, ty);
 
             // Copy tile pixels into output image
             for(uint32_t y = 0; y < tileHeight; ++y)
@@ -191,7 +289,7 @@ void MapCompiler::SaveOGMapAsPNG(const std::string& mapName)
         raw[i*4 + 3] = outPixels[i].a;
     }
 
-    std::string outPath = mapName + ".png";
+    std::string outPath = pngName + ".png";
 
     unsigned error = lodepng_encode32_file(outPath.c_str(), raw.data(), outWidth, outHeight);
     if(error)
