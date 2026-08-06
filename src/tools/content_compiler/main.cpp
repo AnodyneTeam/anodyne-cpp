@@ -1,7 +1,202 @@
 #include <stdio.h>
+#include <unordered_set>
+#include <vector>
+#include <cstdint>
+#include <cstdio>
+
 #include "dialog_compiler.hpp"
 #include "map_compiler.hpp"
 #include "content_paths.hpp"
+
+// ------------------------------------------------------------
+// GBA RGB555 PACKER (THE ONLY ONE YOU SHOULD USE)
+// ------------------------------------------------------------
+static inline uint16_t GBA555(const RGBA& p)
+{
+    uint16_t r = (p.r >> 3) & 0x1F;
+    uint16_t g = (p.g >> 3) & 0x1F;
+    uint16_t b = (p.b >> 3) & 0x1F;
+
+    return (r) | (g << 5) | (b << 10);
+}
+
+// ------------------------------------------------------------
+// PALETTE EXTRACTION (UP TO 256 UNIQUE COLOURS)
+// ------------------------------------------------------------
+std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
+{
+    std::unordered_set<uint32_t> uniqueRGBA;
+
+    const auto& tiles = tileSet.GetTiles();
+    const uint32_t tilesX = tiles.Width();
+    const uint32_t tilesY = tiles.Height();
+
+    for (uint32_t ty = 0; ty < tilesY; ++ty)
+    {
+        for (uint32_t tx = 0; tx < tilesX; ++tx)
+        {
+            const RGBATile& tile = tiles.Get(tx, ty);
+
+            for (uint32_t y = 0; y < 8; ++y)
+            {
+                for (uint32_t x = 0; x < 8; ++x)
+                {
+                    const RGBA& p = tile.mData.Get(x, y);
+
+                    // Ignore fully transparent pixels
+                    if (p.a == 0)
+                        continue;
+
+                    uint32_t key =
+                        (uint32_t(p.r) << 24) |
+                        (uint32_t(p.g) << 16) |
+                        (uint32_t(p.b) << 8)  |
+                        (uint32_t(p.a));
+
+                    uniqueRGBA.insert(key);
+                }
+            }
+        }
+    }
+
+    // Build 256-entry palette
+    std::vector<uint16_t> palette(256, 0);
+    size_t i = 0;
+
+    for (uint32_t key : uniqueRGBA)
+    {
+        if (i >= 256)
+            break;
+
+        RGBA p;
+        p.r = (key >> 24) & 0xFF;
+        p.g = (key >> 16) & 0xFF;
+        p.b = (key >> 8)  & 0xFF;
+        p.a = (key)       & 0xFF;
+
+        palette[i++] = GBA555(p);
+    }
+
+    return palette;
+}
+
+// ------------------------------------------------------------
+// PALETTE SAVER
+// ------------------------------------------------------------
+void SavePaletteGBA(const std::string& headerName,
+                    const std::vector<uint16_t>& palette)
+{
+    FILE* f = fopen(headerName.c_str(), "w");
+    if (!f)
+        return;
+
+    fprintf(f, "// Auto-generated GBA palette\n");
+    fprintf(f, "const unsigned short gTilesetPalette[256] = {\n");
+
+    for (size_t i = 0; i < 256; ++i)
+    {
+        fprintf(f, "    0x%04X%s\n",
+                palette[i],
+                (i == 255 ? "" : ","));
+    }
+
+    fprintf(f, "};\n");
+    fclose(f);
+}
+
+// ------------------------------------------------------------
+// TILE → PALETTE INDEX
+// ------------------------------------------------------------
+uint8_t FindPaletteIndex8BPP(const RGBA& p,
+                             const std::vector<uint16_t>& palette)
+{
+    uint16_t c = GBA555(p);
+
+    for (size_t i = 0; i < palette.size(); ++i)
+        if (palette[i] == c)
+            return (uint8_t)i;
+
+    return 0;
+}
+
+// ------------------------------------------------------------
+// TILESET → 8BPP TILE DATA
+// ------------------------------------------------------------
+std::vector<uint8_t> ConvertTileSetTo8BPP(const TileSet& tileSet,
+                                          const std::vector<uint16_t>& palette)
+{
+    const auto& tiles = tileSet.GetTiles();
+    const uint32_t tilesX = tiles.Width();
+    const uint32_t tilesY = tiles.Height();
+    const uint32_t tileCount = tilesX * tilesY;
+
+    std::vector<uint8_t> out(tileCount * 64);
+    size_t pos = 0;
+
+    for (uint32_t ty = 0; ty < tilesY; ++ty)
+    {
+        for (uint32_t tx = 0; tx < tilesX; ++tx)
+        {
+            const RGBATile& tile = tiles.Get(tx, ty);
+
+            for (uint32_t y = 0; y < 8; ++y)
+            {
+                for (uint32_t x = 0; x < 8; ++x)
+                {
+                    out[pos++] = FindPaletteIndex8BPP(tile.mData.Get(x, y), palette);
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+// ------------------------------------------------------------
+// TILESET SAVER
+// ------------------------------------------------------------
+void SaveTileSetGBA(const std::string& headerName,
+                    const std::vector<uint8_t>& tileData)
+{
+    FILE* f = fopen(headerName.c_str(), "w");
+    if (!f)
+        return;
+
+    fprintf(f, "// Auto-generated GBA tileset (8bpp)\n");
+    fprintf(f, "const unsigned char gTilesetData[%zu] = {\n",
+            tileData.size());
+
+    for (size_t i = 0; i < tileData.size(); ++i)
+    {
+        fprintf(f, "    0x%02X%s\n",
+                tileData[i],
+                (i + 1 == tileData.size() ? "" : ","));
+    }
+
+    fprintf(f, "};\n");
+    fclose(f);
+}
+
+// ------------------------------------------------------------
+// MAP COMPILATION
+// ------------------------------------------------------------
+static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
+{
+    MapCompiler mc;
+    auto ret = mc.Load(mapName,
+                       contentPaths.GetMapBGCSVPath(mapName),
+                       contentPaths.GetMapTilesetPath(mapName));
+
+    if (!ret.success)
+        return;
+
+    auto palette = ExtractPaletteFromTileSet(ret.tiles8x8);
+    SavePaletteGBA(mapName + "_palette.h", palette);
+
+    auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
+    SaveTileSetGBA(mapName + "_tiles.h", tiles);
+}
+
 
 static void CompileDialog(ContentPaths& contentPaths)
 {
@@ -17,66 +212,12 @@ static void CompileDialog(ContentPaths& contentPaths)
     }
 }
 
-static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
-{
-    MapCompiler mc;
-    MapCompileResult ret = mc.Load(mapName, contentPaths.GetMapBGCSVPath(mapName), contentPaths.GetMapTilesetPath(mapName));
-    if (!ret.success)
-    {
-        printf("Map OVER!\n");
-    }
-    else
-    {
-        printf("Map %s compiled successfully: %u 8x8 tiles deduplicated to %u, %u colours\n", 
-            mapName.c_str(), 
-            ret.m8x8TileCountBeforeDeDupe, 
-            ret.tiles8x8.GetTiles().Width() * ret.tiles8x8.GetTiles().Height(), 
-            ret.mTileSetColoursCount);
-    }
-}
-
 int main(int argc, char **argv)
 {
-    printf("Content compiler exec from %s\n", argv[0]);
-
     ContentPaths contentPaths("../../old/Content");
 
-    CompileDialog(contentPaths);
-
-    const std::vector<std::string> mapNames = 
-    {
-        "APARTMENT",
-        "BLANK",
-        "CELL",
-        "CROWD",
-        "FIELDS",
-        "HAPPY",
-        "OVERWORLD",
-        "SPACE",
-        "TERMINAL",
-        "BEACH",
-        "BLUE",
-        "CIRCUS",
-        "DEBUG",
-        "FOREST",
-        "HOTEL",
-        "REDCAVE",
-        "STREET",
-        "WINDMILL",
-        "BEDROOM",
-        "BOSSRUSH",
-        "CLIFF",
-        "DRAWER",
-        "GO",
-        "NEXUS",
-        "REDSEA",
-        "SUBURB"
-    };
-
-    for (auto& mapName : mapNames)
-    {
-        CompileMap(contentPaths, mapName);
-    }
+    //CompileDialog(contentPaths);
+    CompileMap(contentPaths, "STREET");
 
     return 0;
 }
