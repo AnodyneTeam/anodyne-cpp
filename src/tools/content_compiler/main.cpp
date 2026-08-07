@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 
 #include "dialog_compiler.hpp"
 #include "map_compiler.hpp"
@@ -59,14 +60,17 @@ std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
         }
     }
 
-    // Build 256-entry palette
-    std::vector<uint16_t> palette(256, 0);
+    std::vector<uint16_t> palette;
+    palette.reserve(256);
     size_t i = 0;
 
     for (uint32_t key : uniqueRGBA)
     {
         if (i >= 256)
+        {
+            printf("ERROR OUT OF PAL!!!\n");
             break;
+        }
 
         RGBA p;
         p.r = (key >> 24) & 0xFF;
@@ -74,7 +78,7 @@ std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
         p.b = (key >> 8)  & 0xFF;
         p.a = (key)       & 0xFF;
 
-        palette[i++] = GBA555(p);
+        palette.push_back(GBA555(p));
     }
 
     return palette;
@@ -83,24 +87,28 @@ std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
 // ------------------------------------------------------------
 // PALETTE SAVER
 // ------------------------------------------------------------
-void SavePaletteGBA(const std::string& headerName,
+void SavePaletteGBA(const std::string& nameSpace,
+                    const std::string& headerName,
                     const std::vector<uint16_t>& palette)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
         return;
 
+    fprintf(f, "namespace %s\n{\n", nameSpace.c_str());
     fprintf(f, "// Auto-generated GBA palette\n");
-    fprintf(f, "const unsigned short gTilesetPalette[256] = {\n");
+    fprintf(f, "const unsigned short gTilesetPaletteSizeElements = %d;\n\n", palette.size());
+    fprintf(f, "const unsigned short gTilesetPalette[%zu] =\n{\n", palette.size());
 
-    for (size_t i = 0; i < 256; ++i)
+    for(size_t i=0; i<palette.size(); i++)
     {
         fprintf(f, "    0x%04X%s\n",
                 palette[i],
                 (i == 255 ? "" : ","));
     }
 
-    fprintf(f, "};\n");
+    fprintf(f, "};\n"); // Array end
+    fprintf(f, "}\n"); // Namespace end
     fclose(f);
 }
 
@@ -155,16 +163,18 @@ std::vector<uint8_t> ConvertTileSetTo8BPP(const TileSet& tileSet,
 // ------------------------------------------------------------
 // TILESET SAVER
 // ------------------------------------------------------------
-void SaveTileSetGBA(const std::string& headerName,
+void SaveTileSetGBA(const std::string& nameSpace,
+                    const std::string& headerName,
                     const std::vector<uint8_t>& tileData)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
         return;
 
+    fprintf(f, "namespace %s\n{\n", nameSpace.c_str());
     fprintf(f, "// Auto-generated GBA tileset (8bpp)\n");
-    fprintf(f, "const unsigned char gTilesetData[%zu] = {\n",
-            tileData.size());
+    fprintf(f, "const unsigned int gTilesetDataSizeElements = %zu;\n", tileData.size());
+    fprintf(f, "const unsigned char gTilesetData[%zu] = \n{\n", tileData.size());
 
     for (size_t i = 0; i < tileData.size(); ++i)
     {
@@ -174,6 +184,7 @@ void SaveTileSetGBA(const std::string& headerName,
     }
 
     fprintf(f, "};\n");
+    fprintf(f, "}\n");
     fclose(f);
 }
 
@@ -211,7 +222,8 @@ std::vector<uint16_t> ConvertMapToGBA(const Array2D<uint32_t>& map)
 
 
 
-void SaveMapGBA(const std::string& headerName,
+void SaveMapGBA(const std::string& nameSpace,
+                const std::string& headerName,
                 const std::vector<uint16_t>& map,
                 uint32_t width,
                 uint32_t height)
@@ -220,8 +232,8 @@ void SaveMapGBA(const std::string& headerName,
     if (!f)
         return;
 
+    fprintf(f, "namespace %s\n{\n", nameSpace.c_str());
     fprintf(f, "// Auto-generated GBA tilemap\n");
-    fprintf(f, "// %u x %u tiles\n\n", width, height);
 
     fprintf(f, "const unsigned int gMapWidth  = %u;\n", width);
     fprintf(f, "const unsigned int gMapHeight = %u;\n\n", height);
@@ -236,8 +248,45 @@ void SaveMapGBA(const std::string& headerName,
     }
 
     fprintf(f, "};\n");
+    fprintf(f, "}\n");
 
     fclose(f);
+}
+
+static bool IsFileNewer(const std::string& input,
+                        const std::vector<std::string>& outputs)
+{
+    namespace fs = std::filesystem;
+
+    // If the input doesn't exist, nothing to do
+    if (!fs::exists(input))
+    {
+        printf("%s doesn't exist\n", input.c_str());
+        return false;
+    }
+
+    auto inputTime = fs::last_write_time(input);
+
+    for (const auto& out : outputs)
+    {
+        // If an output file is missing -> we must rebuild
+        if (!fs::exists(out))
+        {
+            printf("%s doesn't exist\n", out.c_str());
+            return true;
+        }
+
+        auto outTime = fs::last_write_time(out);
+
+        // If input is newer than this output -> rebuild
+        if (inputTime > outTime)
+        {
+            return true;
+        }
+    }
+
+    // All outputs exist and are newer
+    return false;
 }
 
 // ------------------------------------------------------------
@@ -245,10 +294,29 @@ void SaveMapGBA(const std::string& headerName,
 // ------------------------------------------------------------
 static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
 {
+
+    std::string mapBgCsvPath = contentPaths.GetMapBGCSVPath(mapName);
+    std::string mapTilesetPath = contentPaths.GetMapTilesetPath(mapName);
+
+    std::string palHeader = mapName + "_pal.h";
+    std::string tilesHeader = mapName + "_tiles.h";
+    std::string mapHeader = mapName + "_map.h";
+
+    if (IsFileNewer(mapBgCsvPath, {palHeader, tilesHeader, mapHeader}) ||
+        IsFileNewer(mapTilesetPath, {palHeader, tilesHeader, mapHeader}))
+    {
+        printf("Compiling map: %s\n", mapName.c_str());
+    }
+    else
+    {
+        printf("Map up to date: %s\n", mapName.c_str());
+        return;
+    }
+
     MapCompiler mc;
     auto ret = mc.Load(mapName,
-                       contentPaths.GetMapBGCSVPath(mapName),
-                       contentPaths.GetMapTilesetPath(mapName));
+                       mapBgCsvPath,
+                       mapTilesetPath);
 
     if (!ret.success)
     {
@@ -256,12 +324,12 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     }
 
     auto palette = ExtractPaletteFromTileSet(ret.tiles8x8);
-    SavePaletteGBA(mapName + "_palette.h", palette);
+    SavePaletteGBA(mapName, palHeader, palette);
 
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
-    SaveTileSetGBA(mapName + "_tiles.h", tiles);
+    SaveTileSetGBA(mapName, tilesHeader, tiles);
 
-    SaveMapGBA(mapName + "_map.h", ConvertMapToGBA(ret.map8), ret.map8.Width(), ret.map8.Height());
+    SaveMapGBA(mapName, mapHeader, ConvertMapToGBA(ret.map8), ret.map8.Width(), ret.map8.Height());
 
     printf("Map compilation complete: %s\n", mapName.c_str());
 }
@@ -281,14 +349,102 @@ static void CompileDialog(ContentPaths& contentPaths)
     }
 }
 
+void WriteMapIncludeFile(const std::vector<std::string>& mapNames)
+{
+    FILE* f = fopen("maps.h", "w");
+    if (!f) return;
+
+    fprintf(f, "// Auto-generated map include file\n\n");
+
+    for (const auto& name : mapNames)
+    {
+        fprintf(f, "#include \"%s_pal.h\"\n", name.c_str());
+        fprintf(f, "#include \"%s_tiles.h\"\n", name.c_str());
+        fprintf(f, "#include \"%s_map.h\"\n\n", name.c_str());
+    }
+
+    fclose(f);
+}
+
+void WriteMapRegistry(const std::vector<std::string>& mapNames)
+{
+    FILE* f = fopen("map_registry.h", "w");
+    if (!f) return;
+
+    fprintf(f, "// Auto-generated map registry\n\n");
+
+    // Includes
+    for (const auto& name : mapNames)
+    {
+        fprintf(f, "#include \"%s_pal.h\"\n", name.c_str());
+        fprintf(f, "#include \"%s_tiles.h\"\n", name.c_str());
+        fprintf(f, "#include \"%s_map.h\"\n\n", name.c_str());
+    }
+
+    // Registry array
+    fprintf(f, "static const MapEntry kMaps[] =\n{\n");
+
+    for (const auto& name : mapNames)
+    {
+        fprintf(f,
+            "    {\n"
+            "        { %s::gTilesetPaletteSizeElements, %s::gTilesetPalette },\n"
+            "        { %s::gTilesetDataSizeElements,    %s::gTilesetData    },\n"
+            "        { %s::gMapWidth,                  %s::gMapHeight, %s::gMapData }\n"
+            "    },\n",
+            name.c_str(), name.c_str(),
+            name.c_str(), name.c_str(),
+            name.c_str(), name.c_str(), name.c_str()
+        );
+    }
+
+    fprintf(f, "};\n\n");
+    fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
+
+    fclose(f);
+}
+
 int main(int argc, char **argv)
 {
-    ContentPaths contentPaths("../../old/Content");
+    printf("cwd: %s\n", std::filesystem::current_path().string().c_str());
+
+    ContentPaths contentPaths("../../../old/Content");
+
+    std::vector<std::string> mapNames = {
+        "APARTMENT",
+        "BEDROOM",
+        "BLUE",
+        "CELL",
+        "CLIFF",
+        "DEBUG",
+        "FIELDS",
+        "GO",
+        "HOTEL",
+        "OVERWORLD",
+        "REDSEA",
+        "STREET",
+        "TERMINAL",
+        "BEACH",
+        "BLANK",
+        "BOSSRUSH",
+        "CIRCUS",
+        "CROWD",
+        "DRAWER",
+        "FOREST",
+        "HAPPY",
+        "NEXUS",
+        "REDCAVE",
+        "SPACE",
+        "SUBURB",
+        "WINDMILL"
+    };
 
     //CompileDialog(contentPaths);
-    //CompileMap(contentPaths, "STREET");
-//    CompileMap(contentPaths, "OVERWORLD");
-    CompileMap(contentPaths, "CLIFF");
-
+    for (const auto& mapName : mapNames)
+    {
+        CompileMap(contentPaths, mapName);
+    }
+    WriteMapIncludeFile(mapNames);
+    WriteMapRegistry(mapNames);
     return 0;
 }

@@ -22,7 +22,7 @@ set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
-    anodyne.c
+    anodyne.cpp
     dialog_manager.c
 )
 
@@ -30,6 +30,7 @@ set(FIRST_SOURCES
 # STATIC library
 # ------------------------------------------------------------
 add_library(first_lib STATIC ${FIRST_SOURCES})
+add_dependencies(first_lib RunContentCompiler)
 
 target_compile_options(first_lib PRIVATE
     -mcpu=arm7tdmi

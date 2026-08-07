@@ -11,6 +11,12 @@ add_executable(CompileContent
     content_compiler/dialog_compiler.cpp
     content_compiler/main.cpp)
 
+add_custom_target(RunContentCompiler ALL
+    COMMAND CompileContent
+    COMMENT "Always running content compiler")
+
+add_dependencies(RunContentCompiler CompileContent)
+
 target_include_directories(CompileContent PRIVATE ../3rdParty/lodepng)
 
 target_link_libraries(CompileContent lodepng)
