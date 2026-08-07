@@ -12,7 +12,8 @@ add_executable(CompileContent
     content_compiler/main.cpp)
 
 add_custom_target(RunContentCompiler ALL
-    COMMAND CompileContent
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/CompileContent
+    DEPENDS CompileContent
     COMMENT "Always running content compiler")
 
 add_dependencies(RunContentCompiler CompileContent)
