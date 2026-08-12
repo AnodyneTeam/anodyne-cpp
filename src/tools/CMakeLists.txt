@@ -11,11 +11,11 @@ add_executable(CompileContent
     content_compiler/dialog_compiler.cpp
     content_compiler/main.cpp)
 
-add_custom_target(RunContentCompiler ALL
-    COMMAND $<TARGET_FILE:CompileContent>
+add_custom_target(RunContentCompiler
+    COMMAND "${CMAKE_COMMAND}" -E echo "Running content compiler"
+    COMMAND "$<TARGET_FILE:CompileContent>"
     DEPENDS CompileContent
-    COMMENT "Always running content compiler")
-
+)
 add_dependencies(RunContentCompiler CompileContent)
 
 target_include_directories(CompileContent PRIVATE ../3rdParty/lodepng)
