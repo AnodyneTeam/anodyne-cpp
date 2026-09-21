@@ -6,6 +6,8 @@
 #include "dialog_manager.h"
 #include "tonc.h"
 
+#include "obj_vram_allocator.hpp"
+
 struct MapPalData final
 {
     uint32_t mPalSize = 0;
@@ -99,12 +101,13 @@ static void SetCurrentMap(uint32_t mapIndex)
 
 int main()
 {
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0;
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ;
     REG_BG1CNT = 1;
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
 
     REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_8BPP | BG_REG_32x32;
+
 
     SetCurrentMap(gCurrentMap);
 
@@ -113,6 +116,15 @@ int main()
 
     int lastTileX = -1;
     int lastTileY = -1;
+
+    ObjVramAllocator objVram;
+
+    int id = objVram.alloc(512);
+
+    TILE* pYoung = objVram.ptr(id);
+
+    //objVram.free(id);
+
 
     while (1)
     {

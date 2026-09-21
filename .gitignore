@@ -441,3 +441,8 @@ __pycache__/
 /gifs
 !/AnodyneSharp/AnodyneSharp.Shared/Content/Maps/**
 !/AnodyneSharp/AnodyneSharp.Shared/Entities/**
+.cache
+*.raw
+
+.vscode/settings.json
+src/lib/libtonc.a
