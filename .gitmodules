@@ -4,3 +4,15 @@
 [submodule "src/3rdParty/lodepng"]
 	path = src/3rdParty/lodepng
 	url = https://github.com/AnodyneTeam/lodepng.git
+[submodule "src/3rdParty/stb"]
+	path = src/3rdParty/stb
+	url = https://github.com/nothings/stb.git
+[submodule "src/3rdParty/dr_libs"]
+	path = src/3rdParty/dr_libs
+	url = https://github.com/mackron/dr_libs.git
+[submodule "src/3rdParty/qoa"]
+	path = src/3rdParty/qoa
+	url = https://github.com/phoboslab/qoa.git
+[submodule "src/tools/mgba"]
+	path = src/tools/mgba
+	url = https://github.com/AnodyneTeam/mgba.git
