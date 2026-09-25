@@ -11,6 +11,11 @@ exists yet; only `anodyne/platform/gba` is implemented so far).
 `old/` contains the original AnodyneSharp assets and content (maps, dialogue, sprites, bgm) used as the source data
 that gets compiled into the GBA-native formats at build time — it is not itself part of the C/C++ port.
 
+## Code style
+
+- Always use braces `{ }` for `if`/`else`/`for`/`while`/etc. bodies, even single-statement ones.
+- Prefer C++ casts (`static_cast`, `reinterpret_cast`, `const_cast`) over C-style casts, and RAII over manual acquire/release, in C++ code.
+
 ## Build & run
 
 From `src/`:

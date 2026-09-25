@@ -27,7 +27,15 @@ MEMORY {
 /* Set stack pointers the same way as the BIOS */
 
 __STACK_SVC_SIZE__      = 0x40;
-__STACK_IRQ_SIZE__      = 0xA0;
+/*
+ * The audio VBlank ISR (audio_manager.cpp) decodes QOA frames from within
+ * the interrupt handler - qoa_decode_frame()'s own locals (several 64-bit
+ * fields) plus its callers' frames add up to comfortably more than the
+ * original 0xA0 (160 bytes), which is sized for trivial ISRs (flag sets,
+ * counters). IWRAM has ample headroom (see __IWRAM_BSS_SIZE__/usage - a few
+ * hundred bytes used out of 32K), so this is a cheap, safe increase.
+ */
+__STACK_IRQ_SIZE__      = 0x800;
 __STACK_USR_SIZE_MIN__  = 0x200; /* Minimum size, the real size may be bigger */
 
 __STACK_END__       = ORIGIN(IWRAM) + LENGTH(IWRAM) - 0x20; /* Used by BIOS */

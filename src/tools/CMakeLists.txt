@@ -3,12 +3,19 @@ add_executable(gbafix
     ${SOURCES}gbafix/gbafix.c
 )
 
-add_library(lodepng 
+add_library(lodepng
     ../3rdParty/lodepng/lodepng.cpp)
 
-add_executable(CompileContent 
+add_executable(CompileContent
     content_compiler/map_compiler.cpp
     content_compiler/dialog_compiler.cpp
+    content_compiler/audio_compiler.cpp
+    content_compiler/vorbis_decode.cpp
+    content_compiler/mp3_decode.cpp
+    content_compiler/resampler.cpp
+    content_compiler/dr_mp3_impl.c
+    content_compiler/qoa_impl.c
+    ../3rdParty/stb/stb_vorbis.c
     content_compiler/main.cpp)
 
 add_custom_target(RunContentCompiler ALL
@@ -20,7 +27,11 @@ add_custom_target(RunContentCompiler ALL
 
 add_dependencies(RunContentCompiler CompileContent)
 
-target_include_directories(CompileContent PRIVATE ../3rdParty/lodepng)
+target_include_directories(CompileContent PRIVATE
+    ../3rdParty/lodepng
+    ../3rdParty/qoa
+    ../3rdParty/dr_libs
+    ../3rdParty/stb)
 
 target_link_libraries(CompileContent lodepng)
 

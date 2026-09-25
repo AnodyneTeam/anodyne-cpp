@@ -27,6 +27,21 @@ public:
         return CombinePaths(mBasePath, "textures/tilemaps", mapNameLower + "_tilemap.png");
     }
 
+    std::string GetBgmPath(const std::string& trackName) const
+    {
+        return CombinePaths(mBasePath, "bgm", trackName + ".ogg");
+    }
+
+    std::string GetAmbiencePath(const std::string& trackName) const
+    {
+        return CombinePaths(mBasePath, "ambience", trackName + ".ogg");
+    }
+
+    std::string GetSfxPath(const std::string& category, const std::string& clipName) const
+    {
+        return CombinePaths(mBasePath, "sfx/" + category, clipName + ".mp3");
+    }
+
 private:
     std::string ToLowerCase(const std::string& str) const
     {

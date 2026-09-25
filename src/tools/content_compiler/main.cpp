@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <algorithm>
+#include <cstdlib>
 #include <unordered_set>
 #include <vector>
 #include <cstdint>
@@ -8,6 +10,8 @@
 #include "dialog_compiler.hpp"
 #include "map_compiler.hpp"
 #include "content_paths.hpp"
+#include "file_utils.hpp"
+#include "audio_compiler.hpp"
 
 // ------------------------------------------------------------
 // GBA RGB555 PACKER (THE ONLY ONE YOU SHOULD USE)
@@ -253,42 +257,6 @@ void SaveMapGBA(const std::string& nameSpace,
     fclose(f);
 }
 
-static bool IsFileNewer(const std::string& input,
-                        const std::vector<std::string>& outputs)
-{
-    namespace fs = std::filesystem;
-
-    // If the input doesn't exist, nothing to do
-    if (!fs::exists(input))
-    {
-        printf("%s doesn't exist\n", input.c_str());
-        return false;
-    }
-
-    auto inputTime = fs::last_write_time(input);
-
-    for (const auto& out : outputs)
-    {
-        // If an output file is missing -> we must rebuild
-        if (!fs::exists(out))
-        {
-            printf("%s doesn't exist\n", out.c_str());
-            return true;
-        }
-
-        auto outTime = fs::last_write_time(out);
-
-        // If input is newer than this output -> rebuild
-        if (inputTime > outTime)
-        {
-            return true;
-        }
-    }
-
-    // All outputs exist and are newer
-    return false;
-}
-
 // ------------------------------------------------------------
 // MAP COMPILATION
 // ------------------------------------------------------------
@@ -404,9 +372,285 @@ void WriteMapRegistry(const std::vector<std::string>& mapNames)
     fclose(f);
 }
 
+// ------------------------------------------------------------
+// AUDIO COMPILATION
+// ------------------------------------------------------------
+static std::string EscapeCString(const std::string& s)
+{
+    std::string out;
+    for (char c : s)
+    {
+        if (c == '"' || c == '\\')
+        {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
+static void WriteAudioFrameArrays(const char* varPrefix, const std::vector<CompiledAudioTrack>& tracks, FILE* f)
+{
+    for (size_t i = 0; i < tracks.size(); i++)
+    {
+        fprintf(f, "static const AudioFrameRef %s_%zu_Frames[] = {\n", varPrefix, i);
+        for (const auto& frame : tracks[i].frames)
+        {
+            fprintf(f, "    { %uu, %uu },\n", frame.first, frame.second);
+        }
+        if (tracks[i].frames.empty())
+        {
+            fprintf(f, "    { 0u, 0u },\n"); // keep the array non-empty (failed decode)
+        }
+        fprintf(f, "};\n");
+    }
+}
+
+static void WriteAudioTrackArray(const char* arrayName, const char* varPrefix,
+                                  const std::vector<CompiledAudioTrack>& tracks, FILE* f)
+{
+    fprintf(f, "static const AudioTrackData %s[] = {\n", arrayName);
+    for (size_t i = 0; i < tracks.size(); i++)
+    {
+        const CompiledAudioTrack& t = tracks[i];
+        fprintf(f, "    { \"%s\", %uu, %uu, %zuu, %u, %uu, %s_%zu_Frames },\n", EscapeCString(t.name).c_str(),
+                t.sampleRate, t.totalSamples, t.frames.size(), t.loopEnabled ? 1 : 0, t.loopStartFrame, varPrefix,
+                i);
+    }
+    fprintf(f, "};\n");
+    fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n\n", arrayName, arrayName, arrayName);
+}
+
+static void WriteAudioRegistry(uint32_t outputSampleRate, const std::vector<CompiledAudioTrack>& bgm,
+                                const std::vector<CompiledAudioTrack>& ambience,
+                                const std::vector<CompiledAudioTrack>& sfx)
+{
+    FILE* idx = fopen("audio_block_index.h", "w");
+    if (idx)
+    {
+        fprintf(idx, "// Auto-generated audio frame index\n\n");
+        WriteAudioFrameArrays("kBgm", bgm, idx);
+        WriteAudioFrameArrays("kAmbience", ambience, idx);
+        WriteAudioFrameArrays("kSfx", sfx, idx);
+        fclose(idx);
+    }
+
+    // NOTE: relies on whoever includes this having already included
+    // src/anodyne/audio_manager.h (for AudioTrackData/AudioFrameRef) - same
+    // convention map_registry.h uses for MapEntry.
+    FILE* reg = fopen("audio_registry.h", "w");
+    if (reg)
+    {
+        fprintf(reg, "// Auto-generated audio registry\n\n");
+        // Mix/output rate; every item is at this rate or half of it (see CompileAllAudio).
+        fprintf(reg, "#define AUDIO_OUTPUT_SAMPLE_RATE %uu\n\n", outputSampleRate);
+        fprintf(reg, "#include \"audio_block_index.h\"\n\n");
+        WriteAudioTrackArray("kBgmTracks", "kBgm", bgm, reg);
+        WriteAudioTrackArray("kAmbienceTracks", "kAmbience", ambience, reg);
+        WriteAudioTrackArray("kSfxClips", "kSfx", sfx, reg);
+        fclose(reg);
+    }
+}
+
+struct AudioCliOptions final
+{
+    bool force = false;
+    bool verbose = false;
+    bool mapsOnly = false;
+    bool audioOnly = false;
+};
+
+static AudioCliOptions ParseAudioCliOptions(int argc, char** argv)
+{
+    AudioCliOptions options;
+    for (int i = 1; i < argc; i++)
+    {
+        std::string arg = argv[i];
+        if (arg == "--force")
+        {
+            options.force = true;
+        }
+        else if (arg == "--verbose")
+        {
+            options.verbose = true;
+        }
+        else if (arg == "--maps-only")
+        {
+            options.mapsOnly = true;
+        }
+        else if (arg == "--audio-only")
+        {
+            options.audioOnly = true;
+        }
+        else
+        {
+            printf("Unknown option: %s\n", arg.c_str());
+        }
+    }
+    return options;
+}
+
+static void CompileAllAudio(ContentPaths& contentPaths, const AudioCliOptions& cliOptions)
+{
+    AudioCompilerOptions options;
+    options.force = cliOptions.force;
+    options.verbose = cliOptions.verbose;
+    // The GBA side mixes every stream in software into one 9-bit output at
+    // kOutputSampleRate (both DirectSound FIFOs on one timer - see
+    // audio_manager.cpp). Each item is compiled at either that rate or
+    // exactly half of it (upsampled 2x while mixing); nothing else works.
+    // 26758Hz output: 13.4kHz bandwidth, and a whole multiple of 16 samples
+    // per VBlank (448) as the playback path requires (ValidateGbaSampleRate).
+    // Items default to half rate (13379Hz, 6.7kHz bandwidth): all BGM at
+    // full rate would be ~47MB, far over the 32MB cart limit, so only
+    // kFullRateBgm get it.
+    const uint32_t kOutputSampleRate = 26758;
+    options.defaultSampleRate = kOutputSampleRate / 2;
+
+    // BGM tracks compiled at the full output rate: the most treble-heavy
+    // tracks (measured: strong content in 6.7-13.4kHz, which half rate cuts
+    // off) plus ones that sounded worst at half rate, chosen to fit the
+    // 32MB ROM (~0.3MB headroom left - trim this list to make room for
+    // other content).
+    const std::vector<std::string> kFullRateBgm = {
+        "ending", "bedroom", "hotel-boss", "circus", "sacrificial", "cell", "gameover", "hotel", "boss"
+    };
+    // 1280-sample QOA frames. (The old per-frame "click" was the GBA side
+    // decoding a whole frame inside the VBlank ISR and starving the sound
+    // DMA - fixed by streaming per-slice decode in audio_decode_core.cpp,
+    // not by frame size.) See AUDIO_MAX_FRAME_SAMPLES in audio_manager.h,
+    // must match.
+    options.frameLenSamples = 1280;
+
+    // Per-track loop-start overrides (in samples at the track's own encode
+    // rate) - no original AnodyneSharp loop-point metadata exists anywhere in
+    // this repo, so everything defaults to looping the whole track from 0.
+    std::vector<std::pair<std::string, uint32_t>> loopOverrides = {};
+
+    auto findOverride = [](const std::vector<std::pair<std::string, uint32_t>>& overrides,
+                            const std::string& name) -> uint32_t
+    {
+        for (const auto& o : overrides)
+        {
+            if (o.first == name)
+            {
+                return o.second;
+            }
+        }
+        return 0;
+    };
+
+    std::vector<std::string> bgmNames = {
+        "anodyne_TRAILER_1", "apartment", "apartment-boss", "beach", "bedroom", "bedroom-boss", "blank", "blue",
+        "boss", "briar-fight", "cell", "circus", "circus-boss", "cliff", "crowd", "crowd_boss", "drawer", "ending",
+        "fields", "forest", "gameover", "go", "happy", "happy_alt", "hotel", "hotel_alt", "hotel-boss", "mitra",
+        "nexus", "overworld", "redcave", "redcave-boss", "redsea", "sacrificial", "sagefight", "space", "street",
+        "suburb", "suburb_alt", "terminal", "terminal_alt", "title", "windmill"
+    };
+    std::vector<std::string> ambienceNames = { "beach", "windmill" };
+    // {category subdirectory, clip name} - old/Content/sfx/<category>/<clip>.mp3
+    std::vector<std::pair<std::string, std::string>> sfxClips = {
+        { "1", "big_door_locked" }, { "1", "big_wave" }, { "1", "broom_hit" }, { "1", "bubble_2" },
+        { "1", "bubble_3" }, { "1", "bubble_loop" }, { "1", "button_down" }, { "1", "button_up" },
+        { "1", "cicada_chirp" }, { "1", "cross2" }, { "1", "cross3" }, { "1", "cross4" }, { "1", "dash_pad_1" },
+        { "1", "dash_pad_2" }, { "1", "dialogue_bloop" }, { "1", "dustmaid_alert" }, { "1", "dustpoof" },
+        { "1", "elevator_close" }, { "1", "elevator_open" }, { "1", "enter_door" }, { "1", "fall_1" },
+        { "1", "fall_in_hole" }, { "1", "floor_crack" }, { "1", "gasguy_shoot" }, { "1", "get_small_health" },
+        { "1", "gettreasure" }, { "1", "hit_ground_1" }, { "1", "keyget" }, { "1", "ladder_step_1" },
+        { "1", "ladder_step_2" }, { "1", "noise_step_1" }, { "1", "on_off_laser_shoot" }, { "1", "open" },
+        { "1", "player_hit_1" }, { "1", "player_jump_down" }, { "1", "player_jump_up" }, { "1", "puddle_down" },
+        { "1", "puddle_up" }, { "1", "pushblock" }, { "1", "redboss_death" }, { "1", "redboss_moan" },
+        { "1", "red_cave_rise" }, { "1", "sb_dash" }, { "1", "sb_hurt" }, { "1", "sb_split" },
+        { "1", "shieldy-hit" }, { "1", "slasher_atk" }, { "1", "small_wave" }, { "1", "sparkle_3" },
+        { "1", "spring_bounce" }, { "1", "stream" }, { "1", "sun_guy_charge" }, { "1", "sun_guy_death_long" },
+        { "1", "sun_guy_death_short" }, { "1", "sun_guy_scream2" }, { "1", "sun_guy_scream" },
+        { "1", "swing_broom_1" }, { "1", "swing_broom_2" }, { "1", "swing_broom_3" }, { "1", "talk_2" },
+        { "1", "talk_death" }, { "1", "teleguy_down" }, { "1", "teleguy_up" }, { "1", "teleport_down" },
+        { "1", "teleport_up" }, { "1", "unlock" }, { "1", "wb_hit_ground" }, { "1", "wb_moan_2" },
+        { "1", "wb_moan" }, { "1", "wb_shoot" }, { "1", "wb_tap_ground" }, { "10", "hit_slime" },
+        { "10", "laser_charge" }, { "10", "laser_fire" }, { "2", "4sht_shoot" }, { "2", "bubble_1" },
+        { "2", "dog_bark" }, { "2", "flame_pillar" }, { "2", "gasguy_move" }, { "2", "laser-pew" },
+        { "2", "menu_select" }, { "2", "mover_die" }, { "2", "mover_move" }, { "2", "pause_sound" },
+        { "2", "puddle_step" }, { "2", "rat_move" }, { "2", "slime_shoot" }, { "2", "sparkle_1" },
+        { "2", "sparkle_2" }, { "2", "talk_1" }, { "2", "talk_3" }, { "3", "4sht_pop" }, { "3", "dog_dash" },
+        { "3", "dust_explode" }, { "3", "menu_move" }, { "3", "sf_move" }, { "3", "water_step" },
+        { "4", "bubble_triple" }, { "4", "fireball" }, { "4", "shieldy_ineffective" }, { "5", "dialogue_blip" },
+        { "5", "hit_wall" }, { "5", "sb_ball_appear" }, { "5", "slime_walk" }, { "8", "briar_shine" },
+        { "8", "slime_splash" }
+    };
+
+    AudioCompiler compiler(options);
+
+    std::vector<CompiledAudioTrack> bgmTracks;
+    for (const auto& name : bgmNames)
+    {
+        AudioItemSpec spec;
+        spec.name = name;
+        spec.category = "bgm";
+        spec.sourcePath = contentPaths.GetBgmPath(name);
+        spec.isMp3 = false;
+        spec.loop = true;
+        spec.loopStartSample = findOverride(loopOverrides, name);
+        if (std::find(kFullRateBgm.begin(), kFullRateBgm.end(), name) != kFullRateBgm.end())
+        {
+            spec.sampleRateOverride = kOutputSampleRate;
+        }
+        bgmTracks.push_back(compiler.CompileItem(spec));
+    }
+
+    std::vector<CompiledAudioTrack> ambienceTracks;
+    for (const auto& name : ambienceNames)
+    {
+        AudioItemSpec spec;
+        spec.name = name;
+        spec.category = "ambience";
+        spec.sourcePath = contentPaths.GetAmbiencePath(name);
+        spec.isMp3 = false;
+        spec.loop = true;
+        spec.loopStartSample = findOverride(loopOverrides, name);
+        ambienceTracks.push_back(compiler.CompileItem(spec));
+    }
+
+    std::vector<CompiledAudioTrack> sfxClipsCompiled;
+    for (const auto& [category, clip] : sfxClips)
+    {
+        AudioItemSpec spec;
+        spec.name = clip;
+        spec.category = "sfx_" + category;
+        spec.sourcePath = contentPaths.GetSfxPath(category, clip);
+        spec.isMp3 = true;
+        spec.loop = false;
+        sfxClipsCompiled.push_back(compiler.CompileItem(spec));
+    }
+
+    // The GBA mixer only knows "output rate" or "half of it" (anything else
+    // would silently play at the wrong speed) - fail the build instead.
+    for (const auto* list : { &bgmTracks, &ambienceTracks, &sfxClipsCompiled })
+    {
+        for (const auto& t : *list)
+        {
+            if (t.sampleRate != kOutputSampleRate && t.sampleRate * 2 != kOutputSampleRate)
+            {
+                printf("ERROR: %s compiled at %u Hz - must be %u or %u\n", t.name.c_str(), t.sampleRate,
+                       kOutputSampleRate, kOutputSampleRate / 2);
+                std::exit(1);
+            }
+        }
+    }
+
+    compiler.WriteBlob("audio_blob.bin");
+    WriteAudioRegistry(kOutputSampleRate, bgmTracks, ambienceTracks, sfxClipsCompiled);
+
+    printf("Audio compilation complete: %zu BGM, %zu ambience, %zu SFX -> %zu bytes (%zu/%zu unique frames)\n",
+           bgmTracks.size(), ambienceTracks.size(), sfxClipsCompiled.size(), compiler.BlobSizeBytes(),
+           compiler.UniqueFrameCount(), compiler.TotalFramesSeen());
+}
+
 int main(int argc, char **argv)
 {
     printf("cwd: %s\n", std::filesystem::current_path().string().c_str());
+
+    AudioCliOptions cliOptions = ParseAudioCliOptions(argc, argv);
 
     ContentPaths contentPaths("../../../old/Content");
 
@@ -440,11 +684,20 @@ int main(int argc, char **argv)
     };
 
     //CompileDialog(contentPaths);
-    for (const auto& mapName : mapNames)
+    if (!cliOptions.audioOnly)
     {
-        CompileMap(contentPaths, mapName);
+        for (const auto& mapName : mapNames)
+        {
+            CompileMap(contentPaths, mapName);
+        }
+        WriteMapIncludeFile(mapNames);
+        WriteMapRegistry(mapNames);
     }
-    WriteMapIncludeFile(mapNames);
-    WriteMapRegistry(mapNames);
+
+    if (!cliOptions.mapsOnly)
+    {
+        CompileAllAudio(contentPaths, cliOptions);
+    }
+
     return 0;
 }
