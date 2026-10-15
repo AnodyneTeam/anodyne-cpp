@@ -13,6 +13,7 @@
 #include "sprite.h"
 #include "map_data.h"
 #include "world.h"
+#include "entities.h"
 
 #include "../build/tools/map_registry.h"
 
@@ -89,13 +90,19 @@ static void EnterAudioTestMode()
     // string-draw call) works with what's actually implemented here.
 }
 
+static void LoadWorldMap()
+{
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+    Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]));
+}
+
 static void EnterMapViewerMode()
 {
     REG_BG1CNT = 0;
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
     World_Enter();
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+    LoadWorldMap();
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -261,7 +268,7 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     World_Init(objVram);
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
+    LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
@@ -364,13 +371,13 @@ int main()
             if (key_hit(KEY_START) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+                LoadWorldMap();
             }
 
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+                LoadWorldMap();
             }
 
             // A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);
@@ -437,7 +444,7 @@ int main()
                     if (warpMap != gCurrentMap)
                     {
                         gCurrentMap = warpMap;
-                        World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+                        LoadWorldMap();
                     }
                     World_PlaceAt(warpX, warpY, warpFacing);
                 }

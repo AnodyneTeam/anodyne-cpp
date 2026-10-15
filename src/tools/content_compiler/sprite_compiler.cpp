@@ -311,7 +311,27 @@ std::vector<CompiledSpriteSheet> SpriteCompiler::CompileAll(const ContentPaths& 
     std::vector<CompiledSpriteSheet> sheets;
     for (const SpriteSheetSpec& spec : GetSpriteSheetSpecs())
     {
-        const std::string path = contentPaths.FindTexturePath(spec.mTexture);
+        std::string path = contentPaths.FindTexturePath(spec.mTexture);
+        if (std::string(spec.mTexture) == "placeholder")
+        {
+            // 16x16: magenta frame, dark fill, white cross - obviously "not a real sprite".
+            std::vector<unsigned char> px(16 * 16 * 4);
+            for (int y = 0; y < 16; y++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    const bool border = x == 0 || y == 0 || x == 15 || y == 15;
+                    const bool cross = x == y || x + y == 15;
+                    unsigned char* p = &px[(y * 16 + x) * 4];
+                    p[0] = border ? 255 : (cross ? 255 : 40);
+                    p[1] = border ? 0 : (cross ? 255 : 0);
+                    p[2] = border ? 255 : (cross ? 255 : 60);
+                    p[3] = 255;
+                }
+            }
+            path = "placeholder.png";
+            lodepng::encode(path, px, 16, 16);
+        }
         if (path.empty())
         {
             printf("ERROR: sprite texture %s.png not found\n", spec.mTexture);

@@ -1,4 +1,5 @@
 #include "world.h"
+#include "entities.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1465,6 +1466,7 @@ void CreateMapSprites(const char* mapName)
 bool World_Init(ObjVramAllocator& vram)
 {
     gVram = &vram;
+    Entities_Init(vram);
     gPlayerOk = Sprite_Create(gPlayer, vram, "young_player", 0, kOamPlayer);
     if (gPlayerOk)
     {
@@ -1572,6 +1574,7 @@ void World_SetPlayerVisible(bool visible)
 {
     if (!visible)
     {
+        Entities_Clear();
         if (gPlayerOk)
         {
             Sprite_Hide(gPlayer);
@@ -1657,6 +1660,7 @@ void World_Update()
 
     UpdateBackground(false);
     UpdateScroll(true, false);
+    Entities_Update(gGridX, gGridY, gCamX >> kFrac, gCamY >> kFrac, kViewX);
     if (gPlayerOk)
     {
         DrawPlayerAndOverlays(anim, moving);

@@ -16,6 +16,7 @@
 #include "sprite_compiler.hpp"
 #include "collision_compiler.hpp"
 #include "door_compiler.hpp"
+#include "entity_compiler.hpp"
 #include "lz77.hpp"
 
 // ------------------------------------------------------------
@@ -593,6 +594,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     }
     fprintf(f, "};\n\n");
     fputs(BuildDoorTables(contentPaths, mapNames).c_str(), f);
+    fputs(BuildEntityTables(contentPaths, mapNames).c_str(), f);
     fprintf(f, "\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
 

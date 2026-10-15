@@ -105,3 +105,19 @@ struct MapDoorList final
     uint32_t mCount;
     const MapDoor* mDoors;
 };
+
+// A placeholder sprite for a map entity (Entities.xml): static frame `mFrame` of sheet kEntitySheets[mSheet],
+// top-left at (mX, mY) in map pixels.
+struct MapEntity final
+{
+    int16_t mX;
+    int16_t mY;
+    uint8_t mSheet;
+    uint8_t mFrame;
+};
+
+struct MapEntityList final
+{
+    uint32_t mCount;
+    const MapEntity* mEntities;
+};
