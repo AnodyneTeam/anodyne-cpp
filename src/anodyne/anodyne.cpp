@@ -14,6 +14,7 @@
 #include "map_data.h"
 #include "world.h"
 #include "entities.h"
+#include "title.h"
 
 #include "../build/tools/map_registry.h"
 
@@ -69,7 +70,8 @@ static char* HudLine(char* out, const char* fmt, ...)
 enum class AppMode
 {
     AudioTest,
-    MapViewer
+    MapViewer,
+    Title
 };
 
 static void EnterAudioTestMode()
@@ -251,8 +253,7 @@ int main()
     // (The world starts the map's music itself, see World_Load.)
 
     // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
-    AppMode mode = AppMode::MapViewer;
-    EnterMapViewerMode();
+    AppMode mode = AppMode::Title;
     bool modeComboWasDown = false;
 
     // --- Audio test state ---
@@ -272,6 +273,7 @@ int main()
     bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
+    Title_Enter(objVram);
 
     while (1)
     {
@@ -360,6 +362,27 @@ int main()
                 // VRAM (this once corrupted BG0's map and more).
                 tte_set_pos(0, 0);
                 tte_write(hudBuf);
+            }
+        }
+        else if (mode == AppMode::Title)
+        {
+            int slot = 0;
+            if (Title_Update(&slot))
+            {
+                Title_Exit(objVram);
+                oam_init(oam_mem, 128);
+                for (uint32_t i = 0; i < kMapCount; i++)
+                {
+                    if (strcmp(kMapNames[i], "BLANK") == 0)
+                    {
+                        gCurrentMap = i;
+                    }
+                }
+                mode = AppMode::MapViewer;
+                EnterMapViewerMode();
+                galleryOn = false;
+                LoadWorldMap();
+                World_PlaceAt(77, 87, 0); // IntroState: the new game starts in BLANK at (77, 87)
             }
         }
         else

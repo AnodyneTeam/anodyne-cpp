@@ -28,6 +28,7 @@ set(FIRST_SOURCES
     audio_decode_core.cpp
     sprite.cpp
     entities.cpp
+    title.cpp
     world.cpp
 )
 
