@@ -12,6 +12,7 @@
 #include "content_paths.hpp"
 #include "file_utils.hpp"
 #include "audio_compiler.hpp"
+#include "sprite_compiler.hpp"
 
 // ------------------------------------------------------------
 // GBA RGB555 PACKER (THE ONLY ONE YOU SHOULD USE)
@@ -458,6 +459,7 @@ struct AudioCliOptions final
     bool verbose = false;
     bool mapsOnly = false;
     bool audioOnly = false;
+    bool spritesOnly = false;
 };
 
 static AudioCliOptions ParseAudioCliOptions(int argc, char** argv)
@@ -477,6 +479,10 @@ static AudioCliOptions ParseAudioCliOptions(int argc, char** argv)
         else if (arg == "--maps-only")
         {
             options.mapsOnly = true;
+        }
+        else if (arg == "--sprites-only")
+        {
+            options.spritesOnly = true;
         }
         else if (arg == "--audio-only")
         {
@@ -684,7 +690,7 @@ int main(int argc, char **argv)
     };
 
     //CompileDialog(contentPaths);
-    if (!cliOptions.audioOnly)
+    if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         for (const auto& mapName : mapNames)
         {
@@ -694,7 +700,13 @@ int main(int argc, char **argv)
         WriteMapRegistry(mapNames);
     }
 
-    if (!cliOptions.mapsOnly)
+    if (!cliOptions.mapsOnly && !cliOptions.audioOnly)
+    {
+        SpriteCompiler spriteCompiler;
+        spriteCompiler.WriteHeaders(spriteCompiler.CompileAll(contentPaths));
+    }
+
+    if (!cliOptions.mapsOnly && !cliOptions.spritesOnly)
     {
         CompileAllAudio(contentPaths, cliOptions);
     }

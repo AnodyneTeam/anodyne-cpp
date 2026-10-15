@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+#include <map>
 #include <string>
 
 class ContentPaths final
@@ -25,6 +27,26 @@ public:
     {
         std::string mapNameLower = ToLowerCase(mapName);
         return CombinePaths(mBasePath, "textures/tilemaps", mapNameLower + "_tilemap.png");
+    }
+
+    // Textures live in subfolders (textures/sprites/enemies/..), and the C# looks them up by file stem alone.
+    // Returns "" if no PNG with that stem exists.
+    std::string FindTexturePath(const std::string& stem) const
+    {
+        if (mTextureIndex.empty())
+        {
+            namespace fs = std::filesystem;
+            for (const auto& entry : fs::recursive_directory_iterator(CombinePaths(mBasePath, "textures")))
+            {
+                if (entry.is_regular_file() && entry.path().extension() == ".png")
+                {
+                    mTextureIndex.emplace(entry.path().stem().string(), entry.path().generic_string());
+                }
+            }
+        }
+
+        auto it = mTextureIndex.find(stem);
+        return it == mTextureIndex.end() ? std::string() : it->second;
     }
 
     std::string GetBgmPath(const std::string& trackName) const
@@ -80,4 +102,5 @@ private:
     }
 
     std::string mBasePath;
+    mutable std::map<std::string, std::string> mTextureIndex;
 };

@@ -200,8 +200,11 @@ void AudioManager_Init()
     REG_SOUNDCNT_X = SSTAT_ENABLE; // master enable - must happen before touching other sound regs
     // FIFO A at 100% volume, FIFO B at 50% (no SDS_B100) - the 9-bit split
     // relies on exactly this ratio. Both clocked by Timer 0.
-    REG_SOUNDCNT_H =
-        (u16)(SDS_A100 | SDS_AL | SDS_AR | SDS_ATMR0 | SDS_ARESET | SDS_BL | SDS_BR | SDS_BTMR0 | SDS_BRESET);
+    // kAudioMuted: temporarily silence output by not routing either FIFO to L/R (decoding, timers and the
+    // HUD all keep running). Set to false to hear audio again.
+    constexpr bool kAudioMuted = true;
+    REG_SOUNDCNT_H = (u16)(SDS_A100 | SDS_ATMR0 | SDS_ARESET | SDS_BTMR0 | SDS_BRESET |
+                           (kAudioMuted ? 0 : (SDS_AL | SDS_AR | SDS_BL | SDS_BR)));
     // GBATEK-documented default bias (0x200 = 0x100 bias level, 9-bit
     // resolution at 32768Hz PWM) - the 9-bit output the split targets. No
     // libtonc macro exists for this register's fields.

@@ -26,6 +26,7 @@ set(FIRST_SOURCES
     dialog_manager.c
     audio_manager.cpp
     audio_decode_core.cpp
+    sprite.cpp
 )
 
 # ------------------------------------------------------------

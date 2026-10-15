@@ -1,3 +1,5 @@
+#pragma once
+
 #include <tonc.h>
 
 class ObjVramAllocator final {
@@ -67,7 +69,7 @@ public:
     TILE* ptr(int blockId) const {
         if (blockId < 0 || blockId >= BlockCount)
             return nullptr;
-        return &tile_mem[4][blockId * 16];   // 16 u16 per 4bpp tile
+        return &tile_mem[4][blockId];        // TILE is already one 32-byte 4bpp tile
     }
 
 private:

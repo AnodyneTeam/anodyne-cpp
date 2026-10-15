@@ -10,6 +10,8 @@ add_executable(CompileContent
     content_compiler/map_compiler.cpp
     content_compiler/dialog_compiler.cpp
     content_compiler/audio_compiler.cpp
+    content_compiler/sprite_compiler.cpp
+    content_compiler/sprite_defs.cpp
     content_compiler/vorbis_decode.cpp
     content_compiler/mp3_decode.cpp
     content_compiler/resampler.cpp

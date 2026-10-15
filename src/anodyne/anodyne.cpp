@@ -10,6 +10,7 @@
 
 #include "obj_vram_allocator.hpp"
 #include "audio_manager.h"
+#include "sprite.h"
 
 struct MapPalData final
 {
@@ -135,6 +136,14 @@ static char* HudLine(char* out, const char* fmt, ...)
 // runtime - hold START+SELECT together to switch between them. Audio itself
 // (the VBlank-driven refill) doesn't care which mode is showing and keeps
 // playing across a switch.
+enum class Facing
+{
+    Down,
+    Right,
+    Up,
+    Left
+};
+
 enum class AppMode
 {
     AudioTest,
@@ -161,13 +170,146 @@ static void EnterAudioTestMode()
 
 static void EnterMapViewerMode()
 {
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ;
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
     REG_BG1CNT = 0;
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
 
     REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_8BPP | BG_REG_32x32;
     SetCurrentMap(gCurrentMap);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Sprite gallery (test): every compiled sheet, packed left to right in rows (any size, big ones use several
+// OBJs), each playing its first anim (or stepping through its frames if it has none). A page ends when the
+// screen, the 15 free palette banks, OAM or OBJ VRAM run out. OAM slot 0 / palette bank 0 belong to the player.
+// ---------------------------------------------------------------------------------------------------------
+static const int kGalleryMaxSprites = 15; // palette banks 1..15
+static const int kGalleryMargin = 4;
+static const int kGalleryMaxPages = 64;
+
+static Sprite gGallery[kGalleryMaxSprites];
+static int gGalleryX[kGalleryMaxSprites];
+static int gGalleryY[kGalleryMaxSprites];
+static int gGalleryFrameTimer[kGalleryMaxSprites];
+// First sheet index of each page, learned as pages are loaded (page N+1's start is known once N is loaded).
+static uint32_t gGalleryPageStart[kGalleryMaxPages + 1];
+static int gGalleryPageCount = 0; // pages discovered so far
+static bool gGalleryHasMore = true;
+
+static void GalleryClear(ObjVramAllocator& vram)
+{
+    for (Sprite& s : gGallery)
+    {
+        Sprite_Destroy(s, vram);
+    }
+}
+
+static void GalleryLoadPage(ObjVramAllocator& vram, int page)
+{
+    GalleryClear(vram);
+
+    int slot = 0;
+    int oamNext = 1;
+    int curX = 0;
+    int curY = 0;
+    int rowH = 0;
+    uint32_t i = gGalleryPageStart[page];
+    for (; i < Sprite_SheetCount() && slot < kGalleryMaxSprites; i++)
+    {
+        const SpriteSheetEntry& sheet = *Sprite_SheetAt(i);
+        if (!Sprite_IsDrawable(sheet))
+        {
+            continue;
+        }
+
+        const int w = sheet.mTilesW * 8;
+        const int h = sheet.mTilesH * 8;
+        int x = curX;
+        int y = curY;
+        int newRowH = rowH;
+        if (x + w > 240 && x > 0)
+        {
+            x = 0;
+            y = curY + rowH + kGalleryMargin;
+            newRowH = 0;
+        }
+        if (y + h > 160 && slot > 0)
+        {
+            break; // page full - this sheet starts the next one
+        }
+        if (oamNext + static_cast<int>(sheet.mPartCount) > 128)
+        {
+            break;
+        }
+
+        if (!Sprite_Create(gGallery[slot], vram, sheet.mName, slot + 1, oamNext, sheet.mFrameWidth,
+                           sheet.mFrameHeight))
+        {
+            if (slot > 0)
+            {
+                break; // out of OBJ VRAM - next page
+            }
+            continue; // can't ever fit on its own: skip it
+        }
+
+        if (sheet.mAnimCount > 0)
+        {
+            Sprite_Play(gGallery[slot], sheet.mAnims[0].mName);
+        }
+        gGalleryFrameTimer[slot] = 0;
+        gGalleryX[slot] = x;
+        gGalleryY[slot] = y;
+        oamNext += static_cast<int>(sheet.mPartCount);
+        curX = x + w + kGalleryMargin;
+        curY = y;
+        rowH = (newRowH > h ? newRowH : h);
+        slot++;
+    }
+
+    // Skip trailing undrawable sheets so "more pages" is accurate.
+    while (i < Sprite_SheetCount() && !Sprite_IsDrawable(*Sprite_SheetAt(i)))
+    {
+        i++;
+    }
+    gGalleryHasMore = i < Sprite_SheetCount();
+    if (gGalleryHasMore && page + 1 <= kGalleryMaxPages)
+    {
+        gGalleryPageStart[page + 1] = i;
+        if (page + 2 > gGalleryPageCount)
+        {
+            gGalleryPageCount = page + 2;
+        }
+    }
+    else if (page + 1 > gGalleryPageCount)
+    {
+        gGalleryPageCount = page + 1;
+    }
+}
+
+static void GalleryUpdateAndDraw()
+{
+    for (int i = 0; i < kGalleryMaxSprites; i++)
+    {
+        Sprite& s = gGallery[i];
+        if (!s.mSheet)
+        {
+            continue;
+        }
+
+        if (s.mAnim < 0 && s.mSheet->mFrameCount > 1)
+        {
+            // No anims in the C# for this sheet: step through its frames at 4 fps.
+            if (++gGalleryFrameTimer[i] >= 15)
+            {
+                gGalleryFrameTimer[i] = 0;
+                Sprite_SetFrame(s, (s.mStaticFrame + 1) % s.mSheet->mFrameCount);
+            }
+        }
+
+        Sprite_Update(s);
+        Sprite_Draw(s, gGalleryX[i], gGalleryY[i]);
+    }
 }
 
 int main()
@@ -180,8 +322,9 @@ int main()
     AudioManager_Init();
     AudioManager_PlayBGM(0); // auto-start for easier testing
 
-    AppMode mode = AppMode::AudioTest;
-    EnterAudioTestMode();
+    // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
+    AppMode mode = AppMode::MapViewer;
+    EnterMapViewerMode();
     bool modeComboWasDown = false;
 
     // --- Audio test state ---
@@ -196,12 +339,23 @@ int main()
     int camY = 8 * 10;
     int lastTileX = -1;
     int lastTileY = -1;
-    int scrollTimer = 0;
+    int camFracX = 0; // 16.16 sub-pixel remainder of camX/camY
+    int camFracY = 0;
 
+    oam_init(oam_mem, 128);
+
+    // Player sprite (young_player sheet, compiled by the content compiler): walks with the D-pad.
     ObjVramAllocator objVram;
-    int id = objVram.alloc(512);
-    TILE* pYoung = objVram.ptr(id);
-    (void)pYoung;
+    Sprite player;
+    const bool playerOk = Sprite_Create(player, objVram, "young_player", 0, 0);
+    Facing facing = Facing::Down;
+    bool galleryOn = true;
+    int galleryPage = 0;
+    GalleryLoadPage(objVram, galleryPage);
+    if (playerOk)
+    {
+        Sprite_Play(player, "idle_d");
+    }
 
     while (1)
     {
@@ -320,16 +474,90 @@ int main()
             }
 
             // ------------------------------------------------------------
-            // SCROLLING (slow)
+            // SCROLLING at the C# player walk speed (Player.walkSpeed = 70 px/s at a fixed 60 FPS; diagonal
+            // movement is scaled by 0.7). Sub-pixel position is kept in 16.16 fixed point.
             // ------------------------------------------------------------
-            scrollTimer++;
-            if (scrollTimer >= 120)
             {
-                scrollTimer = 0;
-                if (key_is_down(KEY_LEFT))  camX--;
-                if (key_is_down(KEY_RIGHT)) camX++;
-                if (key_is_down(KEY_UP))    camY--;
-                if (key_is_down(KEY_DOWN))  camY++;
+                const int dirX = (key_is_down(KEY_RIGHT) ? 1 : 0) - (key_is_down(KEY_LEFT) ? 1 : 0);
+                const int dirY = (key_is_down(KEY_DOWN) ? 1 : 0) - (key_is_down(KEY_UP) ? 1 : 0);
+                const int kStepPerFrame = (70 * 65536 + 30) / 60; // 70 px/s -> ~1.1667 px/frame
+                const int step = (dirX != 0 && dirY != 0) ? (kStepPerFrame * 7) / 10 : kStepPerFrame;
+
+                camFracX += dirX * step;
+                camFracY += dirY * step;
+                camX += camFracX >> 16; // arithmetic shift: floors for negative movement too
+                camY += camFracY >> 16;
+                camFracX &= 0xFFFF;
+                camFracY &= 0xFFFF;
+            }
+
+            // ------------------------------------------------------------
+            // PLAYER SPRITE (screen centre; D-pad picks the walk/idle anim)
+            // ------------------------------------------------------------
+            // A toggles the sprite gallery; R/L change its page.
+            if (key_hit(KEY_A))
+            {
+                galleryOn = !galleryOn;
+                if (!galleryOn)
+                {
+                    for (const Sprite& g : gGallery)
+                    {
+                        if (g.mSheet)
+                        {
+                            Sprite_Hide(g);
+                        }
+                    }
+                }
+            }
+            if (galleryOn && (key_hit(KEY_R) || key_hit(KEY_L)))
+            {
+                if (key_hit(KEY_R))
+                {
+                    galleryPage = gGalleryHasMore ? galleryPage + 1 : 0; // wrap after the last page
+                }
+                else if (galleryPage > 0)
+                {
+                    galleryPage--;
+                }
+                else
+                {
+                    // Backwards from page 0: walk forward to find the last page.
+                    while (gGalleryHasMore)
+                    {
+                        GalleryLoadPage(objVram, galleryPage);
+                        if (gGalleryHasMore)
+                        {
+                            galleryPage++;
+                        }
+                    }
+                }
+                GalleryLoadPage(objVram, galleryPage);
+            }
+            if (galleryOn)
+            {
+                GalleryUpdateAndDraw();
+                if (playerOk)
+                {
+                    Sprite_Hide(player);
+                }
+            }
+
+            if (playerOk && !galleryOn)
+            {
+                static const char* const kWalk[] = { "walk_d", "walk_r", "walk_u", "walk_l" };
+                static const char* const kIdle[] = { "idle_d", "idle_r", "idle_u", "idle_l" };
+
+                bool moving = true;
+                if (key_is_down(KEY_DOWN))       facing = Facing::Down;
+                else if (key_is_down(KEY_RIGHT)) facing = Facing::Right;
+                else if (key_is_down(KEY_UP))    facing = Facing::Up;
+                else if (key_is_down(KEY_LEFT))  facing = Facing::Left;
+                else                             moving = false;
+
+                const int f = static_cast<int>(facing);
+                Sprite_Play(player, moving ? kWalk[f] : kIdle[f]);
+                Sprite_Update(player);
+                Sprite_Draw(player, 120 - 8, 80 - 8);
             }
 
             // ------------------------------------------------------------
