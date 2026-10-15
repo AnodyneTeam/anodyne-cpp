@@ -209,6 +209,10 @@ public:
     // Makes every pixel of one tile transparent (AnodyneSharp never draws 16x16 tile 0, whatever the PNG holds).
     void ClearTile(uint32_t index);
 
+    // Adds tiles after the existing ones (growing the grid by whole rows, padded with empty tiles); returns the index
+    // of the first added tile, i.e. width * old height.
+    uint32_t AppendTiles(const std::vector<RGBATile>& tiles);
+
     TileSplitResult Make8x8WithRemap() const;
     TileDedupResult Deduplicate() const;
 
@@ -267,6 +271,8 @@ struct MapCompileResult final
     // For each 16x16 tile, its four 8x8 screen entries (TL, TR, BL, BR) as (variant << 16) | unique 8x8 tile index.
     std::vector<uint32_t> tile16Entries;
     uint32_t tile16Count = 0;
+    // The scrolling background's 20x20 tile pattern (160x160 px), as (variant << 16) | unique 8x8 tile index; empty if none.
+    std::vector<uint32_t> scrollPattern;
 };
 
 class MapCompiler final
@@ -280,7 +286,8 @@ public:
 
     // bg2CSVPath / fgCSVPath may be missing files (the layer is then empty).
     MapCompileResult Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
-                          const std::string& fgCSVPath, const std::string& mapTilesetPath);
+                          const std::string& fgCSVPath, const std::string& mapTilesetPath,
+                          const std::string& scrollTexturePath = std::string());
 
 private:
     void SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet);

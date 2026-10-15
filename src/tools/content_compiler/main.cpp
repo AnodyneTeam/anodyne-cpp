@@ -215,6 +215,40 @@ void SaveTileSetGBA(const std::string& nameSpace,
     fclose(f);
 }
 
+// ------------------------------------------------------------
+// SCROLLING BACKGROUNDS
+// From PlayState.SetBackground/SetDecOver: a texture that scrolls at a fixed speed (px/s) behind the map, or - for the
+// windmill's rain - over everything. Every one repeats every 160px, so only a 160x160 pattern is kept.
+// ------------------------------------------------------------
+struct MapScrollSpec final
+{
+    const char* map;
+    const char* texture;
+    int velocityX;
+    int velocityY;
+    bool overlay; // DrawOrder.DEC_OVER instead of BACKGROUND
+};
+
+static const MapScrollSpec* FindMapScrollSpec(const std::string& mapName)
+{
+    static const MapScrollSpec kSpecs[] = {
+        { "BLANK", "BLANK_BG", -20, 0, false },
+        { "SPACE", "SPACE_BG", -15, 0, false },
+        { "GO", "briar_BG", 0, 15, false },
+        { "NEXUS", "nexus_bg", 0, 15, false },
+        { "BOSSRUSH", "briar_BG", 0, 15, false },
+        { "WINDMILL", "windmill_rain", -10, 160, true },
+    };
+    for (const auto& spec : kSpecs)
+    {
+        if (mapName == spec.map)
+        {
+            return &spec;
+        }
+    }
+    return nullptr;
+}
+
 // A packed (variant << 16) | tile index -> GBA screen entry (10-bit tile index + H/V flip bits).
 static uint16_t ToScreenEntry(uint32_t packed)
 {
@@ -283,6 +317,15 @@ void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerNam
         fprintf(f, "\n};\n");
     }
 
+    if (!map.scrollPattern.empty())
+    {
+        fprintf(f, "const unsigned short gScrollPattern[%zu] = {", map.scrollPattern.size());
+        for (size_t i = 0; i < map.scrollPattern.size(); ++i)
+        {
+            fprintf(f, "%s0x%04X,", (i % 20 == 0) ? "\n    " : "", ToScreenEntry(map.scrollPattern[i]));
+        }
+        fprintf(f, "\n};\n");
+    }
     fprintf(f, "const unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
             map.layers[2].Width());
     fprintf(f, "const unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
@@ -312,7 +355,9 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     std::string tilesHeader = mapName + "_tiles.h";
     std::string mapHeader = mapName + "_map.h";
 
+    const MapScrollSpec* freshnessScroll = FindMapScrollSpec(mapName);
     if (gForceMapRebuild ||
+        (freshnessScroll && IsFileNewer(contentPaths.FindTexturePath(freshnessScroll->texture), {palHeader, tilesHeader, mapHeader})) ||
         IsFileNewer(mapBgCsvPath, {palHeader, tilesHeader, mapHeader}) ||
         IsFileNewer(contentPaths.GetMapLayerCSVPath(mapName, "BG2"), {palHeader, tilesHeader, mapHeader}) ||
         IsFileNewer(contentPaths.GetMapLayerCSVPath(mapName, "FG"), {palHeader, tilesHeader, mapHeader}) ||
@@ -327,11 +372,14 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     }
 
     MapCompiler mc;
+    const MapScrollSpec* scrollSpec = FindMapScrollSpec(mapName);
+    const std::string scrollPath = scrollSpec ? contentPaths.FindTexturePath(scrollSpec->texture) : std::string();
     auto ret = mc.Load(mapName,
                        mapBgCsvPath,
                        contentPaths.GetMapLayerCSVPath(mapName, "BG2"),
                        contentPaths.GetMapLayerCSVPath(mapName, "FG"),
-                       mapTilesetPath);
+                       mapTilesetPath,
+                       scrollPath);
 
     if (!ret.success)
     {
@@ -381,6 +429,58 @@ void WriteMapIncludeFile(const std::vector<std::string>& mapNames)
     fclose(f);
 }
 
+// ------------------------------------------------------------
+// MAP AUDIO SETTINGS
+// Transcribed from old/Content/Maps/<MAP>/Settings.json ("Settings" Music/Ambience plus any "Areas" rectangles, in world
+// pixels, that override the music). Event-driven overrides (HAPPY, TERMINAL, WINDMILL) aren't carried over.
+// ------------------------------------------------------------
+struct MapAudioArea final
+{
+    int x, y, w, h;
+    const char* music;
+};
+
+struct MapAudioSpec final
+{
+    const char* map;
+    const char* music;    // "" = silence
+    const char* ambience; // "" = none
+    std::vector<MapAudioArea> areas;
+};
+
+static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
+{
+    static const std::vector<MapAudioSpec> kSpecs = {
+        { "APARTMENT", "apartment", "", {} },
+        { "BEACH", "beach", "beach", {} },
+        { "BEDROOM", "bedroom", "", {} },
+        { "BLANK", "blank", "", {} },
+        { "BLUE", "blue", "", {} },
+        { "BOSSRUSH", "bedroom", "", {} },
+        { "CELL", "cell", "", {} },
+        { "CIRCUS", "circus", "", {} },
+        { "CLIFF", "cliff", "", {} },
+        { "CROWD", "crowd", "", {} },
+        { "DEBUG", "bedroom", "", {} },
+        { "DRAWER", "drawer", "", {} },
+        { "FIELDS", "fields", "", {} },
+        { "FOREST", "forest", "", {} },
+        { "GO", "go", "", {} },
+        { "HAPPY", "happy_alt", "", { { 320, 320, 480, 160, "happy_alt" } } },
+        { "HOTEL", "hotel", "", { { 0, 0, 960, 160, "hotel_alt" } } },
+        { "NEXUS", "nexus", "", {} },
+        { "OVERWORLD", "overworld", "", {} },
+        { "REDCAVE", "redcave", "", { { 160, 1120, 480, 480, "sacrificial" } } },
+        { "REDSEA", "redsea", "", {} },
+        { "SPACE", "space", "", {} },
+        { "STREET", "street", "", {} },
+        { "SUBURB", "suburb", "", { { 480, 800, 320, 160, "suburb_alt" }, { 0, 960, 160, 160, "suburb_alt" } } },
+        { "TERMINAL", "terminal", "", {} },
+        { "WINDMILL", "", "windmill", {} },
+    };
+    return kSpecs;
+}
+
 void WriteMapRegistry(const std::vector<std::string>& mapNames)
 {
     FILE* f = fopen("map_registry.h", "w");
@@ -426,6 +526,69 @@ void WriteMapRegistry(const std::vector<std::string>& mapNames)
     for (const auto& name : mapNames)
     {
         fprintf(f, "    \"%s\",\n", name.c_str());
+    }
+    fprintf(f, "};\n\n");
+    // Audio: one MapAudioData per map, in the same order as kMaps.
+    for (const auto& name : mapNames)
+    {
+        const MapAudioSpec* spec = nullptr;
+        for (const auto& candidate : GetMapAudioSpecs())
+        {
+            if (name == candidate.map)
+            {
+                spec = &candidate;
+            }
+        }
+        if (!spec)
+        {
+            printf("WARNING: no audio settings for map %s\n", name.c_str());
+        }
+        else if (!spec->areas.empty())
+        {
+            fprintf(f, "static const MapAudioArea kMapAudioAreas_%s[] = {\n", name.c_str());
+            for (const auto& area : spec->areas)
+            {
+                fprintf(f, "    { %d, %d, %d, %d, \"%s\" },\n", area.x, area.y, area.w, area.h, area.music);
+            }
+            fprintf(f, "};\n");
+        }
+    }
+    fprintf(f, "static const MapAudioData kMapAudio[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        const MapAudioSpec* spec = nullptr;
+        for (const auto& candidate : GetMapAudioSpecs())
+        {
+            if (name == candidate.map)
+            {
+                spec = &candidate;
+            }
+        }
+        if (spec && !spec->areas.empty())
+        {
+            fprintf(f, "    { \"%s\", \"%s\", %zu, kMapAudioAreas_%s },\n", spec->music, spec->ambience,
+                    spec->areas.size(), name.c_str());
+        }
+        else
+        {
+            fprintf(f, "    { \"%s\", \"%s\", 0, nullptr },\n", spec ? spec->music : "", spec ? spec->ambience : "");
+        }
+    }
+    fprintf(f, "};\n\n");
+    // Scrolling backgrounds, one entry per map (null pattern = none).
+    fprintf(f, "static const MapScrollData kMapScroll[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        const MapScrollSpec* spec = FindMapScrollSpec(name);
+        if (spec)
+        {
+            fprintf(f, "    { %s::gScrollPattern, %d, %d, %d },\n", name.c_str(), spec->velocityX, spec->velocityY,
+                    spec->overlay ? 1 : 0);
+        }
+        else
+        {
+            fprintf(f, "    { nullptr, 0, 0, 0 },\n");
+        }
     }
     fprintf(f, "};\n\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
@@ -753,7 +916,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "3-layers";
+        const std::string kMapFormatVersion = "4-scroll";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))

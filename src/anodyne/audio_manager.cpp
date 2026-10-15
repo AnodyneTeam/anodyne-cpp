@@ -1,3 +1,4 @@
+#include <string.h>
 #include "audio_manager.h"
 #include "audio_decode_core.hpp"
 
@@ -202,7 +203,7 @@ void AudioManager_Init()
     // relies on exactly this ratio. Both clocked by Timer 0.
     // kAudioMuted: temporarily silence output by not routing either FIFO to L/R (decoding, timers and the
     // HUD all keep running). Set to false to hear audio again.
-    constexpr bool kAudioMuted = true;
+    constexpr bool kAudioMuted = false;
     REG_SOUNDCNT_H = (u16)(SDS_A100 | SDS_ATMR0 | SDS_ARESET | SDS_BTMR0 | SDS_BRESET |
                            (kAudioMuted ? 0 : (SDS_AL | SDS_AR | SDS_BL | SDS_BR)));
     // GBATEK-documented default bias (0x200 = 0x100 bias level, 9-bit
@@ -233,6 +234,7 @@ void AudioManager_Init()
 void AudioManager_PlayBGM(uint32_t trackId) { sPendingBgmId = (int32_t)trackId; }
 void AudioManager_PlayAmbience(uint32_t ambienceId) { sPendingAmbienceId = (int32_t)ambienceId; }
 void AudioManager_StopAmbience() { sPendingAmbienceId = kStopRequest; }
+void AudioManager_StopBGM() { sPendingBgmId = kStopRequest; }
 void AudioManager_PlaySFX(uint32_t sfxId) { sPendingSfxId = (int32_t)sfxId; }
 
 uint32_t AudioManager_GetBgmCount() { return kBgmTracksCount; }
@@ -249,6 +251,25 @@ const char* AudioManager_GetSfxName(uint32_t sfxId)
     return (sfxId < kSfxClipsCount) ? kSfxClips[sfxId].name : "";
 }
 
+static int32_t FindTrack(const AudioTrackData* tracks, uint32_t count, const char* name)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (strcmp(tracks[i].name, name) == 0)
+        {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+int32_t AudioManager_FindBgm(const char* name) { return FindTrack(kBgmTracks, kBgmTracksCount, name); }
+int32_t AudioManager_FindAmbience(const char* name)
+{
+    return FindTrack(kAmbienceTracks, kAmbienceTracksCount, name);
+}
+int32_t AudioManager_FindSfx(const char* name) { return FindTrack(kSfxClips, kSfxClipsCount, name); }
+
 void AudioManager_Update()
 {
     // Play*/Stop* just record a request; the actual cursor mutation happens
@@ -256,9 +277,16 @@ void AudioManager_Update()
     // masked, so the ISR never observes a half-updated cursor.
     if (sPendingBgmId != kNoPendingRequest)
     {
-        uint32_t id = (uint32_t)sPendingBgmId;
+        const int32_t request = sPendingBgmId;
+        uint32_t id = (uint32_t)request;
         sPendingBgmId = kNoPendingRequest;
-        if (id < kBgmTracksCount)
+        if (request == kStopRequest)
+        {
+            REG_IME = 0;
+            sBgmCursor.active = 0;
+            REG_IME = 1;
+        }
+        else if (id < kBgmTracksCount)
         {
             REG_IME = 0;
             DecodeCursor_Start(&sBgmCursor, &kBgmTracks[id], true);

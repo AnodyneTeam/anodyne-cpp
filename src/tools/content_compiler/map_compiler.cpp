@@ -166,6 +166,23 @@ bool TileSet::Load(const std::string &pngPath, size_t& coloursCount)
     return true;
 }
 
+uint32_t TileSet::AppendTiles(const std::vector<RGBATile>& tiles)
+{
+    const uint32_t width = mTiles.Width();
+    const uint32_t firstIndex = width * mTiles.Height();
+    const uint32_t rows = (static_cast<uint32_t>(tiles.size()) + width - 1) / width;
+    mTiles.Resize(width, mTiles.Height() + rows);
+
+    for (uint32_t i = 0; i < width * rows; ++i)
+    {
+        RGBATile padded;
+        padded.SetSize(mTileWidth, mTileHeight); // transparent
+        const uint32_t index = firstIndex + i;
+        mTiles.Get(index % width, index / width) = i < tiles.size() ? tiles[i] : padded;
+    }
+    return firstIndex;
+}
+
 void TileSet::ClearTile(uint32_t index)
 {
     const uint32_t tx = index % mTiles.Width();
@@ -436,7 +453,8 @@ TileDedupResult TileSet::Deduplicate() const
 
 
 MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
-                                   const std::string& fgCSVPath, const std::string& mapTilesetPath)
+                                   const std::string& fgCSVPath, const std::string& mapTilesetPath,
+                                   const std::string& scrollTexturePath)
 {
     MapCompileResult ret;
 
@@ -468,6 +486,39 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
     // Split the tileset into 8x8 entries
     TileSplitResult split16To8 = mTileSet16.Make8x8WithRemap();
 
+    // A scrolling background (see PlayState.SetBackground): its image repeats every 160px, so only the top-left
+    // 160x160 matters. Its 8x8 tiles join the map's tile set so they share the palette and de-duplication.
+    uint32_t scrollBase = 0;
+    bool haveScroll = false;
+    if (!scrollTexturePath.empty())
+    {
+        TileSet scrollSet(8, 8);
+        size_t scrollColours = 0;
+        if (scrollSet.Load(scrollTexturePath, scrollColours))
+        {
+            std::vector<RGBATile> scrollTiles;
+            for (uint32_t ty = 0; ty < 20; ++ty)
+            {
+                for (uint32_t tx = 0; tx < 20; ++tx)
+                {
+                    RGBATile tile;
+                    tile.SetSize(8, 8);
+                    if (tx < scrollSet.GetTiles().Width() && ty < scrollSet.GetTiles().Height())
+                    {
+                        tile = scrollSet.GetTiles().Get(tx, ty);
+                    }
+                    scrollTiles.push_back(tile);
+                }
+            }
+            scrollBase = split16To8.tiles8x8.AppendTiles(scrollTiles);
+            haveScroll = true;
+        }
+        else
+        {
+            printf("Failed to load scrolling background %s\n", scrollTexturePath.c_str());
+        }
+    }
+
     // Expand the map to the new 8x8 indices (1 entry becomes 4)
     Array2D<uint32_t> map8;
     Build8x8Map(mMap16, split16To8, map8);
@@ -489,6 +540,15 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
         {
             const DedupEntry& e = dedup.remap8toUnique[index];
             ret.tile16Entries.push_back((uint32_t(e.variant) << 16) | e.newIndex);
+        }
+    }
+
+    if (haveScroll)
+    {
+        for (uint32_t i = 0; i < 400; ++i)
+        {
+            const DedupEntry& e = dedup.remap8toUnique[scrollBase + i];
+            ret.scrollPattern.push_back((uint32_t(e.variant) << 16) | e.newIndex);
         }
     }
 

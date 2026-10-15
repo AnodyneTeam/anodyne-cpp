@@ -53,3 +53,32 @@ struct MapEntry final
     MapScreenBlockData mScreenBlockData;
     MapCollisionData mCollision;
 };
+
+// Map music/ambience (from the map's Settings.json). An area is a world-pixel rectangle that overrides the music
+// while the player is inside it. Empty string = silence / no ambience.
+struct MapAudioArea final
+{
+    int16_t mX;
+    int16_t mY;
+    int16_t mWidth;
+    int16_t mHeight;
+    const char* mMusic;
+};
+
+struct MapAudioData final
+{
+    const char* mMusic;
+    const char* mAmbience;
+    uint32_t mAreaCount;
+    const MapAudioArea* mAreas;
+};
+
+// A background that scrolls at a fixed speed behind the map (or, with mOverlay, over everything: the windmill's
+// rain). mPattern is a 20x20 tile (160x160 px) block of screen entries that repeats; velocities are px/s.
+struct MapScrollData final
+{
+    const uint16_t* mPattern; // nullptr: this map has none
+    int16_t mVelocityX;
+    int16_t mVelocityY;
+    uint8_t mOverlay;
+};

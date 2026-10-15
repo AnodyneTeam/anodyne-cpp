@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_manager.h"
 #include "sprite.h"
 #include "tonc.h"
 
@@ -74,13 +75,17 @@ enum : uint8_t
 constexpr uint32_t kMaxCollisionCells = 120 * 120;
 constexpr uint32_t kMaxLayerBytes = kMaxCollisionCells * 2;
 
-// The map is three stacked layers; each is one hardware BG (all 8bpp, sharing the map's tileset in CBB0). Lower
-// priority number = in front. The C# draw order is MAP_BG < reflection < foot overlay < MAP_BG2 < entities <
-// grass overlay < MAP_FG, so: BG = 3, BG2 = 2, FG = 0; the player (and anything "entity") is an OBJ at priority 1;
-// things that sit between BG and BG2 are OBJ at priority 3 (ties go to the OBJ).
-constexpr int kLayerCount = 3;
-constexpr int kLayerScreenblock[kLayerCount] = { 31, 30, 29 }; // BG, BG2, FG; the tileset must end below 0xE800
-constexpr int kLayerPriority[kLayerCount] = { 3, 2, 0 };
+// The map is three stacked layers (BG, BG2, FG) plus an optional scrolling background; each is one hardware BG
+// (all 8bpp, sharing the map's tileset in CBB0). Lower priority number = in front. The C# draw order is
+// BACKGROUND < MAP_BG < reflection < foot overlay < MAP_BG2 < entities < grass overlay < MAP_FG < DEC_OVER, so by
+// default: scrolling background = 3 (behind BG, which wins ties by being a lower BG index), BG = 3, BG2 = 2, FG = 0;
+// the player (and anything "entity") is an OBJ at priority 1; things between BG and BG2 are OBJ at priority 3.
+// Only the windmill has a DEC_OVER layer (the rain): it takes hardware BG0 so it ties above FG, which moves to BG3.
+constexpr int kLayerCount = 3;                 // BG, BG2, FG: the layers made from the map's own CSVs
+constexpr int kRoleCount = 4;                  // + the scrolling background / overlay
+constexpr int kRoleScroll = 3;
+constexpr int kRoleScreenblock[kRoleCount] = { 31, 30, 29, 28 }; // the tileset must end below 0xE000
+constexpr uint32_t kMaxTilesetBytes = 0xE000;
 
 // OAM slots / OBJ palette banks used by the world (the sprite gallery test uses the rest). A sprite takes one OAM
 // slot per hardware OBJ in its frame - the 24x24 overlays take 4 each - so these are spaced for that. Among sprites
@@ -161,6 +166,10 @@ bool gFootWater = false;  // set by the map this frame
 bool gFootGrass = false;
 bool gReflecting = false;
 int gTick = 0;
+int gStepTimer = 0;        // Player.step_noise_timer, in frames
+
+const MapAudioData* gAudio = nullptr;
+const char* gMusicPlaying = nullptr;
 
 int gCamX = 0; // top-left of the current screen being shown, Fx
 int gCamY = 0;
@@ -170,6 +179,16 @@ bool gTransition = false;
 
 int gBgTX = 0; // tile coordinate of the BG ring's top-left (each layer holds a 32x32 window of the map)
 int gBgTY = 0;
+
+// Which hardware BG / priority each role (BG, BG2, FG, scroll) uses on the current map.
+int gHw[kRoleCount] = { 2, 1, 0, 3 };
+int gPrio[kRoleCount] = { 3, 2, 0, 3 };
+
+const MapScrollData* gScroll = nullptr; // null: no scrolling background on this map
+int gScrollPosX = 0;                    // ScrollingTex.Position, Fx (0 down to -160, wrapping)
+int gScrollPosY = 0;
+int gScrollTX = 0;                      // ring origin (tile coordinates) of the scroll layer
+int gScrollTY = 0;
 
 int Abs(int v)
 {
@@ -200,7 +219,7 @@ void WriteBgTile(int mx, int my)
     const int slot = (my & 31) * 32 + (mx & 31);
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        se_mem[kLayerScreenblock[layer]][slot] = LayerEntry(layer, mx, my);
+        se_mem[kRoleScreenblock[layer]][slot] = LayerEntry(layer, mx, my);
     }
 }
 
@@ -274,8 +293,229 @@ void UpdateBackground(bool force)
     {
         BgScrollTo(vx >> 3, vy >> 3);
     }
-    REG_BG0HOFS = REG_BG1HOFS = REG_BG2HOFS = vx & 255;
-    REG_BG0VOFS = REG_BG1VOFS = REG_BG2VOFS = vy & 255;
+    for (int layer = 0; layer < kLayerCount; layer++)
+    {
+        REG_BG_OFS[gHw[layer]].x = vx & 255;
+        REG_BG_OFS[gHw[layer]].y = vy & 255;
+    }
+}
+
+// ---- Scrolling background (ScrollingTex.cs) ------------------------------------------------------------------
+int FloorMod(int value, int divisor)
+{
+    const int m = value % divisor;
+    return m < 0 ? m + divisor : m;
+}
+
+// The 20x20-tile pattern repeats every 160px, so tile (mx, my) is pattern[my mod 20][mx mod 20].
+void WriteScrollTile(int mx, int my)
+{
+    se_mem[kRoleScreenblock[kRoleScroll]][(my & 31) * 32 + (mx & 31)] =
+        gScroll->mPattern[FloorMod(my, 20) * 20 + FloorMod(mx, 20)];
+}
+
+void ScrollFull(int tx, int ty)
+{
+    gScrollTX = tx;
+    gScrollTY = ty;
+    for (int j = 0; j < 32; j++)
+    {
+        for (int i = 0; i < 32; i++)
+        {
+            WriteScrollTile(tx + i, ty + j);
+        }
+    }
+}
+
+void ScrollRingTo(int tx, int ty)
+{
+    if (abs(tx - gScrollTX) >= 32 || abs(ty - gScrollTY) >= 32)
+    {
+        ScrollFull(tx, ty);
+        return;
+    }
+    while (gScrollTX < tx)
+    {
+        gScrollTX++;
+        for (int j = 0; j < 32; j++)
+        {
+            WriteScrollTile(gScrollTX + 31, gScrollTY + j);
+        }
+    }
+    while (gScrollTX > tx)
+    {
+        gScrollTX--;
+        for (int j = 0; j < 32; j++)
+        {
+            WriteScrollTile(gScrollTX, gScrollTY + j);
+        }
+    }
+    while (gScrollTY < ty)
+    {
+        gScrollTY++;
+        for (int i = 0; i < 32; i++)
+        {
+            WriteScrollTile(gScrollTX + i, gScrollTY + 31);
+        }
+    }
+    while (gScrollTY > ty)
+    {
+        gScrollTY--;
+        for (int i = 0; i < 32; i++)
+        {
+            WriteScrollTile(gScrollTX + i, gScrollTY);
+        }
+    }
+}
+
+// The texture is screen-locked (drawn at camera + Position) and moves by Position: playfield pixel x shows texture
+// pixel x - Position.X, so the hardware BG origin is -(Position + the playfield's left margin).
+void UpdateScroll(bool advance, bool force)
+{
+    if (!gScroll)
+    {
+        return;
+    }
+
+    if (advance)
+    {
+        gScrollPosX += gScroll->mVelocityX * 65536 / kFps;
+        gScrollPosY += gScroll->mVelocityY * 65536 / kFps;
+        if (gScrollPosX < -Fx(160)) // Position.X < -Texture.Width / 2
+        {
+            gScrollPosX = 0;
+        }
+        if (gScrollPosY > 0)
+        {
+            gScrollPosY = -Fx(160);
+        }
+        else if (gScrollPosY < -Fx(160))
+        {
+            gScrollPosY = 0;
+        }
+    }
+
+    // (int) cast truncates towards zero
+    const int posX = gScrollPosX < 0 ? -((-gScrollPosX) >> kFrac) : (gScrollPosX >> kFrac);
+    const int posY = gScrollPosY < 0 ? -((-gScrollPosY) >> kFrac) : (gScrollPosY >> kFrac);
+    const int vx = -kViewX - posX;
+    const int vy = -posY;
+    if (force)
+    {
+        ScrollFull(vx >> 3, vy >> 3);
+    }
+    else
+    {
+        ScrollRingTo(vx >> 3, vy >> 3);
+    }
+    REG_BG_OFS[gHw[kRoleScroll]].x = vx & 255;
+    REG_BG_OFS[gHw[kRoleScroll]].y = vy & 255;
+}
+
+// Hardware BG roles for the current map, and the registers that depend on them.
+void ApplyDisplayRegs(bool windowOn)
+{
+    const bool overlay = gScroll && gScroll->mOverlay;
+    // roles: BG, BG2, FG, scroll
+    gHw[0] = 2;
+    gHw[1] = 1;
+    gPrio[0] = 3;
+    gPrio[1] = 2;
+    if (overlay)
+    {
+        gHw[kRoleScroll] = 0; // rain: in front of everything, FG included
+        gHw[2] = 3;
+        gPrio[kRoleScroll] = 0;
+        gPrio[2] = 0;
+    }
+    else
+    {
+        gHw[2] = 0;
+        gHw[kRoleScroll] = 3;
+        gPrio[2] = 0;
+        gPrio[kRoleScroll] = 3;
+    }
+
+    for (int role = 0; role < kRoleCount; role++)
+    {
+        REG_BGCNT[gHw[role]] = BG_CBB(0) | BG_SBB(kRoleScreenblock[role]) | BG_PRIO(gPrio[role]) | BG_8BPP | BG_REG_32x32;
+    }
+
+    uint16_t dispcnt = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D;
+    uint16_t winin = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
+    if (gScroll)
+    {
+        dispcnt |= DCNT_BG3;
+        winin |= WIN_BG3;
+    }
+    if (windowOn)
+    {
+        dispcnt |= DCNT_WIN0;
+    }
+    REG_DISPCNT = dispcnt;
+    REG_WININ = winin;
+}
+
+// ---- Audio ---------------------------------------------------------------------------------------------------
+void PlaySfx(const char* name)
+{
+    const int32_t id = AudioManager_FindSfx(name);
+    if (id >= 0)
+    {
+        AudioManager_PlaySFX(static_cast<uint32_t>(id));
+    }
+}
+
+// Map.ReloadSettings: the music for where the player is - the first Settings.json area containing the player's
+// position, else the map's default. Only restarts the music when the track actually changes.
+void UpdateMusic()
+{
+    if (!gAudio)
+    {
+        return;
+    }
+
+    const char* music = gAudio->mMusic;
+    const int px = gPosX >> kFrac;
+    const int py = gPosY >> kFrac;
+    for (uint32_t i = 0; i < gAudio->mAreaCount; i++)
+    {
+        const MapAudioArea& a = gAudio->mAreas[i];
+        if (px >= a.mX && px < a.mX + a.mWidth && py >= a.mY && py < a.mY + a.mHeight)
+        {
+            music = a.mMusic;
+            break;
+        }
+    }
+
+    if (gMusicPlaying != nullptr && strcmp(music, gMusicPlaying) == 0)
+    {
+        return;
+    }
+    gMusicPlaying = music;
+
+    const int32_t id = music[0] ? AudioManager_FindBgm(music) : -1;
+    if (id >= 0)
+    {
+        AudioManager_PlayBGM(static_cast<uint32_t>(id));
+    }
+    else
+    {
+        AudioManager_StopBGM();
+    }
+}
+
+void UpdateAmbience()
+{
+    const int32_t id = (gAudio && gAudio->mAmbience[0]) ? AudioManager_FindAmbience(gAudio->mAmbience) : -1;
+    if (id >= 0)
+    {
+        AudioManager_PlayAmbience(static_cast<uint32_t>(id));
+    }
+    else
+    {
+        AudioManager_StopAmbience();
+    }
 }
 
 // ---- Collision ----------------------------------------------------------------------------------------------
@@ -430,6 +670,7 @@ void ReceiveDamage(bool knockback)
         return;
     }
 
+    PlaySfx("player_hit_1");
     gHealth--;
     if (gHealth <= 0)
     {
@@ -674,6 +915,7 @@ void CheckForTransition()
     gGridEntranceY = gPosY;
     gVelX = gVelY = 0;
     gTransition = true;
+    UpdateMusic(); // ReloadSettings(player position) as the screen changes
 }
 
 bool KeyLeft()
@@ -888,6 +1130,7 @@ void GroundMovement(bool& playFallAnim)
             gFallTimer--;
             if (gFallTimer <= 0)
             {
+                PlaySfx("fall_in_hole");
                 gHasFallen = true;
                 gIsSlipping = false;
                 gPosX = gFallPointX + Fx(3);
@@ -931,6 +1174,22 @@ void GroundMovement(bool& playFallAnim)
         gYPush = 0;
     }
 
+    // Player.Movement: footsteps while walking on puddles / in sludge (half as often when sinking).
+    gStepTimer--;
+    if (gStepTimer <= 0 && (gVelX != 0 || gVelY != 0) && gOnConveyor)
+    {
+        if (gSinking)
+        {
+            PlaySfx("water_step");
+            gStepTimer = kFps / 2; // step_timer_max 0.5s
+        }
+        else
+        {
+            PlaySfx("puddle_step");
+            gStepTimer = kFps / 4;
+        }
+    }
+
     playFallAnim = gHasFallen;
 }
 
@@ -961,6 +1220,13 @@ void LadderMovement(const char*& anim)
     {
         gVelX = FxPerFrame(kWalkSpeed);
         anim = "climb";
+    }
+
+    gStepTimer--;
+    if (gStepTimer <= 0 && gVelY != 0)
+    {
+        gStepTimer = kFps / 5; // 0.2s
+        PlaySfx((gTick & 1) ? "ladder_step_1" : "ladder_step_2");
     }
     gState = PlayerState::Ground;
 }
@@ -1171,17 +1437,18 @@ bool World_Init(ObjVramAllocator& vram)
     return gPlayerOk;
 }
 
-void World_Load(const MapEntry& map, const char* mapName)
+void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll)
 {
     gMap = &map;
+    gAudio = &audio;
 
     // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 29-31
-    // (0x0600E800 and up), which the three layers use for their maps.
+    // (0x0600E000 and up), which the layers use for their maps.
     memcpy16(pal_bg_mem, map.mPalData.mPalData, map.mPalData.mPalSize);
     uint32_t tilesetBytes = map.mTileSetData.mTileSetSize;
-    if (tilesetBytes > 0xE800)
+    if (tilesetBytes > kMaxTilesetBytes)
     {
-        tilesetBytes = 0xE800;
+        tilesetBytes = kMaxTilesetBytes;
     }
     memcpy16(tile_mem, map.mTileSetData.mTileSetData, tilesetBytes / 2);
 
@@ -1231,21 +1498,27 @@ void World_Load(const MapEntry& map, const char* mapName)
     {
         CreateMapSprites(mapName);
     }
+    gScroll = scroll.mPattern ? &scroll : nullptr;
+    gScrollPosX = 0;
+    gScrollPosY = 0;
+    ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+
     PickSpawn();
     MoveCameraToGrid();
     UpdateBackground(true);
+    UpdateScroll(false, true);
+
+    gStepTimer = 0;
+    UpdateMusic();
+    UpdateAmbience();
 }
 
 void World_Enter()
 {
-    // Three 8bpp BG layers + OBJ, with window 0 cutting everything to the 160x160 playfield.
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D | DCNT_WIN0;
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(kLayerScreenblock[2]) | BG_PRIO(kLayerPriority[2]) | BG_8BPP | BG_REG_32x32; // FG
-    REG_BG1CNT = BG_CBB(0) | BG_SBB(kLayerScreenblock[1]) | BG_PRIO(kLayerPriority[1]) | BG_8BPP | BG_REG_32x32; // BG2
-    REG_BG2CNT = BG_CBB(0) | BG_SBB(kLayerScreenblock[0]) | BG_PRIO(kLayerPriority[0]) | BG_8BPP | BG_REG_32x32; // BG
+    // BG layers + OBJ, with window 0 cutting everything to the 160x160 playfield.
+    ApplyDisplayRegs(true);
     REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
     REG_WIN0V = (0 << 8) | kScreenPx;
-    REG_WININ = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
     REG_WINOUT = 0;
 }
 
@@ -1336,6 +1609,7 @@ void World_Update()
     }
 
     UpdateBackground(false);
+    UpdateScroll(true, false);
     if (gPlayerOk)
     {
         DrawPlayerAndOverlays(anim, moving);

@@ -95,7 +95,7 @@ static void EnterMapViewerMode()
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
     World_Enter();
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -241,7 +241,7 @@ int main()
     REG_WAITCNT = WS_STANDARD;
 
     AudioManager_Init();
-    AudioManager_PlayBGM(0); // auto-start for easier testing
+    // (The world starts the map's music itself, see World_Load.)
 
     // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
     AppMode mode = AppMode::MapViewer;
@@ -261,7 +261,7 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     World_Init(objVram);
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
@@ -364,13 +364,13 @@ int main()
             if (key_hit(KEY_START) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
             }
 
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
             }
 
             // A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);

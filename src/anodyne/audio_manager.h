@@ -36,6 +36,7 @@ void AudioManager_Init(void);
 void AudioManager_PlayBGM(uint32_t trackId);
 void AudioManager_PlayAmbience(uint32_t ambienceId);
 void AudioManager_StopAmbience(void);
+void AudioManager_StopBGM(void);
 void AudioManager_PlaySFX(uint32_t sfxId);
 void AudioManager_Update(void);
 
@@ -53,3 +54,8 @@ void AudioManager_ResetIsrCyclesMax(void);
 uint32_t AudioManager_GetSfxCount(void);
 const char* AudioManager_GetBgmName(uint32_t trackId);
 const char* AudioManager_GetSfxName(uint32_t sfxId);
+
+// Track lookup by name (the file stem used in AnodyneSharp, e.g. "overworld", "puddle_step"); -1 if unknown.
+int32_t AudioManager_FindBgm(const char* name);
+int32_t AudioManager_FindAmbience(const char* name);
+int32_t AudioManager_FindSfx(const char* name);
