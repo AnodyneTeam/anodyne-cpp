@@ -834,6 +834,48 @@ void CollideWithMap()
     }
 }
 
+// ---- Doors ----------------------------------------------------------------------------------------------------
+const MapDoorList* gDoors = nullptr;
+bool gDoorLatch = false; // Door.player_on_door: no re-trigger until the player has left every door
+
+struct PendingWarp final
+{
+    bool mPending = false;
+    const MapDoor* mDoor = nullptr;
+} gWarp;
+
+// Door.Collided: stepping onto a door (or pressing B on an interactive one) warps the player.
+void CheckDoors()
+{
+    if (!gDoors || gWarp.mPending)
+    {
+        return;
+    }
+    bool touching = false;
+    for (uint32_t i = 0; i < gDoors->mCount; i++)
+    {
+        const MapDoor& d = gDoors->mDoors[i];
+        if (!HitboxIntersects(d.mX, d.mY, d.mW, d.mH))
+        {
+            continue;
+        }
+        touching = true;
+        if (gDoorLatch || (d.mInteract && !key_hit(KEY_B)))
+        {
+            continue;
+        }
+        PlaySfx(d.mPortal || d.mInteract ? "teleport_up" : "enter_door");
+        gWarp.mPending = true;
+        gWarp.mDoor = &d;
+        gDoorLatch = true;
+        return;
+    }
+    if (!touching)
+    {
+        gDoorLatch = false;
+    }
+}
+
 // ---- Player / screens ---------------------------------------------------------------------------------------
 void MoveCameraToGrid()
 {
@@ -1437,9 +1479,13 @@ bool World_Init(ObjVramAllocator& vram)
     return gPlayerOk;
 }
 
-void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll)
+void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
+                const MapDoorList& doors)
 {
     gMap = &map;
+    gDoors = &doors;
+    gDoorLatch = false;
+    gWarp.mPending = false;
     gAudio = &audio;
 
     // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 29-31
@@ -1605,6 +1651,7 @@ void World_Update()
 
         // ---- Map.Collide + PlayState.CheckForTransition ----
         CollideWithMap();
+        CheckDoors();
         CheckForTransition();
     }
 
@@ -1614,4 +1661,46 @@ void World_Update()
     {
         DrawPlayerAndOverlays(anim, moving);
     }
+}
+
+bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing)
+{
+    if (!gWarp.mPending)
+    {
+        return false;
+    }
+    gWarp.mPending = false;
+    destMap = gWarp.mDoor->mDestMap;
+    destX = gWarp.mDoor->mDestX;
+    destY = gWarp.mDoor->mDestY;
+    facing = gWarp.mDoor->mFacing;
+    return true;
+}
+
+void World_PlaceAt(int x, int y, uint8_t facing)
+{
+    gDoorLatch = true; // Door's constructor: starting on a door doesn't trigger it
+    gPosX = gLastX = Fx(x);
+    gPosY = gLastY = Fx(y);
+    gGridX = x / kScreenPx;
+    gGridY = y / kScreenPx;
+    while (gGridX > 0 && !GridExists(gGridX, gGridY))
+    {
+        gGridX--;
+    }
+    while (gGridY > 0 && !GridExists(gGridX, gGridY))
+    {
+        gGridY--;
+    }
+    gGridEntranceX = gPosX;
+    gGridEntranceY = gPosY;
+    gVelX = gVelY = 0;
+    if (facing <= 3)
+    {
+        gFacing = static_cast<Facing>(facing);
+    }
+    MoveCameraToGrid();
+    UpdateBackground(true);
+    UpdateScroll(false, true);
+    UpdateMusic();
 }

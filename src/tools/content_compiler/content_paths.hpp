@@ -18,6 +18,11 @@ public:
         return CombinePaths(mBasePath, "Dialogue", "dialogue_" + language + ".txt");
     }
 
+    std::string GetEntitiesPath() const
+    {
+        return CombinePaths(mBasePath, "Entities.xml");
+    }
+
     std::string GetMapBGCSVPath(const std::string& mapName) const
     {
         return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), "BG.csv");

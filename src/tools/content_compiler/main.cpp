@@ -15,6 +15,7 @@
 #include "audio_compiler.hpp"
 #include "sprite_compiler.hpp"
 #include "collision_compiler.hpp"
+#include "door_compiler.hpp"
 #include "lz77.hpp"
 
 // ------------------------------------------------------------
@@ -481,7 +482,7 @@ static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
     return kSpecs;
 }
 
-void WriteMapRegistry(const std::vector<std::string>& mapNames)
+void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
 {
     FILE* f = fopen("map_registry.h", "w");
     if (!f) return;
@@ -591,6 +592,8 @@ void WriteMapRegistry(const std::vector<std::string>& mapNames)
         }
     }
     fprintf(f, "};\n\n");
+    fputs(BuildDoorTables(contentPaths, mapNames).c_str(), f);
+    fprintf(f, "\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
 
     fclose(f);
@@ -936,7 +939,7 @@ int main(int argc, char **argv)
             CompileMapCollision(contentPaths, mapName);
         }
         WriteMapIncludeFile(mapNames);
-        WriteMapRegistry(mapNames);
+        WriteMapRegistry(contentPaths, mapNames);
         WriteFileIfChanged("map_format_version.txt", kMapFormatVersion);
     }
 

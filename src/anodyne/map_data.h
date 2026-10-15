@@ -82,3 +82,26 @@ struct MapScrollData final
     int16_t mVelocityY;
     uint8_t mOverlay;
 };
+
+// A door/teleporter trigger on a map (Entities.xml "Door"s, paired by link id). The hitbox is in map pixels;
+// stepping on it (or pressing B on it, if mInteract) puts the player at (mDestX, mDestY) in map mDestMap.
+// mFacing: 0 down, 1 right, 2 up, 3 left, 255 = keep. mPortal plays the teleport sound instead of the door's.
+struct MapDoor final
+{
+    int16_t mX;
+    int16_t mY;
+    int16_t mW;
+    int16_t mH;
+    int16_t mDestX;
+    int16_t mDestY;
+    uint8_t mDestMap;
+    uint8_t mFacing;
+    uint8_t mInteract;
+    uint8_t mPortal;
+};
+
+struct MapDoorList final
+{
+    uint32_t mCount;
+    const MapDoor* mDoors;
+};

@@ -95,7 +95,7 @@ static void EnterMapViewerMode()
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
     World_Enter();
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -261,7 +261,7 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     World_Init(objVram);
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
@@ -364,13 +364,13 @@ int main()
             if (key_hit(KEY_START) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
             }
 
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
-                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap]);
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
             }
 
             // A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);
@@ -427,6 +427,20 @@ int main()
             else
             {
                 World_Update();
+
+                uint8_t warpMap = 0;
+                uint8_t warpFacing = 0;
+                int warpX = 0;
+                int warpY = 0;
+                if (World_TakeWarp(warpMap, warpX, warpY, warpFacing))
+                {
+                    if (warpMap != gCurrentMap)
+                    {
+                        gCurrentMap = warpMap;
+                        World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+                    }
+                    World_PlaceAt(warpX, warpY, warpFacing);
+                }
             }
         }
 
