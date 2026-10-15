@@ -923,6 +923,14 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     } },
     { "title_text", 128, 48, {
     } },
+    { "door_spinglow1", 64, 64, {
+    } },
+    { "door_spinglow2", 64, 64, {
+    } },
+    { "dialogue_box", 156, 44, {
+    } },
+    { "dialogue_blinky_box", 8, 8, {
+    } },
     { "title_remake", 71, 11, {
     } },
     { "press_enter", 96, 16, {

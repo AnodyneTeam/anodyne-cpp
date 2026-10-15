@@ -186,6 +186,26 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         return false;
     }
 
+    // Soft glows (alpha gradient over one colour): bake the alpha against black so the 15-colour palette keeps the
+    // falloff instead of the gradient collapsing to "transparent".
+    if (std::string(spec.mTexture).rfind("door_spinglow", 0) == 0)
+    {
+        for (size_t i = 0; i + 3 < raw.size(); i += 4)
+        {
+            const unsigned a = raw[i + 3];
+            if (a < 16)
+            {
+                raw[i + 3] = 0;
+                continue;
+            }
+            for (int ch = 0; ch < 3; ch++)
+            {
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a / 255);
+            }
+            raw[i + 3] = 255;
+        }
+    }
+
     const int fw = spec.mFrameWidth;
     const int fh = spec.mFrameHeight;
     if (fw <= 0 || fh <= 0 || static_cast<unsigned>(fw) > pngW || static_cast<unsigned>(fh) > pngH)

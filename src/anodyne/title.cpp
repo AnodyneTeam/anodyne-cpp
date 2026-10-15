@@ -23,6 +23,18 @@ constexpr int kFlashFrames = 45;       // 1.5s
 constexpr int kFadeFrames = 30;
 constexpr int kBlinkFrames = 60;
 constexpr int kMenuItems = 4;
+// Affine matrix slot n lives in the attr3 words of OAM entries 4n..4n+3, so use the last slots (OAM 120-127 unused).
+constexpr int kSpinAffine1 = 30;
+constexpr int kSpinAffine2 = 31;
+
+// Dialogue box (C# TextBox, bottom position): sprite at (2, 114), text cells on the 8px BG1 grid inside it.
+constexpr int kBoxX = kViewX + 2;
+constexpr int kBoxY = 160 - 44 - 2;
+constexpr int kTextCol = (kViewX + 8) / 8;
+constexpr int kTextRow = (kBoxY + 6) / 8;
+constexpr int kTextCols = 18;
+constexpr int kTextLines = 4;
+constexpr int kCharsPerFrame = 2; // IntroState: DialogueState speed x4
 
 enum class State
 {
@@ -31,7 +43,10 @@ enum class State
     Title,     // title text + blinking "press start"
     FadeOut,   // to black, then the menu
     MenuFadeIn,
-    Menu
+    Menu,
+    IntroFade,  // menu -> black
+    IntroBox,   // the sage's dialogue
+    IntroWait   // 1.5s of black, then the game
 };
 
 State gState = State::Rise;
@@ -48,11 +63,19 @@ Sprite gRemake;
 Sprite gPressEnter;
 Sprite gGlow;
 Sprite gArrow;
+Sprite gSpin1;
+Sprite gSpin2;
+Sprite gBox;
+Sprite gBlinky;
 bool gHaveText = false;
 bool gHaveRemake = false;
 bool gHavePress = false;
 bool gHaveGlow = false;
 bool gHaveArrow = false;
+bool gHaveSpin = false;
+bool gHaveBox = false;
+bool gHaveBlinky = false;
+int gSpinAngle = 0;
 bool gShowTitleSprites = false;
 
 void PlaySfx(const char* name)
@@ -136,6 +159,9 @@ void HideAllSprites()
     if (gHavePress) { Sprite_Hide(gPressEnter); }
     if (gHaveGlow) { Sprite_Hide(gGlow); }
     if (gHaveArrow) { Sprite_Hide(gArrow); }
+    if (gHaveSpin) { Sprite_Hide(gSpin1); Sprite_Hide(gSpin2); }
+    if (gHaveBox) { Sprite_Hide(gBox); }
+    if (gHaveBlinky) { Sprite_Hide(gBlinky); }
 }
 
 void DrawTitleSprites(bool pressVisible)
@@ -143,6 +169,15 @@ void DrawTitleSprites(bool pressVisible)
     if (gHaveText) { Sprite_Draw(gTitleText, kViewX + 16, 16 + kViewY); }
     if (gHaveRemake) { Sprite_Draw(gRemake, kViewX + 45, 47 + kViewY); }
     if (gHaveGlow) { Sprite_Draw(gGlow, kViewX + 48, kDoorEndY + 17 + kViewY); }
+    if (gHaveSpin)
+    {
+        // doorSpin1/2 spin at +-90 degrees/s about the centre of a 64x64 image at (48, door top).
+        gSpinAngle = (gSpinAngle + 65536 / 4 / 60) & 0xFFFF;
+        obj_aff_rotscale(&obj_aff_mem[kSpinAffine1], 256, 256, static_cast<u16>(gSpinAngle));
+        obj_aff_rotscale(&obj_aff_mem[kSpinAffine2], 256, 256, static_cast<u16>(-gSpinAngle));
+        Sprite_DrawAffine(gSpin1, kViewX + 80, kDoorEndY + 32 + kViewY, kSpinAffine1);
+        Sprite_DrawAffine(gSpin2, kViewX + 80, kDoorEndY + 32 + kViewY, kSpinAffine2);
+    }
     if (gHavePress)
     {
         if (pressVisible)
@@ -152,6 +187,95 @@ void DrawTitleSprites(bool pressVisible)
         else
         {
             Sprite_Hide(gPressEnter);
+        }
+    }
+}
+
+// ---- new-game intro dialogue ----
+char gLines[48][kTextCols + 1];
+int gLineCount = 0;
+int gPage = 0;
+int gBoxFirstLine = 0;
+int gReveal = 0;
+int gBoxChars = 0;
+
+void LoadPage()
+{
+    // Greedy word wrap of the page into kTextCols columns; '\n' forces a break.
+    gLineCount = 0;
+    const char* text = title::kIntroPages[gPage];
+    int col = 0;
+    memset(gLines, 0, sizeof(gLines));
+    const char* p = text;
+    while (*p && gLineCount < 47)
+    {
+        if (*p == '\n')
+        {
+            gLineCount++;
+            col = 0;
+            p++;
+            continue;
+        }
+        if (*p == ' ')
+        {
+            if (col > 0)
+            {
+                gLines[gLineCount][col++] = ' ';
+            }
+            p++;
+            continue;
+        }
+        int wordLen = 0;
+        while (p[wordLen] && p[wordLen] != ' ' && p[wordLen] != '\n')
+        {
+            wordLen++;
+        }
+        if (col > 0 && col + wordLen > kTextCols)
+        {
+            while (col > 0 && gLines[gLineCount][col - 1] == ' ')
+            {
+                gLines[gLineCount][--col] = 0;
+            }
+            gLineCount++;
+            col = 0;
+        }
+        for (int i = 0; i < wordLen && col < kTextCols; i++)
+        {
+            gLines[gLineCount][col++] = p[i];
+        }
+        p += wordLen;
+    }
+    gLineCount++;
+    gBoxFirstLine = 0;
+}
+
+void StartBox()
+{
+    gReveal = 0;
+    gBoxChars = 0;
+    for (int l = gBoxFirstLine; l < gLineCount && l < gBoxFirstLine + kTextLines; l++)
+    {
+        gBoxChars += static_cast<int>(strlen(gLines[l]));
+    }
+    ClearText();
+}
+
+void DrawBoxText()
+{
+    int left = gReveal;
+    for (int l = 0; l < kTextLines && gBoxFirstLine + l < gLineCount; l++)
+    {
+        const char* line = gLines[gBoxFirstLine + l];
+        const int len = static_cast<int>(strlen(line));
+        char buf[kTextCols + 1];
+        const int n = left < len ? left : len;
+        memcpy(buf, line, n);
+        buf[n] = 0;
+        PutText(kTextCol, kTextRow + l, buf, 15);
+        left -= n;
+        if (left <= 0)
+        {
+            break;
         }
     }
 }
@@ -232,6 +356,14 @@ void Title_Enter(ObjVramAllocator& vram)
     gHaveGlow = Sprite_Create(gGlow, vram, "door_glow", 3, oam);
     oam += gHaveGlow ? Sprite_OamCount(gGlow) : 0;
     gHaveArrow = Sprite_Create(gArrow, vram, "arrows", 4, oam);
+    oam += gHaveArrow ? Sprite_OamCount(gArrow) : 0;
+    gHaveSpin = Sprite_Create(gSpin1, vram, "door_spinglow1", 5, oam);
+    oam += gHaveSpin ? Sprite_OamCount(gSpin1) : 0;
+    gHaveSpin = gHaveSpin && Sprite_Create(gSpin2, vram, "door_spinglow2", 6, oam);
+    oam += gHaveSpin ? Sprite_OamCount(gSpin2) : 0;
+    gHaveBox = Sprite_Create(gBox, vram, "dialogue_box", 7, oam);
+    oam += gHaveBox ? Sprite_OamCount(gBox) : 0;
+    gHaveBlinky = Sprite_Create(gBlinky, vram, "dialogue_blinky_box", 8, oam);
     if (gHaveArrow)
     {
         Sprite_Play(gArrow, "enabledRight");
@@ -379,7 +511,8 @@ bool Title_Update(int* slot)
             if (gMenuIndex < 3)
             {
                 *slot = gMenuIndex;
-                start = true;
+                gState = State::IntroFade;
+                gTimer = 0;
             }
         }
         else if (key_hit(KEY_B))
@@ -397,18 +530,106 @@ bool Title_Update(int* slot)
         DrawMenu();
         break;
     }
+    case State::IntroFade:
+    {
+        Fade(3, (gTimer * 16) / kFadeFrames);
+        gTimer++;
+        if (gTimer >= kFadeFrames)
+        {
+            REG_DISPCNT &= ~(DCNT_BG2 | DCNT_BG3);
+            HideAllSprites();
+            ClearText();
+            const int32_t bgm = AudioManager_FindBgm("blank");
+            if (bgm >= 0)
+            {
+                AudioManager_PlayBGM(static_cast<uint32_t>(bgm));
+            }
+            Fade(0, 0);
+            gPage = 0;
+            LoadPage();
+            StartBox();
+            gState = State::IntroBox;
+            gTimer = 0;
+        }
+        break;
+    }
+    case State::IntroBox:
+    {
+        const bool full = gReveal >= gBoxChars;
+        if (!full)
+        {
+            gReveal += kCharsPerFrame;
+            if (key_hit(KEY_A) || key_hit(KEY_B))
+            {
+                gReveal = gBoxChars;
+            }
+            if (gReveal > gBoxChars)
+            {
+                gReveal = gBoxChars;
+            }
+        }
+        DrawBoxText();
+        if (gHaveBox)
+        {
+            Sprite_Draw(gBox, kBoxX, kBoxY);
+        }
+        if (full)
+        {
+            gTimer++;
+            if (gHaveBlinky)
+            {
+                if ((gTimer / 24) & 1)
+                {
+                    Sprite_Hide(gBlinky);
+                }
+                else
+                {
+                    Sprite_Draw(gBlinky, kBoxX + 156 - 10, kBoxY + 44 - 10);
+                }
+            }
+            if (key_hit(KEY_A) || key_hit(KEY_B))
+            {
+                gTimer = 0;
+                gBoxFirstLine += kTextLines;
+                if (gBoxFirstLine >= gLineCount)
+                {
+                    gPage++;
+                    if (gPage >= title::kIntroPageCount)
+                    {
+                        HideAllSprites();
+                        ClearText();
+                        gState = State::IntroWait;
+                        break;
+                    }
+                    LoadPage();
+                }
+                StartBox();
+            }
+        }
+        break;
+    }
+    case State::IntroWait:
+    {
+        gTimer++;
+        if (gTimer >= 90)
+        {
+            start = true;
+        }
+        break;
+    }
     }
     return start;
 }
 
 void Title_Exit(ObjVramAllocator& vram)
 {
-    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow };
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSpin1, &gSpin2, &gBox, &gBlinky };
     for (Sprite* s : all)
     {
         Sprite_Destroy(*s, vram);
     }
-    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = false;
+    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = gHaveBlinky = false;
+    REG_DISPCNT |= DCNT_BG3;
     REG_BLDCNT = 0;
     REG_BLDY = 0;
     REG_BG2HOFS = REG_BG2VOFS = REG_BG3HOFS = REG_BG3VOFS = 0;

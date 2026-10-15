@@ -189,3 +189,14 @@ void Sprite_Hide(const Sprite& sprite)
         obj_hide(&oam_mem[sprite.mOamSlot + i]);
     }
 }
+
+void Sprite_DrawAffine(const Sprite& sprite, int cx, int cy, int affineIndex)
+{
+    const SpritePartData& part = sprite.mSheet->mParts[0];
+    const int x = cx - part.mWidth;
+    const int y = cy - part.mHeight;
+    obj_set_attr(&oam_mem[sprite.mOamSlot],
+                 ATTR0_AFF_DBL | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
+                 (part.mSize << 14) | ATTR1_AFF_ID(affineIndex) | ATTR1_X(x & 0x1FF),
+                 ATTR2_ID(sprite.mVramBlock + part.mTileOffset) | ATTR2_PRIO(sprite.mPriority) | ATTR2_PALBANK(sprite.mPalBank));
+}

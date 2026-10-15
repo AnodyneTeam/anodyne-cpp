@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <map>
 #include <string>
 #include <vector>
@@ -274,6 +275,105 @@ bool CompileTitle(const ContentPaths& paths)
         out += buf;
     }
     out += "\n};\n}\n";
+
+    // ---- the new-game intro dialogue (npc sage / area BLANK / scene intro) ----
+    {
+        std::ifstream dlg(paths.GetDialogPath("EN"));
+        std::string line;
+        bool inSage = false;
+        bool inBlank = false;
+        bool inScene = false;
+        std::vector<std::string> pages;
+        auto trim = [](std::string t)
+        {
+            const char* ws = " \t\r\n";
+            const size_t b = t.find_first_not_of(ws);
+            return b == std::string::npos ? std::string() : t.substr(b, t.find_last_not_of(ws) - b + 1);
+        };
+        auto replaceAll = [](std::string& t, const std::string& from, const std::string& to)
+        {
+            for (size_t p = t.find(from); p != std::string::npos; p = t.find(from, p + to.size()))
+            {
+                t.replace(p, from.size(), to);
+            }
+        };
+        while (std::getline(dlg, line))
+        {
+            const std::string t = trim(line);
+            if (t.rfind("npc ", 0) == 0)
+            {
+                inSage = t == "npc sage";
+                inBlank = inScene = false;
+            }
+            else if (inSage && t.rfind("area ", 0) == 0)
+            {
+                inBlank = t == "area BLANK";
+                inScene = false;
+            }
+            else if (inBlank && t == "scene intro")
+            {
+                inScene = true;
+            }
+            else if (inScene && t.rfind("end scene", 0) == 0)
+            {
+                break;
+            }
+            else if (inScene && !t.empty() && t[0] != '#')
+            {
+                std::string text = t;
+                replaceAll(text, "[SOMEKEY-C]", "A");
+                replaceAll(text, "[SOMEKEY-ENTER]", "START");
+                replaceAll(text, "\xE2\x80\x99", "'");
+                replaceAll(text, "\\n", "\n");
+                std::string ascii;
+                for (char ch : text)
+                {
+                    if (static_cast<unsigned char>(ch) < 128)
+                    {
+                        ascii += ch;
+                    }
+                }
+                // '^' = wait for a button press and start a fresh box.
+                size_t start = 0;
+                for (size_t i = 0; i <= ascii.size(); i++)
+                {
+                    if (i == ascii.size() || ascii[i] == '^')
+                    {
+                        const std::string page = trim(ascii.substr(start, i - start));
+                        if (!page.empty())
+                        {
+                            pages.push_back(page);
+                        }
+                        start = i + 1;
+                    }
+                }
+            }
+        }
+        out.resize(out.size() - 2); // reopen the namespace
+        out += "const unsigned short kIntroPageCount = " + std::to_string(pages.size()) + ";\nconst char* const kIntroPages[] = {\n";
+        for (const std::string& page : pages)
+        {
+            out += "    \"";
+            for (char ch : page)
+            {
+                if (ch == '\n')
+                {
+                    out += "\\n";
+                }
+                else if (ch == '"' || ch == '\\')
+                {
+                    out += std::string("\\") + ch;
+                }
+                else
+                {
+                    out += ch;
+                }
+            }
+            out += "\",\n";
+        }
+        out += "};\n}\n";
+        printf("Title: %zu intro pages\n", pages.size());
+    }
 
     WriteFileIfChanged("title_data.h", out);
     return true;
