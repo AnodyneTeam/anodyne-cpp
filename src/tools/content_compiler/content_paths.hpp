@@ -23,6 +23,16 @@ public:
         return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), "BG.csv");
     }
 
+    std::string GetMapLayerCSVPath(const std::string& mapName, const std::string& layer) const
+    {
+        return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), layer + ".csv");
+    }
+
+    std::string GetMapTileDataPath(const std::string& mapName) const
+    {
+        return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), "TileData.col");
+    }
+
     std::string GetMapTilesetPath(const std::string& mapName) const
     {
         std::string mapNameLower = ToLowerCase(mapName);

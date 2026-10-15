@@ -166,6 +166,25 @@ bool TileSet::Load(const std::string &pngPath, size_t& coloursCount)
     return true;
 }
 
+void TileSet::ClearTile(uint32_t index)
+{
+    const uint32_t tx = index % mTiles.Width();
+    const uint32_t ty = index / mTiles.Width();
+    if (ty >= mTiles.Height())
+    {
+        return;
+    }
+
+    RGBATile& tile = mTiles.Get(tx, ty);
+    for (uint32_t y = 0; y < mTileHeight; ++y)
+    {
+        for (uint32_t x = 0; x < mTileWidth; ++x)
+        {
+            tile.mData.Set(x, y, RGBA{ 0, 0, 0, 0 });
+        }
+    }
+}
+
 TileSplitResult TileSet::Make8x8WithRemap() const
 {
     TileSplitResult result;
@@ -416,7 +435,8 @@ TileDedupResult TileSet::Deduplicate() const
 }
 
 
-MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& mapTilesetPath)
+MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
+                                   const std::string& fgCSVPath, const std::string& mapTilesetPath)
 {
     MapCompileResult ret;
 
@@ -434,6 +454,13 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
         printf("Failed to load map tileset\n");
         return ret;
     }
+
+    // Map.cs: tile 0 is invisible. It must be fully transparent so empty BG2/FG cells show what is underneath.
+    mTileSet16.ClearTile(0);
+
+    ret.layers[0] = mMap16;
+    csvMap.Load(bg2CSVPath, ret.layers[1]); // optional layers: a missing file leaves the layer empty
+    csvMap.Load(fgCSVPath, ret.layers[2]);
 
     // Save the map PNG - build with 16x16 tile indices and 16x16 tile images
     SaveMapAsPNG(mapName + "_16x16", mMap16, mTileSet16);
@@ -454,6 +481,16 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
     // Debug save the map and tileset
     SaveMapAsPNG(mapName + "_8x8", map8, dedup.tilesUnique);
     SaveTileSetAsPNG(mapName + "_8x8_tiles", dedup.tilesUnique);
+
+    ret.tile16Count = static_cast<uint32_t>(split16To8.remap16to8.size());
+    for (const auto& sub : split16To8.remap16to8)
+    {
+        for (uint32_t index : sub)
+        {
+            const DedupEntry& e = dedup.remap8toUnique[index];
+            ret.tile16Entries.push_back((uint32_t(e.variant) << 16) | e.newIndex);
+        }
+    }
 
     ret.map8 = map8;
     ret.tiles8x8 = dedup.tilesUnique;

@@ -27,6 +27,7 @@ set(FIRST_SOURCES
     audio_manager.cpp
     audio_decode_core.cpp
     sprite.cpp
+    world.cpp
 )
 
 # ------------------------------------------------------------

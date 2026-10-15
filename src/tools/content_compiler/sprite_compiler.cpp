@@ -8,7 +8,9 @@
 #include <cstdlib>
 #include <map>
 
+#include "file_utils.hpp"
 #include "lodepng.h"
+#include "lz77.hpp"
 
 namespace
 {
@@ -172,61 +174,6 @@ std::vector<SpritePart> LayoutParts(int tilesW, int tilesH)
     return parts;
 }
 
-// GBA BIOS LZ77 (SWI 0x11/0x12). Header word = (size << 8) | 0x10, then groups of a flag byte (MSB first,
-// 1 = back reference) and 8 items: a literal byte, or two bytes holding length-3 (4 bits) and disp-1 (12 bits).
-// The VRAM variant (0x12, 16-bit writes) can't reference the byte just written, so disp >= 2.
-std::vector<uint8_t> CompressLz77(const uint8_t* data, size_t size)
-{
-    std::vector<uint8_t> out = { 0x10, static_cast<uint8_t>(size), static_cast<uint8_t>(size >> 8),
-                                 static_cast<uint8_t>(size >> 16) };
-    size_t pos = 0;
-    while (pos < size)
-    {
-        const size_t flagAt = out.size();
-        out.push_back(0);
-        for (int bit = 0; bit < 8 && pos < size; bit++)
-        {
-            size_t bestLen = 0;
-            size_t bestDisp = 0;
-            const size_t maxDisp = std::min<size_t>(pos, 4096);
-            for (size_t disp = 2; disp <= maxDisp; disp++)
-            {
-                size_t len = 0;
-                while (len < 18 && pos + len < size && data[pos + len - disp] == data[pos + len])
-                {
-                    len++;
-                }
-                if (len > bestLen)
-                {
-                    bestLen = len;
-                    bestDisp = disp;
-                    if (len == 18)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            if (bestLen >= 3)
-            {
-                out[flagAt] |= static_cast<uint8_t>(0x80 >> bit);
-                out.push_back(static_cast<uint8_t>(((bestLen - 3) << 4) | ((bestDisp - 1) >> 8)));
-                out.push_back(static_cast<uint8_t>((bestDisp - 1) & 0xFF));
-                pos += bestLen;
-            }
-            else
-            {
-                out.push_back(data[pos++]);
-            }
-        }
-    }
-    while (out.size() % 4)
-    {
-        out.push_back(0);
-    }
-    return out;
-}
-
 bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, CompiledSpriteSheet& out)
 {
     std::vector<uint8_t> raw;
@@ -345,35 +292,6 @@ std::string Identifier(const std::string& name)
         }
     }
     return id;
-}
-
-bool WriteFileIfChanged(const char* path, const std::string& content)
-{
-    if (FILE* existing = fopen(path, "rb"))
-    {
-        std::string old;
-        char buf[4096];
-        size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), existing)) > 0)
-        {
-            old.append(buf, n);
-        }
-        fclose(existing);
-        if (old == content)
-        {
-            return false;
-        }
-    }
-
-    FILE* f = fopen(path, "wb");
-    if (!f)
-    {
-        printf("ERROR: can't write %s\n", path);
-        return false;
-    }
-    fwrite(content.data(), 1, content.size(), f);
-    fclose(f);
-    return true;
 }
 
 void Append(std::string& s, const char* fmt, ...) __attribute__((format(printf, 2, 3)));

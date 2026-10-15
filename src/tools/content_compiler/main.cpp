@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <algorithm>
 #include <cstdlib>
+#include <map>
 #include <unordered_set>
 #include <vector>
 #include <cstdint>
@@ -13,6 +14,8 @@
 #include "file_utils.hpp"
 #include "audio_compiler.hpp"
 #include "sprite_compiler.hpp"
+#include "collision_compiler.hpp"
+#include "lz77.hpp"
 
 // ------------------------------------------------------------
 // GBA RGB555 PACKER (THE ONLY ONE YOU SHOULD USE)
@@ -27,65 +30,64 @@ static inline uint16_t GBA555(const RGBA& p)
 }
 
 // ------------------------------------------------------------
-// PALETTE EXTRACTION (UP TO 256 UNIQUE COLOURS)
+// PALETTE EXTRACTION
+// Index 0 is reserved for "transparent" (black): the map is drawn as three stacked 8bpp BG layers (BG, BG2, FG) that
+// share this palette, so a transparent pixel has to be index 0 for the layers below to show through. Colours are
+// de-duplicated after the RGB555 conversion; if more than 255 remain, the least used are snapped to the nearest.
 // ------------------------------------------------------------
+static bool IsTransparentPixel(const RGBA& p)
+{
+    return p.a < 128;
+}
+
+static int Colour555Distance(uint16_t a, uint16_t b)
+{
+    const int dr = (a & 0x1F) - (b & 0x1F);
+    const int dg = ((a >> 5) & 0x1F) - ((b >> 5) & 0x1F);
+    const int db = ((a >> 10) & 0x1F) - ((b >> 10) & 0x1F);
+    return dr * dr + dg * dg + db * db;
+}
+
 std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
 {
-    std::unordered_set<uint32_t> uniqueRGBA;
+    std::map<uint16_t, size_t> histogram;
 
     const auto& tiles = tileSet.GetTiles();
-    const uint32_t tilesX = tiles.Width();
-    const uint32_t tilesY = tiles.Height();
-
-    for (uint32_t ty = 0; ty < tilesY; ++ty)
+    for (uint32_t ty = 0; ty < tiles.Height(); ++ty)
     {
-        for (uint32_t tx = 0; tx < tilesX; ++tx)
+        for (uint32_t tx = 0; tx < tiles.Width(); ++tx)
         {
             const RGBATile& tile = tiles.Get(tx, ty);
-
             for (uint32_t y = 0; y < 8; ++y)
             {
                 for (uint32_t x = 0; x < 8; ++x)
                 {
                     const RGBA& p = tile.mData.Get(x, y);
-
-                    // Ignore fully transparent pixels
-                    if (p.a == 0)
-                        continue;
-
-                    uint32_t key =
-                        (uint32_t(p.r) << 24) |
-                        (uint32_t(p.g) << 16) |
-                        (uint32_t(p.b) << 8)  |
-                        (uint32_t(p.a));
-
-                    uniqueRGBA.insert(key);
+                    if (!IsTransparentPixel(p))
+                    {
+                        histogram[GBA555(p)]++;
+                    }
                 }
             }
         }
     }
 
-    std::vector<uint16_t> palette;
-    palette.reserve(256);
-    size_t i = 0;
-
-    for (uint32_t key : uniqueRGBA)
+    std::vector<std::pair<uint16_t, size_t>> colours(histogram.begin(), histogram.end());
+    std::stable_sort(colours.begin(), colours.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
+    if (colours.size() > 255)
     {
-        if (i >= 256)
-        {
-            printf("ERROR OUT OF PAL!!!\n");
-            break;
-        }
-
-        RGBA p;
-        p.r = (key >> 24) & 0xFF;
-        p.g = (key >> 16) & 0xFF;
-        p.b = (key >> 8)  & 0xFF;
-        p.a = (key)       & 0xFF;
-
-        palette.push_back(GBA555(p));
+        printf("WARNING: tileset has %zu colours, reducing to 255\n", colours.size());
+        colours.resize(255);
     }
 
+    std::vector<uint16_t> palette;
+    palette.reserve(colours.size() + 1);
+    palette.push_back(0); // transparent
+    for (const auto& c : colours)
+    {
+        palette.push_back(c.first);
+    }
     return palette;
 }
 
@@ -109,7 +111,7 @@ void SavePaletteGBA(const std::string& nameSpace,
     {
         fprintf(f, "    0x%04X%s\n",
                 palette[i],
-                (i == 255 ? "" : ","));
+                (i + 1 == palette.size() ? "" : ","));
     }
 
     fprintf(f, "};\n"); // Array end
@@ -123,13 +125,33 @@ void SavePaletteGBA(const std::string& nameSpace,
 uint8_t FindPaletteIndex8BPP(const RGBA& p,
                              const std::vector<uint16_t>& palette)
 {
-    uint16_t c = GBA555(p);
+    if (IsTransparentPixel(p))
+    {
+        return 0;
+    }
 
-    for (size_t i = 0; i < palette.size(); ++i)
-        if (palette[i] == c)
-            return (uint8_t)i;
+    if (palette.size() < 2)
+    {
+        return 0;
+    }
 
-    return 0;
+    const uint16_t c = GBA555(p);
+    size_t best = 1;
+    int bestDistance = Colour555Distance(c, palette[1]);
+    for (size_t i = 1; i < palette.size(); ++i)
+    {
+        const int d = Colour555Distance(c, palette[i]);
+        if (d < bestDistance)
+        {
+            bestDistance = d;
+            best = i;
+        }
+        if (d == 0)
+        {
+            break;
+        }
+    }
+    return static_cast<uint8_t>(best);
 }
 
 // ------------------------------------------------------------
@@ -193,74 +215,93 @@ void SaveTileSetGBA(const std::string& nameSpace,
     fclose(f);
 }
 
-std::vector<uint16_t> ConvertMapToGBA(const Array2D<uint32_t>& map)
+// A packed (variant << 16) | tile index -> GBA screen entry (10-bit tile index + H/V flip bits).
+static uint16_t ToScreenEntry(uint32_t packed)
 {
-    const uint32_t w = map.Width();
-    const uint32_t h = map.Height();
-
-    std::vector<uint16_t> out(w * h);
-
-    size_t pos = 0;
-    for (uint32_t y = 0; y < h; ++y)
-    {
-        for (uint32_t x = 0; x < w; ++x)
-        {
-            uint32_t packed = map.Get(x, y);
-
-            uint16_t tileIndex = packed & 0xFFFF;
-            TileVariant variant = (TileVariant)((packed >> 16) & 0xFF);
-
-            uint16_t hflip = (variant == VAR_H || variant == VAR_HV) ? 1 : 0;
-            uint16_t vflip = (variant == VAR_V || variant == VAR_HV) ? 1 : 0;
-
-            uint16_t entry =
-                (tileIndex & 0x03FF) |   // GBA tile index (0–1023)
-                (hflip << 10)        |   // bit 10 = H flip
-                (vflip << 11);           // bit 11 = V flip
-
-            out[pos++] = entry;
-        }
-    }
-
-    return out;
+    const uint16_t tileIndex = packed & 0xFFFF;
+    const TileVariant variant = static_cast<TileVariant>((packed >> 16) & 0xFF);
+    const uint16_t hflip = (variant == VAR_H || variant == VAR_HV) ? 1 : 0;
+    const uint16_t vflip = (variant == VAR_V || variant == VAR_HV) ? 1 : 0;
+    return static_cast<uint16_t>((tileIndex & 0x03FF) | (hflip << 10) | (vflip << 11));
 }
 
-
-
-void SaveMapGBA(const std::string& nameSpace,
-                const std::string& headerName,
-                const std::vector<uint16_t>& map,
-                uint32_t width,
-                uint32_t height)
+// The map is stored as up to three 16x16-tile layers (BG, BG2, FG; each BIOS-LZ77 packed little-endian u16 tile
+// indices, same indices as the AnodyneSharp CSVs) plus one table giving each 16x16 tile's four 8x8 screen entries.
+// The GBA builds BG screen entries from that table as the camera scrolls. Index 0 is "empty" in every layer.
+void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerName, const MapCompileResult& map)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
-        return;
-
-    fprintf(f, "namespace %s\n{\n", nameSpace.c_str());
-    fprintf(f, "// Auto-generated GBA tilemap\n");
-
-    fprintf(f, "const unsigned int gMapWidth  = %u;\n", width);
-    fprintf(f, "const unsigned int gMapHeight = %u;\n\n", height);
-
-    fprintf(f, "const unsigned short gMapData[%u] = {\n", width * height);
-
-    for (size_t i = 0; i < map.size(); ++i)
     {
-        fprintf(f, "    0x%04X%s\n",
-                map[i],
-                (i + 1 == map.size() ? "" : ","));
+        return;
     }
 
-    fprintf(f, "};\n");
-    fprintf(f, "}\n");
+    fprintf(f, "namespace %s\n{\n// Auto-generated GBA map layers (LZ77)\n", nameSpace.c_str());
 
+    fprintf(f, "const unsigned int gTile16Count = %u;\n", map.tile16Count);
+    fprintf(f, "const unsigned short gTile16Entries[%zu] = {", map.tile16Entries.size());
+    for (size_t i = 0; i < map.tile16Entries.size(); ++i)
+    {
+        fprintf(f, "%s0x%04X,", (i % 16 == 0) ? "\n    " : "", ToScreenEntry(map.tile16Entries[i]));
+    }
+    fprintf(f, "\n};\n\n");
+
+    size_t unpackedTotal[3] = {};
+    size_t packedTotal[3] = {};
+    for (int layer = 0; layer < 3; ++layer)
+    {
+        const Array2D<uint32_t>& cells = map.layers[layer];
+        std::vector<uint8_t> bytes;
+        bytes.reserve(static_cast<size_t>(cells.Width()) * cells.Height() * 2);
+        for (uint32_t y = 0; y < cells.Height(); ++y)
+        {
+            for (uint32_t x = 0; x < cells.Width(); ++x)
+            {
+                const uint32_t tile = cells.Get(x, y);
+                bytes.push_back(static_cast<uint8_t>(tile & 0xFF));
+                bytes.push_back(static_cast<uint8_t>((tile >> 8) & 0xFF));
+            }
+        }
+
+        std::vector<uint8_t> packed;
+        if (!bytes.empty())
+        {
+            packed = CompressLz77(bytes.data(), bytes.size());
+        }
+        else
+        {
+            packed = { 0x10, 0, 0, 0 }; // never read (zero size), keeps the array non-empty
+        }
+        unpackedTotal[layer] = bytes.size();
+        packedTotal[layer] = packed.size();
+
+        fprintf(f, "alignas(4) const unsigned char gLayer%dPacked[%zu] = {", layer, packed.size());
+        for (size_t i = 0; i < packed.size(); ++i)
+        {
+            fprintf(f, "%s0x%02X,", (i % 32 == 0) ? "\n    " : "", packed[i]);
+        }
+        fprintf(f, "\n};\n");
+    }
+
+    fprintf(f, "const unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
+            map.layers[2].Width());
+    fprintf(f, "const unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
+            map.layers[1].Height(), map.layers[2].Height());
+    fprintf(f, "const unsigned int gLayerUnpackedSize[3] = { %zu, %zu, %zu };\n", unpackedTotal[0], unpackedTotal[1],
+            unpackedTotal[2]);
+    fprintf(f, "}\n");
     fclose(f);
+
+    printf("Map %s: %u tiles, layers packed %zu/%zu/%zu bytes\n", nameSpace.c_str(), map.tile16Count, packedTotal[0],
+           packedTotal[1], packedTotal[2]);
 }
 
 // ------------------------------------------------------------
 // MAP COMPILATION
 // ------------------------------------------------------------
+// Set when the generated map header format changed since the headers on disk were written.
+static bool gForceMapRebuild = false;
+
 static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
 {
 
@@ -271,7 +312,10 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     std::string tilesHeader = mapName + "_tiles.h";
     std::string mapHeader = mapName + "_map.h";
 
-    if (IsFileNewer(mapBgCsvPath, {palHeader, tilesHeader, mapHeader}) ||
+    if (gForceMapRebuild ||
+        IsFileNewer(mapBgCsvPath, {palHeader, tilesHeader, mapHeader}) ||
+        IsFileNewer(contentPaths.GetMapLayerCSVPath(mapName, "BG2"), {palHeader, tilesHeader, mapHeader}) ||
+        IsFileNewer(contentPaths.GetMapLayerCSVPath(mapName, "FG"), {palHeader, tilesHeader, mapHeader}) ||
         IsFileNewer(mapTilesetPath, {palHeader, tilesHeader, mapHeader}))
     {
         printf("Compiling map: %s\n", mapName.c_str());
@@ -285,6 +329,8 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     MapCompiler mc;
     auto ret = mc.Load(mapName,
                        mapBgCsvPath,
+                       contentPaths.GetMapLayerCSVPath(mapName, "BG2"),
+                       contentPaths.GetMapLayerCSVPath(mapName, "FG"),
                        mapTilesetPath);
 
     if (!ret.success)
@@ -298,7 +344,7 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
     SaveTileSetGBA(mapName, tilesHeader, tiles);
 
-    SaveMapGBA(mapName, mapHeader, ConvertMapToGBA(ret.map8), ret.map8.Width(), ret.map8.Height());
+    SaveMapLayersGBA(mapName, mapHeader, ret);
 
     printf("Map compilation complete: %s\n", mapName.c_str());
 }
@@ -347,7 +393,8 @@ void WriteMapRegistry(const std::vector<std::string>& mapNames)
     {
         fprintf(f, "#include \"%s_pal.h\"\n", name.c_str());
         fprintf(f, "#include \"%s_tiles.h\"\n", name.c_str());
-        fprintf(f, "#include \"%s_map.h\"\n\n", name.c_str());
+        fprintf(f, "#include \"%s_map.h\"\n", name.c_str());
+        fprintf(f, "#include \"%s_col.h\"\n\n", name.c_str());
     }
 
     // Registry array
@@ -359,14 +406,27 @@ void WriteMapRegistry(const std::vector<std::string>& mapNames)
             "    {\n"
             "        { %s::gTilesetPaletteSizeElements, %s::gTilesetPalette },\n"
             "        { %s::gTilesetDataSizeElements,    %s::gTilesetData    },\n"
-            "        { %s::gMapWidth,                  %s::gMapHeight, %s::gMapData }\n"
+            "        { %s::gTile16Count, %s::gTile16Entries,\n"
+            "          { { %s::gLayerWidth[0], %s::gLayerHeight[0], %s::gLayerUnpackedSize[0], %s::gLayer0Packed },\n"
+            "            { %s::gLayerWidth[1], %s::gLayerHeight[1], %s::gLayerUnpackedSize[1], %s::gLayer1Packed },\n"
+            "            { %s::gLayerWidth[2], %s::gLayerHeight[2], %s::gLayerUnpackedSize[2], %s::gLayer2Packed } } },\n"
+            "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked }\n"
             "    },\n",
-            name.c_str(), name.c_str(),
-            name.c_str(), name.c_str(),
-            name.c_str(), name.c_str(), name.c_str()
+            name.c_str(), name.c_str(),                                                            // palette (2)
+            name.c_str(), name.c_str(),                                                            // tileset (2)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // tile16 + layer 0 (6)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 1 (4)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 2 (4)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str()     // collision (6)
         );
     }
 
+    fprintf(f, "};\n\n");
+    fprintf(f, "static const char* const kMapNames[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        fprintf(f, "    \"%s\",\n", name.c_str());
+    }
     fprintf(f, "};\n\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
 
@@ -692,12 +752,29 @@ int main(int argc, char **argv)
     //CompileDialog(contentPaths);
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
+        // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
+        const std::string kMapFormatVersion = "3-layers";
+        {
+            std::string existing;
+            if (FILE* v = fopen("map_format_version.txt", "rb"))
+            {
+                char buf[64] = {};
+                size_t n = fread(buf, 1, sizeof(buf) - 1, v);
+                existing.assign(buf, n);
+                fclose(v);
+            }
+            gForceMapRebuild = existing != kMapFormatVersion;
+        }
+
         for (const auto& mapName : mapNames)
         {
             CompileMap(contentPaths, mapName);
+            // Cheap, and only rewrites its header when the result changes.
+            CompileMapCollision(contentPaths, mapName);
         }
         WriteMapIncludeFile(mapNames);
         WriteMapRegistry(mapNames);
+        WriteFileIfChanged("map_format_version.txt", kMapFormatVersion);
     }
 
     if (!cliOptions.mapsOnly && !cliOptions.audioOnly)

@@ -19,6 +19,7 @@ struct Sprite final
     bool mFinished = false;
     int mLoadedFrame = -1;
     int mStaticFrame = 0; // used while no anim is playing
+    int mPriority = 1;    // OBJ priority (0 = in front of every BG); same priority: lower OAM slot is in front
 };
 
 // Finds a compiled sheet by PNG stem. frameW/frameH disambiguate textures used at several sizes (0 = any).
@@ -45,6 +46,8 @@ void Sprite_Destroy(Sprite& sprite, ObjVramAllocator& vram);
 // Starts the named anim. Does nothing if it's already playing, unless `restart`. Returns false if unknown.
 bool Sprite_Play(Sprite& sprite, const char* animName, bool restart = false);
 void Sprite_SetFrame(Sprite& sprite, int frame);
+// The sheet frame being shown (the current anim frame, or the static frame).
+int Sprite_CurrentFrame(const Sprite& sprite);
 
 // Call once per 60Hz frame: advances the animation and uploads the frame to VRAM if it changed.
 void Sprite_Update(Sprite& sprite);

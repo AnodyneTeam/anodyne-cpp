@@ -11,32 +11,8 @@
 #include "obj_vram_allocator.hpp"
 #include "audio_manager.h"
 #include "sprite.h"
-
-struct MapPalData final
-{
-    uint32_t mPalSize = 0;
-    const uint16_t* mPalData = nullptr;
-};
-
-struct MapTileSetData final
-{
-    uint32_t mTileSetSize = 0;
-    const uint8_t* mTileSetData = nullptr;
-};
-
-struct MapScreenBlockData final
-{
-    uint32_t mMapWidth = 0;
-    uint32_t mMapHeight = 0;
-    const uint16_t* mMapData = nullptr;
-};
-
-struct MapEntry final
-{
-    MapPalData mPalData;
-    MapTileSetData mTileSetData;
-    MapScreenBlockData mScreenBlockData;
-};
+#include "map_data.h"
+#include "world.h"
 
 #include "../build/tools/map_registry.h"
 
@@ -55,53 +31,6 @@ static void dialog_manager_test(void)
     dialog_manager_free(&dm);
 }
 */
-
-void CopyMapRegionToBG0(int mapX, int mapY)
-{
-    const int MAP_W = kMaps[gCurrentMap].mScreenBlockData.mMapWidth;
-    const int MAP_H = kMaps[gCurrentMap].mScreenBlockData.mMapHeight;
-
-    const int VIEW_W = 32;
-    const int VIEW_H = 32;
-
-    for (int y = 0; y < VIEW_H; y++)
-    {
-        int srcY = mapY + y;
-        if (srcY < 0) srcY = 0;
-        if (srcY >= MAP_H) srcY = MAP_H - 1;
-
-        for (int x = 0; x < VIEW_W; x++)
-        {
-            int srcX = mapX + x;
-            if (srcX < 0) srcX = 0;
-            if (srcX >= MAP_W) srcX = MAP_W - 1;
-
-            // ROW-MAJOR INDEXING — THIS IS THE IMPORTANT PART
-            uint16_t tile = kMaps[gCurrentMap].mScreenBlockData.mMapData[srcY * MAP_W + srcX];
-
-            se_mem[31][y * VIEW_W + x] = tile;
-        }
-    }
-}
-
-static void SetCurrentMap(uint32_t mapIndex)
-{
-    gCurrentMap = mapIndex;
-
-    // --- Palette (256 halfwords) ---
-    memcpy16(pal_bg_mem, kMaps[gCurrentMap].mPalData.mPalData, kMaps[gCurrentMap].mPalData.mPalSize);
-
-    // --- Tiles (8bpp, byte data -> halfword count) ---
-    memcpy16(tile_mem, kMaps[gCurrentMap].mTileSetData.mTileSetData, kMaps[gCurrentMap].mScreenBlockData.mMapWidth * kMaps[gCurrentMap].mScreenBlockData.mMapHeight);
-
-    CopyMapRegionToBG0(0, 0);
-    // --- Map (uint16_t entries) ---
-   // memcpy16(se_mem[31], gMapData, sizeof(gMapData) / 2);
-
-   /// for (int i = 0; i < 1024; i++)
-    //    se_mem[31][i] = 5;
-
-}
 
 // HUD text is drawn over itself in place (see the audio test loop), so
 // every line is padded to the full screen width to overwrite old text.
@@ -136,14 +65,6 @@ static char* HudLine(char* out, const char* fmt, ...)
 // runtime - hold START+SELECT together to switch between them. Audio itself
 // (the VBlank-driven refill) doesn't care which mode is showing and keeps
 // playing across a switch.
-enum class Facing
-{
-    Down,
-    Right,
-    Up,
-    Left
-};
-
 enum class AppMode
 {
     AudioTest,
@@ -170,21 +91,21 @@ static void EnterAudioTestMode()
 
 static void EnterMapViewerMode()
 {
-    REG_DISPCNT = DCNT_MODE0 | DCNT_BG0 | DCNT_OBJ | DCNT_OBJ_1D;
     REG_BG1CNT = 0;
     REG_BG2CNT = 0;
     REG_BG3CNT = 0;
-
-    REG_BG0CNT = BG_CBB(0) | BG_SBB(31) | BG_8BPP | BG_REG_32x32;
-    SetCurrentMap(gCurrentMap);
+    World_Enter();
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
 }
 
 // ---------------------------------------------------------------------------------------------------------
 // Sprite gallery (test): every compiled sheet, packed left to right in rows (any size, big ones use several
 // OBJs), each playing its first anim (or stepping through its frames if it has none). A page ends when the
-// screen, the 15 free palette banks, OAM or OBJ VRAM run out. OAM slot 0 / palette bank 0 belong to the player.
+// screen, the free palette banks, OAM or OBJ VRAM run out. The world owns OAM slots 0-9 / palette banks 0-3.
 // ---------------------------------------------------------------------------------------------------------
-static const int kGalleryMaxSprites = 15; // palette banks 1..15
+static const int kGalleryFirstOam = 10;     // OAM slots 0-9 and palette banks 0-3 belong to the world (see world.cpp)
+static const int kGalleryFirstBank = 4;
+static const int kGalleryMaxSprites = 12;   // palette banks 4..15
 static const int kGalleryMargin = 4;
 static const int kGalleryMaxPages = 64;
 
@@ -210,7 +131,7 @@ static void GalleryLoadPage(ObjVramAllocator& vram, int page)
     GalleryClear(vram);
 
     int slot = 0;
-    int oamNext = 1;
+    int oamNext = kGalleryFirstOam;
     int curX = 0;
     int curY = 0;
     int rowH = 0;
@@ -243,7 +164,7 @@ static void GalleryLoadPage(ObjVramAllocator& vram, int page)
             break;
         }
 
-        if (!Sprite_Create(gGallery[slot], vram, sheet.mName, slot + 1, oamNext, sheet.mFrameWidth,
+        if (!Sprite_Create(gGallery[slot], vram, sheet.mName, slot + kGalleryFirstBank, oamNext, sheet.mFrameWidth,
                            sheet.mFrameHeight))
         {
             if (slot > 0)
@@ -334,28 +255,16 @@ int main()
     uint32_t hudIsrLast = 0;
     uint32_t hudIsrMax = 0;
 
-    // --- Map viewer state ---
-    int camX = 8 * 10;
-    int camY = 8 * 10;
-    int lastTileX = -1;
-    int lastTileY = -1;
-    int camFracX = 0; // 16.16 sub-pixel remainder of camX/camY
-    int camFracY = 0;
-
     oam_init(oam_mem, 128);
 
-    // Player sprite (young_player sheet, compiled by the content compiler): walks with the D-pad.
+    // The world (map + player, ported from the C#) owns OAM slot 0 / OBJ palette bank 0; the sprite gallery test
+    // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
-    Sprite player;
-    const bool playerOk = Sprite_Create(player, objVram, "young_player", 0, 0);
-    Facing facing = Facing::Down;
-    bool galleryOn = true;
+    World_Init(objVram);
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]); // again: the map's overlay sprites need the VRAM allocator
+    bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
-    if (playerOk)
-    {
-        Sprite_Play(player, "idle_d");
-    }
 
     while (1)
     {
@@ -381,8 +290,7 @@ int main()
             else
             {
                 EnterMapViewerMode();
-                lastTileX = -1;
-                lastTileY = -1;
+                galleryOn = false;
             }
         }
         modeComboWasDown = modeComboDown;
@@ -456,49 +364,26 @@ int main()
             if (key_hit(KEY_START) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                SetCurrentMap(gCurrentMap);
-                camX = 8 * 10;
-                camY = 8 * 10;
-                lastTileX = -1;
-                lastTileY = -1;
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
             }
 
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
-                SetCurrentMap(gCurrentMap);
-                camX = 8 * 10;
-                camY = 8 * 10;
-                lastTileX = -1;
-                lastTileY = -1;
+                World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap]);
             }
 
-            // ------------------------------------------------------------
-            // SCROLLING at the C# player walk speed (Player.walkSpeed = 70 px/s at a fixed 60 FPS; diagonal
-            // movement is scaled by 0.7). Sub-pixel position is kept in 16.16 fixed point.
-            // ------------------------------------------------------------
-            {
-                const int dirX = (key_is_down(KEY_RIGHT) ? 1 : 0) - (key_is_down(KEY_LEFT) ? 1 : 0);
-                const int dirY = (key_is_down(KEY_DOWN) ? 1 : 0) - (key_is_down(KEY_UP) ? 1 : 0);
-                const int kStepPerFrame = (70 * 65536 + 30) / 60; // 70 px/s -> ~1.1667 px/frame
-                const int step = (dirX != 0 && dirY != 0) ? (kStepPerFrame * 7) / 10 : kStepPerFrame;
-
-                camFracX += dirX * step;
-                camFracY += dirY * step;
-                camX += camFracX >> 16; // arithmetic shift: floors for negative movement too
-                camY += camFracY >> 16;
-                camFracX &= 0xFFFF;
-                camFracY &= 0xFFFF;
-            }
-
-            // ------------------------------------------------------------
-            // PLAYER SPRITE (screen centre; D-pad picks the walk/idle anim)
-            // ------------------------------------------------------------
-            // A toggles the sprite gallery; R/L change its page.
+            // A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);
+            // R/L change its page.
             if (key_hit(KEY_A))
             {
                 galleryOn = !galleryOn;
-                if (!galleryOn)
+                if (galleryOn)
+                {
+                    World_SetPlayerVisible(false);
+                    REG_DISPCNT = REG_DISPCNT & ~DCNT_WIN0;
+                }
+                else
                 {
                     for (const Sprite& g : gGallery)
                     {
@@ -507,6 +392,7 @@ int main()
                             Sprite_Hide(g);
                         }
                     }
+                    REG_DISPCNT = REG_DISPCNT | DCNT_WIN0;
                 }
             }
             if (galleryOn && (key_hit(KEY_R) || key_hit(KEY_L)))
@@ -533,63 +419,14 @@ int main()
                 }
                 GalleryLoadPage(objVram, galleryPage);
             }
+
             if (galleryOn)
             {
                 GalleryUpdateAndDraw();
-                if (playerOk)
-                {
-                    Sprite_Hide(player);
-                }
             }
-
-            if (playerOk && !galleryOn)
+            else
             {
-                static const char* const kWalk[] = { "walk_d", "walk_r", "walk_u", "walk_l" };
-                static const char* const kIdle[] = { "idle_d", "idle_r", "idle_u", "idle_l" };
-
-                bool moving = true;
-                if (key_is_down(KEY_DOWN))       facing = Facing::Down;
-                else if (key_is_down(KEY_RIGHT)) facing = Facing::Right;
-                else if (key_is_down(KEY_UP))    facing = Facing::Up;
-                else if (key_is_down(KEY_LEFT))  facing = Facing::Left;
-                else                             moving = false;
-
-                const int f = static_cast<int>(facing);
-                Sprite_Play(player, moving ? kWalk[f] : kIdle[f]);
-                Sprite_Update(player);
-                Sprite_Draw(player, 120 - 8, 80 - 8);
-            }
-
-            // ------------------------------------------------------------
-            // CAMERA CLAMPING
-            // ------------------------------------------------------------
-            int mapWpx = kMaps[gCurrentMap].mScreenBlockData.mMapWidth  * 8;
-            int mapHpx = kMaps[gCurrentMap].mScreenBlockData.mMapHeight * 8;
-
-            if (camX < 0) camX = 0;
-            if (camY < 0) camY = 0;
-            if (camX > mapWpx - 240) camX = mapWpx - 240;
-            if (camY > mapHpx - 160) camY = mapHpx - 160;
-
-            // ------------------------------------------------------------
-            // TILE + SUBPIXEL SCROLLING
-            // ------------------------------------------------------------
-            int tileX = camX >> 3;
-            int tileY = camY >> 3;
-            int subX = camX & 7;
-            int subY = camY & 7;
-
-            REG_BG0HOFS = subX;
-            REG_BG0VOFS = subY;
-
-            // ------------------------------------------------------------
-            // TILE WINDOW UPDATE
-            // ------------------------------------------------------------
-            if (tileX != lastTileX || tileY != lastTileY)
-            {
-                CopyMapRegionToBG0(tileX, tileY);
-                lastTileX = tileX;
-                lastTileY = tileY;
+                World_Update();
             }
         }
 

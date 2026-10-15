@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -36,3 +37,35 @@ inline bool IsFileNewer(const std::string& input, const std::vector<std::string>
 
     return false;
 }
+
+// Writes `content` to `path` unless the file already holds exactly that, so an unchanged generated header keeps its
+// timestamp and doesn't trigger a rebuild of everything that includes it. Returns true if the file was written.
+inline bool WriteFileIfChanged(const char* path, const std::string& content)
+{
+    if (FILE* existing = fopen(path, "rb"))
+    {
+        std::string old;
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), existing)) > 0)
+        {
+            old.append(buf, n);
+        }
+        fclose(existing);
+        if (old == content)
+        {
+            return false;
+        }
+    }
+
+    FILE* f = fopen(path, "wb");
+    if (!f)
+    {
+        printf("ERROR: can't write %s\n", path);
+        return false;
+    }
+    fwrite(content.data(), 1, content.size(), f);
+    fclose(f);
+    return true;
+}
+

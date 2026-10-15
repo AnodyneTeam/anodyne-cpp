@@ -128,6 +128,11 @@ void Sprite_SetFrame(Sprite& sprite, int frame)
     sprite.mStaticFrame = frame;
 }
 
+int Sprite_CurrentFrame(const Sprite& sprite)
+{
+    return CurrentFrame(sprite);
+}
+
 void Sprite_Update(Sprite& sprite)
 {
     if (sprite.mAnim >= 0 && !sprite.mFinished)
@@ -173,7 +178,7 @@ void Sprite_Draw(const Sprite& sprite, int x, int y, bool hflip)
         obj_set_attr(&oam_mem[sprite.mOamSlot + i],
                      ATTR0_REG | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(py & 0xFF),
                      (part.mSize << 14) | ATTR1_X(px & 0x1FF) | (hflip ? ATTR1_HFLIP : 0),
-                     ATTR2_ID(sprite.mVramBlock + part.mTileOffset) | ATTR2_PALBANK(sprite.mPalBank));
+                     ATTR2_ID(sprite.mVramBlock + part.mTileOffset) | ATTR2_PRIO(sprite.mPriority) | ATTR2_PALBANK(sprite.mPalBank));
     }
 }
 

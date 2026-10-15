@@ -206,6 +206,9 @@ public:
         return mTiles;
     }
 
+    // Makes every pixel of one tile transparent (AnodyneSharp never draws 16x16 tile 0, whatever the PNG holds).
+    void ClearTile(uint32_t index);
+
     TileSplitResult Make8x8WithRemap() const;
     TileDedupResult Deduplicate() const;
 
@@ -258,6 +261,12 @@ struct MapCompileResult final
     size_t mTileSetColoursCount = 0;
     Array2D<uint32_t> map8;
     TileSet tiles8x8;
+
+    // The BG, BG2 and FG layers as 16x16 tile indices (Width() == 0 when the map has no such layer).
+    Array2D<uint32_t> layers[3];
+    // For each 16x16 tile, its four 8x8 screen entries (TL, TR, BL, BR) as (variant << 16) | unique 8x8 tile index.
+    std::vector<uint32_t> tile16Entries;
+    uint32_t tile16Count = 0;
 };
 
 class MapCompiler final
@@ -269,7 +278,9 @@ public:
 
     }
 
-    MapCompileResult Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& mapTilesetPath);
+    // bg2CSVPath / fgCSVPath may be missing files (the layer is then empty).
+    MapCompileResult Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
+                          const std::string& fgCSVPath, const std::string& mapTilesetPath);
 
 private:
     void SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet);
