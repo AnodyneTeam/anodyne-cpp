@@ -204,7 +204,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
             const int dx = static_cast<int>(px) - 32;
             const int dy = static_cast<int>(py) - 32;
             const int rawA = raw[i + 3];
-            const int a = rawA * 16 / 10 > 255 ? 255 : rawA * 16 / 10; // the C# glow reads stronger than its raw alpha
+            const int a = rawA * 14 / 10 > 255 ? 255 : rawA * 14 / 10;
             if (rawA < 6 || dx * dx + dy * dy > 15 * 15)
             {
                 raw[i + 3] = 0;
@@ -222,14 +222,14 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         for (size_t i = 0; i + 3 < raw.size(); i += 4)
         {
             const int a = raw[i + 3];
-            if (a < 6)
+            if (a < 14) // short rays: the C# ones only just reach the floor
             {
                 raw[i + 3] = 0;
                 continue;
             }
             for (int ch = 0; ch < 3; ch++)
             {
-                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 13 / (255 * 10));
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 6 / (255 * 10));
             }
             raw[i + 3] = 255;
         }
