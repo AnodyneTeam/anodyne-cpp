@@ -201,7 +201,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
             }
             for (int ch = 0; ch < 3; ch++)
             {
-                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a / 255);
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 6 / (255 * 10)); // x0.6: the C# glow is subtle
             }
             raw[i + 3] = 255;
         }

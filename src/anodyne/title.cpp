@@ -19,7 +19,7 @@ constexpr int kCbbText = 3;
 constexpr int kBgScrollSpeed = 30;     // px/s (ScrollingTex velocity (0, -30))
 constexpr int kDoorRiseSpeed = 20;     // px/s
 constexpr int kDoorEndY = 180 - 116;   // door top when fully risen
-constexpr int kFlashFrames = 45;       // 1.5s
+constexpr int kFlashFrames = 90;       // 1.5s: TitleState PressStart = Flash(1.5s, White): instantly white, then fading out
 constexpr int kFadeFrames = 30;
 constexpr int kBlinkFrames = 60;
 constexpr int kMenuItems = 4;
@@ -177,11 +177,17 @@ void HideAllSprites()
     if (gHaveBox) { Sprite_Hide(gBox); }
 }
 
-void DrawTitleSprites(bool pressVisible)
+void DrawTitleSprites(bool pressVisible, bool spin = true)
 {
     if (gHaveText) { Sprite_Draw(gTitleText, kViewX + 16, 16 + kViewY); }
     if (gHaveRemake) { Sprite_Draw(gRemake, kViewX + 45, 47 + kViewY); }
-    if (gHaveSpin)
+    if (!spin && gHaveSpin)
+    {
+        // A semi-transparent OBJ ignores the brightness fade of the flash and would show as a dark blob.
+        Sprite_Hide(gSpin1);
+        Sprite_Hide(gSpin2);
+    }
+    if (spin && gHaveSpin)
     {
         // doorSpin1/2 spin at +-90 degrees/s about the centre of a 64x64 image at (48, door top).
         gSpinAngle = (gSpinAngle + 65536 / 4 / 60) & 0xFFFF;
@@ -569,24 +575,13 @@ bool Title_Update(int* slot)
     }
     case State::Flash:
     {
-        // Up to white, swap in the title layout at the peak, back down.
-        const int half = kFlashFrames / 2;
-        if (gTimer < half)
+        // Instantly white with the title already swapped in, then fading out.
+        if (gTimer == 0)
         {
-            Fade(2, (gTimer * 16) / half);
+            EnterTitleLayout();
         }
-        else
-        {
-            if (gTimer == half)
-            {
-                EnterTitleLayout();
-            }
-            Fade(2, 16 - ((gTimer - half) * 16) / half);
-        }
-        if (gShowTitleSprites)
-        {
-            DrawTitleSprites(false);
-        }
+        Fade(2, 16 - (gTimer * 16) / kFlashFrames);
+        DrawTitleSprites(false, false);
         gTimer++;
         if (gTimer >= kFlashFrames)
         {
