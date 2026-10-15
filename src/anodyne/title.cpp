@@ -228,8 +228,8 @@ void DrawTitleSprites(bool pressVisible)
         gSpinAngle = (gSpinAngle + 65536 / 4 / 60) & 0xFFFF;
         obj_aff_rotscale(&obj_aff_mem[kSpinAffine1], 256, 256, static_cast<u16>(gSpinAngle));
         obj_aff_rotscale(&obj_aff_mem[kSpinAffine2], 256, 256, static_cast<u16>(-gSpinAngle));
-        Sprite_DrawAffine(gSpin1, kViewX + 80, kDoorEndY + 32 + kViewY, kSpinAffine1);
-        Sprite_DrawAffine(gSpin2, kViewX + 80, kDoorEndY + 32 + kViewY, kSpinAffine2);
+        Sprite_DrawAffine(gSpin1, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine1);
+        Sprite_DrawAffine(gSpin2, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine2);
     }
     if (gHavePress)
     {
