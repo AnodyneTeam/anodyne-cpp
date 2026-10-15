@@ -61,11 +61,9 @@ std::string Hex(const std::vector<uint8_t>& data)
 
 bool CompileTitle(const ContentPaths& paths)
 {
-    // images[2] is the door with the glow disc (door_glow, at (48, 17)) baked in: the title's spinning glow sprites
-    // blend additively with the BG underneath, and an OBJ can't see another OBJ below it, so the disc has to be BG.
-    Image images[3];
-    const char* const names[3] = { "title_bg", "door", "door" };
-    for (int i = 0; i < 3; i++)
+    Image images[2];
+    const char* const names[2] = { "title_bg", "door" };
+    for (int i = 0; i < 2; i++)
     {
         if (!LoadImage(paths, names[i], images[i]))
         {
@@ -80,29 +78,6 @@ bool CompileTitle(const ContentPaths& paths)
         {
             const unsigned v = images[0].mRgba[i + ch] * 2;
             images[0].mRgba[i + ch] = static_cast<uint8_t>(v > 255 ? 255 : v);
-        }
-    }
-    images[2].mName = "doorglow";
-    {
-        Image glow;
-        if (!LoadImage(paths, "door_glow", glow))
-        {
-            return false;
-        }
-        for (unsigned y = 0; y < glow.mH; y++)
-        {
-            for (unsigned x = 0; x < glow.mW; x++)
-            {
-                const uint8_t* src = &glow.mRgba[(y * glow.mW + x) * 4];
-                if (src[3] >= 128 && 48 + x < images[2].mW && 17 + y < images[2].mH)
-                {
-                    uint8_t* dst = &images[2].mRgba[((17 + y) * images[2].mW + 48 + x) * 4];
-                    dst[0] = src[0];
-                    dst[1] = src[1];
-                    dst[2] = src[2];
-                    dst[3] = 255;
-                }
-            }
         }
     }
 
@@ -183,7 +158,7 @@ bool CompileTitle(const ContentPaths& paths)
 
     for (const Image& img : images)
     {
-        const char* prefix = img.mName == "door" ? "Door" : (img.mName == "doorglow" ? "DoorGlow" : "Bg");
+        const char* prefix = img.mName == "door" ? "Door" : "Bg";
         std::vector<uint16_t> map;
         for (unsigned ty = 0; ty < img.mTilesH; ty++)
         {

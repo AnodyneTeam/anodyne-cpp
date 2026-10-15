@@ -186,12 +186,11 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         return false;
     }
 
-    // Soft glows (alpha gradient of one gold colour). The C# alpha-blends them over the orange glow disc, which only
-    // nudges the disc towards the gold - so as an additive OBJ (BLDALPHA 16/16) store the positive part of
-    // (gold - disc) * alpha, plus a trace of plain gold * alpha so the rays still show faintly over dark areas.
+    // Soft glows (alpha gradient of one gold colour): drawn as additive semi-transparent OBJs (BLDALPHA 16/16) behind
+    // the opaque glow-disc sprite, so they only show outside the disc - like the C# alpha blend of gold over orange,
+    // which is nearly invisible on the disc. Store gold * alpha (a little reduced); near-zero alpha is transparent.
     if (std::string(spec.mTexture).rfind("door_spinglow", 0) == 0)
     {
-        const int disc[3] = { 228, 165, 65 };
         for (size_t i = 0; i + 3 < raw.size(); i += 4)
         {
             const int a = raw[i + 3];
@@ -202,9 +201,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
             }
             for (int ch = 0; ch < 3; ch++)
             {
-                const int toward = raw[i + ch] > disc[ch] ? raw[i + ch] - disc[ch] : 0;
-                const int v = (toward * a + raw[i + ch] * a / 20) / 255;
-                raw[i + ch] = static_cast<uint8_t>(v > 255 ? 255 : v);
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 8 / (255 * 10));
             }
             raw[i + 3] = 255;
         }

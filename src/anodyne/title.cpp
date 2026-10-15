@@ -63,6 +63,7 @@ Sprite gTitleText;
 Sprite gRemake;
 Sprite gPressEnter;
 Sprite gArrow;
+Sprite gGlow;
 Sprite gSpin1;
 Sprite gSpin2;
 Sprite gBox;
@@ -70,6 +71,7 @@ bool gHaveText = false;
 bool gHaveRemake = false;
 bool gHavePress = false;
 bool gHaveArrow = false;
+bool gHaveGlow = false;
 bool gHaveSpin = false;
 bool gHaveBox = false;
 int gPromptBlink = 0;
@@ -173,6 +175,7 @@ void HideAllSprites()
     if (gHaveRemake) { Sprite_Hide(gRemake); }
     if (gHavePress) { Sprite_Hide(gPressEnter); }
     if (gHaveArrow) { Sprite_Hide(gArrow); }
+    if (gHaveGlow) { Sprite_Hide(gGlow); }
     if (gHaveSpin) { Sprite_Hide(gSpin1); Sprite_Hide(gSpin2); }
     if (gHaveBox) { Sprite_Hide(gBox); }
 }
@@ -181,6 +184,7 @@ void DrawTitleSprites(bool pressVisible, bool spin = true)
 {
     if (gHaveText) { Sprite_Draw(gTitleText, kViewX + 16, 16 + kViewY); }
     if (gHaveRemake) { Sprite_Draw(gRemake, kViewX + 45, 47 + kViewY); }
+    if (gHaveGlow) { Sprite_Draw(gGlow, kViewX + 48, kDoorEndY + 17 + kViewY); }
     if (!spin && gHaveSpin)
     {
         // A semi-transparent OBJ ignores the brightness fade of the flash and would show as a dark blob.
@@ -377,14 +381,6 @@ void DrawMenu()
 
 void EnterTitleLayout()
 {
-    // The glow disc is part of the door BG here (see title_compiler.cpp), shown only on the title proper.
-    for (int y = 0; y < title::kDoorGlowTilesH; y++)
-    {
-        for (int x = 0; x < title::kDoorGlowTilesW; x++)
-        {
-            se_mem[kSbDoor][y * 32 + x] = title::kDoorGlowMap[y * title::kDoorGlowTilesW + x];
-        }
-    }
     SetDoorY(kDoorEndY);
     gShowTitleSprites = true;
     ClearText();
@@ -433,6 +429,10 @@ void Title_Enter(ObjVramAllocator& vram)
     ClearText();
 
     int oam = 0;
+    // The opaque glow disc takes the first slot: it sits in front of the (additive) rays, which then only show
+    // outside it, as in the C#.
+    gHaveGlow = Sprite_Create(gGlow, vram, "door_glow", 7, oam);
+    oam += gHaveGlow ? Sprite_OamCount(gGlow) : 0;
     gHaveSpin = Sprite_Create(gSpin1, vram, "door_spinglow1", 9, oam);
     oam += gHaveSpin ? Sprite_OamCount(gSpin1) : 0;
     gHaveSpin = gHaveSpin && Sprite_Create(gSpin2, vram, "door_spinglow2", 10, oam);
@@ -760,12 +760,12 @@ bool Title_Update(int* slot)
 
 void Title_Exit(ObjVramAllocator& vram)
 {
-    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gArrow, &gSpin1, &gSpin2, &gBox };
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSpin1, &gSpin2, &gBox };
     for (Sprite* s : all)
     {
         Sprite_Destroy(*s, vram);
     }
-    gHaveText = gHaveRemake = gHavePress = gHaveArrow = gHaveSpin = gHaveBox = false;
+    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = false;
     REG_DISPCNT |= DCNT_BG3;
     REG_BLDCNT = 0;
     REG_BLDY = 0;
