@@ -56,7 +56,7 @@ void Sprite_Update(Sprite& sprite);
 void Sprite_Draw(const Sprite& sprite, int x, int y, bool hflip = false);
 void Sprite_Hide(const Sprite& sprite);
 
-// Draws a single-OBJ sprite rotated about its centre (double-size affine OBJ, so it isn't clipped), using affine
+// Draws a single-OBJ sprite rotated about its centre (corners of the sprite's own box are clipped), using affine
 // matrix slot `affineIndex` (0-31; fill it with obj_aff_rotscale). (cx, cy) = the sprite's centre in screen pixels.
 // blend = semi-transparent OBJ (blended with BLDALPHA against the BLDCNT target-2 layers).
 void Sprite_DrawAffine(const Sprite& sprite, int cx, int cy, int affineIndex, bool blend = false);

@@ -193,10 +193,13 @@ void Sprite_Hide(const Sprite& sprite)
 void Sprite_DrawAffine(const Sprite& sprite, int cx, int cy, int affineIndex, bool blend)
 {
     const SpritePartData& part = sprite.mSheet->mParts[0];
-    const int x = cx - part.mWidth;
-    const int y = cy - part.mHeight;
+    // Not double-size: an OBJ costs 10 + 2 * box width cycles on every scanline it covers and the budget is 1210, so
+    // four 128px double-size boxes starve the sprites after them (they get clipped). Rotated corners of the
+    // original-size box are cut instead, which only matters for sprites that aren't round.
+    const int x = cx - part.mWidth / 2;
+    const int y = cy - part.mHeight / 2;
     obj_set_attr(&oam_mem[sprite.mOamSlot],
-                 ATTR0_AFF_DBL | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
+                 ATTR0_AFF | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
                  (part.mSize << 14) | ATTR1_AFF_ID(affineIndex) | ATTR1_X(x & 0x1FF),
                  ATTR2_ID(sprite.mVramBlock + part.mTileOffset) | ATTR2_PRIO(sprite.mPriority) | ATTR2_PALBANK(sprite.mPalBank));
 }
