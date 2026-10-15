@@ -13,7 +13,7 @@
 
 namespace
 {
-constexpr int kMaxImageColours = 223; // + transparent index 0
+constexpr int kMaxImageColours = 175; // + transparent index 0 (banks 11-13 hold the overlays and the red prompt)
 
 struct Image final
 {
@@ -201,9 +201,9 @@ bool CompileTitle(const ContentPaths& paths)
         out += "\n};\n";
     }
 
-    if (tiles.size() > 768)
+    if (tiles.size() > 512)
     {
-        printf("ERROR: title needs %zu tiles (max 768)\n", tiles.size());
+        printf("ERROR: title needs %zu tiles (max 512)\n", tiles.size());
         return false;
     }
     std::vector<uint8_t> tileBytes;
@@ -226,6 +226,91 @@ bool CompileTitle(const ContentPaths& paths)
     out += "\n};\n";
     printf("Title: %zu unique tiles, %zu colours, tiles %zu -> %zu bytes\n", tiles.size(), lookup.size() + 1, tileBytes.size(),
            packed.size());
+
+    // ---- lighting overlays (title_overlay1/2): the C# blends them over the screen with a shader; on the GBA they
+    // become a BG of flat 8x8 blocks (the average colour of each block, <= 15 colours) that is alpha-blended on.
+    out += "const unsigned short kOverlayTilesW = 20;\nconst unsigned short kOverlayTilesH = 23;\n";
+    for (int o = 1; o <= 2; o++)
+    {
+        Image ov;
+        if (!LoadImage(paths, o == 1 ? "title_overlay1" : "title_overlay2", ov))
+        {
+            return false;
+        }
+        std::vector<uint16_t> blockColour;
+        for (unsigned ty = 0; ty < 23; ty++)
+        {
+            for (unsigned tx = 0; tx < 20; tx++)
+            {
+                unsigned sum[3] = {};
+                unsigned n = 0;
+                for (unsigned y = ty * 8; y < ty * 8 + 8 && y < ov.mH; y++)
+                {
+                    for (unsigned x = tx * 8; x < tx * 8 + 8 && x < ov.mW; x++)
+                    {
+                        for (int c = 0; c < 3; c++)
+                        {
+                            sum[c] += ov.mRgba[(y * ov.mW + x) * 4 + c];
+                        }
+                        n++;
+                    }
+                }
+                const uint8_t avg[3] = { static_cast<uint8_t>(n ? sum[0] / n : 0), static_cast<uint8_t>(n ? sum[1] / n : 0),
+                                         static_cast<uint8_t>(n ? sum[2] / n : 0) };
+                blockColour.push_back(To555(avg));
+            }
+        }
+        // <= 15 colours: coarsen each channel (drop low bits) until they fit; index 0 stays unused.
+        std::vector<uint16_t> pal(1, 0);
+        std::map<uint16_t, int> palIndex;
+        std::vector<uint16_t> mapped;
+        for (int drop = 0; drop < 5; drop++)
+        {
+            pal.assign(1, 0);
+            palIndex.clear();
+            mapped.clear();
+            const unsigned keep = 5 - drop;
+            bool overflow = false;
+            for (uint16_t c : blockColour)
+            {
+                unsigned ch[3] = { c & 31u, (c >> 5) & 31u, (c >> 10) & 31u };
+                for (unsigned& v : ch)
+                {
+                    v = (v >> (5 - keep)) << (5 - keep);
+                }
+                const uint16_t q = static_cast<uint16_t>(ch[0] | (ch[1] << 5) | (ch[2] << 10));
+                if (!palIndex.count(q))
+                {
+                    if (pal.size() > 15)
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    palIndex[q] = static_cast<int>(pal.size());
+                    pal.push_back(q);
+                }
+                mapped.push_back(static_cast<uint16_t>(palIndex[q]));
+            }
+            if (!overflow)
+            {
+                break;
+            }
+        }
+        pal.resize(16, 0);
+        snprintf(buf, sizeof(buf), "const unsigned short kOverlay%dPal[16] = {", o);
+        out += buf;
+        for (uint16_t c : pal)
+        {
+            out += std::to_string(c) + ",";
+        }
+        snprintf(buf, sizeof(buf), "};\nconst unsigned char kOverlay%dMap[%zu] = {", o, mapped.size());
+        out += buf;
+        for (size_t i = 0; i < mapped.size(); i++)
+        {
+            out += std::string(i % 40 == 0 ? "\n    " : "") + std::to_string(mapped[i]) + ",";
+        }
+        out += "\n};\n";
+    }
 
     // ---- font: 7x8 glyphs in 8x8 4bpp tiles, ink = index 1 ----
     Image font;

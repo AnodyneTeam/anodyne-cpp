@@ -32,8 +32,10 @@ constexpr int kBoxX = kViewX + 2;
 constexpr int kBoxY = 160 - 44 - 2;
 constexpr int kTextCol = (kViewX + 8) / 8;
 constexpr int kTextRow = (kBoxY + 6) / 8;
-constexpr int kTextCols = 18;
-constexpr int kTextLines = 4;
+constexpr int kTextCols = 17;
+constexpr int kTextLines = 3; // 12px apart like the C#: lines 0/2 on BG1, line 1 on BG2 shifted 4px
+constexpr int kSbOverlay = 26;
+constexpr int kCbbSolid = 2;
 constexpr int kCharsPerFrame = 2; // IntroState: DialogueState speed x4
 
 enum class State
@@ -66,7 +68,6 @@ Sprite gArrow;
 Sprite gSpin1;
 Sprite gSpin2;
 Sprite gBox;
-Sprite gBlinky;
 bool gHaveText = false;
 bool gHaveRemake = false;
 bool gHavePress = false;
@@ -74,7 +75,9 @@ bool gHaveGlow = false;
 bool gHaveArrow = false;
 bool gHaveSpin = false;
 bool gHaveBox = false;
-bool gHaveBlinky = false;
+bool gFading = false;
+int gOverlay = 0; // 0 none, 1/2 = title_overlay1/2 as an alpha-blended BG0
+int gPromptBlink = 0;
 int gSpinAngle = 0;
 bool gShowTitleSprites = false;
 
@@ -87,9 +90,55 @@ void PlaySfx(const char* name)
     }
 }
 
+void ApplyOverlay()
+{
+    if (gOverlay)
+    {
+        // BG0 (flat-colour blocks) blended onto BG2/BG3/backdrop: dst + src * 6/16 acts like a light.
+        REG_DISPCNT |= DCNT_BG0;
+        REG_BLDCNT = BLD_BG0 | BLD_STD | ((BLD_BG2 | BLD_BG3 | BLD_BACKDROP) << 8);
+        REG_BLDALPHA = BLDA_BUILD(3, 16);
+    }
+    else
+    {
+        REG_DISPCNT &= ~DCNT_BG0;
+        REG_BLDCNT = 0;
+    }
+}
+
+void SetOverlay(int which)
+{
+    gOverlay = which;
+    if (which)
+    {
+        const uint8_t* map = which == 1 ? title::kOverlay1Map : title::kOverlay2Map;
+        const int bank = which == 1 ? 11 : 12;
+        for (int y = 0; y < title::kOverlayTilesH; y++)
+        {
+            for (int x = 0; x < title::kOverlayTilesW; x++)
+            {
+                se_mem[kSbOverlay][y * 32 + x] = static_cast<uint16_t>(map[y * title::kOverlayTilesW + x] | (bank << 12));
+            }
+        }
+    }
+    if (!gFading)
+    {
+        ApplyOverlay();
+    }
+}
+
 void Fade(int mode, int level)
 {
-    // mode: 0 none, 2 lighten, 3 darken (BLDCNT effect bits 6-7); applies to everything.
+    // mode: 0 none, 2 lighten, 3 darken (BLDCNT effect bits 6-7), applied to everything. The overlay needs the
+    // blend unit for itself, so it is off while fading.
+    if (mode == 0)
+    {
+        gFading = false;
+        ApplyOverlay();
+        return;
+    }
+    gFading = true;
+    REG_DISPCNT &= ~DCNT_BG0;
     REG_BLDCNT = (mode << 6) | 0x3F;
     REG_BLDY = static_cast<uint16_t>(level);
 }
@@ -103,14 +152,19 @@ void ClearText()
 }
 
 // 8x8 glyph cells on BG1, palette bank `bank` (14/15 colour index 1).
-void PutText(int tx, int ty, const char* text, int bank)
+void PutTextOn(int sb, int tx, int ty, const char* text, int bank)
 {
     for (int i = 0; text[i] && tx + i < 32; i++)
     {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         const uint8_t glyph = c < 128 ? title::kFontAscii[c] : 0;
-        se_mem[kSbText][ty * 32 + tx + i] = static_cast<uint16_t>(c == ' ' ? 0 : (glyph + 1) | (bank << 12));
+        se_mem[sb][ty * 32 + tx + i] = static_cast<uint16_t>(c == ' ' ? 0 : (glyph + 1) | (bank << 12));
     }
+}
+
+void PutText(int tx, int ty, const char* text, int bank)
+{
+    PutTextOn(kSbText, tx, ty, text, bank);
 }
 
 void WriteBgRow(int row)
@@ -161,7 +215,6 @@ void HideAllSprites()
     if (gHaveArrow) { Sprite_Hide(gArrow); }
     if (gHaveSpin) { Sprite_Hide(gSpin1); Sprite_Hide(gSpin2); }
     if (gHaveBox) { Sprite_Hide(gBox); }
-    if (gHaveBlinky) { Sprite_Hide(gBlinky); }
 }
 
 void DrawTitleSprites(bool pressVisible)
@@ -253,6 +306,11 @@ void StartBox()
 {
     gReveal = 0;
     gBoxChars = 0;
+    gPromptBlink = 0;
+    for (int i = 0; i < 32 * 32; i++)
+    {
+        se_mem[kSbDoor][i] = 0; // BG2 carries line 1 in the intro (the door is gone by then)
+    }
     for (int l = gBoxFirstLine; l < gLineCount && l < gBoxFirstLine + kTextLines; l++)
     {
         gBoxChars += static_cast<int>(strlen(gLines[l]));
@@ -271,7 +329,8 @@ void DrawBoxText()
         const int n = left < len ? left : len;
         memcpy(buf, line, n);
         buf[n] = 0;
-        PutText(kTextCol, kTextRow + l, buf, 15);
+        // Lines are 12px apart: 0 and 2 sit on the BG1 grid, line 1 on BG2 (scrolled 4px) one row down.
+        PutTextOn(l == 1 ? kSbDoor : kSbText, kTextCol, kTextRow + (l == 0 ? 0 : (l == 1 ? 1 : 3)), buf, 15);
         left -= n;
         if (left <= 0)
         {
@@ -312,8 +371,18 @@ void EnterTitleLayout()
 void Title_Enter(ObjVramAllocator& vram)
 {
     REG_DISPCNT = DCNT_MODE0 | DCNT_BG1 | DCNT_BG2 | DCNT_BG3 | DCNT_OBJ | DCNT_OBJ_1D | DCNT_WIN0;
-    REG_BG0CNT = 0;
-    REG_BG0HOFS = REG_BG0VOFS = REG_BG1HOFS = REG_BG1VOFS = 0;
+    REG_BG0CNT = BG_CBB(kCbbSolid) | BG_SBB(kSbOverlay) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
+    REG_BG0HOFS = static_cast<uint16_t>(-kViewX);
+    REG_BG0VOFS = static_cast<uint16_t>(-kViewY);
+    REG_BG1HOFS = REG_BG1VOFS = 0;
+    for (int i = 0; i < 16; i++)
+    {
+        memset32(&tile_mem[kCbbSolid][i], i * 0x11111111u, 8); // flat tiles: every pixel = colour i
+    }
+    for (int i = 0; i < 32 * 32; i++)
+    {
+        se_mem[kSbOverlay][i] = 0;
+    }
     REG_BG3CNT = BG_CBB(0) | BG_SBB(kSbBg) | BG_8BPP | BG_REG_32x32 | BG_PRIO(3);
     REG_BG2CNT = BG_CBB(0) | BG_SBB(kSbDoor) | BG_8BPP | BG_REG_32x32 | BG_PRIO(2);
     REG_BG1CNT = BG_CBB(kCbbText) | BG_SBB(kSbText) | BG_4BPP | BG_REG_32x32 | BG_PRIO(0);
@@ -322,11 +391,14 @@ void Title_Enter(ObjVramAllocator& vram)
     REG_WININ = 0x3F;
     REG_WINOUT = 0;
 
-    memcpy16(pal_bg_mem, title::kPalette, 224);
-    // Text banks: colour 1 of bank 14 = dim blue-grey (unselected), bank 15 = white (selected).
-    memset16(&pal_bg_mem[224], 0, 32);
-    pal_bg_mem[224 + 1] = RGB15(14, 17, 18);
-    pal_bg_mem[240 + 1] = RGB15(31, 31, 31);
+    memset16(pal_bg_mem, 0, 256);
+    memcpy16(pal_bg_mem, title::kPalette, 176);
+    // 4bpp banks (colour index 1 = ink): 11/12 the lighting overlays, 13 red prompt, 14 dim text, 15 white text.
+    memcpy16(&pal_bg_mem[11 * 16], title::kOverlay1Pal, 16);
+    memcpy16(&pal_bg_mem[12 * 16], title::kOverlay2Pal, 16);
+    pal_bg_mem[13 * 16 + 1] = RGB15(31, 4, 4);
+    pal_bg_mem[14 * 16 + 1] = RGB15(14, 17, 18);
+    pal_bg_mem[15 * 16 + 1] = RGB15(31, 31, 31);
     LZ77UnCompVram(title::kTilesPacked, tile_mem[0]);
     // Glyph tiles start at tile 1 (tile 0 stays blank).
     memset32(&tile_mem[kCbbText][0], 0, 8);
@@ -347,23 +419,21 @@ void Title_Enter(ObjVramAllocator& vram)
     ClearText();
 
     int oam = 0;
-    gHaveText = Sprite_Create(gTitleText, vram, "title_text", 0, oam);
+    gHaveText = Sprite_Create(gTitleText, vram, "title_text", 4, oam);
     oam += gHaveText ? Sprite_OamCount(gTitleText) : 0;
-    gHaveRemake = Sprite_Create(gRemake, vram, "title_remake", 1, oam);
+    gHaveRemake = Sprite_Create(gRemake, vram, "title_remake", 5, oam);
     oam += gHaveRemake ? Sprite_OamCount(gRemake) : 0;
-    gHavePress = Sprite_Create(gPressEnter, vram, "press_enter", 2, oam);
+    gHavePress = Sprite_Create(gPressEnter, vram, "press_enter", 6, oam);
     oam += gHavePress ? Sprite_OamCount(gPressEnter) : 0;
-    gHaveGlow = Sprite_Create(gGlow, vram, "door_glow", 3, oam);
+    gHaveGlow = Sprite_Create(gGlow, vram, "door_glow", 7, oam);
     oam += gHaveGlow ? Sprite_OamCount(gGlow) : 0;
-    gHaveArrow = Sprite_Create(gArrow, vram, "arrows", 4, oam);
+    gHaveArrow = Sprite_Create(gArrow, vram, "arrows", 8, oam);
     oam += gHaveArrow ? Sprite_OamCount(gArrow) : 0;
-    gHaveSpin = Sprite_Create(gSpin1, vram, "door_spinglow1", 5, oam);
+    gHaveSpin = Sprite_Create(gSpin1, vram, "door_spinglow1", 9, oam);
     oam += gHaveSpin ? Sprite_OamCount(gSpin1) : 0;
-    gHaveSpin = gHaveSpin && Sprite_Create(gSpin2, vram, "door_spinglow2", 6, oam);
+    gHaveSpin = gHaveSpin && Sprite_Create(gSpin2, vram, "door_spinglow2", 10, oam);
     oam += gHaveSpin ? Sprite_OamCount(gSpin2) : 0;
-    gHaveBox = Sprite_Create(gBox, vram, "dialogue_box", 7, oam);
-    oam += gHaveBox ? Sprite_OamCount(gBox) : 0;
-    gHaveBlinky = Sprite_Create(gBlinky, vram, "dialogue_blinky_box", 8, oam);
+    gHaveBox = Sprite_Create(gBox, vram, "dialogue_box", 11, oam);
     if (gHaveArrow)
     {
         Sprite_Play(gArrow, "enabledRight");
@@ -404,6 +474,10 @@ bool Title_Update(int* slot)
         }
         else
         {
+            if (gTimer == 60)
+            {
+                SetOverlay(1);
+            }
             Fade(0, 0);
         }
         gDoorSub += kDoorRiseSpeed * 256 / 60;
@@ -435,6 +509,8 @@ bool Title_Update(int* slot)
             if (gTimer == half)
             {
                 EnterTitleLayout();
+                gOverlay = 2;
+                SetOverlay(2);
             }
             Fade(2, 16 - ((gTimer - half) * 16) / half);
         }
@@ -472,6 +548,7 @@ bool Title_Update(int* slot)
         {
             // The menu: background only (door and title art hidden), labels on BG1.
             REG_DISPCNT &= ~DCNT_BG2;
+            SetOverlay(0);
             HideAllSprites();
             gShowTitleSprites = false;
             gState = State::MenuFadeIn;
@@ -520,6 +597,7 @@ bool Title_Update(int* slot)
             PlaySfx("pause_sound");
             REG_DISPCNT |= DCNT_BG2;
             EnterTitleLayout();
+            SetOverlay(2);
             gState = State::Title;
             gTimer = 0;
         }
@@ -536,7 +614,11 @@ bool Title_Update(int* slot)
         gTimer++;
         if (gTimer >= kFadeFrames)
         {
-            REG_DISPCNT &= ~(DCNT_BG2 | DCNT_BG3);
+            SetOverlay(0);
+            REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG3) | DCNT_BG2;
+            REG_BG2CNT = BG_CBB(kCbbText) | BG_SBB(kSbDoor) | BG_4BPP | BG_REG_32x32 | BG_PRIO(0);
+            REG_BG2HOFS = 0;
+            REG_BG2VOFS = static_cast<uint16_t>(-4);
             HideAllSprites();
             ClearText();
             const int32_t bgm = AudioManager_FindBgm("blank");
@@ -559,8 +641,10 @@ bool Title_Update(int* slot)
         if (!full)
         {
             gReveal += kCharsPerFrame;
+            PlaySfx("dialogue_blip");
             if (key_hit(KEY_A) || key_hit(KEY_B))
             {
+                PlaySfx("dialogue_bloop");
                 gReveal = gBoxChars;
             }
             if (gReveal > gBoxChars)
@@ -576,19 +660,11 @@ bool Title_Update(int* slot)
         if (full)
         {
             gTimer++;
-            if (gHaveBlinky)
-            {
-                if ((gTimer / 24) & 1)
-                {
-                    Sprite_Hide(gBlinky);
-                }
-                else
-                {
-                    Sprite_Draw(gBlinky, kBoxX + 156 - 10, kBoxY + 44 - 10);
-                }
-            }
+            // The intro's prompt: the interact key in red, blinking every 0.4s (C# TextBox.introPrompt).
+            PutText((kBoxX + 156 - 12) / 8, (kBoxY + 44 - 14) / 8, ((gTimer / 24) & 1) ? " " : "A", 13);
             if (key_hit(KEY_A) || key_hit(KEY_B))
             {
+                PlaySfx("dialogue_bloop");
                 gTimer = 0;
                 gBoxFirstLine += kTextLines;
                 if (gBoxFirstLine >= gLineCount)
@@ -623,12 +699,12 @@ bool Title_Update(int* slot)
 
 void Title_Exit(ObjVramAllocator& vram)
 {
-    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSpin1, &gSpin2, &gBox, &gBlinky };
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSpin1, &gSpin2, &gBox };
     for (Sprite* s : all)
     {
         Sprite_Destroy(*s, vram);
     }
-    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = gHaveBlinky = false;
+    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = false;
     REG_DISPCNT |= DCNT_BG3;
     REG_BLDCNT = 0;
     REG_BLDY = 0;
