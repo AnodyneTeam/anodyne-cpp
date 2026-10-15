@@ -393,7 +393,8 @@ void Title_Enter(ObjVramAllocator& vram)
     REG_BG0CNT = 0;
     REG_BG0HOFS = REG_BG0VOFS = REG_BG1HOFS = REG_BG1VOFS = 0;
     REG_BG3CNT = BG_CBB(0) | BG_SBB(kSbBg) | BG_8BPP | BG_REG_32x32 | BG_PRIO(3);
-    REG_BG2CNT = BG_CBB(0) | BG_SBB(kSbDoor) | BG_8BPP | BG_REG_32x32 | BG_PRIO(2);
+    // 32x64 (SBB 29-30): the door sits below the screen while it rises, and a 32-row map would wrap it round to the top.
+    REG_BG2CNT = BG_CBB(0) | BG_SBB(kSbDoor) | BG_8BPP | BG_REG_32x64 | BG_PRIO(2);
     REG_BG1CNT = BG_CBB(kCbbText) | BG_SBB(kSbText) | BG_4BPP | BG_REG_32x32 | BG_PRIO(0);
     REG_WIN0H = (kViewX << 8) | (kViewX + 160);
     REG_WIN0V = (0 << 8) | 160;
@@ -412,7 +413,7 @@ void Title_Enter(ObjVramAllocator& vram)
     memcpy32(&tile_mem[kCbbText][1], title::kFontTiles, sizeof(title::kFontTiles) / 4);
 
     // Door map (SBB 29): the door's tiles in the top-left, the rest empty.
-    for (int i = 0; i < 32 * 32; i++)
+    for (int i = 0; i < 32 * 64; i++)
     {
         se_mem[kSbDoor][i] = 0;
     }

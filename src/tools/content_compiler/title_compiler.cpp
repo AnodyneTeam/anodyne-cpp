@@ -28,7 +28,8 @@ struct Image final
 
 uint16_t To555(const uint8_t* p)
 {
-    return static_cast<uint16_t>((p[0] >> 3) | ((p[1] >> 3) << 5) | ((p[2] >> 3) << 10));
+    auto q = [](unsigned v) { return v >= 252 ? 31u : (v + 4) >> 3; }; // round, don't truncate: the title's colours are tiny
+    return static_cast<uint16_t>(q(p[0]) | (q(p[1]) << 5) | (q(p[2]) << 10));
 }
 
 bool LoadImage(const ContentPaths& paths, const std::string& stem, Image& out)
@@ -69,6 +70,16 @@ bool CompileTitle(const ContentPaths& paths)
         if (!LoadImage(paths, names[i], images[i]))
         {
             return false;
+        }
+    }
+    // title_bg is (0,0,0) / (5,7,18): near-black in the C# too. Double it so the scrolling pattern is visible at all
+    // on the GBA's coarser 5-bit colours and LCD.
+    for (size_t i = 0; i + 3 < images[0].mRgba.size(); i += 4)
+    {
+        for (int ch = 0; ch < 3; ch++)
+        {
+            const unsigned v = images[0].mRgba[i + ch] * 2;
+            images[0].mRgba[i + ch] = static_cast<uint8_t>(v > 255 ? 255 : v);
         }
     }
     images[2].mName = "doorglow";
