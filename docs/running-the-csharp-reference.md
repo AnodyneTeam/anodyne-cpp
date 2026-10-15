@@ -13,10 +13,10 @@ side is the quickest way to check how something is supposed to look or behave (t
 ```
 export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH DOTNET_CLI_TELEMETRY_OPTOUT=1
 cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform
-dotnet build -c Release          # ~10s incremental
+dotnet build                     # Debug, ~10s incremental. NOT -c Release (see below)
 ```
 
-Output: `bin/Release/net10.0/AnodyneSharp` (+ `AnodyneSharp.dll`, `Content/`).
+Output: `bin/Debug/net10.0/AnodyneSharp` (+ `AnodyneSharp.dll`, `Content/`).
 
 ## Run
 
@@ -24,7 +24,7 @@ Run it from the output directory - it reads `Content/`, `Settings.json` and writ
 `DOTNET_ROOT` must be set or the apphost fails with "You must install .NET to run this application".
 
 ```
-cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Release/net10.0
+cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0
 export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
 ./AnodyneSharp
 ```
@@ -34,6 +34,8 @@ messages are OpenAL HRTF warnings.
 
 ## Useful bits
 
-- The Debug build in `bin/Debug/net10.0` already existed; use Release as above, or `dotnet build` / `dotnet run`.
+- **Use the Debug build.** The Release build compiles but exits immediately with no window and no error: its `Content/`
+  output lacks the compiled `effects` (shaders), so startup fails silently. Debug's output has them.
+- To check it's running: `xwininfo -root -tree | grep -i anodyne` shows a window titled "Anodyne Fan Remake" (480x540).
 - `RECORDING_SYSTEM.md` in the AnodyneSharp repo describes its input record/playback (handy for comparing sequences).
 - The game's assets are the same ones this repo compiles from `old/Content`.
