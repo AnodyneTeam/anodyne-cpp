@@ -65,6 +65,8 @@ Sprite gPressEnter;
 Sprite gArrow;
 Sprite gGlow;
 Sprite gSpin1;
+Sprite gInner1;
+Sprite gInner2;
 Sprite gSpin2;
 Sprite gBox;
 bool gHaveText = false;
@@ -73,6 +75,7 @@ bool gHavePress = false;
 bool gHaveArrow = false;
 bool gHaveGlow = false;
 bool gHaveSpin = false;
+bool gHaveInner = false;
 bool gHaveBox = false;
 int gPromptBlink = 0;
 int gSpinAngle = 0;
@@ -177,6 +180,7 @@ void HideAllSprites()
     if (gHaveArrow) { Sprite_Hide(gArrow); }
     if (gHaveGlow) { Sprite_Hide(gGlow); }
     if (gHaveSpin) { Sprite_Hide(gSpin1); Sprite_Hide(gSpin2); }
+    if (gHaveInner) { Sprite_Hide(gInner1); Sprite_Hide(gInner2); }
     if (gHaveBox) { Sprite_Hide(gBox); }
 }
 
@@ -190,6 +194,11 @@ void DrawTitleSprites(bool pressVisible, bool spin = true)
         // A semi-transparent OBJ ignores the brightness fade of the flash and would show as a dark blob.
         Sprite_Hide(gSpin1);
         Sprite_Hide(gSpin2);
+        if (gHaveInner)
+        {
+            Sprite_Hide(gInner1);
+            Sprite_Hide(gInner2);
+        }
     }
     if (spin && gHaveSpin)
     {
@@ -199,6 +208,11 @@ void DrawTitleSprites(bool pressVisible, bool spin = true)
         obj_aff_rotscale(&obj_aff_mem[kSpinAffine2], 256, 256, static_cast<u16>(-gSpinAngle));
         Sprite_DrawAffine(gSpin1, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine1, true);
         Sprite_DrawAffine(gSpin2, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine2, true);
+        if (gHaveInner)
+        {
+            Sprite_DrawAffine(gInner1, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine1);
+            Sprite_DrawAffine(gInner2, kViewX + 80, kDoorEndY + 33 + kViewY, kSpinAffine2);
+        }
     }
     if (gHavePress)
     {
@@ -431,6 +445,11 @@ void Title_Enter(ObjVramAllocator& vram)
     int oam = 0;
     // The opaque glow disc takes the first slot: it sits in front of the (additive) rays, which then only show
     // outside it, as in the C#.
+    // Inner rays (opaque, over the disc) take the very first slots, then the disc, then the additive outer rays.
+    gHaveInner = Sprite_Create(gInner1, vram, "door_spinglow1_inner", 12, oam);
+    oam += gHaveInner ? Sprite_OamCount(gInner1) : 0;
+    gHaveInner = gHaveInner && Sprite_Create(gInner2, vram, "door_spinglow2_inner", 13, oam);
+    oam += gHaveInner ? Sprite_OamCount(gInner2) : 0;
     gHaveGlow = Sprite_Create(gGlow, vram, "door_glow", 7, oam);
     oam += gHaveGlow ? Sprite_OamCount(gGlow) : 0;
     gHaveSpin = Sprite_Create(gSpin1, vram, "door_spinglow1", 9, oam);
@@ -760,12 +779,12 @@ bool Title_Update(int* slot)
 
 void Title_Exit(ObjVramAllocator& vram)
 {
-    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSpin1, &gSpin2, &gBox };
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gInner1, &gInner2, &gSpin1, &gSpin2, &gBox };
     for (Sprite* s : all)
     {
         Sprite_Destroy(*s, vram);
     }
-    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = false;
+    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = gHaveInner = false;
     REG_DISPCNT |= DCNT_BG3;
     REG_BLDCNT = 0;
     REG_BLDY = 0;

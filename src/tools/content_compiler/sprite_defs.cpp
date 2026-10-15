@@ -927,6 +927,10 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     } },
     { "door_spinglow2", 64, 64, {
     } },
+    { "door_spinglow1_inner", 64, 64, {
+    } },
+    { "door_spinglow2_inner", 64, 64, {
+    } },
     { "dialogue_box", 156, 44, {
     } },
     { "dialogue_blinky_box", 8, 8, {

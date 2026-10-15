@@ -189,7 +189,35 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
     // Soft glows (alpha gradient of one gold colour): drawn as additive semi-transparent OBJs (BLDALPHA 16/16) behind
     // the opaque glow-disc sprite, so they only show outside the disc - like the C# alpha blend of gold over orange,
     // which is nearly invisible on the disc. Store gold * alpha (a little reduced); near-zero alpha is transparent.
-    if (std::string(spec.mTexture).rfind("door_spinglow", 0) == 0)
+    const std::string texName = spec.mTexture;
+    if (texName.rfind("door_spinglow", 0) == 0 && texName.size() > 6 && texName.compare(texName.size() - 6, 6, "_inner") == 0)
+    {
+        // The part of the glow that lies over the orange disc: opaque, alpha-blended against the disc colour like
+        // the C# does, and cut to a circle (radius 15) that is inside the disc at every rotation. It is drawn in
+        // front of the disc; the outer rays (the plain variant) sit behind it.
+        const int disc[3] = { 228, 165, 65 };
+        const unsigned w = pngW;
+        for (size_t i = 0; i + 3 < raw.size(); i += 4)
+        {
+            const unsigned px = static_cast<unsigned>((i / 4) % w);
+            const unsigned py = static_cast<unsigned>((i / 4) / w);
+            const int dx = static_cast<int>(px) - 32;
+            const int dy = static_cast<int>(py) - 32;
+            const int rawA = raw[i + 3];
+            const int a = rawA * 16 / 10 > 255 ? 255 : rawA * 16 / 10; // the C# glow reads stronger than its raw alpha
+            if (rawA < 6 || dx * dx + dy * dy > 15 * 15)
+            {
+                raw[i + 3] = 0;
+                continue;
+            }
+            for (int ch = 0; ch < 3; ch++)
+            {
+                raw[i + ch] = static_cast<uint8_t>((raw[i + ch] * a + disc[ch] * (255 - a)) / 255);
+            }
+            raw[i + 3] = 255;
+        }
+    }
+    else if (texName.rfind("door_spinglow", 0) == 0)
     {
         for (size_t i = 0; i + 3 < raw.size(); i += 4)
         {
@@ -201,7 +229,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
             }
             for (int ch = 0; ch < 3; ch++)
             {
-                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 8 / (255 * 10));
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 13 / (255 * 10));
             }
             raw[i + 3] = 255;
         }
@@ -332,7 +360,12 @@ std::vector<CompiledSpriteSheet> SpriteCompiler::CompileAll(const ContentPaths& 
     std::vector<CompiledSpriteSheet> sheets;
     for (const SpriteSheetSpec& spec : GetSpriteSheetSpecs())
     {
-        std::string path = contentPaths.FindTexturePath(spec.mTexture);
+        std::string stem = spec.mTexture;
+        if (stem.size() > 6 && stem.compare(stem.size() - 6, 6, "_inner") == 0)
+        {
+            stem.resize(stem.size() - 6); // door_spinglow1_inner bakes door_spinglow1.png differently
+        }
+        std::string path = contentPaths.FindTexturePath(stem);
         if (std::string(spec.mTexture) == "placeholder")
         {
             // 16x16: magenta frame, dark fill, white cross - obviously "not a real sprite".
