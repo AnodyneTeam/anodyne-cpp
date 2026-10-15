@@ -193,7 +193,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
     if (texName.rfind("door_spinglow", 0) == 0 && texName.size() > 6 && texName.compare(texName.size() - 6, 6, "_inner") == 0)
     {
         // The part of the glow that lies over the orange disc: opaque, alpha-blended against the disc colour like
-        // the C# does, and cut to a circle (radius 15) that is inside the disc at every rotation. It is drawn in
+        // the C# does, and cut to a circle (radius 13) that is inside the disc at every rotation. It is drawn in
         // front of the disc; the outer rays (the plain variant) sit behind it.
         const int disc[3] = { 228, 165, 65 };
         const unsigned w = pngW;
@@ -205,7 +205,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
             const int dy = static_cast<int>(py) - 32;
             const int rawA = raw[i + 3];
             const int a = rawA * 14 / 10 > 255 ? 255 : rawA * 14 / 10;
-            if (rawA < 6 || dx * dx + dy * dy > 15 * 15)
+            if (rawA < 6 || dx * dx + dy * dy > 13 * 13)
             {
                 raw[i + 3] = 0;
                 continue;
