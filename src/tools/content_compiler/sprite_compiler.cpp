@@ -186,24 +186,22 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         return false;
     }
 
-    // Soft glows (alpha gradient over one colour): flatten onto a mid-tone background so the 15-colour
-    // palette keeps the falloff (the GBA can't alpha-blend an OBJ here: the title's lighting overlay owns the blend
-    // unit). Near-zero alpha is transparent. The title draws them behind the door's glow disc, where the C# glow
-    // would be gold on orange, i.e. invisible anyway.
+    // Soft glows (alpha gradient over one colour): drawn as additive semi-transparent OBJs (BLDALPHA 16/16), so
+    // store the colour pre-multiplied by its alpha - the blend then adds alpha * colour onto what is underneath.
+    // Near-zero alpha is transparent.
     if (std::string(spec.mTexture).rfind("door_spinglow", 0) == 0)
     {
-        const unsigned dark[3] = { 84, 84, 92 }; // mid-tone: reads as a glow over both the dark pillars and the lit floor
         for (size_t i = 0; i + 3 < raw.size(); i += 4)
         {
             const unsigned a = raw[i + 3];
-            if (a < 10)
+            if (a < 6)
             {
                 raw[i + 3] = 0;
                 continue;
             }
             for (int ch = 0; ch < 3; ch++)
             {
-                raw[i + ch] = static_cast<uint8_t>((raw[i + ch] * a + dark[ch] * (255 - a)) / 255);
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a / 255);
             }
             raw[i + 3] = 255;
         }

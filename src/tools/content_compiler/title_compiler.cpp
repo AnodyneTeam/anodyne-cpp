@@ -13,7 +13,7 @@
 
 namespace
 {
-constexpr int kMaxImageColours = 175; // + transparent index 0 (banks 11-13 hold the overlays and the red prompt)
+constexpr int kMaxImageColours = 175; // + transparent index 0 (banks 13-15 hold the red prompt and the text colours)
 
 struct Image final
 {
@@ -60,13 +60,38 @@ std::string Hex(const std::vector<uint8_t>& data)
 
 bool CompileTitle(const ContentPaths& paths)
 {
-    Image images[2];
-    const char* const names[2] = { "title_bg", "door" };
-    for (int i = 0; i < 2; i++)
+    // images[2] is the door with the glow disc (door_glow, at (48, 17)) baked in: the title's spinning glow sprites
+    // blend additively with the BG underneath, and an OBJ can't see another OBJ below it, so the disc has to be BG.
+    Image images[3];
+    const char* const names[3] = { "title_bg", "door", "door" };
+    for (int i = 0; i < 3; i++)
     {
         if (!LoadImage(paths, names[i], images[i]))
         {
             return false;
+        }
+    }
+    images[2].mName = "doorglow";
+    {
+        Image glow;
+        if (!LoadImage(paths, "door_glow", glow))
+        {
+            return false;
+        }
+        for (unsigned y = 0; y < glow.mH; y++)
+        {
+            for (unsigned x = 0; x < glow.mW; x++)
+            {
+                const uint8_t* src = &glow.mRgba[(y * glow.mW + x) * 4];
+                if (src[3] >= 128 && 48 + x < images[2].mW && 17 + y < images[2].mH)
+                {
+                    uint8_t* dst = &images[2].mRgba[((17 + y) * images[2].mW + 48 + x) * 4];
+                    dst[0] = src[0];
+                    dst[1] = src[1];
+                    dst[2] = src[2];
+                    dst[3] = 255;
+                }
+            }
         }
     }
 
@@ -147,6 +172,7 @@ bool CompileTitle(const ContentPaths& paths)
 
     for (const Image& img : images)
     {
+        const char* prefix = img.mName == "door" ? "Door" : (img.mName == "doorglow" ? "DoorGlow" : "Bg");
         std::vector<uint16_t> map;
         for (unsigned ty = 0; ty < img.mTilesH; ty++)
         {
@@ -189,9 +215,9 @@ bool CompileTitle(const ContentPaths& paths)
             }
         }
         snprintf(buf, sizeof(buf), "const unsigned short k%sTilesW = %u;\nconst unsigned short k%sTilesH = %u;\n",
-                 img.mName == "door" ? "Door" : "Bg", img.mTilesW, img.mName == "door" ? "Door" : "Bg", img.mTilesH);
+                 prefix, img.mTilesW, prefix, img.mTilesH);
         out += buf;
-        snprintf(buf, sizeof(buf), "const unsigned short k%sMap[%zu] = {", img.mName == "door" ? "Door" : "Bg", map.size());
+        snprintf(buf, sizeof(buf), "const unsigned short k%sMap[%zu] = {", prefix, map.size());
         out += buf;
         for (size_t i = 0; i < map.size(); i++)
         {
@@ -226,91 +252,6 @@ bool CompileTitle(const ContentPaths& paths)
     out += "\n};\n";
     printf("Title: %zu unique tiles, %zu colours, tiles %zu -> %zu bytes\n", tiles.size(), lookup.size() + 1, tileBytes.size(),
            packed.size());
-
-    // ---- lighting overlays (title_overlay1/2): the C# blends them over the screen with a shader; on the GBA they
-    // become a BG of flat 8x8 blocks (the average colour of each block, <= 15 colours) that is alpha-blended on.
-    out += "const unsigned short kOverlayTilesW = 20;\nconst unsigned short kOverlayTilesH = 23;\n";
-    for (int o = 1; o <= 2; o++)
-    {
-        Image ov;
-        if (!LoadImage(paths, o == 1 ? "title_overlay1" : "title_overlay2", ov))
-        {
-            return false;
-        }
-        std::vector<uint16_t> blockColour;
-        for (unsigned ty = 0; ty < 23; ty++)
-        {
-            for (unsigned tx = 0; tx < 20; tx++)
-            {
-                unsigned sum[3] = {};
-                unsigned n = 0;
-                for (unsigned y = ty * 8; y < ty * 8 + 8 && y < ov.mH; y++)
-                {
-                    for (unsigned x = tx * 8; x < tx * 8 + 8 && x < ov.mW; x++)
-                    {
-                        for (int c = 0; c < 3; c++)
-                        {
-                            sum[c] += ov.mRgba[(y * ov.mW + x) * 4 + c];
-                        }
-                        n++;
-                    }
-                }
-                const uint8_t avg[3] = { static_cast<uint8_t>(n ? sum[0] / n : 0), static_cast<uint8_t>(n ? sum[1] / n : 0),
-                                         static_cast<uint8_t>(n ? sum[2] / n : 0) };
-                blockColour.push_back(To555(avg));
-            }
-        }
-        // <= 15 colours: coarsen each channel (drop low bits) until they fit; index 0 stays unused.
-        std::vector<uint16_t> pal(1, 0);
-        std::map<uint16_t, int> palIndex;
-        std::vector<uint16_t> mapped;
-        for (int drop = 0; drop < 5; drop++)
-        {
-            pal.assign(1, 0);
-            palIndex.clear();
-            mapped.clear();
-            const unsigned keep = 5 - drop;
-            bool overflow = false;
-            for (uint16_t c : blockColour)
-            {
-                unsigned ch[3] = { c & 31u, (c >> 5) & 31u, (c >> 10) & 31u };
-                for (unsigned& v : ch)
-                {
-                    v = (v >> (5 - keep)) << (5 - keep);
-                }
-                const uint16_t q = static_cast<uint16_t>(ch[0] | (ch[1] << 5) | (ch[2] << 10));
-                if (!palIndex.count(q))
-                {
-                    if (pal.size() > 15)
-                    {
-                        overflow = true;
-                        break;
-                    }
-                    palIndex[q] = static_cast<int>(pal.size());
-                    pal.push_back(q);
-                }
-                mapped.push_back(static_cast<uint16_t>(palIndex[q]));
-            }
-            if (!overflow)
-            {
-                break;
-            }
-        }
-        pal.resize(16, 0);
-        snprintf(buf, sizeof(buf), "const unsigned short kOverlay%dPal[16] = {", o);
-        out += buf;
-        for (uint16_t c : pal)
-        {
-            out += std::to_string(c) + ",";
-        }
-        snprintf(buf, sizeof(buf), "};\nconst unsigned char kOverlay%dMap[%zu] = {", o, mapped.size());
-        out += buf;
-        for (size_t i = 0; i < mapped.size(); i++)
-        {
-            out += std::string(i % 40 == 0 ? "\n    " : "") + std::to_string(mapped[i]) + ",";
-        }
-        out += "\n};\n";
-    }
 
     // ---- font: 7x8 glyphs in 8x8 4bpp tiles, ink = index 1 ----
     Image font;
@@ -360,6 +301,54 @@ bool CompileTitle(const ContentPaths& paths)
         out += buf;
     }
     out += "\n};\n}\n";
+
+    // ---- title credits: lines 2-7 of `npc misc / area any / scene title` ----
+    {
+        std::ifstream dlg(paths.GetDialogPath("EN"));
+        std::string line;
+        bool inMisc = false;
+        bool inAny = false;
+        bool inScene = false;
+        std::vector<std::string> lines;
+        while (std::getline(dlg, line))
+        {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            {
+                line.pop_back();
+            }
+            const size_t b = line.find_first_not_of(" \t");
+            const std::string t = b == std::string::npos ? std::string() : line.substr(b);
+            if (t.rfind("npc ", 0) == 0)
+            {
+                inMisc = t == "npc misc";
+                inAny = inScene = false;
+            }
+            else if (inMisc && t.rfind("area ", 0) == 0)
+            {
+                inAny = t == "area any";
+                inScene = false;
+            }
+            else if (inAny && t == "scene title")
+            {
+                inScene = true;
+            }
+            else if (inScene && t.rfind("end scene", 0) == 0)
+            {
+                break;
+            }
+            else if (inScene && !t.empty() && t[0] != '#')
+            {
+                lines.push_back(t);
+            }
+        }
+        out.resize(out.size() - 2);
+        out += "const char* const kCreditLines[6] = {\n";
+        for (int i = 2; i <= 7 && i < static_cast<int>(lines.size()); i++)
+        {
+            out += "    \"" + lines[i] + "\",\n";
+        }
+        out += "};\n}\n";
+    }
 
     // ---- the new-game intro dialogue (npc sage / area BLANK / scene intro) ----
     {
