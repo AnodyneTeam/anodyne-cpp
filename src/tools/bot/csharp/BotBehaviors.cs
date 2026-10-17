@@ -125,6 +125,8 @@ namespace AnodyneSharp.Recording
                         break;
                     case '+': yield return OpenChests(); break;
                     case 'i': yield return CollectCicada(); break;
+                    case 'o': yield return EnterDoorTo(tok.Substring(1)); break; // o<MAP>: walk through this map's door that leads to MAP
+                    case 'e': yield return Tap(KeyFunctions.Cancel); yield return Wait(30); break; // e: jump (the boots)
                     case 'c':
                     {
                         // DEV ONLY (ANODYNE_BOT_DEV=1): top the card count up to n without earning the cards, to develop the later parts while the
@@ -1076,6 +1078,29 @@ namespace AnodyneSharp.Recording
                 return K(wanted);
             }
             var threats = PredictThreats(except);
+            if (GlobalState.inventory.CanJump && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
+            {
+                // With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
+                // through the volley / the dash instead of waiting for a gap that may never come. Steer in the air towards where we were going.
+                if (Player.state == AnodyneSharp.Entities.PlayerState.AIR)
+                {
+                    Dodged = true;
+                    return K(wanted);
+                }
+                var moving = threats.Where(t => !t.Stationary).ToList();
+                if (moving.Count > 0)
+                {
+                    int hitStill = PlanHitFrameStanding(0, KeyFunctions.Right, 0, moving);
+                    int hitWalk = PlanHitFrame(wanted, 0, wanted, 24, moving);
+                    int first = Math.Min(hitStill == int.MaxValue ? 999 : hitStill, hitWalk == int.MaxValue ? 999 : hitWalk);
+                    if (first <= 22)
+                    {
+                        Dodged = true;
+                        BotRunner.Status += " [jump the hit]";
+                        return K(KeyFunctions.Cancel, wanted);
+                    }
+                }
+            }
             if (look != null && look.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null && PathPlanHit(look, threats) != int.MaxValue
                 && PathPlanHit(look, threats.Where(t => !t.Stationary).ToList()) != int.MaxValue) // a stationary blocker never moves away: waiting for it is pointless, the blocker logic below deals with it
             {
@@ -1580,6 +1605,60 @@ namespace AnodyneSharp.Recording
                 yield return Talking ? AdvanceKeys(i) : K();
             }
             yield return Wait(30);
+        }
+
+        /// <summary>Token o&lt;MAP&gt;: the door of this map that is linked to a door on MAP (e.g. oREDCAVE): walk there and through it.</summary>
+        protected static IEnumerable<object> EnterDoorTo(string spec)
+        {
+            // "MAP" or "MAP@x,y": the door nearest that world position when a map has several doors to the same place
+            string map = spec;
+            Vector2? near = null;
+            if (spec.Contains('@'))
+            {
+                map = spec.Substring(0, spec.IndexOf('@'));
+                var xy = spec.Substring(spec.IndexOf('@') + 1).Split(',');
+                near = new Vector2(float.Parse(xy[0]), float.Parse(xy[1]));
+            }
+            string here = GlobalState.CURRENT_MAP_NAME;
+            var door = AnodyneSharp.Entities.EntityManager.GetMapEntities(here)
+                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && pr.Type.Name != "NexusPad" && pr.Type.Name != "NexusDoor")
+                .Where(pr => string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, map, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(pr => near.HasValue ? (new Vector2(pr.Position.X, pr.Position.Y) - near.Value).Length() : 0f)
+                .FirstOrDefault();
+            if (door == null)
+            {
+                throw new InvalidOperationException($"bot: no door from {here} to {map}");
+            }
+            BotRunner.Status = $"to the door to {map} at {door.Position.X:0},{door.Position.Y:0}";
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  doors of {here}: " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(here).Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door")).Select(pr => $"{pr.Type.Name}@{pr.Position.X:0},{pr.Position.Y:0}->{AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map}")) + $"; taking {door.Position}");
+            }
+            // UpDoor / DownDoor / LeftDoor / RightDoor: the way we walk into it
+            var into = door.Type.Name.StartsWith("Down") ? KeyFunctions.Down : door.Type.Name.StartsWith("Left") ? KeyFunctions.Left : door.Type.Name.StartsWith("Right") ? KeyFunctions.Right : KeyFunctions.Up;
+            // the door tile itself is not floor: go to the tile in front of it (the side we come from)
+            var back = into == KeyFunctions.Up ? new Vector2(0, 22) : into == KeyFunctions.Down ? new Vector2(0, -22) : into == KeyFunctions.Left ? new Vector2(22, 0) : new Vector2(-22, 0);
+            yield return GoGlobal(door.Position.X + back.X, door.Position.Y + back.Y);
+            // line up with the door's own (small) hitbox before walking in
+            var de = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == door.Type.Name && (e.Position - door.Position).Length() < 24);
+            if (de != null)
+            {
+                bool vertical = into == KeyFunctions.Up || into == KeyFunctions.Down;
+                for (int i = 0; i < 120; i++)
+                {
+                    float off = vertical ? (de.Hitbox.Center.X - 5) - Pos.X : (de.Hitbox.Center.Y - 6) - Pos.Y;
+                    if (Math.Abs(off) <= 1.5f)
+                    {
+                        break;
+                    }
+                    yield return K(vertical ? (off < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (off < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                }
+            }
+            for (int i = 0; i < 240 && GlobalState.CURRENT_MAP_NAME == here; i++)
+            {
+                yield return GlobalState.ScreenTransition ? K() : K(into);
+            }
+            yield return Wait(60);
         }
 
         protected static IEnumerable<object> OpenChests()

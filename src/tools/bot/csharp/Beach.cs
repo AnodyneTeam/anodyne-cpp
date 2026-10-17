@@ -30,4 +30,16 @@ namespace AnodyneSharp.Recording
             yield return Section("beach buttons", () => Exec("O1 X1 +"));
         }
     }
+
+    /// <summary>Part 7, the end: the Fisherman on (7,3) (two broom hits), then the whirlpool he was fishing in takes us to the Red Sea.</summary>
+    public class Beach3 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Beach 3: the Fisherman and the whirlpool");
+            yield return Section("beach to the fisherman", () => Exec("O1 X1 >1168,562 W20"));
+            yield return Section("beach fisherman", () => Exec("I1200,576,u W35 A W35 T W200"));
+            yield return Section("beach whirlpool", () => Exec("O1 X0 G1203,572 D50 W200"));
+        }
+    }
 }

@@ -27,13 +27,14 @@ index f25975b..f7cd04d 100644
          }
  
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-index f41eeba..9fba9f2 100644
+index f41eeba..50a4e4b 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
 +++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-@@ -291,6 +291,8 @@
+@@ -291,6 +291,9 @@
      <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest2.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Fields.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Beach.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedSea.cs" />
 +    <Compile Include="$(MSBuildThisFileDirectory)Recording\FightPolicies.cs" />
 +    <Compile Include="$(MSBuildThisFileDirectory)Recording\SpaceTime.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
