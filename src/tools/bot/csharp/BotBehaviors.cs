@@ -466,7 +466,7 @@ namespace AnodyneSharp.Recording
         public static bool DodgeEnabled;
 
         /// <summary>Extra px kept around beam bullets (they leave 12px gaps for a 10px player, so 0 is needed to slip through a dense row).</summary>
-        public static int LaserMargin = 2;
+        public static int LaserMargin = 1;
         private static int _dodgeStreak;
 
         private const float WalkPxPerFrame = 70f / 60f;
@@ -601,6 +601,24 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>The bullets an emitter has not fired yet: it shoots every 31 frames, from the timer's real phase.</summary>
+        /// <summary>True if the point is on an open beam tile or on an emitter's own tile (a bullet spends its first frames there).</summary>
+        private static bool BeamTile(Dictionary<Point, int> lanes, Vector2 p)
+        {
+            var t = BotNav.TileOf(p);
+            if (lanes.ContainsKey(t))
+            {
+                return true;
+            }
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e.GetType().Name == "PewLaser" && BotNav.TileOf(e.Position + new Vector2(8, 8)) == t)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static IEnumerable<Threat> PredictEmitter(Entity em, Dictionary<Point, int> lanes)
         {
             var emThreat = new Threat { Name = "PewLaser", Margin = 1 };
@@ -644,7 +662,7 @@ namespace AnodyneSharp.Recording
                     var r = boxAtSpawn;
                     r.Offset((int)off.X, (int)off.Y);
                     // The bullet is gone once it reaches a wall (or a dust plug): lanes only holds the open beam tiles.
-                    if (lanes.Count > 0 && !lanes.ContainsKey(BotNav.TileOf(new Vector2(r.Center.X - 5, r.Center.Y - 6))))
+                    if (lanes.Count > 0 && !BeamTile(lanes, new Vector2(r.Center.X - 5, r.Center.Y - 6)))
                     {
                         break;
                     }
@@ -679,7 +697,7 @@ namespace AnodyneSharp.Recording
                     var r = d.Hitbox;
                     r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
                     if (bolt && lanes.Count > 0 && d.GetType().DeclaringType == typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser) &&
-                        !lanes.ContainsKey(BotNav.TileOf(new Vector2(r.Center.X - 5, r.Center.Y - 6))))
+                        !BeamTile(lanes, new Vector2(r.Center.X - 5, r.Center.Y - 6)))
                     {
                         break;
                     }
@@ -743,6 +761,125 @@ namespace AnodyneSharp.Recording
         /// <summary>Set by SafeMove when the wanted step runs into an enemy that does not move: waiting never helps, the caller must go round or kill it.</summary>
         public static Entity BlockedBy;
 
+        /// <summary>The first frame at which walking the waypoints (hitbox top-left targets, one axis at a time) meets a predicted danger.</summary>
+        private static int PathPlanHit(List<Vector2> waypoints, List<Threat> threats)
+        {
+            var pb = Player.Hitbox;
+            var pos = new Vector2(pb.X, pb.Y);
+            int f = 0;
+            foreach (var wp in waypoints)
+            {
+                for (int guard = 0; guard < 80 && f < Horizon && (Math.Abs(wp.X - pos.X) > 1f || Math.Abs(wp.Y - pos.Y) > 1f); guard++)
+                {
+                    f++;
+                    var d = Math.Abs(wp.X - pos.X) > 1f ? new Vector2(Math.Sign(wp.X - pos.X), 0) : new Vector2(0, Math.Sign(wp.Y - pos.Y));
+                    pos += d * Math.Min(WalkPxPerFrame, Math.Abs(wp.X - pos.X) > 1f ? Math.Abs(wp.X - pos.X) : Math.Abs(wp.Y - pos.Y));
+                    var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
+                    foreach (var th in threats)
+                    {
+                        var r = th.At[f];
+                        if (r == null)
+                        {
+                            continue;
+                        }
+                        var rr = r.Value;
+                        rr.Inflate(th.Margin, th.Margin);
+                        if (mine.Intersects(rr))
+                        {
+                            return f;
+                        }
+                    }
+                }
+            }
+            return int.MaxValue;
+        }
+
+        private static int _stDumps;
+
+        /// <summary>Writes the planner's inputs (player, goal, predicted dangers, nearby floor) so the case can be replayed in planner_test.</summary>
+        private static void DumpSpaceTimeFixture(string dir, Vector2 goal, List<Threat> threats)
+        {
+            System.IO.Directory.CreateDirectory(dir);
+            var sb = new System.Text.StringBuilder();
+            var pb = Player.Hitbox;
+            sb.AppendLine($"player {pb.X} {pb.Y} {pb.Width} {pb.Height}");
+            sb.AppendLine($"goal {goal.X} {goal.Y}");
+            sb.AppendLine($"horizon {Horizon}");
+            foreach (var t in threats)
+            {
+                sb.AppendLine($"threat {t.Name} {t.Margin} {(t.Stationary ? 1 : 0)}");
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    var r = t.At[f];
+                    sb.AppendLine(r == null ? "-" : $"{r.Value.X} {r.Value.Y} {r.Value.Width} {r.Value.Height}");
+                }
+            }
+            var here = BotNav.TileOf(Pos);
+            sb.AppendLine($"floor {here.X - 15} {here.Y - 15} 31 31");
+            for (int ty = here.Y - 15; ty <= here.Y + 15; ty++)
+            {
+                for (int tx = here.X - 15; tx <= here.X + 15; tx++)
+                {
+                    sb.Append(BotNav.Walkable(new Point(tx, ty)) ? '.' : '#');
+                }
+                sb.AppendLine();
+            }
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, $"st_{BotRunner.Frame}_{_stDumps++}.txt"), sb.ToString());
+        }
+
+        private static int _stCache = -1, _stCacheFrame = -1;
+        private static Vector2 _stCacheGoal;
+
+        private static readonly KeyFunctions[][] StActions =
+        {
+            new KeyFunctions[0],
+            new[] { KeyFunctions.Up }, new[] { KeyFunctions.Down }, new[] { KeyFunctions.Left }, new[] { KeyFunctions.Right },
+            new[] { KeyFunctions.Up, KeyFunctions.Right }, new[] { KeyFunctions.Up, KeyFunctions.Left },
+            new[] { KeyFunctions.Down, KeyFunctions.Right }, new[] { KeyFunctions.Down, KeyFunctions.Left },
+        };
+
+        /// <summary>Keys for the next frame of a plan to `goal` (hitbox top-left) that never meets a predicted danger; null if none (see SpaceTime).</summary>
+        private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats)
+        {
+            var st = new List<StThreat>(threats.Count);
+            foreach (var t in threats)
+            {
+                st.Add(new StThreat { At = t.At, Margin = t.Margin, Stationary = t.Stationary });
+            }
+            // The plan is good for a few frames: re-search every 3rd frame only (a search costs milliseconds).
+            if (_stCacheFrame >= 0 && BotRunner.Frame - _stCacheFrame < 3 && BotRunner.Frame - _stCacheFrame >= 0 && (goal - _stCacheGoal).Length() < 40f)
+            {
+                return _stCache < 0 ? null : StActions[_stCache];
+            }
+            int a = SpaceTime.Plan(Player.Hitbox, goal, st, CornersWalkable, Horizon);
+            if (a < 0)
+            {
+                // Doomed with the comfortable margins: settle for exact geometry (a bullet is exactly its rectangle).
+                foreach (var t in st)
+                {
+                    t.Margin = 0;
+                }
+                a = SpaceTime.Plan(Player.Hitbox, goal, st, CornersWalkable, Horizon);
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_ST_RANGE") is string rng && Environment.GetEnvironmentVariable("ANODYNE_ST_DUMP") is string rdir)
+            {
+                var parts = rng.Split('-');
+                if (BotRunner.Frame >= long.Parse(parts[0]) && BotRunner.Frame <= long.Parse(parts[1]))
+                {
+                    System.Console.Error.WriteLine($"  spacetime f{BotRunner.Frame} -> action {a} at {Player.Hitbox} goal {goal}");
+                    DumpSpaceTimeFixture(rdir, goal, threats);
+                }
+            }
+            if (a < 0 && Environment.GetEnvironmentVariable("ANODYNE_ST_DUMP") is string dumpDir && _stDumps < 60 && BotRunner.Frame % 15 == 0)
+            {
+                DumpSpaceTimeFixture(dumpDir, goal, threats);
+            }
+            _stCache = a;
+            _stCacheFrame = (int)BotRunner.Frame;
+            _stCacheGoal = goal;
+            return a < 0 ? null : StActions[a];
+        }
+
         /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
         protected static KeyFunctions[] StandSafe(Entity except)
         {
@@ -761,7 +898,7 @@ namespace AnodyneSharp.Recording
             return K();
         }
 
-        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false)
+        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
             BlockedBy = null;
@@ -776,12 +913,39 @@ namespace AnodyneSharp.Recording
                 return K(wanted);
             }
             var threats = PredictThreats(except);
+            if (look != null && look.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null && PathPlanHit(look, threats) != int.MaxValue)
+            {
+                // Walking the planned route as it is would meet something that moves (a patroller in a one-tile corridor, a beam):
+                // plan the dash through space and time instead of just the next step.
+                var stl = SpaceTimeMove(look[look.Count - 1], threats);
+                if (Environment.GetEnvironmentVariable("ANODYNE_ST_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  spacetime from {Player.Hitbox} to {look[look.Count - 1]} wanted={wanted}: " + (stl == null ? "none" : stl.Length == 0 ? "wait" : string.Join("+", stl)));
+                }
+                if (stl != null)
+                {
+                    Dodged = stl.Length == 0 || stl.Length > 1 || stl[0] != wanted;
+                    return stl.Length == 0 ? K() : K(stl);
+                }
+            }
             // Frames of walking after the wait: only as far as the step we are taking (the next waypoint), not past it.
             int Run = Math.Clamp((int)Math.Ceiling(dist / WalkPxPerFrame) + 3, 6, 40);
             if (PlanHitFrame(wanted, 0, wanted, Run, threats) == int.MaxValue)
             {
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
+            }
+            if (_lastHitThreat != null && !_lastHitThreat.Stationary && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null)
+            {
+                // The straight way would be hit by something that moves: search for a way through (diagonals, waiting, going round).
+                var pbx = Player.Hitbox;
+                var goalTL = new Vector2(pbx.X, pbx.Y) + DirVector(wanted) * Math.Max(dist, 20f);
+                var st = SpaceTimeMove(goalTL, threats);
+                if (st != null)
+                {
+                    Dodged = st.Length == 0 || st[0] != wanted || st.Length > 1;
+                    return st.Length == 0 ? K() : K(st);
+                }
             }
             if (stopForBlockers && _lastHitThreat != null && _lastHitThreat.Stationary && _lastHitThreat.Source != null && BlockerBudget > 0)
             {
@@ -1621,17 +1785,92 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// Temple (0,1): the way into the main room is a one-tile corridor (row y=288) that a Shieldy patrols. A broom hit from the front
+        /// shoves it 8px along the way we face, so walk in facing east, shove it back each time it comes at us, and gain ground
+        /// whenever it is far; at the gap column (x~100) turn up into the room.
+        /// </summary>
+        protected static IEnumerable<object> PushShieldyAlongCorridor()
+        {
+            int lastSwing = -100;
+            for (int i = 0; i < 2400; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var pb = Player.Hitbox;
+                if (pb.Center.X >= 98 && pb.Bottom <= 284)
+                {
+                    yield break; // in the room above the corridor
+                }
+                var sh = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Shieldy" && e.Hitbox.Y >= 280 && e.Hitbox.Y <= 300);
+                if (sh == null)
+                {
+                    yield break;
+                }
+                BotRunner.Status = "shove the corridor Shieldy east";
+                var sb = sh.Hitbox;
+                if (i % 30 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  corridor f{i} me={pb} shieldy={sb} v={sh.velocity.X:0} facing={Player.facing}");
+                }
+                float rowOff = pb.Center.Y - sb.Center.Y;
+                if (Math.Abs(rowOff) > 3 && sb.Left < 116)
+                {
+                    yield return K(rowOff > 0 ? KeyFunctions.Up : KeyFunctions.Down); // line up with the corridor row
+                    continue;
+                }
+                if (sb.Left >= 116)
+                {
+                    // Shoved far enough east: walk along to the gap column and up into the room.
+                    yield return pb.Center.X < 102 ? K(KeyFunctions.Right) : K(KeyFunctions.Up);
+                    continue;
+                }
+                int gap = sb.Left - pb.Right;
+                if (Player.facing != Facing.RIGHT)
+                {
+                    yield return K(KeyFunctions.Right);
+                    continue;
+                }
+                if (gap < 3)
+                {
+                    yield return K(KeyFunctions.Left); // never touch it
+                    continue;
+                }
+                if (gap > 9)
+                {
+                    yield return K(KeyFunctions.Right);
+                    continue;
+                }
+                if (i - lastSwing > 26)
+                {
+                    lastSwing = i;
+                    yield return K(KeyFunctions.Accept); // a front hit shoves it 8px east
+                    continue;
+                }
+                yield return K();
+            }
+            throw new TimeoutException("bot: could not get past the corridor Shieldy");
+        }
+
+        /// <summary>
         /// Temple screen (0,1): a Shieldy patrols the row under the upper button without touching it. A broom hit from the
         /// front shoves a Shieldy 8px, so hit it from below as it passes under the button (pushing it onto the button), then
         /// hurry to the lower button; the gate opens for good once both are pressed at the same time.
         /// </summary>
         protected static IEnumerable<object> TempleButtonRoom()
         {
-            yield return GoScreenTo(0, 1);
+            if (Grid != new Point(0, 1))
+            {
+                // Step onto the screen at its bottom exit (the main room is entered through a one-tile corridor with a Shieldy in it).
+                yield return GoScreenTo(0, 1);
+            }
             if (!BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Gate"))
             {
                 yield break; // solved on an earlier visit: opened gates stay gone
             }
+            yield return PushShieldyAlongCorridor();
             yield return GoTo(70, 240);
             yield return Hold(1, KeyFunctions.Up);
             int lastSwing = -100;

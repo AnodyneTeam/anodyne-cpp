@@ -577,6 +577,10 @@ namespace AnodyneSharp.Recording
                             System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}")));
                             yield return Exec($"&{Grid.X},{Grid.Y},{Grid.X},{Grid.Y}");
                         }
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine("  BLOCKED tiles: " + string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}")));
+                        }
                         throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
                     }
                 }
@@ -736,7 +740,7 @@ namespace AnodyneSharp.Recording
                         KeyFunctions dir = Math.Abs(dx) > 2f
                             ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                             : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                        var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true);
+                        var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true, look: path.Skip(pi).Take(4).Select(BotNav.CentreOf).ToList());
                         if (BlockedBy != null && blockerHandled < 6)
                         {
                             // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
