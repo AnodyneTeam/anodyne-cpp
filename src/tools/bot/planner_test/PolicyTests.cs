@@ -6,7 +6,7 @@ using System.Linq;
 
 static class PolicyTests
 {
-    static PCtx Ctx(Sim s, Sim.Enemy e) => new PCtx { P = s.PlayerBox, Facing = s.Facing, T = e.Box, TV = e.V, Walk = s.Walk, Others = s.Enemies.Where(o => o != e && !o.Dead).Select(o => o.Box).ToList() };
+    static PCtx Ctx(Sim s, Sim.Enemy e) => new PCtx { P = s.PlayerBox, Facing = s.Facing, T = e.Box, TV = e.V, Walk = s.Walk, Swinging = s.SwingT > 0, Others = s.Enemies.Where(o => o != e && !o.Dead).Select(o => o.Box).ToList() };
 
     // Runs one episode; returns (killed, damage, frames).
     public static int VerboseSeed = -1;

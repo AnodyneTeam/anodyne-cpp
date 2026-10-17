@@ -11,6 +11,7 @@ namespace AnodyneSharp.Recording
     {
         public Rectangle P;          // player hitbox
         public PFacing Facing;
+        public bool Swinging;        // the broom is out (a swing in progress: pressing Accept now does nothing)
         public Rectangle T;          // target hitbox
         public Vector2 TV;           // target velocity (px/s)
         public Func<Rectangle, bool> Walk = _ => true; // is this player-sized rectangle on floor?
@@ -76,7 +77,7 @@ namespace AnodyneSharp.Recording
             }
             m.Swing++;
             float reach = orbiting ? 34 : 27;
-            if (dist < reach && m.Swing - m.LastSwing >= SwingCooldown)
+            if (dist < reach && !c.Swinging && m.Swing - m.LastSwing >= 4)
             {
                 m.LastSwing = m.Swing;
                 return K(PKey.Accept);
@@ -158,7 +159,7 @@ namespace AnodyneSharp.Recording
             {
                 return K(want == PFacing.Left ? PKey.Left : want == PFacing.Right ? PKey.Right : want == PFacing.Up ? PKey.Up : PKey.Down);
             }
-            if ((orbiting || bestD < 27) && m.Swing - m.LastSwing >= SwingCooldown)
+            if ((orbiting || bestD < 27) && !c.Swinging)
             {
                 m.LastSwing = m.Swing;
                 return K(PKey.Accept);
@@ -194,7 +195,7 @@ namespace AnodyneSharp.Recording
                 if (gap <= 12)
                 {
                     m.Swing++;
-                    if (m.Swing - m.LastSwing >= SwingCooldown + 8)
+                    if (!c.Swinging && m.Swing - m.LastSwing >= 24)
                     {
                         m.LastSwing = m.Swing;
                         return K(PKey.Accept);
@@ -313,7 +314,7 @@ namespace AnodyneSharp.Recording
             }
             if (approaching)
             {
-                if (gap >= 12 && gap <= 17 && m.Swing - m.LastSwing >= SwingCooldown + 8)
+                if (gap >= 12 && gap <= 17 && !c.Swinging && m.Swing - m.LastSwing >= 24)
                 {
                     m.Swing++;
                     m.LastSwing = m.Swing;
@@ -327,7 +328,7 @@ namespace AnodyneSharp.Recording
                 }
                 return canBack ? K(PKey.Up) : Dodge();
             }
-            if (gap >= 3 && gap <= 8 && m.Swing - m.LastSwing >= SwingCooldown + 8)
+            if (gap >= 3 && gap <= 8 && !c.Swinging && m.Swing - m.LastSwing >= 24)
             {
                 m.Swing++;
                 m.LastSwing = m.Swing;
@@ -386,7 +387,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (gap <= 9 || gap < 4)
                 {
-                    if (m.Swing - m.LastSwing >= SwingCooldown)
+                    if (!c.Swinging && m.Swing - m.LastSwing >= 4)
                     {
                         var want = face == PKey.Up ? PFacing.Up : face == PKey.Down ? PFacing.Down : face == PKey.Left ? PFacing.Left : PFacing.Right;
                         if (c.Facing != want)

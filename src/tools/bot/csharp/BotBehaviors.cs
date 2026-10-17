@@ -2214,6 +2214,7 @@ namespace AnodyneSharp.Recording
         {
             P = Player.Hitbox,
             Facing = Player.facing switch { Facing.UP => PFacing.Up, Facing.DOWN => PFacing.Down, Facing.LEFT => PFacing.Left, _ => PFacing.Right },
+            Swinging = Player.broom != null && Player.broom.exists,
             T = target.Hitbox,
             TV = target.velocity,
             Walk = CornersWalkable,
