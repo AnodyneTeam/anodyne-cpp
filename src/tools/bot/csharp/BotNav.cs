@@ -1,4 +1,4 @@
-using AnodyneSharp.Entities;
+﻿using AnodyneSharp.Entities;
 using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Registry;
@@ -172,6 +172,37 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Extra tiles the next searches must avoid (e.g. tiles near enemies); set by the caller, cleared with Avoid = null.</summary>
         public static HashSet<Point> Avoid;
+
+        /// <summary>Tiles a PewLaser's beam sweeps: from the emitter in its facing direction until a wall.</summary>
+        public static HashSet<Point> LaneTiles()
+        {
+            var set = new HashSet<Point>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "PewLaser")
+                {
+                    continue;
+                }
+                var d = e.facing switch
+                {
+                    Facing.RIGHT => new Point(1, 0),
+                    Facing.LEFT => new Point(-1, 0),
+                    Facing.UP => new Point(0, -1),
+                    _ => new Point(0, 1)
+                };
+                var t = TileOf(e.Position + new Vector2(8, 8));
+                for (int i = 1; i < 24; i++)
+                {
+                    t = new Point(t.X + d.X, t.Y + d.Y);
+                    if (!Walkable(t))
+                    {
+                        break;
+                    }
+                    set.Add(t);
+                }
+            }
+            return set;
+        }
 
         /// <summary>Tiles within `margin` px of any living enemy except `except`.</summary>
         public static HashSet<Point> NearEnemies(int margin, Entity except = null)

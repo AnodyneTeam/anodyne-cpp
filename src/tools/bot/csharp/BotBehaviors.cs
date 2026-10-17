@@ -1,4 +1,4 @@
-using AnodyneSharp.Entities;
+﻿using AnodyneSharp.Entities;
 using AnodyneSharp.Entities.Enemy;
 using AnodyneSharp.Input;
 using AnodyneSharp.Registry;
@@ -210,7 +210,18 @@ namespace AnodyneSharp.Recording
             }
             if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
             {
+                int closed() => BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Gate" && e.Solid);
+                int before = closed();
                 yield return Fight(1500, soft: true);
+                // Clearing a room usually opens its gates: give them a moment so the route planner does not see them shut.
+                for (int i = 0; i < 240 && before > 0 && closed() >= before && Enemies().Count == 0; i++)
+                {
+                    yield return Talking ? AdvanceKeys(i) : K();
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  gates closed {before} -> {closed()}, enemies {Enemies().Count}");
+                }
             }
         }
 
@@ -276,7 +287,7 @@ namespace AnodyneSharp.Recording
         private const float WalkPxPerFrame = 70f / 60f;
 
         private static readonly System.Text.RegularExpressions.Regex ProjectileName =
-            new("Laser|Goo|Bullet|Fire|Spit|Shot|Bolt|Slash|Burst|Spike|Explosion|Wave", System.Text.RegularExpressions.RegexOptions.Compiled);
+            new("Laser|Goo|Bullet|Fire|Spit|Shot|Bolt|Slash|Burst|Spike|Wave", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         /// <summary>Things that hurt on contact: living enemies and their projectiles (not `except`).</summary>
         protected static List<Entity> Dangers(Entity except = null)
@@ -527,7 +538,7 @@ namespace AnodyneSharp.Recording
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
                         string near = string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}({e.Hitbox.Width}x{e.Hitbox.Height})"));
-                        System.Console.Error.WriteLine($"  HP {_lastHp}->{GlobalState.CUR_HEALTH} f{i} playerBox={Player.Hitbox} enemies: {near}");
+                        System.Console.Error.WriteLine($"  HP {_lastHp}->{GlobalState.CUR_HEALTH} f{i} playerBox={Player.Hitbox} face={Player.facing} lanes={BotNav.LaneTiles().Count} enemies: {near} dangers: " + string.Join(" ", Dangers().Select(d => $"{d.GetType().Name}{d.Hitbox}")));
                     }
                     _lastHp = GlobalState.CUR_HEALTH;
                 }
@@ -583,9 +594,67 @@ namespace AnodyneSharp.Recording
                     }
                     var et = BotNav.TileOf(new Vector2(c.X - 5, c.Y - 6));
                     List<Point> sp = null;
+                    var lanes = BotNav.LaneTiles();
+                    if (lanes.Contains(new Point(et.X, et.Y - 1)) && BotNav.Walkable(new Point(et.X, et.Y + 2)))
+                    {
+                        // A beam runs along the row just above it: shove it up into the beam from below (a front hit moves it 8px).
+                        int gapb = pb.Top - tb.Bottom;
+                        if (Math.Abs(dx) <= 4 && gapb >= -2 && gapb <= 40)
+                        {
+                            if (gapb > 10)
+                            {
+                                yield return K(KeyFunctions.Up);
+                                continue;
+                            }
+                            if (Player.facing != Facing.UP)
+                            {
+                                yield return K(KeyFunctions.Up);
+                                continue;
+                            }
+                            swing++;
+                            if (swing - lastSwing >= SwingCooldown)
+                            {
+                                lastSwing = swing;
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            yield return K();
+                            continue;
+                        }
+                        if (Math.Abs(dx) > 4 && Math.Abs(dy) < 16 && Math.Abs(dx) < 26 && BotNav.Walkable(BotNav.TileOf(Pos + new Vector2(0, 16))))
+                        {
+                            // Level with it and close: its flanks hurt too, so drop down out of its row before circling to the south side.
+                            yield return K(KeyFunctions.Down);
+                            continue;
+                        }
+                        var below = new Point(et.X, et.Y + 2);
+                        List<Point> bp = null;
+                        foreach (int margin in new[] { 20, 12, 5 })
+                        {
+                            BotNav.Avoid = BotNav.NearEnemies(margin, target);
+                            bp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == below, below, strict: true);
+                            BotNav.Avoid = null;
+                            if (bp != null)
+                            {
+                                break;
+                            }
+                        }
+                        if (bp != null && bp.Count > 0)
+                        {
+                            lastStep = bp[0];
+                            var nc = BotNav.CentreOf(bp[0]) + new Vector2(5, 6);
+                            float px = nc.X - me.X, py = nc.Y - me.Y;
+                            yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down), target);
+                            continue;
+                        }
+                    }
                     foreach (int up in new[] { 2, 1 })
                     {
                         var standoff = new Point(et.X, et.Y - up);
+                        if (lanes.Contains(standoff))
+                        {
+                            continue; // a laser sweeps that row: let it do the work instead
+                        }
                         foreach (int margin in new[] { 5, 1, -3 })
                         {
                             BotNav.Avoid = BotNav.NearEnemies(margin);
@@ -616,6 +685,26 @@ namespace AnodyneSharp.Recording
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
                     {
                         System.Console.Error.WriteLine($"  shieldy: no standoff path: me tile {BotNav.TileOf(Pos)} enemy tile {et} walkable above1={BotNav.Walkable(new Point(et.X, et.Y - 1))} above2={BotNav.Walkable(new Point(et.X, et.Y - 2))} dx={dx:0} dy={dy:0}");
+                    }
+                    if (lanes.Count > 0)
+                    {
+                        // No attack spot outside the beams: step out of any lane and let the lasers kill it.
+                        var here = BotNav.TileOf(Pos);
+                        if (lanes.Contains(here))
+                        {
+                            BotNav.Avoid = new HashSet<Point>(lanes);
+                            var op = BotNav.FindPath(here, t => !lanes.Contains(t), here);
+                            BotNav.Avoid = null;
+                            if (op != null && op.Count > 0)
+                            {
+                                var nc = BotNav.CentreOf(op[0]) + new Vector2(5, 6);
+                                float px = nc.X - me.X, py = nc.Y - me.Y;
+                                yield return K(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                                continue;
+                            }
+                        }
+                        yield return K();
+                        continue;
                     }
                     yield return K(KeyFunctions.Up);
                     continue;
