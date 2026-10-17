@@ -2492,8 +2492,12 @@ namespace AnodyneSharp.Recording
                 {
                     // Slimes drift: whichever is nearest is the one that can touch us, so it is always the one to deal with (not the one chosen earlier).
                     var meBox = Player.Hitbox;
-                    target = enemies.Where(e => e.GetType().Name == "Slime")
-                        .OrderBy(e => Math.Max(Math.Max(e.Hitbox.Left - meBox.Right, meBox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - meBox.Bottom, meBox.Top - e.Hitbox.Bottom))).First();
+                    int SlimeGap(Entity e) => Math.Max(Math.Max(e.Hitbox.Left - meBox.Right, meBox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - meBox.Bottom, meBox.Top - e.Hitbox.Bottom));
+                    var nearestSlime = enemies.Where(e => e.GetType().Name == "Slime").OrderBy(SlimeGap).First();
+                    if (SlimeGap(nearestSlime) < 60)
+                    {
+                        target = nearestSlime; // within reach of us: it is the one to deal with
+                    }
                 }
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
