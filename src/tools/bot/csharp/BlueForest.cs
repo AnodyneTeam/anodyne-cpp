@@ -9,7 +9,7 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("Blue Forest: Edward card");
             // Arrive on (2,8). North, west, west, east back through the lower passage, then south to the chest on (1,9).
-            yield return Exec("Qn Qw Qw Qe Qs Qs I176,1536,r W30");
+            yield return Exec("Qn Qw Qw Qe Qs Qs I176,1536,d W30");
 
             yield return Say("Blue Forest: Sage, then the temple door");
             // The Sage stands in the corridor to the temple (4,6); talk to him, then walk up the stairs into the door.

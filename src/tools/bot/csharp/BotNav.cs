@@ -106,6 +106,8 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Entity-made floor hazards (cracked tiles that collapse, holes) the tile data doesn't show.</summary>
+        private static bool _crossCracked;
+
         private static HashSet<Point> Hazards()
         {
             var set = new HashSet<Point>();
@@ -116,7 +118,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 string name = e.GetType().Name;
-                if (name == "CrackedTile" || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
+                if ((name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
                 }
@@ -242,6 +244,19 @@ namespace AnodyneSharp.Recording
                 _respectClosedGates = false;
                 p = FindPathCore(a, isGoal, forced);
                 _respectClosedGates = true;
+            }
+            if (p == null && !strict)
+            {
+                // Cracked tiles only give way after a second of standing on them, so when they are the only way across, run over them.
+                _crossCracked = true;
+                p = FindPathCore(a, isGoal, forced);
+                if (p == null)
+                {
+                    _respectClosedGates = false;
+                    p = FindPathCore(a, isGoal, forced);
+                    _respectClosedGates = true;
+                }
+                _crossCracked = false;
             }
             return p;
         }
