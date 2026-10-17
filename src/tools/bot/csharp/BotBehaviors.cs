@@ -584,8 +584,10 @@ namespace AnodyneSharp.Recording
 
         private static bool CornersWalkable(Rectangle r)
         {
-            return BotNav.Walkable(BotNav.TileOf(new Vector2(r.Left, r.Top))) && BotNav.Walkable(BotNav.TileOf(new Vector2(r.Right - 1, r.Top))) &&
-                   BotNav.Walkable(BotNav.TileOf(new Vector2(r.Left, r.Bottom - 1))) && BotNav.Walkable(BotNav.TileOf(new Vector2(r.Right - 1, r.Bottom - 1)));
+            // Pixel -> tile directly (BotNav.TileOf expects a hitbox top-left and adds half the hitbox size, which is not what a corner is).
+            static Point Px(float x, float y) => new((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+            return BotNav.Walkable(Px(r.Left, r.Top)) && BotNav.Walkable(Px(r.Right - 1, r.Top)) &&
+                   BotNav.Walkable(Px(r.Left, r.Bottom - 1)) && BotNav.Walkable(Px(r.Right - 1, r.Bottom - 1));
         }
 
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
@@ -2459,7 +2461,7 @@ namespace AnodyneSharp.Recording
                 var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
                 if (i % 10 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.X},{e.Hitbox.Center.Y}")) + $" target={target.GetType().Name}");
+                    System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.X},{e.Hitbox.Center.Y}")) + $" target={target.GetType().Name} status=[{BotRunner.Status}]");
                 }
                 if (enemies.FirstOrDefault(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < (forced == null ? 80 : 40)) is Entity nearAnnoyer)
                 {
@@ -2478,6 +2480,69 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
+                if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero)
+                {
+                    // A Shieldy that stands still dies to two downward swings: whenever we are above it, just do that (turn down, boom),
+                    // sliding along its top to line up first. Anything fancier only matters when we are not above it yet.
+                    var tb = target.Hitbox;
+                    var pb = Player.Hitbox;
+                    int gap = tb.Top - pb.Bottom;
+                    float adx = tb.Center.X - pb.Center.X;
+                    if (pb.Center.Y < tb.Center.Y && gap <= 80)
+                    {
+                        // We are north of it: line up on its column, come down to a few px above it, turn down (the turn is one press of Down),
+                        // swing. No planning, no standoff tiles: this is the whole job.
+                        BotRunner.Status = "fight/boom";
+                        if (Math.Abs(adx) <= 6)
+                        {
+                            if (gap < 2)
+                            {
+                                yield return K(KeyFunctions.Up); // touching/overlapping: back off first
+                                continue;
+                            }
+                            if (Player.facing != Facing.DOWN)
+                            {
+                                yield return gap >= 4 ? K(KeyFunctions.Down) : K(KeyFunctions.Up);
+                                continue;
+                            }
+                            if (gap > 9 && WalkableAhead(KeyFunctions.Down, 2))
+                            {
+                                yield return K(KeyFunctions.Down);
+                                continue;
+                            }
+                            if (gap <= 12)
+                            {
+                                swing++;
+                                if (swing - lastSwing >= SwingCooldown + 8)
+                                {
+                                    lastSwing = swing;
+                                    yield return K(KeyFunctions.Accept);
+                                    continue;
+                                }
+                                yield return K();
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            var slideKey = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                            if (i % 60 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"  boom f{i}: adx={adx:0} gap={gap} pb={pb} tb={tb} slide {slideKey} walkable={WalkableAhead(slideKey, 3)} blocked=[{string.Join(" ", BotNav.Blocked.Select(q => q.X + "," + q.Y))}] tiles L={BotNav.Walkable(new Point(26, 15))} {BotNav.Walkable(new Point(26, 14))} {BotNav.Walkable(new Point(27, 15))} {BotNav.Walkable(new Point(27, 14))}");
+                            }
+                            if (gap < 2)
+                            {
+                                yield return K(KeyFunctions.Up);
+                                continue;
+                            }
+                            if (WalkableAhead(slideKey, 3))
+                            {
+                                yield return SafeMove(slideKey, target);
+                                continue;
+                            }
+                        }
+                    }
+                }
                 if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && Target_ColumnAboveClear(target))
                 {
                     // A Shieldy patrolling up and down a column: wait above it facing down, swing when it is in reach, back off between
