@@ -646,17 +646,35 @@ namespace AnodyneSharp.Recording
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
             bool jump = GlobalState.inventory.CanJump;
+            Point lastHere = new(-1, -1);
+            List<Point> plan = null;
             for (int hop = 0; hop < 80; hop++)
             {
                 BotNav.ResetDustCache();
                 var here = BotNav.TileOf(Pos);
+                bool stalled = here == lastHere;
+                lastHere = here;
                 var gs = new Point(goal.X / 10, goal.Y / 10);
                 if (Grid == gs)
                 {
                     yield return RaftTo(gx, gy);
                     yield break;
                 }
-                var route = BotNav.RaftPath(here, OnConveyor(here), goal, jump);
+                // Stick to the plan made earlier while we are on it (re-planning every hop can flip-flop when the dust supply changes).
+                List<Point> route = null;
+                if (plan != null)
+                {
+                    int at = plan.IndexOf(here);
+                    if (at >= 0)
+                    {
+                        route = plan.Skip(at + 1).ToList();
+                    }
+                }
+                if (route == null || route.Count == 0)
+                {
+                    route = BotNav.RaftPath(here, OnConveyor(here), goal, jump);
+                    plan = route == null ? null : new List<Point>(route.Prepend(here));
+                }
                 if (route == null)
                 {
                     throw new InvalidOperationException($"bot: no route from {here} to {goal} on {Map}");
@@ -673,7 +691,15 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 BotRunner.Status = $"on to {way.X},{way.Y}";
+                RaftLog($"hop {hop}: from {here} to {way} (route {route.Count}) pos {Pos} grid {Grid} trans {GlobalState.ScreenTransition}");
                 var wc = BotNav.CentreOf(way);
+                if (stalled && new Point(way.X / 10, way.Y / 10) != Grid)
+                {
+                    // Standing right at a screen edge without crossing: push on in that direction.
+                    var edge = way.X > here.X ? KeyFunctions.Right : way.X < here.X ? KeyFunctions.Left : way.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                    yield return Hold(25, edge);
+                    continue;
+                }
                 int wayIdx = route.IndexOf(way);
                 bool wet = route.Take(wayIdx + 1).Any(t => OnConveyor(t) || BotNav.IsSpike(t));
                 if (false)
@@ -694,17 +720,43 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
+        private static readonly HashSet<System.Guid> _failedChests = new();
+        private static readonly HashSet<System.Guid> _pressedButtons = new();
+
         protected static IEnumerable<object> OpenChests()
         {
             for (int n = 0; n < 30; n++)
             {
                 var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated).ToList();
-                var d = BotNav.DistMap(BotNav.TileOf(Pos), true, null, GlobalState.inventory.CanJump);
-                var best = chests
-                    .Select(pr => (pr, t: BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17))))
-                    .Where(c => d.ContainsKey(c.t))
-                    .OrderBy(c => d[c.t]).Select(c => ((AnodyneSharp.Entities.EntityPreset pr, Point t)?)c).FirstOrDefault();
+                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated && pr.Frame == 2 && !_failedChests.Contains(pr.EntityID)).ToList();
+                BotNav.ResetDustCache();
+                bool jumpOk = GlobalState.inventory.CanJump;
+                var hereT = BotNav.TileOf(Pos);
+                // Buttons whose gates are still shut come first.
+                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID))
+                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
+                    .Where(x => x.rp != null).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
+                if (btn != null)
+                {
+                    _pressedButtons.Add(btn.EntityID);
+                    BotRunner.Status = $"to the button at {btn.Position.X:0},{btn.Position.Y:0}";
+                    yield return GoGlobal(btn.Position.X + 3, btn.Position.Y + 2);
+                    yield return Wait(90);
+                    continue;
+                }
+                (AnodyneSharp.Entities.EntityPreset pr, Point t)? best = null;
+                int bestLen = int.MaxValue;
+                foreach (var pr in chests)
+                {
+                    var t = BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17));
+                    var rp = BotNav.RaftPath(hereT, OnConveyor(hereT), t, jumpOk);
+                    if (rp != null && rp.Count < bestLen)
+                    {
+                        bestLen = rp.Count;
+                        best = (pr, t);
+                    }
+                }
                 if (best == null)
                 {
                     yield break;
@@ -845,7 +897,7 @@ namespace AnodyneSharp.Recording
                 {
                     throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
                 }
-                int wi = path.FindIndex(OnConveyor);
+                int wi = path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
                 if (wi < 0)
                 {
                     yield return GoTo(gx, gy);

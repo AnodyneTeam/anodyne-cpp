@@ -160,7 +160,7 @@ namespace AnodyneSharp.Recording
                 foreach (var d in dirs)
                 {
                     var n = new Point(c.X + d.X, c.Y + d.Y);
-                    bool nw = IsConveyor(n);
+                    bool nw = IsConveyor(n) && !(jump && NarrowWater(n));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
                     {
@@ -287,8 +287,9 @@ namespace AnodyneSharp.Recording
             switch (ev)
             {
                 case CollisionEventType.HOLE:
-                case CollisionEventType.PUDDLE:
                     return false;
+                case CollisionEventType.PUDDLE:
+                    return allow == Touching.NONE; // shallow water: slows you down but can be walked
                 case CollisionEventType.SPIKE:
                     return AllowJump && allow == Touching.NONE;
                 case CollisionEventType.CONVEYOR:
@@ -310,7 +311,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 string name = e.GetType().Name;
-                if ((name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
+                if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
                 }
