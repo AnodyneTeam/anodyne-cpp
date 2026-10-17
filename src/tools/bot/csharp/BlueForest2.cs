@@ -14,7 +14,7 @@ namespace AnodyneSharp.Recording
             yield return Section("forest2 card gate", () => Exec("O1 X1 H4,7 H4,8 H3,8 H3,7 H2,7 H1,7 H0,7 I40,1120,d W90"));
 
             // North through three fighting rooms, east, then south to the health cicada on (1,5).
-            yield return Section("forest2 north", () => Exec("O1 X1 H0,6 V H0,5 H0,4 H0,3 H1,3 H1,4 H1,5 P256,896 W600 T"));
+            yield return Section("forest2 north", () => Exec("g3 O1 X1 H0,6 V H0,5 H0,4 H0,3 H1,3 H1,4 H1,5 P256,896 W600 T"));
 
             // South: four slimes guard the gate on (1,6); then west and down the left column to the green-key gate on (0,9),
             // and through the door below it into the Fields.

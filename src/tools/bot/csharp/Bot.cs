@@ -29,7 +29,7 @@ namespace AnodyneSharp.Recording
         public static bool NoAutoPlug;
         /// <summary>Hearts to be won back after a hit (-1 = no debt); see RecoverFrames.</summary>
         public static int DebtBaseline = -1;
-        public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 240;
+        public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 600;
         private static long _debtSince;
         public static bool PlayBusy;
         private static string _lastBusyName = "";

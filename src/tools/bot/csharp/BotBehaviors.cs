@@ -2672,6 +2672,47 @@ namespace AnodyneSharp.Recording
             return seen;
         }
 
+        /// <summary>
+        /// Where the dog's hitbox will be f frames from now, given that its attack began `e` frames ago aimed at `tPos` (our position then):
+        /// three one-second dashes towards (tPos.X-44, tPos.Y-8), (tPos.X+36, tPos.Y-8), (tPos.X-44, tPos.Y-8) at 66, 84, 84 px/s.
+        /// </summary>
+        private static Func<int, Rectangle?> DogPath(Entity dog, int e, Vector2 tPos)
+        {
+            var start = dog.Position;
+            var hb0 = dog.Hitbox;
+            float[] speeds = { 66f, 84f, 84f };
+            float[] dxs = { -44f, 36f, -44f };
+            var pos = start;
+            var vel = dog.velocity;
+            var cache = new List<Rectangle?>();
+            for (int f = 0; f <= Horizon; f++)
+            {
+                int t = e + f;
+                if (f > 0 && t % 60 == 0)
+                {
+                    int phase = t / 60; // 1.. (phase 0 started the attack)
+                    if (phase <= 2)
+                    {
+                        var target = new Vector2(tPos.X + dxs[phase], tPos.Y - 8);
+                        var dir = target - pos;
+                        vel = dir.Length() < 0.5f ? Vector2.Zero : Vector2.Normalize(dir) * speeds[phase];
+                    }
+                    else
+                    {
+                        vel = Vector2.Zero; // pacing again
+                    }
+                }
+                if (f > 0)
+                {
+                    pos += vel / 60f;
+                }
+                var r = hb0;
+                r.Offset((int)(pos.X - start.X), (int)(pos.Y - start.Y));
+                cache.Add(r);
+            }
+            return f => cache[Math.Min(f, cache.Count - 1)];
+        }
+
         /// <summary>The direction (towards a beam lane that is at most 4 shoves away over open floor) in which to push a Shieldy, or null.</summary>
         private static KeyFunctions? BeamPushDirection(Entity shieldy, HashSet<Point> lanes)
         {
@@ -2715,6 +2756,9 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
             int beamPushes = 0, ambushWaited = 0;
+            bool dogDashing = false;
+            int dogAttackFrame = 0, dogSwingWait = 70;
+            Vector2 dogTPos = Vector2.Zero;
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
                 yield return SeerFight();
@@ -3034,6 +3078,104 @@ namespace AnodyneSharp.Recording
                             yield return K(clear);
                             continue;
                         }
+                    }
+                }
+                // A Dog notices us inside its 96px square, barks for a second (standing still), then runs three one-second dashes: each heads
+                // for a point beside where we stood when the attack began (44px left, 36px right, 44px left, on the row 8px above us), at
+                // 66/84/84px/s, for exactly one second whether it gets there or not; then it paces again. The whole attack is therefore
+                // known in advance: predict it, keep out of its way (the planner), and hit it while it barks or paces.
+                if (target.GetType().Name == "Dog")
+                {
+                    var dg = target.Hitbox;
+                    float dspeed = Math.Abs(target.velocity.X) + Math.Abs(target.velocity.Y);
+                    if (noKill > 0 && noKill < 1200)
+                    {
+                        noKill = 1; // three hits take three barks and three charges: waiting out the charges is not "no progress"
+                    }
+                    if (i % 15 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        var dhf0 = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        System.Console.Error.WriteLine($"  dogstate f{i} health={dhf0?.GetValue(target)} dashing={dogDashing} P={Player.Hitbox} dog={dg} v={target.velocity} status={BotRunner.Status}");
+                    }
+                    if (dspeed > 40f && !dogDashing)
+                    {
+                        dogDashing = true;
+                        dogAttackFrame = 0;
+                        dogTPos = Player.Position; // the position the dog aims at (it samples ours as the attack begins)
+                    }
+                    if (dogDashing)
+                    {
+                        dogAttackFrame++;
+                        if (dogAttackFrame > 190)
+                        {
+                            dogDashing = false;
+                        }
+                    }
+                    if (dogDashing)
+                    {
+                        var path = DogPath(target, dogAttackFrame, dogTPos);
+                        var dogThreat = new Threat { Name = "Dog", Margin = 5, Source = target };
+                        for (int f = 0; f <= Horizon; f++)
+                        {
+                            dogThreat.At[f] = path(f);
+                        }
+                        BotRunner.Status = "fight/dog: out of the way of its dashes";
+                        var pbd = Player.Hitbox;
+                        var away = SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                        {
+                            System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))}");
+                        }
+                        yield return away == null || away.Length == 0 ? K() : K(away);
+                        continue;
+                    }
+                    // barking or pacing: close in to a standoff ~5px short of its box (touching it hurts), line up, face it and swing
+                    var pbs = Player.Hitbox;
+                    float sdx = dg.Center.X - pbs.Center.X, sdy = dg.Center.Y - pbs.Center.Y;
+                    if (Math.Sqrt(sdx * sdx + sdy * sdy) < 60)
+                    {
+                        bool vert = Math.Abs(sdy) >= Math.Abs(sdx);
+                        var faceKey = vert ? (sdy > 0 ? KeyFunctions.Down : KeyFunctions.Up) : (sdx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
+                        var backKey = vert ? (sdy > 0 ? KeyFunctions.Up : KeyFunctions.Down) : (sdx > 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                        int sgap = vert ? (sdy > 0 ? dg.Top - pbs.Bottom : pbs.Top - dg.Bottom) : (sdx > 0 ? dg.Left - pbs.Right : pbs.Left - dg.Right);
+                        float cross = vert ? sdx : sdy;
+                        var wantFacing = faceKey == KeyFunctions.Up ? Facing.UP : faceKey == KeyFunctions.Down ? Facing.DOWN : faceKey == KeyFunctions.Left ? Facing.LEFT : Facing.RIGHT;
+                        dogSwingWait++;
+                        BotRunner.Status = "fight/dog: standoff";
+                        if (sgap < 3)
+                        {
+                            yield return K(backKey);
+                            continue;
+                        }
+                        if (Math.Abs(cross) > 4)
+                        {
+                            var slide = vert ? (cross > 0 ? KeyFunctions.Right : KeyFunctions.Left) : (cross > 0 ? KeyFunctions.Down : KeyFunctions.Up);
+                            yield return K(WalkableAhead(slide, 4) ? slide : faceKey);
+                            continue;
+                        }
+                        if (Player.facing != wantFacing)
+                        {
+                            yield return K(sgap >= 5 ? faceKey : backKey); // turning nudges ~1px towards it
+                            continue;
+                        }
+                        if (sgap > 11)
+                        {
+                            yield return K(faceKey);
+                            continue;
+                        }
+                        if (dogSwingWait >= 70 && !(Player.broom != null && Player.broom.exists))
+                        {
+                            dogSwingWait = 0;
+                            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                            {
+                                var dhf = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                System.Console.Error.WriteLine($"  dog SWING f{i} health={dhf?.GetValue(target)} gap={sgap} cross={cross:0} face={Player.facing}");
+                            }
+                            yield return K(KeyFunctions.Accept);
+                            continue;
+                        }
+                        yield return K();
+                        continue;
                     }
                 }
                 // Hit and owing hearts: a dropped heart that is near and not guarded by an enemy is worth more than the fight (they time out).

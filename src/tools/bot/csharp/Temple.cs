@@ -56,7 +56,7 @@ namespace AnodyneSharp.Recording
             // (1,1): the way to the key gate is down the beam column (the only link between its halves); that costs two hearts, documented
             // (g2), with the beam cost scaled down (y10) so the walk takes it instead of a 70-tile detour, and no dust fetching (p1).
             // Then (1,0): two Shieldies, three Slimes and two lasers; the chest is behind the gate that opens when they are dead.
-            yield return Section("temple Shieldy card", () => Exec("g2 y10 p1 O1 @2 X1 H3,0 H2,0 H2,1 H1,1 I224,160,d W40 g0 y100 p0 H1,0 F I176,16,d W40"));
+            yield return Section("temple Shieldy card", () => Exec("g2 y10 p1 O1 @0 X1 H3,0 H2,0 H2,1 H1,1 I224,160,d W40 g0 y100 p0 @2 H1,0 F I176,16,d W40"));
 
             // Out: down through the entrance door at the bottom of (2,4).
             yield return Section("temple exit", () => Exec("O1 X1 H2,1 H2,2 H2,3 H2,4 Pb405,780 W60"));
