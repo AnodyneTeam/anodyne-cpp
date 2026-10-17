@@ -740,10 +740,26 @@ namespace AnodyneSharp.Recording
                 foreach (var d in dusts.OrderBy(d => (d.Position - Pos).LengthSquared()))
                 {
                     var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                    if (dt == BotNav.TileOf(Pos))
+                    {
+                        // The raft is on the very tile we stand on (a one-tile islet): sweep it from where we are, in each direction.
+                        foreach (var face in new[] { KeyFunctions.Down, KeyFunctions.Up, KeyFunctions.Left, KeyFunctions.Right })
+                        {
+                            yield return Hold(1, face);
+                            yield return Wait(3);
+                            yield return Tap(KeyFunctions.Accept);
+                            yield return Wait(30);
+                            if (Player.broom.dust != null)
+                            {
+                                yield break;
+                            }
+                        }
+                    }
                     BotNav.Avoid = dustTiles;
                     foreach (var o in o4)
                     {
                         var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                        if (attempt == 0) { RaftLog($"pick candidate dust {dt} from {t}: walkable={BotNav.Walkable(t)} reach={ReachableWithJump(t)}"); }
                         if (BotNav.Walkable(t) && !dustTiles.Contains(t) && ReachableWithJump(t))
                         {
                             BotRunner.Status = $"sweeping dust at {dt.X},{dt.Y}";
@@ -813,7 +829,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                bool wetNow = OnConveyor(here) || HasRaft();
+                bool wetNow = OnConveyor(here);
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
                 if (path == null)
                 {
@@ -883,7 +899,7 @@ namespace AnodyneSharp.Recording
                         }
                         break;
                     }
-                    var p2 = BotNav.RaftPath(cur, wet || HasRaft(), goal, jump);
+                    var p2 = BotNav.RaftPath(cur, wet, goal, jump);
                     if (p2 == null || p2.Count == 0)
                     {
                         RaftLog($"ride ends at {cur}: no route (wet={wet})");

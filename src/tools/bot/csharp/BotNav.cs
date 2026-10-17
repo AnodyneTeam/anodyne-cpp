@@ -124,7 +124,13 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            return _dustScreens.Contains((sx, sy));
+            if (_dustScreens.Contains((sx, sy)))
+            {
+                return true;
+            }
+            // A raft left behind (or dust carried) on the screen we are on can be used again.
+            var g = GlobalState.CurrentMapGrid;
+            return g.X == sx && g.Y == sy && (BotRunner.Player.broom.dust != null || System.Linq.Enumerable.Any(BotRunner.Entities(), e => e.GetType().Name == "Dust"));
         }
 
         public static void ResetDustCache() => _dustScreens = null;
