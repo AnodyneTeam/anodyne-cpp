@@ -744,9 +744,14 @@ namespace AnodyneSharp.Recording
             var laneReplanned = new HashSet<Point>();
             var userGoal = isGoal;
             isGoal = t => userGoal(t) && (goalLaneBan == null || !goalLaneBan.Contains(t));
+            string startMap = Map;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 replan:
+                if (Map != startMap)
+                {
+                    yield break; // a door took us to another map part-way: the goal was a tile of the old one, we are through
+                }
                 if (avoidStationary != null)
                 {
                     BotNav.Avoid = avoidStationary;
@@ -873,6 +878,10 @@ namespace AnodyneSharp.Recording
                 var gridAtStart = Grid;
                 for (int pi = 0; pi < path.Count; pi++)
                 {
+                    if (Map != startMap)
+                    {
+                        yield break;
+                    }
                     var tile = path[pi];
                     if (Grid != gridAtStart && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && !laneReplanned.Contains(Grid))
                     {

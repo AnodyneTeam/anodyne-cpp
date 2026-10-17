@@ -958,6 +958,17 @@ namespace AnodyneSharp.Recording
             {
                 return K();
             }
+            // Standing here is about to be hit: search for a way to keep clear over the whole horizon (a first-fit sidestep ran from a patroller
+            // straight into the next danger, then back again).
+            if (Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null)
+            {
+                var pbs = Player.Hitbox;
+                var stay = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), threats, useCache: false);
+                if (stay != null && stay.Length > 0)
+                {
+                    return K(stay);
+                }
+            }
             foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
             {
                 if (WalkableAhead(k, 8) && PlanHitFrame(k, 8, k, 0, threats) == int.MaxValue)
