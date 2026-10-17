@@ -73,3 +73,15 @@ index 3564914..75e6e20 100644
                  else if (arg.StartsWith("-bot=", StringComparison.OrdinalIgnoreCase))
                  {
                      BotPath = arg.Substring("-bot=".Length);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+index f244f53..5d9f201 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+@@ -270,6 +270,7 @@ namespace AnodyneSharp.States
+ 
+             bool updateEntities = _childStates.All(s => s.UpdateEntities);
+             AnodyneSharp.Recording.BotRunner.PlayBusy = _childStates.Count > 0;
++            AnodyneSharp.Recording.BotRunner.PlayBusyName = _childStates.Count > 0 ? string.Join("+", _childStates.Select(c => c.GetType().Name)) : "";
+             AnodyneSharp.Recording.BotRunner.InDeathMenu = _childStates.Any(s => s is DeathState);
+ 
+             if (_childStates.Count > 0)

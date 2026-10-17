@@ -10,12 +10,12 @@ D=$(mktemp -d /tmp/bot/from_XXXXXX); cp -r "$SNAP"/. "$D"/
 export DISPLAY=${DISPLAY:-:0} DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
 # the bot sources live in the C# checkout: rebuild when any is newer than the binary, so a run never uses a stale build
 SRC=/home/snake/dev/AnodyneSharp/AnodyneSharp
-DLL=$SRC/AnodyneSharp.Multiplatform/bin/Debug/net10.0/AnodyneSharp.dll
+DLL=$SRC/AnodyneSharp.Multiplatform/bin/${CONF:-Debug}/net10.0/AnodyneSharp.dll
 if [ -n "$(find $SRC/AnodyneSharp.Shared -name '*.cs' -newer $DLL 2>/dev/null | head -1)" ]; then
-    echo "rebuilding (sources newer than the binary)"; (cd $SRC/AnodyneSharp.Multiplatform && dotnet build 2>&1 | grep -E " error |rror\(s\)" | sort -u | head -5 | tee /tmp/bot/build.log)
+    echo "rebuilding (sources newer than the binary)"; (cd $SRC/AnodyneSharp.Multiplatform && dotnet build -c ${CONF:-Debug} -p:Optimize=true 2>&1 | grep -E " error |rror\(s\)" | sort -u | head -5 | tee /tmp/bot/build.log)
     grep -q " error " /tmp/bot/build.log && { echo "BUILD FAILED"; exit 3; }
 fi
-cd $SRC/AnodyneSharp.Multiplatform/bin/Debug/net10.0
+cd $SRC/AnodyneSharp.Multiplatform/bin/${CONF:-Debug}/net10.0
 ANODYNE_BOT_SECSAVE=/tmp/bot/sec ANODYNE_BOT_SAVEDIR=$D ANODYNE_BOT_KEYS="$TOK" timeout -k 5 ${SECS:-900} ./AnodyneSharp -fast -bot=keys -trace="$D/trace.tsv" 2>&1 | tee /tmp/bot/from.log | grep -aE "BOT FAILED|HIT near" | cut -c1-300
 echo "frames: $(wc -l < $D/trace.tsv)  last: $(tail -1 $D/trace.tsv | cut -f2-6)"
 rm -rf "$D"

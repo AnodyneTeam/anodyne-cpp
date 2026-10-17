@@ -27,6 +27,7 @@ namespace AnodyneSharp.Recording
         };
 
         public static int Nodes; // nodes expanded by the last Plan (for performance tests)
+        public static int CallsThisFrame, NodesThisFrame; // totals since the bot's frame began (the per-frame time budget watchdog reports them)
         public static bool Reached; // did the last Plan reach the goal (true) or only find a plan that stays alive (false)?
 
         /// <returns>The index into Actions of the first block of a surviving plan, or -1 if none survives the horizon.</returns>
@@ -44,10 +45,12 @@ namespace AnodyneSharp.Recording
             int bestLate = -1;
             int deepest = 0; // fallback: the survivor that lasted longest (ties: nearest the goal)
             Nodes = 0;
+            CallsThisFrame++;
             Reached = false;
             while (open.TryDequeue(out int idx, out _) && xs.Count < maxNodes)
             {
                 Nodes++;
+                NodesThisFrame++;
                 float nx = xs[idx], ny = ys[idx];
                 int nt = ts[idx];
                 if (nt > ts[deepest] || (nt == ts[deepest] && Hh(nx, ny) < Hh(xs[deepest], ys[deepest])))

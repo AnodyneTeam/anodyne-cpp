@@ -22,7 +22,11 @@ namespace AnodyneSharp.Recording
         public static Player Player;
 
         /// <summary>PlayState has a child state (dialogue, cutscene, menu...) consuming input.</summary>
+        /// <summary>ANODYNE_ROUTE=100: take the side rooms (cards, secrets) as well as the walkthrough's main path.</summary>
+        public static readonly bool Full100 = Environment.GetEnvironmentVariable("ANODYNE_ROUTE") == "100";
         public static bool PlayBusy;
+        private static string _lastBusyName = "";
+        public static string PlayBusyName = ""; // which child states of the play state are open (for the failure ring)
 
         /// <summary>The "Continue?" menu after dying is open (Up selects Yes, Accept confirms; No would send us to the death room).</summary>
         public static bool InDeathMenu;
@@ -132,6 +136,7 @@ namespace AnodyneSharp.Recording
 
         // Stuck watchdog: nothing observable changed for this many frames.
         private static string _stuckSig = "";
+        private static int _busyFrames;
         private static long _stuckSince;
 
         /// <summary>Frames without any change (position, health, dialogue, keys, screen) before the run is called stuck. Deliberate waits reset the clock.</summary>
@@ -140,10 +145,33 @@ namespace AnodyneSharp.Recording
         /// <summary>Called by steps that stand still on purpose (Wait, standing on a button).</summary>
         public static void NotStuck() => _stuckSince = _botFrame;
 
+        /// <summary>A fade, flash or screen shake is playing (boss death scenes and the like): nothing else changes for a while.</summary>
+        private static bool CutsceneRunning()
+        {
+            try { return GlobalState.flash.Active() || GlobalState.screenShake.Active() || !GlobalState.darkness.ReachedAlpha; }
+            catch { return false; }
+        }
+
         private static void CheckStuck()
         {
             var p = Player;
             string sig = $"{GlobalState.CURRENT_MAP_NAME}|{(p == null ? 0 : (int)p.Position.X)}|{(p == null ? 0 : (int)p.Position.Y)}|{GlobalState.CUR_HEALTH}|{GlobalState.Dialogue}|{GlobalState.inventory.CardCount}|{GlobalState.inventory.GetCurrentMapKeys()}|{GlobalState.ScreenTransition}";
+            // Dialogue and cutscene states (anything the play state has open) do the waiting themselves: the clock only runs once they are over.
+            if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+            {
+                if (++_busyFrames > 9000)
+                {
+                    System.Console.Error.WriteLine($"BOT FAILED: a dialogue/cutscene ({PlayBusyName}) has been open for {_busyFrames} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
+                    DumpRing();
+                    _trace?.Flush();
+                    Environment.Exit(2);
+                }
+                _stuckSince = _botFrame;
+            }
+            else
+            {
+                _busyFrames = 0;
+            }
             if (sig != _stuckSig)
             {
                 _stuckSig = sig;
@@ -151,7 +179,7 @@ namespace AnodyneSharp.Recording
                 return;
             }
             // a long dialogue changes nothing we can see between its pages (same text, same place), so it gets a much longer leash
-            if (_botFrame - _stuckSince > (string.IsNullOrEmpty(GlobalState.Dialogue) ? StuckLimit : 3000) && !_allowRetry)
+            if (_botFrame - _stuckSince > (string.IsNullOrEmpty(GlobalState.Dialogue) && !PlayBusy ? (CutsceneRunning() ? 1500 : StuckLimit) : 3000) && !_allowRetry)
             {
                 System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
@@ -174,7 +202,7 @@ namespace AnodyneSharp.Recording
                     return;
                 }
                 var sb = new System.Text.StringBuilder();
-                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
+                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} busy={PlayBusyName} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
                 foreach (var e in Entities())
                 {
                     if (e.exists && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || e.GetType().Name.StartsWith("Seer")))
@@ -250,7 +278,40 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        // Per-frame time budget: the bot must not be what slows the game down. A frame over SlowFrameMs is reported with its cause, and a
+        // run whose average over a window is over MaxAvgMs is a fatal error (a planner that blows up shows up at once, not as "it feels slow").
+        private static readonly double SlowFrameMs = double.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SLOW_MS"), out double sm) ? sm : 40;
+        private static readonly double MaxAvgMs = double.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_MAX_AVG_MS"), out double am) ? am : 12;
+        private static double _winMs; private static int _winN; private static int _slowReports;
+
         public static Dictionary<Keys, KeyInput.InputState> NextFrame()
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            AnodyneSharp.Recording.SpaceTime.CallsThisFrame = 0;
+            AnodyneSharp.Recording.SpaceTime.NodesThisFrame = 0;
+            var result = NextFrameCore();
+            double ms = sw.Elapsed.TotalMilliseconds;
+            _winMs += ms;
+            if (ms > SlowFrameMs && _slowReports++ < 40)
+            {
+                System.Console.Error.WriteLine($"SLOW BOT FRAME {ms:0.0}ms at f{_botFrame} ({Status}): spacetime calls {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}, nodes {AnodyneSharp.Recording.SpaceTime.NodesThisFrame}");
+            }
+            if (++_winN >= 300)
+            {
+                double avg = _winMs / _winN;
+                if (avg > MaxAvgMs)
+                {
+                    System.Console.Error.WriteLine($"BOT FAILED: the bot itself is slow: {avg:0.0}ms per frame over the last {_winN} frames at f{_botFrame} ({Status}); spacetime calls/nodes in the last frame {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}/{AnodyneSharp.Recording.SpaceTime.NodesThisFrame}");
+                    DumpRing();
+                    _trace?.Flush();
+                    Environment.Exit(4);
+                }
+                _winMs = 0; _winN = 0;
+            }
+            return result;
+        }
+
+        private static Dictionary<Keys, KeyInput.InputState> NextFrameCore()
         {
             KeyFunctions[] held = Array.Empty<KeyFunctions>();
             _botFrame++;
@@ -260,6 +321,11 @@ namespace AnodyneSharp.Recording
                 _stack.Clear();
                 _stack.Push(new KeysOnlyScript().Run().GetEnumerator());
             }
+            if (PlayBusyName != _lastBusyName && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  busy '{_lastBusyName}' -> '{PlayBusyName}' at f{_botFrame} P={Player?.Position} dialogue={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "-" : GlobalState.Dialogue.Substring(0, Math.Min(30, GlobalState.Dialogue.Length)))} ({Status})");
+            }
+            _lastBusyName = PlayBusyName;
             CheckNoDamage();
             CheckStuck();
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SNAP_AT") is string snap && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string sd2)

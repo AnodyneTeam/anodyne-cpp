@@ -15,6 +15,7 @@ namespace AnodyneSharp.Recording
         public Rectangle T;          // target hitbox
         public Vector2 TV;           // target velocity (px/s)
         public Func<Rectangle, bool> Walk = _ => true; // is this player-sized rectangle on floor?
+        public Func<Rectangle, bool> Hazard = _ => false; // is this player-sized rectangle in a beam lane (or otherwise a place not to loiter)?
         public System.Collections.Generic.IList<Rectangle> Others = new Rectangle[0]; // the other living enemies on the screen
     }
 
@@ -184,6 +185,10 @@ namespace AnodyneSharp.Recording
                 {
                     return K(PKey.Up);
                 }
+                if (c.Hazard(pb) && gap > 2 && Ahead(c, PKey.Down, 2))
+                {
+                    return K(PKey.Down); // standing in a beam: get through it to the safe side of the swing spot instead of swinging here
+                }
                 if (c.Facing != PFacing.Down)
                 {
                     return gap >= 4 ? K(PKey.Down) : K(PKey.Up);
@@ -192,7 +197,7 @@ namespace AnodyneSharp.Recording
                 {
                     return K(PKey.Down);
                 }
-                if (gap <= 12)
+                if (gap <= 12 && !c.Hazard(pb))
                 {
                     m.Swing++;
                     if (!c.Swinging && m.Swing - m.LastSwing >= 24)

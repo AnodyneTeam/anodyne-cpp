@@ -299,7 +299,12 @@ namespace AnodyneSharp.Recording
                     }
                     case 'P':
                     {
-                        var xy = tok.Substring(1).Split(',');
+                        // Pb<x>,<y>: only while still inside the dungeon map (the walk before it may already have left through the door)
+                        if (tok.Length > 1 && tok[1] == 'b' && Map != "BEDROOM")
+                        {
+                            break;
+                        }
+                        var xy = tok.Substring(tok.Length > 1 && tok[1] == 'b' ? 2 : 1).Split(',');
                         yield return GoTo(float.Parse(xy[0]), float.Parse(xy[1]));
                         break;
                     }
@@ -871,7 +876,7 @@ namespace AnodyneSharp.Recording
         };
 
         /// <summary>Keys for the next frame of a plan to `goal` (hitbox top-left) that never meets a predicted danger; null if none (see SpaceTime).</summary>
-        private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats)
+        private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats, bool useCache = true)
         {
             var st = new List<StThreat>(threats.Count);
             foreach (var t in threats)
@@ -879,11 +884,14 @@ namespace AnodyneSharp.Recording
                 st.Add(new StThreat { At = t.At, Margin = t.Margin, Stationary = t.Stationary });
             }
             // The plan is good for a few frames: re-search every 3rd frame only (a search costs milliseconds).
-            if (_stCacheFrame >= 0 && BotRunner.Frame - _stCacheFrame < 3 && BotRunner.Frame - _stCacheFrame >= 0 && (goal - _stCacheGoal).Length() < 40f)
+            if (useCache && _stCacheFrame >= 0 && BotRunner.Frame - _stCacheFrame < 3 && BotRunner.Frame - _stCacheFrame >= 0 && (goal - _stCacheGoal).Length() < 40f)
             {
                 return _stCache < 0 ? null : StActions[_stCache];
             }
-            int a = SpaceTime.Plan(Player.Hitbox, goal, st, CornersWalkable, Horizon);
+            var swPlan = System.Diagnostics.Stopwatch.StartNew();
+            var fastWalk = FastWalkable();
+            int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700);
+            if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
             {
                 // Doomed with the comfortable margins: settle for exact geometry (a bullet is exactly its rectangle).
@@ -891,7 +899,7 @@ namespace AnodyneSharp.Recording
                 {
                     t.Margin = 0;
                 }
-                a = SpaceTime.Plan(Player.Hitbox, goal, st, CornersWalkable, Horizon);
+                a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 400);
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_RANGE") is string rng && Environment.GetEnvironmentVariable("ANODYNE_ST_DUMP") is string rdir)
             {
@@ -910,6 +918,31 @@ namespace AnodyneSharp.Recording
             _stCacheFrame = (int)BotRunner.Frame;
             _stCacheGoal = goal;
             return a < 0 ? null : StActions[a];
+        }
+
+        /// <summary>CornersWalkable with the tiles around the player looked up once (a search asks about the same few tiles hundreds of thousands of times).</summary>
+        private static Func<Rectangle, bool> FastWalkable()
+        {
+            var pt = BotNav.TileOf(new Vector2(Player.Hitbox.X, Player.Hitbox.Y));
+            const int R = 14;
+            int ox = pt.X - R, oy = pt.Y - R;
+            var grid = new sbyte[(2 * R + 1) * (2 * R + 1)]; // 0 unknown, 1 walkable, -1 not
+            bool Tile(int tx, int ty)
+            {
+                int gx = tx - ox, gy = ty - oy;
+                if (gx < 0 || gy < 0 || gx > 2 * R || gy > 2 * R)
+                {
+                    return BotNav.Walkable(new Point(tx, ty));
+                }
+                ref sbyte c = ref grid[gy * (2 * R + 1) + gx];
+                if (c == 0)
+                {
+                    c = BotNav.Walkable(new Point(tx, ty)) ? (sbyte)1 : (sbyte)-1;
+                }
+                return c > 0;
+            }
+            return r => Tile((int)Math.Floor(r.Left / 16f), (int)Math.Floor(r.Top / 16f)) && Tile((int)Math.Floor((r.Right - 1) / 16f), (int)Math.Floor(r.Top / 16f)) &&
+                        Tile((int)Math.Floor(r.Left / 16f), (int)Math.Floor((r.Bottom - 1) / 16f)) && Tile((int)Math.Floor((r.Right - 1) / 16f), (int)Math.Floor((r.Bottom - 1) / 16f));
         }
 
         /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
@@ -2287,6 +2320,10 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100;
             bool seerStarted = false;
             int awake = 0;
+            int seerPlanI = -100;
+            KeyFunctions[] seerCachedKeys = null;
+            bool seerCachedWasVulnerable = false;
+            int seerTraceA = int.Parse(Environment.GetEnvironmentVariable("SEER_TRACE_A") ?? "-1"), seerTraceB = int.Parse(Environment.GetEnvironmentVariable("SEER_TRACE_B") ?? "-2");
             int seerLastHearts = GlobalState.CUR_HEALTH;
             string seerLastKeys = "";
             Vector2 seerStart0 = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer")?.Position ?? Vector2.Zero;
@@ -2376,6 +2413,12 @@ namespace AnodyneSharp.Recording
                     yield return K(KeyFunctions.Accept);
                     continue;
                 }
+                if (i - seerPlanI < 3 && seerCachedKeys != null && seerCachedWasVulnerable == vulnerable)
+                {
+                    // Planning is the expensive part (a handful of space-time searches): redo it every third frame and keep walking the plan in between.
+                    yield return seerCachedKeys.Length == 0 ? K() : K(seerCachedKeys);
+                    continue;
+                }
                 // Choose where to be: beside/below the boss at striking distance while it is vulnerable, else the safest spot we can find.
                 Vector2 goal;
                 Facing seerFace = Facing.UP;
@@ -2394,7 +2437,7 @@ namespace AnodyneSharp.Recording
                     seerFace = cands[0].Item2;
                     foreach (var cand in cands)
                     {
-                        var k = SpaceTimeMove(cand.Item1, threats);
+                        var k = SpaceTimeMove(cand.Item1, threats, useCache: false);
                         if (k != null && SpaceTime.Reached)
                         {
                             goal = cand.Item1;
@@ -2411,20 +2454,20 @@ namespace AnodyneSharp.Recording
                 if (waveE != null && waveE.Hitbox.Bottom < pb.Top + 60 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
                 {
                     // The wave sweeps down the whole floor-plan width and dies on the first dust it meets: the only safe place is below the dust line.
-                    goal = new Vector2(Math.Clamp(pb.X, 338, 450), 129);
+                    goal = new Vector2(Math.Clamp(pb.X, 338, 450), 131);
                     BotRunner.Status = "Seer fight: ducking the wave";
                 }
-                var keys = SpaceTimeMove(goal, threats);
+                var keys = SpaceTimeMove(goal, threats, useCache: false);
                 if (vulnerable && keys != null && keys.Length == 0 && Player.facing != seerFace && (new Vector2(pb.X, pb.Y) - goal).Length() < 6)
                 {
                     // arrived at the striking spot: turn to face it
                     keys = new[] { seerFace == Facing.UP ? KeyFunctions.Up : seerFace == Facing.DOWN ? KeyFunctions.Down : seerFace == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right };
                 }
-                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (i % 10 == 0 || (i >= seerTraceA && i <= seerTraceB)))
                 {
                     System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
                 }
-                if ((keys == null || keys.Length == 0) && !StandingSafe(12))
+                if ((keys == null || keys.Length == 0) && !StandingSafe(12) && !(waveE != null && pb.Y >= 129))
                 {
                     // Nothing safe was found and the boss is about to reach us: standing still is the one sure way to be hit. Run for the
                     // direction that keeps us clear of the predicted boss/orb boxes the longest, and furthest from them.
@@ -2444,7 +2487,7 @@ namespace AnodyneSharp.Recording
                         float score = 0;
                         var pos = new Vector2(pb.X, pb.Y);
                         bool ok = true;
-                        for (int f = 1; f <= 16 && ok; f++)
+                        for (int f = 1; f <= 36 && ok; f++)
                         {
                             pos += mv;
                             var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
@@ -2455,7 +2498,7 @@ namespace AnodyneSharp.Recording
                                 if (r == null) { continue; }
                                 var rr = r.Value;
                                 rr.Inflate(th.Margin, th.Margin);
-                                if (mine.Intersects(rr)) { score -= 100 + (17 - f) * 10; }
+                                if (mine.Intersects(rr)) { score -= 100 + (37 - f) * 6; }
                                 else
                                 {
                                     float dx = Math.Max(0, Math.Max(rr.Left - mine.Right, mine.Left - rr.Right));
@@ -2468,6 +2511,9 @@ namespace AnodyneSharp.Recording
                     }
                     if (bestOpt != null) { keys = bestOpt; }
                 }
+                seerPlanI = i;
+                seerCachedKeys = keys;
+                seerCachedWasVulnerable = vulnerable;
                 seerLastKeys = keys == null ? "none" : string.Join("+", keys);
                 yield return keys ?? K();
             }
@@ -2503,8 +2549,33 @@ namespace AnodyneSharp.Recording
             T = target.Hitbox,
             TV = target.velocity,
             Walk = CornersWalkable,
+            Hazard = LaneHazard(),
             Others = Enemies().Where(e => e != target).Select(e => e.Hitbox).ToList()
         };
+
+        /// <summary>A player-sized rectangle that touches a live beam lane (or an emitter's own tile).</summary>
+        private static Func<Rectangle, bool> LaneHazard()
+        {
+            var lanes = BotNav.LaneTiles();
+            if (lanes.Count == 0)
+            {
+                return _ => false;
+            }
+            return r =>
+            {
+                for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
+                {
+                    for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
+                    {
+                        if (lanes.Contains(new Point(tx, ty)))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+        }
 
         /// <summary>A policy's keys as a frame: a plain step goes through the danger-aware SafeMove, anything else (swings, standing) is sent as is.</summary>
         private static KeyFunctions[] PolicyFrame(PKey[] keys, Entity target)
@@ -2856,6 +2927,12 @@ namespace AnodyneSharp.Recording
                 if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero && FightPolicies.BoomStationary(PolicyCtx(target), pmem) is PKey[] boomKeys)
                 {
                     BotRunner.Status = "fight/boom";
+                    if (DodgeEnabled && boomKeys.Length == 1 && boomKeys[0] != PKey.Accept && BotNav.LaneTiles().Count > 0)
+                    {
+                        // beams about: a plain step must time its crossing of them
+                        yield return SafeMove(boomKeys[0] switch { PKey.Up => KeyFunctions.Up, PKey.Down => KeyFunctions.Down, PKey.Left => KeyFunctions.Left, _ => KeyFunctions.Right }, target, 12f);
+                        continue;
+                    }
                     yield return PolicyFrame(boomKeys, target);
                     continue;
                 }
