@@ -99,6 +99,13 @@ namespace AnodyneSharp.Recording
                     }
                     case 'K': yield return TempleLaserDust(); break;
                     case 'k': yield return FillHoles(); break;
+                    case 'l':
+                    {
+                        // l<col>,<rowStart>,<rowEnd>: walk UP a beam column towards its emitter, leapfrogging two dusts (see LeapfrogUp)
+                        var a = tok.Substring(1).Split(',');
+                        yield return LeapfrogUp(int.Parse(a[0]), int.Parse(a[1]), int.Parse(a[2]));
+                        break;
+                    }
                     case '~':
                     {
                         // ~x,y: ride a dust raft over the river to the tile containing world point x,y
@@ -690,6 +697,10 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 bool bolt = name == "Laser";
+                if (bolt && d.velocity == Vector2.Zero)
+                {
+                    continue; // a bullet that has hit something is poofing out: harmless (and standing still, it would look like a wall)
+                }
                 bool still = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
                 var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still };
                 for (int f = 0; f <= Horizon; f++)
@@ -1781,6 +1792,151 @@ namespace AnodyneSharp.Recording
                 yield return StandFaceAccept(13, 21, 'l');
                 yield return StandFaceAccept(12, 21, 'l');
                 yield return Wait(200);
+            }
+        }
+
+        /// <summary>
+        /// Walks up a one-tile column that a PewLaser at its top end fires down, using two loose dusts that take turns being the shield:
+        /// stand on a tile, place the carried dust on the tile ahead (bullets die on it, so everything behind it is safe), step onto it,
+        /// sweep the dust left behind us and place that one ahead in turn. The first plug is placed from the first tile of the column
+        /// at a moment when no bullet is near; from then on every step is in a shadow.
+        /// </summary>
+        protected static IEnumerable<object> LeapfrogUp(int col, int rowStart, int rowEnd)
+        {
+            BotRunner.Status = $"leapfrog up column {col} from {rowStart} to {rowEnd}";
+            // Carry one dust (the one off the beam), the other stays where it is (it is behind us, below the column, in the shadow).
+            yield return PickUpLooseDust(null);
+            if (!_pickedDust)
+            {
+                throw new InvalidOperationException("bot: leapfrog needs a loose dust");
+            }
+            // The shield dust sits on (col,rowStart), where the beam ends: that tile and the ones below it are in its shadow. Stand on it
+            // (low in the tile, so a bullet dying on the dust above never touches us), face up and set the carried dust on the tile ahead.
+            var below = BotNav.CentreOf(new Point(col, rowStart + 1));
+            yield return GoTo(below.X, below.Y);
+            var onShield = BotNav.CentreOf(new Point(col, rowStart)) + new Vector2(0, 3);
+            yield return WalkTo(onShield.X, onShield.Y, tol: 1f);
+            yield return Hold(1, KeyFunctions.Up);
+            yield return Wait(2);
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(14);
+            // Now every tile up to the plug is in its shadow: leapfrog.
+            int row = rowStart;
+            bool haveInHand = false;
+            while (row > rowEnd)
+            {
+                // Standing on `row`; a dust sits on row-1 (just placed). Step onto it, then fetch the dust left behind and place it ahead.
+                row--;
+                var here = BotNav.CentreOf(new Point(col, row)) + new Vector2(0, 3); // low in the tile: a bullet dying on the dust above must not touch us
+                yield return WalkTo(here.X, here.Y, tol: 1f);
+                if (row <= rowEnd)
+                {
+                    break;
+                }
+                // sweep the dust on row+1 (behind us: face down)
+                yield return Hold(1, KeyFunctions.Down);
+                yield return Wait(2);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(14);
+                haveInHand = Player.broom.dust != null;
+                // place it ahead (row-1)
+                yield return WalkTo(here.X, here.Y, tol: 1f);
+                yield return Hold(1, KeyFunctions.Up);
+                yield return Wait(2);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(14);
+            }
+            if (!haveInHand && row > rowEnd)
+            {
+                throw new InvalidOperationException("bot: leapfrog lost its dust");
+            }
+        }
+
+        /// <summary>The first frame at which running a key script (key, frames) from here meets a predicted danger (standing for Accept).</summary>
+        private static int ScriptHits((KeyFunctions key, int frames)[] script, List<Threat> threats, int extraMargin = 0)
+        {
+            var pb = Player.Hitbox;
+            var pos = new Vector2(pb.X, pb.Y);
+            int f = 0;
+            foreach (var (key, frames) in script)
+            {
+                var v = (key == KeyFunctions.Accept ? Vector2.Zero : DirVector(key)) * WalkPxPerFrame;
+                for (int i = 0; i < frames && f < Horizon; i++)
+                {
+                    f++;
+                    pos += v;
+                    var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
+                    foreach (var th in threats)
+                    {
+                        var r = th.At[f];
+                        if (r == null) { continue; }
+                        var rr = r.Value;
+                        rr.Inflate(th.Margin + extraMargin, th.Margin + extraMargin);
+                        if (mine.Intersects(rr))
+                        {
+                            return f;
+                        }
+                    }
+                }
+            }
+            return int.MaxValue;
+        }
+
+        /// <summary>
+        /// Shoves a Shieldy that blocks the way: a broom hit from the front moves it 8px in the direction we face (left, right or up; a
+        /// downward swing hurts it instead). Stand level with it a few px away, face the way we want to go and swing, `swings` times.
+        /// </summary>
+        protected static IEnumerable<object> PushBlocker(Entity b, KeyFunctions dir, int swings = 8)
+        {
+            var face = dir == KeyFunctions.Left ? Facing.LEFT : dir == KeyFunctions.Right ? Facing.RIGHT : dir == KeyFunctions.Up ? Facing.UP : Facing.DOWN;
+            var back = dir == KeyFunctions.Left ? KeyFunctions.Right : dir == KeyFunctions.Right ? KeyFunctions.Left : dir == KeyFunctions.Up ? KeyFunctions.Down : KeyFunctions.Up;
+            bool horiz = dir == KeyFunctions.Left || dir == KeyFunctions.Right;
+            int lastSwing = -100, done = 0;
+            for (int i = 0; i < 500 && done < swings && b.exists; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                BotRunner.Status = $"shove the {b.GetType().Name} {dir}";
+                var pb = Player.Hitbox;
+                var bb = b.Hitbox;
+                float cross = horiz ? pb.Center.Y - bb.Center.Y : pb.Center.X - bb.Center.X;
+                int gap = dir == KeyFunctions.Right ? bb.Left - pb.Right : dir == KeyFunctions.Left ? pb.Left - bb.Right : dir == KeyFunctions.Up ? pb.Top - bb.Bottom : bb.Top - pb.Bottom;
+                if (gap < -2)
+                {
+                    yield break; // we are past it already
+                }
+                if (Math.Abs(cross) > 3)
+                {
+                    var side = horiz ? (cross > 0 ? KeyFunctions.Up : KeyFunctions.Down) : (cross > 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                    yield return gap < 6 ? K(back) : K(side); // line up level with it, not touching
+                    continue;
+                }
+                if (Player.facing != face)
+                {
+                    yield return gap >= 4 ? K(dir) : K(back);
+                    continue;
+                }
+                if (gap < 3)
+                {
+                    yield return K(back);
+                    continue;
+                }
+                if (gap > 9)
+                {
+                    yield return K(dir);
+                    continue;
+                }
+                if (i - lastSwing > 26)
+                {
+                    lastSwing = i;
+                    done++;
+                    yield return K(KeyFunctions.Accept);
+                    continue;
+                }
+                yield return K();
             }
         }
 

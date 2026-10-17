@@ -12,4 +12,4 @@ export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
 cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0
 ANODYNE_BOT_SAVEDIR=$D ANODYNE_BOT_DEBUG=1 ANODYNE_BOT_KEYS="$TOK" timeout -k 5 "$SECS" ./AnodyneSharp $FAST -bot=keys -trace="$D/trace.tsv" 2>&1 | grep -av "AL lib" | cut -c1-260
 python3 "$HERE/damage_report.py" "$D/trace.tsv"
-rm -rf "$D"
+[ -n "$KEEP" ] && cp "$D/trace.tsv" "$KEEP"; rm -rf "$D"

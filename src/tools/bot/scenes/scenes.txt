@@ -5,4 +5,6 @@ shieldy_room_2_2    | 00_temple_Shieldy_room | W30 X0 H2,2 F X1                 
 key1_corridor       | 01_temple_key_1        | W30 H0,4 I16,656,d W20                                                | 300
 key2_rooms          | 02_temple_key_2        | W30 X0 O1 K X1 H0,2 H0,3 H1,3 I176,496,d W20                          | 600
 resave_shieldies    | 03_temple_resave       | W30 X0 H2,2 F X1 V                                                    | 300
-east_button_room    | 04_temple_east         | W30 X0 O1 K X1 H0,2 F X0 # H1,1 O0 % O1 @0 H2,1 B336,176 H2,2 @2 F V X1 | 900
+east_button_room    | 04_temple_east        | W30 X0 O1 K X1 H0,2 F X0 # H1,1 O1 l16,17,12 H2,1 B336,176 H2,2 F V X1 | 900
+leapfrog_column     | 04_temple_east        | W30 wBEDROOM:182,262 W10 O1 l16,17,12 W30 | 150
+corridor_shove      | 04_temple_east        | W30 X0 O1 K X1 H0,2 F X0 # H1,1 | 400

@@ -124,6 +124,32 @@ namespace AnodyneSharp.Recording
         private static readonly bool _allowDamage = Environment.GetEnvironmentVariable("ANODYNE_BOT_ALLOW_DAMAGE") != null;
         private static int _hpSeen = -1, _hpSeenAllow = -1;
 
+        /// <summary>Dev only: let a failing step restart its section (the old behaviour). By default a step that fails is a fatal error.</summary>
+        private static readonly bool _allowRetry = Environment.GetEnvironmentVariable("ANODYNE_BOT_RETRY") != null;
+
+        // Stuck watchdog: nothing observable changed for this many frames.
+        private static string _stuckSig = "";
+        private static long _stuckSince;
+
+        private static void CheckStuck()
+        {
+            var p = Player;
+            string sig = $"{GlobalState.CURRENT_MAP_NAME}|{(p == null ? 0 : (int)p.Position.X)}|{(p == null ? 0 : (int)p.Position.Y)}|{GlobalState.CUR_HEALTH}|{GlobalState.Dialogue}|{GlobalState.inventory.CardCount}|{GlobalState.inventory.GetCurrentMapKeys()}|{GlobalState.ScreenTransition}";
+            if (sig != _stuckSig)
+            {
+                _stuckSig = sig;
+                _stuckSince = _botFrame;
+                return;
+            }
+            if (_botFrame - _stuckSince > 2400 && !_allowRetry)
+            {
+                System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
+                try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
+                _trace?.Flush();
+                Environment.Exit(2);
+            }
+        }
+
         private static void CheckNoDamage()
         {
             if (Player == null)
@@ -172,6 +198,7 @@ namespace AnodyneSharp.Recording
                 _stack.Push(new KeysOnlyScript().Run().GetEnumerator());
             }
             CheckNoDamage();
+            CheckStuck();
             if (Deaths != _lastDeaths)
             {
                 // Died and respawned at the checkpoint: drop whatever helpers were running down to the innermost Section,
@@ -198,7 +225,7 @@ namespace AnodyneSharp.Recording
                 {
                     more = top.MoveNext();
                 }
-                catch (Exception e) when (!(e is BotFatalException) && _stack.Any(s => s is SectionEnumerator))
+                catch (Exception e) when (!(e is BotFatalException) && _allowRetry && _stack.Any(s => s is SectionEnumerator))
                 {
                     // A step inside a retry Section failed (timeout, no path...): drop to the section and let it start over.
                     System.Console.Error.WriteLine("  section step failed, retrying: " + e.Message);
@@ -770,6 +797,11 @@ namespace AnodyneSharp.Recording
                             if (detour != null && detour.Count > 0 && (detour.Count <= path.Count + 20 || !GlobalState.inventory.HasBroom))
                             {
                                 avoidStationary = avoid;
+                            }
+                            else if (GlobalState.inventory.HasBroom && blocker.GetType().Name == "Shieldy")
+                            {
+                                // A shield-bearer in the way: push it along the way we are going (left, right or up), then carry on.
+                                yield return PushBlocker(blocker, dir);
                             }
                             else if (GlobalState.inventory.HasBroom)
                             {

@@ -30,7 +30,7 @@ namespace AnodyneSharp.Recording
             // spend a key the walkthrough needs later, so it is left for the 100% route.
             // (1,1) -> (2,1): plug the laser over the gap column (dodge off for the dash up it), cross east to the room whose button
             // opens its gates, step on it, slip through the bullet row and the corridor down to the (2,2) checkpoint and save.
-            const string ToEast = "X0 O1 K X1 H0,2 F X0 # H1,1 O0 % O1 @0 H2,1 B336,176 H2,2 @2 F V";
+            const string ToEast = "X0 O1 K X1 H0,2 F X0 # H1,1 O1 l16,17,12 H2,1 B336,176 H2,2 F V";
             yield return Section("temple east", () => Exec(ToEast + " X1"));
 
             // East wing: (3,2) Shieldies/Annoyer, then south (3,3) and west (2,3) to the chest with the Red Slime card (@448,592).
