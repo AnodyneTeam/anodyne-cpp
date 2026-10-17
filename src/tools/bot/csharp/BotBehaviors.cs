@@ -165,6 +165,31 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine("JUMPPATH " + (jp == null ? "none" : string.Join(">", jp.Select(q => $"{q.X},{q.Y}{(BotNav.IsJumpable(q) ? "^" : "")}"))) + $" narrow(76,81)={BotNav.NarrowWater(new Point(76, 81))} narrow(76,82)={BotNav.NarrowWater(new Point(76, 82))}");
                         break;
                     }
+                    case 'h':
+                    {
+                        // h<sx>,<sy>,<ox>,<oy>: farm hearts by re-entering screen (sx,sy) (enemies respawn) from (ox,oy) until HP is full
+                        var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
+                        for (int i = 0; i < 10 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH; i++)
+                        {
+                            yield return GoScreenTo(a[0], a[1]);
+                            yield return CollectHearts();
+                            yield return GoScreenTo(a[2], a[3]);
+                        }
+                        break;
+                    }
+                    case 'n':
+                    {
+                        // n<tab>: pause menu -> tab number <tab> (the Map tab) -> "return to the Nexus pad" -> yes
+                        yield return MenuReturnToPad(n);
+                        break;
+                    }
+                    case 'u':
+                    {
+                        // dev: single-frame taps: u<k> with k = 1 Up, 2 Down, 3 Left, 4 Right, 5 Accept, 6 Cancel, 7 Pause
+                        yield return Tap((KeyFunctions)n);
+                        yield return Wait(8);
+                        break;
+                    }
                     case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos}"); break;
                     case '?':
                     {
@@ -782,6 +807,31 @@ namespace AnodyneSharp.Recording
                     yield break; // could not open it; do not loop forever
                 }
             }
+        }
+
+        /// <summary>Opens the pause menu, goes to the Map tab and takes the "return to this area's Nexus pad" warp.</summary>
+        protected static IEnumerable<object> MenuReturnToPad(int tab)
+        {
+            yield return Tap(KeyFunctions.Pause);
+            yield return Wait(20);
+            for (int i = 0; i < 8; i++)
+            {
+                yield return Tap(KeyFunctions.Up);
+                yield return Wait(4);
+            }
+            for (int i = 0; i < tab; i++)
+            {
+                yield return Tap(KeyFunctions.Down);
+                yield return Wait(4);
+            }
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(10);
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(10);
+            yield return Tap(KeyFunctions.Left);
+            yield return Wait(6);
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(120);
         }
 
         private static bool OnConveyor(Point t) => BotNav.CurrentMap.GetTileClass(t).Item2 == AnodyneSharp.MapData.Tiles.CollisionEventType.CONVEYOR;
