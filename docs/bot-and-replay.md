@@ -52,9 +52,19 @@ repeat, so use absolute `H` screen targets. After 40 failures the run stops (`Bo
 `ANODYNE_BOT_SAVEDIR=<dir>`: the game keeps its saves there, so a run that saved at a checkpoint (`V`) can be resumed
 later without replaying the whole route (`-bot=keys` with no `ANODYNE_BOT_PRE` just boots into the save).
 
+Newer tokens: `>x,y` walk to a world point across screens (plans over the whole map: shut gates/doors from the entity presets,
+dust rafts over rivers, jumping spikes and narrow rivers once the boots are owned; fights on arrival) - `~x,y` same but
+within a river crossing - `k` sweep every loose dust on the screen into the hole - `+` open every reachable card chest
+(WIP) - `%`/`K`/`#` temple puzzles. Debug: `$<type>` list the map's entity presets, `&sx,sy,ex,ey` ASCII dump of screens,
+`r<x>,<y>[,s]` print the permissive (or strict, raft-aware) route, `?x,y,...` tile classes, `q` carrying/raft state.
+`ANODYNE_BOT_DEBUG=1` also logs the raft planner (`raft round/hop/step`).
+
 Parts so far (each starts where the previous one ended), in `BotScripts.PartNames`:
-`nexus` (title -> BLANK consoles -> Nexus), `roadway` (Nexus Sage, pad to the Roadway), `overworld1` (Roadway: broom, key,
-lock, teleporter), `temple` (Blue Forest: Edward card, Sage, into the temple), `temple1` (temple: Shieldy room, two keys, the dust-blocked laser column, the Shieldy-and-button room, the first small-key gate).
+`nexus`, `roadway`, `overworld1`, `temple` (Blue Forest: Edward card chest, Sage, into the temple), `temple1` (the whole temple:
+keys, laser/dust and button puzzles, Red Slime card, Seer boss, Shieldy card), `forest2` (Blue Forest 2: Nexus Point, big card gate,
+health cicada, slimes, green-key gate), `fields` (Fields: Miao, Goldman's box and the dust-into-hole cave, the Nexus round trip,
+Finty, Mitra's jump boots, narrow rivers jumped to the left door into the Beach), `beach` (Beach: Nexus Point and the Fisherman
+card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, every part replays identically.
 
 ## Gotchas learned
 
@@ -83,11 +93,14 @@ lock, teleporter), `temple` (Blue Forest: Edward card, Sage, into the temple), `
 
 ## Status
 
-- C# bot: title -> Nexus -> Roadway (broom) -> Blue Forest -> temple entrance (15,961 frames), then in the temple the
-  Shieldy room, both keys, the laser-dust and button puzzles and the first key gate (`temple1`, 41,678 frames); every part
-  replays identically.
-- Not done: the upper temple rooms (2,0)/(2,1), the Red Slime card, the second key gate, the Seer boss, and everything after it; the 100% route
-  and a separate speedrun route. The walkthroughs are room-level, so every room needs its own puzzle/combat logic - this is a
-  long, incremental job.
+- C# bot: title -> Nexus -> Roadway -> Blue Forest -> the whole temple -> Blue Forest 2 -> Fields (boots) -> Beach, 6 cards
+  (`beach` golden, 98,463 frames, replay identical).
+- Work in progress (not in the goldens): crossing the Fields lake on dust rafts (the planner finds the walkthrough's route and a
+  dev run from a save reaches the button on Mitra's screen, but inside the retry-section chain a failed first attempt leaves the bot
+  somewhere the planner cannot recover from), the Miao and Mitra cards (the Beach card gate on (0,4) needs more than 6 cards),
+  and the Beach button/gate rooms.
+- Not done: everything after the Beach (whirlpool, Red Sea, Red Cave, ...), the 100% route and a separate speedrun route.
+  The walkthroughs are room-level, so every room needs its own puzzle/combat logic - this is a long, incremental job.
 - GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the
-  C# run (`compare_milestones.py`); the Nexus Sage, Roadway and later have no behaviour on the GBA yet.
+  C# run (`compare_milestones.py`); the Nexus Sage, Roadway and later have no behaviour on the GBA yet, so the later goldens
+  are the target the GBA port should reproduce as it grows.
