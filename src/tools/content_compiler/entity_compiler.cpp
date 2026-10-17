@@ -165,6 +165,9 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
         const int frame = std::atoi(attrs["frame"].c_str());
         std::string sheet = "placeholder";
         bool useFrame = false;
+        int kind = 0;
+        int arg = 0;
+        int shownFrame = -1; // -1 = use "frame" when the look says so
         if (tag == "Door")
         {
             const int type = std::atoi(attrs["type"].c_str());
@@ -192,10 +195,29 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
         {
             continue;
         }
+        if (tag == "Sage" && mapNames[currentMap] == "BLANK")
+        {
+            // SageBlank: invisible, shows sage/intro line frame+1 when the screen transition ends.
+            kind = 3;
+            arg = frame;
+            sheet = "placeholder";
+        }
+        else if (tag == "Console")
+        {
+            kind = 1;
+        }
+        else if (tag == "Gate")
+        {
+            // Gate.GetSprite(int.Parse(TypeValue)): the closed frame is the "type" attribute; "frame" is the condition.
+            kind = 2;
+            arg = frame;
+            shownFrame = std::atoi(attrs["type"].c_str());
+        }
 
         char buf[96];
-        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d },\n", std::atoi(attrs["x"].c_str()),
-                 std::atoi(attrs["y"].c_str()), sheetId(sheet), useFrame ? frame : 0);
+        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, %d },\n", std::atoi(attrs["x"].c_str()),
+                 std::atoi(attrs["y"].c_str()), sheetId(sheet),
+                 shownFrame >= 0 ? shownFrame : (useFrame ? frame : 0), kind, arg);
         perMap[currentMap].push_back(buf);
         count++;
     }

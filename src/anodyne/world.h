@@ -25,5 +25,8 @@ void World_SetPlayerVisible(bool visible);
 // Doors: when the player steps on a door, World_TakeWarp returns true once with the destination (map index,
 // player hitbox top-left in map pixels, facing 0-3 or 255). The caller loads that map (if it differs) and
 // calls World_PlaceAt.
+// The current BG scroll offsets per hardware BG (the registers are write-only).
+void World_GetBgOffsets(int16_t x[4], int16_t y[4]);
+
 bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing);
 void World_PlaceAt(int x, int y, uint8_t facing);

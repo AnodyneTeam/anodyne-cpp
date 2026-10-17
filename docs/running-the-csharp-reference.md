@@ -39,3 +39,29 @@ messages are OpenAL HRTF warnings.
 - To check it's running: `xwininfo -root -tree | grep -i anodyne` shows a window titled "Anodyne Fan Remake" (480x540).
 - `RECORDING_SYSTEM.md` in the AnodyneSharp repo describes its input record/playback (handy for comparing sequences).
 - The game's assets are the same ones this repo compiles from `old/Content`.
+
+## Pixelate test scene (PC vs GBA, pixel by pixel)
+
+The pixelate effect is checked with a fixed test pattern on both sides instead of by eye:
+
+1. **PC**: the AnodyneSharp checkout has a `PixelateTest` scene (`Drawing/Effects/Pixelate.cs`, hooked into
+   `AnodyneGame.Update/Draw`; not committed there). `ANODYNE_PIXELATE_TEST=<dir> ./AnodyneSharp` (from the build output
+   directory, `DOTNET_ROOT` set) draws the pattern through the real shader for block sizes 1..48, writes `pc_sNN.png`
+   (160x180, the 20px HUD header on top) and exits.
+2. **GBA**: hold L+R at boot (`src/anodyne/pixelate_test.cpp`) and `src/tools/pixelate_test/capture_gba.py <elf> <gba> <dir>`
+   writes `gba_sNN.png` (the 160x160 playfield) using the mGBA python bindings.
+3. `src/tools/pixelate_test/compare.py <dir>` prints the mismatch per block size and writes `montage.png`.
+
+Current state: block sizes 1, 2, 4, 5 and 10..48 are pixel-identical; 3 and 6..9 differ only in where the block grid
+starts (the hardware mosaic grid can't be offset, and the software blocks need one palette entry each, so they stop at
+11px).
+
+## Dialogue (GBA)
+
+`dialogue_EN.txt` is compiled by the content compiler into `build/tools/dialog_data.h` (232 scenes, 737 lines, ~75KB;
+`[SOMEKEY-*]` become GBA button names, curly quotes become ASCII). `src/anodyne/dialog.cpp` is the runtime: scene lookup
+(`Dialog_Get`, same progress/loop rules as `DialogueScene.GetDialogue`) and the text box, a port of
+`DialogueState`/`TextBox`/`TextWriter` (typewriter + blip, hold A/B to speed up, `^` pauses, 3-line box with the
+line-bump scroll, blinking arrow, intro box with a red `A` prompt). The box is 8 semi-transparent OBJs (OAM 120-127,
+OBJ palette bank 15, 136 tiles of OBJ VRAM while open), so entities use OAM 10-119 and banks 4-14. While a box is
+open `World_Update` freezes the player. `gDialogueOpen` (RAM) lets `src/tools/bot/gba_drive.py` mash A through it.

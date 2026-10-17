@@ -5,6 +5,8 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
+#include "screen_fx.hpp"
+#include "soft_mosaic.hpp"
 #include "sprite.h"
 #include "../build/tools/title_data.h"
 
@@ -22,6 +24,7 @@ constexpr int kDoorEndY = 180 - 116;   // door top when fully risen
 constexpr int kFlashFrames = 90;       // 1.5s: TitleState PressStart = Flash(1.5s, White): instantly white, then fading out
 constexpr int kFadeFrames = 30;
 constexpr int kBlinkFrames = 60;
+
 constexpr int kMenuItems = 4;
 // Affine matrix slot n lives in the attr3 words of OAM entries 4n..4n+3, so use the last slots (OAM 120-127 unused).
 constexpr int kSpinAffine1 = 30;
@@ -42,7 +45,8 @@ enum class State
     Rise,      // door scrolls up
     Flash,     // white flash into the title
     Title,     // title text + blinking "press start"
-    FadeOut,   // to black, then the menu
+    Pixelate,  // mosaic grows to 15px blocks while dimming slightly
+    FadeOut,   // mosaic keeps growing while fading to black, then the menu
     MenuFadeIn,
     Menu,
     IntroFade,  // menu -> black
@@ -58,6 +62,8 @@ int gDoorY = 180;        // C# coordinates
 int gDoorSub = 0;        // Fx 8 fraction
 int gMenuIndex = 0;
 int gBlink = 0;
+int gPix = 256;          // C# Pixelation, 8.8 (block size in px; 1.0 = off)
+int gDark = 0;           // C# black_overlay alpha, 16.16
 
 Sprite gTitleText;
 Sprite gRemake;
@@ -405,6 +411,7 @@ void EnterTitleLayout()
 
 void Title_Enter(ObjVramAllocator& vram)
 {
+    memset16(pal_bg_mem, 0, 256); // black backdrop before the layers/window are switched over
     REG_DISPCNT = DCNT_MODE0 | DCNT_BG1 | DCNT_BG2 | DCNT_BG3 | DCNT_OBJ | DCNT_OBJ_1D | DCNT_WIN0;
     REG_BG0CNT = 0;
     REG_BG0HOFS = REG_BG0VOFS = REG_BG1HOFS = REG_BG1VOFS = 0;
@@ -417,7 +424,6 @@ void Title_Enter(ObjVramAllocator& vram)
     REG_WININ = 0x3F;
     REG_WINOUT = 0;
 
-    memset16(pal_bg_mem, 0, 256);
     memcpy16(pal_bg_mem, title::kPalette, 176);
     // 4bpp banks (colour index 1 = ink): 13 red prompt, 14 dim text, 15 white text.
     pal_bg_mem[13 * 16 + 1] = RGB15(31, 4, 4);
@@ -618,18 +624,43 @@ bool Title_Update(int* slot)
         if (anyKey)
         {
             PlaySfx("menu_select");
-            gState = State::FadeOut;
+            gState = State::Pixelate;
+            gPix = 256;
+            gDark = 0;
             gTimer = 0;
         }
         break;
     }
+    case State::Pixelate:
     case State::FadeOut:
     {
-        Fade(3, (gTimer * 16) / kFadeFrames);
+        // TitleState Pixelate/FadeOut: pixelation +15 block-px/s throughout; the black overlay +0.36/s until the
+        // pixelation reaches 15, then +0.72/s until fully black.
+        gBlink = (gTimer / kBlinkFrames) & 1;
+        DrawTitleSprites(!gBlink);
         gTimer++;
-        if (gTimer >= kFadeFrames)
+        gPix += 15 * 256 / 60;
+        gDark += (gState == State::Pixelate ? 36 : 72) * 65536 / 100 / 60;
+        if (gState == State::Pixelate && gPix >= 15 * 256)
+        {
+            gState = State::FadeOut;
+        }
+        if (gDark > 65536)
+        {
+            gDark = 65536;
+        }
+        Fade(3, (gDark * 16) >> 16);
+        MosaicBgOffsets offsets;
+        offsets.x[3] = static_cast<int16_t>(-kViewX); // BG3 background, BG2 door (see UpdateBg / SetDoorY)
+        offsets.y[3] = static_cast<int16_t>((gBgScroll >> 8) - kViewY);
+        offsets.x[2] = static_cast<int16_t>(-kViewX);
+        offsets.y[2] = static_cast<int16_t>(-(gDoorY + kViewY));
+        offsets.originY = kViewY; // the title draws on the C# screen directly, no HUD header
+        Mosaic_Apply(gPix, offsets);
+        if (gState == State::FadeOut && gDark >= 65536)
         {
             // The menu: background only (door and title art hidden), labels on BG1.
+            Mosaic_End();
             REG_DISPCNT &= ~DCNT_BG2;
             HideAllSprites();
             gShowTitleSprites = false;
@@ -754,6 +785,10 @@ bool Title_Update(int* slot)
                     {
                         HideAllSprites();
                         ClearText();
+                        for (int i = 0; i < 32 * 32; i++)
+                        {
+                            se_mem[kSbDoor][i] = 0; // line 1 of the box lives on BG2
+                        }
                         gState = State::IntroWait;
                         break;
                     }

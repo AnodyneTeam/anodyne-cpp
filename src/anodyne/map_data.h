@@ -108,12 +108,23 @@ struct MapDoorList final
 
 // A placeholder sprite for a map entity (Entities.xml): static frame `mFrame` of sheet kEntitySheets[mSheet],
 // top-left at (mX, mY) in map pixels.
+// What an entity does (everything else is a static placeholder sprite).
+enum EntityKind : uint8_t
+{
+    ENT_STATIC = 0,
+    ENT_CONSOLE = 1, // solid; Accept while facing it turns it green and counts as a solved puzzle
+    ENT_GATE = 2,    // solid until enough puzzles are solved / enemies killed (mArg = the XML "frame" condition)
+    ENT_BLANK_SAGE = 3, // BLANK's invisible Sage: when the camera arrives on its screen it says sage/intro line mArg+1
+};
+
 struct MapEntity final
 {
     int16_t mX;
     int16_t mY;
     uint8_t mSheet;
     uint8_t mFrame;
+    uint8_t mKind;
+    uint8_t mArg;
 };
 
 struct MapEntityList final

@@ -1,4 +1,5 @@
 #include "world.h"
+#include "dialog.h"
 #include "entities.h"
 
 #include <stdio.h>
@@ -281,6 +282,18 @@ void BgScrollTo(int tx, int ty)
     }
 }
 
+// The scroll registers are write-only, so keep a copy for the pixelate effect to sample the screen with.
+int16_t gBgOfsX[4];
+int16_t gBgOfsY[4];
+
+void SetBgOffset(int hw, int x, int y)
+{
+    REG_BG_OFS[hw].x = static_cast<uint16_t>(x);
+    REG_BG_OFS[hw].y = static_cast<uint16_t>(y);
+    gBgOfsX[hw] = static_cast<int16_t>(x);
+    gBgOfsY[hw] = static_cast<int16_t>(y);
+}
+
 // Screen x of world x 0 is kViewX - camera, so the BG origin is the camera minus the playfield's left margin.
 void UpdateBackground(bool force)
 {
@@ -296,8 +309,7 @@ void UpdateBackground(bool force)
     }
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        REG_BG_OFS[gHw[layer]].x = vx & 255;
-        REG_BG_OFS[gHw[layer]].y = vy & 255;
+        SetBgOffset(gHw[layer], vx & 255, vy & 255);
     }
 }
 
@@ -409,8 +421,7 @@ void UpdateScroll(bool advance, bool force)
     {
         ScrollRingTo(vx >> 3, vy >> 3);
     }
-    REG_BG_OFS[gHw[kRoleScroll]].x = vx & 255;
-    REG_BG_OFS[gHw[kRoleScroll]].y = vy & 255;
+    SetBgOffset(gHw[kRoleScroll], vx & 255, vy & 255);
 }
 
 // Hardware BG roles for the current map, and the registers that depend on them.
@@ -454,7 +465,7 @@ void ApplyDisplayRegs(bool windowOn)
         dispcnt |= DCNT_WIN0;
     }
     REG_DISPCNT = dispcnt;
-    REG_WININ = winin;
+    REG_WININ = winin | WIN_BLD; // anodyne.cpp hides map loads behind a full darken
 }
 
 // ---- Audio ---------------------------------------------------------------------------------------------------
@@ -1561,13 +1572,22 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     UpdateAmbience();
 }
 
+void World_GetBgOffsets(int16_t x[4], int16_t y[4])
+{
+    for (int i = 0; i < 4; i++)
+    {
+        x[i] = gBgOfsX[i];
+        y[i] = gBgOfsY[i];
+    }
+}
+
 void World_Enter()
 {
     // BG layers + OBJ, with window 0 cutting everything to the 160x160 playfield.
     ApplyDisplayRegs(true);
     REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
     REG_WIN0V = (0 << 8) | kScreenPx;
-    REG_WINOUT = 0;
+    REG_WINOUT = WIN_BLD; // the side margins show the backdrop, which the darken has to cover too
 }
 
 void World_SetPlayerVisible(bool visible)
@@ -1599,7 +1619,18 @@ void World_Update()
     const char* anim = nullptr; // nullptr: walk/idle from the velocity
     bool moving = false;
 
-    if (gTransition)
+    // While a dialogue box is open the world stands still (it still draws), and the frame that closes it takes
+    // no input either, so the closing press can't also interact with something.
+    const bool dialogueFrame = Dialog_IsOpen();
+    if (dialogueFrame)
+    {
+        Dialog_Update();
+    }
+
+    if (dialogueFrame)
+    {
+    }
+    else if (gTransition)
     {
         // PlayState.StateTransition: the player stands still and the camera scrolls to the new screen.
         const int step = kScrollSpeed * 65536 / kFps;
@@ -1610,10 +1641,27 @@ void World_Update()
         if (doneX && doneY)
         {
             gTransition = false;
+            // PlayState EndScreenTransition: BLANK's invisible Sage speaks when the camera arrives on its screen.
+            int sageFrame = 0;
+            if (Entities_TakeScreenTrigger(gGridX, gGridY, &sageFrame))
+            {
+                bool top = false;
+                const char* text = Dialog_Get("sage", "intro", sageFrame + 1, &top);
+                Dialog_Open(text, top, false);
+            }
         }
     }
     else
     {
+        // ---- PlayState.EntityUpdate: Accept interacts with the entity the player faces (before they move) ----
+        if (key_hit(KEY_A) && gState == PlayerState::Ground && !gWarp.mPending)
+        {
+            static const int kDirX[4] = { 0, 1, 0, -1 }; // Facing order: Down, Right, Up, Left
+            static const int kDirY[4] = { 1, 0, -1, 0 };
+            const int f = static_cast<int>(gFacing);
+            Entities_Interact(gPosX >> kFrac, gPosY >> kFrac, kHitW, kHitH, kDirX[f], kDirY[f]);
+        }
+
         // ---- Player.Update -> Movement() ----
         bool playFall = false;
         if (gState == PlayerState::Ladder)
@@ -1654,6 +1702,12 @@ void World_Update()
 
         // ---- Map.Collide + PlayState.CheckForTransition ----
         CollideWithMap();
+        SolidRect solids[24];
+        const int solidCount = Entities_GetSolids(solids, 24);
+        for (int i = 0; i < solidCount; i++)
+        {
+            Separate(Fx(solids[i].mX), Fx(solids[i].mY), Fx(solids[i].mW), Fx(solids[i].mH), TOUCH_ANY);
+        }
         CheckDoors();
         CheckForTransition();
     }

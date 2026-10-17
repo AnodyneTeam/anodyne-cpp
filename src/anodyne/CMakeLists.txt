@@ -23,12 +23,14 @@ set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
     anodyne.cpp
-    dialog_manager.c
+    dialog.cpp
     audio_manager.cpp
     audio_decode_core.cpp
     sprite.cpp
     entities.cpp
     title.cpp
+    soft_mosaic.cpp
+    pixelate_test.cpp
     world.cpp
 )
 

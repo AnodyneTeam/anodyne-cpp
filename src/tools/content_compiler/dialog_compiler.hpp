@@ -65,6 +65,6 @@ public:
     std::map<std::string, DialogueNPC> newSceneTree;
 
     bool Load(const std::string &fullPath);
-    void Compile();
+    std::string Emit();
     void DebugPrint();
 };

@@ -401,17 +401,32 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
 }
 
 
+// Writes dialog_data.h (only when its content changed, so the ROM code isn't rebuilt for nothing).
 static void CompileDialog(ContentPaths& contentPaths)
 {
     DialogCompiler dc;
-    if (dc.Load(contentPaths.GetDialogPath("EN")))
+    if (!dc.Load(contentPaths.GetDialogPath("EN")))
     {
-        dc.Compile();
-        dc.DebugPrint();
+        printf("Dialog: could not load dialogue_EN.txt\n");
+        return;
     }
-    else
+    const std::string text = dc.Emit();
+    std::string old;
+    if (FILE* f = fopen("dialog_data.h", "rb"))
     {
-        printf("Dialog OVER!\n");
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        {
+            old.append(buf, n);
+        }
+        fclose(f);
+    }
+    if (old != text)
+    {
+        FILE* f = fopen("dialog_data.h", "wb");
+        fwrite(text.data(), 1, text.size(), f);
+        fclose(f);
     }
 }
 
@@ -918,7 +933,7 @@ int main(int argc, char **argv)
         "WINDMILL"
     };
 
-    //CompileDialog(contentPaths);
+    CompileDialog(contentPaths);
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.

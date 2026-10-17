@@ -5,34 +5,25 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "dialog_manager.h"
+#include "dialog.h"
 #include "tonc.h"
 
 #include "obj_vram_allocator.hpp"
 #include "audio_manager.h"
+#include "screen_fx.hpp"
+#include "soft_mosaic.hpp"
 #include "sprite.h"
 #include "map_data.h"
 #include "world.h"
 #include "entities.h"
 #include "title.h"
+#include "pixelate_test.hpp"
 
 #include "../build/tools/map_registry.h"
 
 // kMapCount is provided from map_registry_.h
 static uint32_t gCurrentMap = 0;
 
-/*
-static void dialog_manager_test(void)
-{
-    struct dialog_manager dm;
-    struct binary_blob data;
-    dialog_manager_init(&dm, &data);
-
-    dialog_manager_random(&dm, npc_id_empty1, scene_id_empty3);
-
-    dialog_manager_free(&dm);
-}
-*/
 
 // HUD text is drawn over itself in place (see the audio test loop), so
 // every line is padded to the full screen width to overwrite old text.
@@ -71,7 +62,9 @@ enum class AppMode
 {
     AudioTest,
     MapViewer,
-    Title
+    Title,
+    Intro, // IntroState: black screen, the sage's opening text, then the new game starts in BLANK
+    PixelateTest
 };
 
 static void EnterAudioTestMode()
@@ -92,10 +85,18 @@ static void EnterAudioTestMode()
     // string-draw call) works with what's actually implemented here.
 }
 
+// Hides half-built screens while maps load: a full darken of every layer and the backdrop (forced blank would show
+// white). The world's windows let it through (WIN_BLD), so it also covers the margins around the playfield.
+static void ScreenBlack(bool on)
+{
+    ScreenDarken(on ? 16 : 0);
+}
+
 static void LoadWorldMap()
 {
     World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]));
+    Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 
 static void EnterMapViewerMode()
@@ -248,6 +249,8 @@ int main()
     // power-on 4/2 with no prefetch - everything still running from ROM
     // (Thumb code, const data, the audio blob) gets substantially faster.
     REG_WAITCNT = WS_STANDARD;
+    REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
+    ScreenBlack(true);
 
     AudioManager_Init();
     // (The world starts the map's music itself, see World_Load.)
@@ -255,6 +258,26 @@ int main()
     // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
     AppMode mode = AppMode::Title;
     bool modeComboWasDown = false;
+    int blackFrames = 0; // frames left before ScreenBlack(false)
+    int introPhase = 0;  // 0 wait, 1 dialogue, 2 wait
+    int introTimer = 0;
+
+    // Door/teleporter warps (PlayState S_MAP_EXIT / S_MAP_ENTER): the world freezes while the screen pixelates and
+    // fades to black, the map swaps, then it pixelates back in and fades up.
+    enum class WarpPhase
+    {
+        None,
+        Exit,
+        Enter
+    };
+    WarpPhase warpPhase = WarpPhase::None;
+    int warpPix = 256;  // C# Pixelation, 8.8
+    int warpDark = 0;   // C# black_overlay alpha, 16.16
+    int warpExitStep = 0;
+    uint8_t warpMap = 0;
+    uint8_t warpFacing = 0;
+    int warpX = 0;
+    int warpY = 0;
 
     // --- Audio test state ---
     uint32_t debugBgmIndex = 0;
@@ -269,11 +292,23 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     World_Init(objVram);
+    Dialog_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;
     GalleryLoadPage(objVram, galleryPage);
-    Title_Enter(objVram);
+    // Hold L+R at boot for the pixelate test scene (compared against the C# one, see pixelate_test.hpp).
+    key_poll();
+    if (key_is_down(KEY_L) && key_is_down(KEY_R))
+    {
+        mode = AppMode::PixelateTest;
+        ScreenBlack(false);
+        PixelateTest_Enter();
+    }
+    else
+    {
+        Title_Enter(objVram);
+    }
 
     while (1)
     {
@@ -288,7 +323,7 @@ int main()
         // ------------------------------------------------------------
         // MODE SWITCH (hold START+SELECT together)
         // ------------------------------------------------------------
-        bool modeComboDown = key_is_down(KEY_START) && key_is_down(KEY_SELECT);
+        bool modeComboDown = mode != AppMode::PixelateTest && key_is_down(KEY_START) && key_is_down(KEY_SELECT);
         if (modeComboDown && !modeComboWasDown)
         {
             mode = (mode == AppMode::AudioTest) ? AppMode::MapViewer : AppMode::AudioTest;
@@ -304,7 +339,11 @@ int main()
         }
         modeComboWasDown = modeComboDown;
 
-        if (mode == AppMode::AudioTest)
+        if (mode == AppMode::PixelateTest)
+        {
+            PixelateTest_Update();
+        }
+        else if (mode == AppMode::AudioTest)
         {
             // ------------------------------------------------------------
             // AUDIO TEST CONTROLS
@@ -369,7 +408,48 @@ int main()
             int slot = 0;
             if (Title_Update(&slot))
             {
+                ScreenBlack(true);
                 Title_Exit(objVram);
+                oam_init(oam_mem, 128);
+                // IntroState: 1.5s of black, the sage's text in the box, 1.5s of black, then BLANK.
+                REG_DISPCNT = DCNT_MODE0 | DCNT_OBJ | DCNT_OBJ_1D;
+                REG_WININ = REG_WINOUT = 0;
+                REG_BLDCNT = 0;
+                REG_BLDY = 0;
+                pal_bg_mem[0] = 0;
+                ScreenBlack(false);
+                mode = AppMode::Intro;
+                introPhase = 0;
+                introTimer = 90;
+            }
+        }
+        else if (mode == AppMode::Intro)
+        {
+            bool startGame = false;
+            if (introPhase == 0 || introPhase == 2)
+            {
+                if (--introTimer <= 0)
+                {
+                    if (introPhase == 0)
+                    {
+                        introPhase = 1;
+                        Dialog_Open(Dialog_GetFor("sage", "BLANK", "intro", 0), false, true);
+                    }
+                    else
+                    {
+                        startGame = true;
+                    }
+                }
+            }
+            else if (!Dialog_Update())
+            {
+                introPhase = 2;
+                introTimer = 90;
+            }
+            if (startGame)
+            {
+                ScreenBlack(true); // hide the swap to the world until its first frame is drawn
+                blackFrames = 2;
                 oam_init(oam_mem, 128);
                 for (uint32_t i = 0; i < kMapCount; i++)
                 {
@@ -394,18 +474,22 @@ int main()
             if (key_hit(KEY_START) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap + 1) % kMapCount;
+                ScreenBlack(true);
                 LoadWorldMap();
+                blackFrames = 2;
             }
 
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
+                ScreenBlack(true);
                 LoadWorldMap();
+                blackFrames = 2;
             }
 
-            // A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);
-            // R/L change its page.
-            if (key_hit(KEY_A))
+            // B+A toggles the sprite gallery (full-screen, so the 160x160 playfield window is off meanwhile);
+            // R/L change its page. (A alone is Accept in the world.)
+            if (key_hit(KEY_A) && key_is_down(KEY_B))
             {
                 galleryOn = !galleryOn;
                 if (galleryOn)
@@ -456,22 +540,67 @@ int main()
             }
             else
             {
-                World_Update();
-
-                uint8_t warpMap = 0;
-                uint8_t warpFacing = 0;
-                int warpX = 0;
-                int warpY = 0;
-                if (World_TakeWarp(warpMap, warpX, warpY, warpFacing))
+                if (warpPhase == WarpPhase::None)
                 {
-                    if (warpMap != gCurrentMap)
+                    World_Update();
+                    if (World_TakeWarp(warpMap, warpX, warpY, warpFacing))
                     {
-                        gCurrentMap = warpMap;
-                        LoadWorldMap();
+                        warpPhase = WarpPhase::Exit;
+                        warpPix = 256;
+                        warpDark = 0;
+                        // transition_out: 1.568s leaving BLANK, 0.785s elsewhere
+                        warpExitStep = strcmp(kMapNames[gCurrentMap], "BLANK") == 0 ? 65536 * 1000 / 1568 / 60 : 65536 * 1000 / 785 / 60;
                     }
-                    World_PlaceAt(warpX, warpY, warpFacing);
+                }
+                else if (warpPhase == WarpPhase::Exit)
+                {
+                    warpPix += 30 * 256 / 60;
+                    warpDark += warpExitStep;
+                    if (warpDark >= 65536)
+                    {
+                        warpDark = 65536;
+                        ScreenDarken(16);
+                        Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
+                        if (warpMap != gCurrentMap)
+                        {
+                            gCurrentMap = warpMap;
+                            LoadWorldMap();
+                        }
+                        World_PlaceAt(warpX, warpY, warpFacing);
+                        World_Update(); // draw the new screen while it is still black
+                        warpPhase = WarpPhase::Enter;
+                        warpPix = 10 * 256;
+                    }
+                }
+                else
+                {
+                    warpPix -= 30 * 256 / 60;
+                    warpDark -= 65536 * 10 / 8 / 60; // transition_in 0.8s
+                    if (warpPix < 256)
+                    {
+                        warpPix = 256;
+                    }
+                    if (warpDark <= 0)
+                    {
+                        warpDark = 0;
+                        warpPhase = WarpPhase::None;
+                        Mosaic_End();
+                        ScreenDarken(0);
+                    }
+                }
+                if (warpPhase != WarpPhase::None)
+                {
+                    ScreenDarken((warpDark * 16) >> 16);
+                    MosaicBgOffsets offsets;
+                    World_GetBgOffsets(offsets.x, offsets.y);
+                    Mosaic_Apply(warpPix, offsets);
                 }
             }
+        }
+
+        if (blackFrames > 0 && --blackFrames == 0)
+        {
+            ScreenBlack(false);
         }
 
         AudioManager_Update();
