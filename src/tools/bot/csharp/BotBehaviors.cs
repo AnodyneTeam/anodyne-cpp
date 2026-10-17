@@ -2223,11 +2223,7 @@ namespace AnodyneSharp.Recording
                 return K();
             }
             KeyFunctions Map(PKey k) => k switch { PKey.Up => KeyFunctions.Up, PKey.Down => KeyFunctions.Down, PKey.Left => KeyFunctions.Left, PKey.Right => KeyFunctions.Right, _ => KeyFunctions.Accept };
-            if (keys.Length == 1 && keys[0] != PKey.Accept)
-            {
-                return SafeMove(Map(keys[0]), target);
-            }
-            return K(keys.Select(Map).ToArray());
+            return K(keys.Select(Map).ToArray()); // the policies do their own avoiding: SafeMove would second-guess a retreat and stand still
         }
 
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
