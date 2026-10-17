@@ -2202,6 +2202,46 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
+                if (target.GetType().Name == "Slime")
+                {
+                    // Slimes drift at <=10 px/s and hurt on contact (their goo is harmless): line up on the broom's axis, stop with a
+                    // few px of gap and swing from there; back off if one drifts into contact range.
+                    bool horiz = Math.Abs(dx) >= Math.Abs(dy);
+                    float along = horiz ? dx : dy, across = horiz ? dy : dx;
+                    float gap = Math.Abs(along) - (horiz ? 13 : 14);
+                    var face = horiz ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    var away = horiz ? (dx < 0 ? KeyFunctions.Right : KeyFunctions.Left) : (dy < 0 ? KeyFunctions.Down : KeyFunctions.Up);
+                    var side = horiz ? (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                    swing++;
+                    if (Math.Abs(across) <= 7)
+                    {
+                        if (gap < 2)
+                        {
+                            yield return K(away);
+                        }
+                        else if (gap <= 9)
+                        {
+                            if (swing - lastSwing >= SwingCooldown)
+                            {
+                                lastSwing = swing;
+                                yield return K(face, KeyFunctions.Accept);
+                            }
+                            else
+                            {
+                                yield return K();
+                            }
+                        }
+                        else
+                        {
+                            yield return K(face);
+                        }
+                    }
+                    else
+                    {
+                        yield return gap < 6 ? K(away) : K(side);
+                    }
+                    continue;
+                }
                 if (Math.Abs(dx) >= Math.Abs(dy))
                 {
                     // Line up vertically first, then close in horizontally.

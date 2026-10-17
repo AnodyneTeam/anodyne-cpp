@@ -118,11 +118,11 @@ namespace AnodyneSharp.Recording
         /// <summary>Produces this frame's key states. Sets Active=false (and closes the game) when the script ends.</summary>
         /// <summary>Taking damage or dying (game over) is a fatal error for the bot, unless ANODYNE_BOT_ALLOW_DAMAGE is set (scene tests).</summary>
         private static readonly bool _allowDamage = Environment.GetEnvironmentVariable("ANODYNE_BOT_ALLOW_DAMAGE") != null;
-        private static int _hpSeen = -1;
+        private static int _hpSeen = -1, _hpSeenAllow = -1;
 
         private static void CheckNoDamage()
         {
-            if (_allowDamage || Player == null)
+            if (Player == null)
             {
                 return;
             }
@@ -137,6 +137,17 @@ namespace AnodyneSharp.Recording
                 why = $"took damage (HP {_hpSeen}->{hp})";
             }
             _hpSeen = hp;
+            if (why != null || (_allowDamage && _hpSeenAllow >= 0 && hp < _hpSeenAllow))
+            {
+                string near = "";
+                try
+                {
+                    near = string.Join(" ", Entities().Where(e => e.exists && Math.Abs(e.Position.X - Player.Position.X) < 90 && Math.Abs(e.Position.Y - Player.Position.Y) < 90).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}"));
+                }
+                catch { }
+                System.Console.Error.WriteLine($"  HIT near: {near}");
+            }
+            if (_allowDamage) { _hpSeenAllow = hp; return; }
             if (why != null)
             {
                 System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame}");
