@@ -1678,6 +1678,12 @@ namespace AnodyneSharp.Recording
             int unstick = 0;
             KeyFunctions unstickKey = KeyFunctions.Down;
             Point? lastStep = null; // the next path tile we were walking towards (blamed when we stop moving)
+            // Watchdog: if no enemy dies for a while, try something else (pseudo-random but seeded, so a run is reproducible).
+            var rng = new Random(unchecked((int)(BotRunner.Frame * 7919 + 13)));
+            int lastCount = -1, noKill = 0;
+            Entity forced = null;
+            int forcedFrames = 0, aggroFrames = 0, relocFrames = 0;
+            Point? reloc = null;
             List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
             int heldAge = 0;
             int planHold = 0; // frames during which a chosen route around a Shieldy is followed without re-deciding (no flip-flopping)
@@ -1709,6 +1715,105 @@ namespace AnodyneSharp.Recording
                 {
                     yield return CollectHearts();
                     yield break;
+                }
+                if (enemies.Count != lastCount)
+                {
+                    lastCount = enemies.Count;
+                    noKill = 0;
+                    forced = null;
+                    reloc = null;
+                    relocFrames = 0;
+                    aggroFrames = 0;
+                }
+                else
+                {
+                    noKill++;
+                }
+                if (forcedFrames > 0 && --forcedFrames == 0)
+                {
+                    forced = null;
+                }
+                if (aggroFrames > 0)
+                {
+                    aggroFrames--;
+                }
+                if (noKill > 0 && noKill % 300 == 0)
+                {
+                    BotNav.Blocked.Clear(); // learned "blocked" tiles may have been wrong
+                    int strategy = rng.Next(3);
+                    heldPlan = null;
+                    if (strategy == 0 && enemies.Count > 1)
+                    {
+                        forced = enemies[rng.Next(enemies.Count)];
+                        forcedFrames = 240;
+                    }
+                    else if (strategy == 1)
+                    {
+                        // Wander off to a random reachable tile away from the enemies, then try again from there.
+                        var here1 = BotNav.TileOf(Pos);
+                        var near = BotNav.NearEnemies(12);
+                        var seen = new HashSet<Point> { here1 };
+                        var frontier = new List<Point> { here1 };
+                        var options = new List<Point>();
+                        for (int depth = 0; depth < 8; depth++)
+                        {
+                            var next = new List<Point>();
+                            foreach (var t in frontier)
+                            {
+                                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                                {
+                                    var n = new Point(t.X + d.X, t.Y + d.Y);
+                                    if (seen.Add(n) && BotNav.Walkable(n))
+                                    {
+                                        next.Add(n);
+                                        if (depth >= 2 && !near.Contains(n))
+                                        {
+                                            options.Add(n);
+                                        }
+                                    }
+                                }
+                            }
+                            frontier = next;
+                        }
+                        if (options.Count > 0)
+                        {
+                            reloc = options[rng.Next(options.Count)];
+                            relocFrames = 100;
+                        }
+                    }
+                    else
+                    {
+                        aggroFrames = 240;
+                    }
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  fight watchdog: no kill for {noKill} frames at {Pos}; strategy {strategy} (forced={forced?.GetType().Name} reloc={reloc} aggro={aggroFrames})");
+                    }
+                }
+                if (relocFrames > 0 && reloc.HasValue)
+                {
+                    relocFrames--;
+                    var hereR = BotNav.TileOf(Pos);
+                    if (hereR == reloc.Value)
+                    {
+                        relocFrames = 0;
+                    }
+                    else
+                    {
+                        BotNav.Avoid = BotNav.NearEnemies(6);
+                        var rp = BotNav.FindPath(hereR, t => t == reloc.Value, reloc.Value);
+                        BotNav.Avoid = null;
+                        rp ??= BotNav.FindPath(hereR, t => t == reloc.Value, reloc.Value);
+                        if (rp != null && rp.Count > 0)
+                        {
+                            BotRunner.Status = "fight/relocate";
+                            var ncR = BotNav.CentreOf(rp[0]) + new Vector2(5, 6);
+                            float pxR = ncR.X - (Pos.X + 5), pyR = ncR.Y - (Pos.Y + 6);
+                            yield return SafeMove(Math.Abs(pxR) > 2f ? (pxR < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (pyR < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                            continue;
+                        }
+                        relocFrames = 0;
+                    }
                 }
                 if (GlobalState.CUR_HEALTH <= 3)
                 {
@@ -1762,7 +1867,8 @@ namespace AnodyneSharp.Recording
                     }
                     _lastHp = GlobalState.CUR_HEALTH;
                 }
-                var target = enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
+                var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced
+                    : enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
                 BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left)";
@@ -1776,7 +1882,7 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
-                if (target.GetType().Name == "Shieldy")
+                if (target.GetType().Name == "Shieldy" && aggroFrames <= 0)
                 {
                     // Only a downward swing hurts it (the broom reaches ~16px below the player). Get to a standoff two
                     // tiles above, line up in x, walk down until the gap is small, then swing facing down.
