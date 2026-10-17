@@ -60,7 +60,64 @@ namespace AnodyneSharp.Recording
                 var t = new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16);
                 (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
             }
+            // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
+            var grid = GlobalState.CurrentMapGrid;
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == null || !pr.Type.Name.EndsWith("Gate") || !pr.Alive || ((int)pr.Position.X / 160 == grid.X && (int)pr.Position.Y / 160 == grid.Y))
+                {
+                    continue;
+                }
+                var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                _gatesClosed.Add(t);
+                if (pr.Type.Name.StartsWith("Big"))
+                {
+                    _gatesClosed.Add(new Point(t.X + 1, t.Y));
+                }
+            }
         }
+
+        /// <summary>BFS step counts over walkable tiles from `from` (stays inside `bounds` if given).</summary>
+        public static Dictionary<Point, int> DistMap(Point from, bool allowWater, Rectangle? bounds = null, bool allowJump = false)
+        {
+            bool old = AllowWater, oldJ = AllowJump;
+            AllowWater = allowWater;
+            AllowJump = allowJump;
+            RefreshGates();
+            var dist = new Dictionary<Point, int> { [from] = 0 };
+            var q = new Queue<Point>();
+            q.Enqueue(from);
+            Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            while (q.Count > 0)
+            {
+                var c = q.Dequeue();
+                foreach (var d in dirs)
+                {
+                    var n = new Point(c.X + d.X, c.Y + d.Y);
+                    if (dist.ContainsKey(n) || (bounds.HasValue && !bounds.Value.Contains(n)) || !Walkable(n))
+                    {
+                        continue;
+                    }
+                    dist[n] = dist[c] + 1;
+                    q.Enqueue(n);
+                }
+            }
+            AllowWater = old;
+            AllowJump = oldJ;
+            return dist;
+        }
+
+        /// <summary>Set while riding a dust raft: conveyor (river) tiles count as walkable then.</summary>
+        public static bool AllowWater;
+
+        /// <summary>Set once the boots are on: spike tiles count as walkable (they are jumped over).</summary>
+        public static bool AllowJump;
+
+        public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
+
+        public static bool IsSpike(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.SPIKE;
+
+        public static string DebugGates() => string.Join(" ", System.Linq.Enumerable.Select(_gatesClosed, t => $"{t.X},{t.Y}"));
 
         private static bool _respectClosedGates = true;
 
@@ -98,9 +155,12 @@ namespace AnodyneSharp.Recording
             switch (ev)
             {
                 case CollisionEventType.HOLE:
-                case CollisionEventType.SPIKE:
                 case CollisionEventType.PUDDLE:
                     return false;
+                case CollisionEventType.SPIKE:
+                    return AllowJump && allow == Touching.NONE;
+                case CollisionEventType.CONVEYOR:
+                    return AllowWater && allow == Touching.NONE;
             }
             return allow == Touching.NONE;
         }

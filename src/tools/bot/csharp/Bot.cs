@@ -434,9 +434,43 @@ namespace AnodyneSharp.Recording
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 var path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                bool jumping = false;
                 if (path == null)
                 {
-                    throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
+                    // A strip of river only a tile or two wide is simply waded across.
+                    BotNav.AllowWater = true;
+                    var wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                    BotNav.AllowWater = false;
+                    if (wade != null && wade.Count(t => BotNav.IsConveyor(t)) <= 2)
+                    {
+                        path = wade;
+                    }
+                    // Spikes: with the boots they are jumped over.
+                    if (path == null)
+                    if (GlobalState.inventory.CanJump)
+                    {
+                        BotNav.AllowJump = true;
+                        path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                        BotNav.AllowJump = false;
+                        jumping = path != null;
+                    }
+                    // Or a river is in the way: cross it on a dust raft.
+                    if (path == null)
+                    {
+                        BotNav.AllowWater = true;
+                        var wet = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                        BotNav.AllowWater = false;
+                        if (wet != null && wet.Count > 0)
+                        {
+                            var last = BotNav.CentreOf(wet[wet.Count - 1]);
+                            yield return RaftTo(last.X, last.Y);
+                            yield break;
+                        }
+                    }
+                    if (path == null)
+                    {
+                        throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
+                    }
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
@@ -444,8 +478,28 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  path to {what}: {path.Count} tiles from {BotNav.TileOf(Pos)} via {via}");
                 }
                 bool stuck = false;
-                foreach (var tile in path)
+                for (int pi = 0; pi < path.Count; pi++)
                 {
+                    var tile = path[pi];
+                    if (jumping && BotNav.IsSpike(tile))
+                    {
+                        int pj = pi;
+                        while (pj < path.Count && BotNav.IsSpike(path[pj]))
+                        {
+                            pj++;
+                        }
+                        var land = pj < path.Count ? path[pj] : path[pj - 1];
+                        var from = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
+                        var jk = tile.X > from.X ? KeyFunctions.Right : tile.X < from.X ? KeyFunctions.Left : tile.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                        BotRunner.Status = "jump over the spikes";
+                        yield return K(jk, KeyFunctions.Cancel);
+                        for (int j = 0; j < 90 && !(BotNav.TileOf(Pos) == land && Player.state != PlayerState.AIR); j++)
+                        {
+                            yield return K(jk);
+                        }
+                        pi = pj - 1;
+                        continue;
+                    }
                     var c = BotNav.CentreOf(tile);
                     Vector2 last = Pos;
                     int still = 0;
@@ -561,7 +615,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -571,6 +625,7 @@ namespace AnodyneSharp.Recording
             "temple" => new BlueForest(),
             "temple1" => new Temple(),
             "forest2" => new BlueForest2(),
+            "fields" => new Fields(),
             _ => throw new ArgumentException(name)
         };
 

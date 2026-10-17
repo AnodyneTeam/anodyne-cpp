@@ -98,11 +98,81 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'K': yield return TempleLaserDust(); break;
+                    case 'k': yield return FillHoles(); break;
+                    case '~':
+                    {
+                        // ~x,y: ride a dust raft over the river to the tile containing world point x,y
+                        var xy = tok.Substring(1).Split(',');
+                        yield return RaftTo(float.Parse(xy[0]), float.Parse(xy[1]));
+                        break;
+                    }
                     case '#': yield return TempleButtonRoom(); break;
                     case 'N':
                         System.Console.Error.WriteLine("BLOCKED: " + string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}")));
                         for (int r = 20; r <= 28; r++) { System.Console.Error.WriteLine(BotNav.DebugRow(r, 14, 30)); }
                         break;
+                    case '+': yield return OpenChests(); break;
+                    case '>':
+                    {
+                        // >x,y: walk to world point x,y across screens (fighting, rafting and jumping as needed)
+                        var xy = tok.Substring(1).Split(',');
+                        yield return GoGlobal(float.Parse(xy[0]), float.Parse(xy[1]));
+                        break;
+                    }
+                    case 'r':
+                    {
+                        // Debug: the most permissive route (rafts, jumps, shut gates ignored) to world point x,y, as screens and obstacles.
+                        var a = tok.Substring(1).Split(',');
+                        var goalT = BotNav.TileOf(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
+                        BotNav.AllowWater = true;
+                        BotNav.AllowJump = true;
+                        var rp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalT, goalT);
+                        BotNav.AllowWater = false;
+                        BotNav.AllowJump = false;
+                        if (rp == null)
+                        {
+                            System.Console.Error.WriteLine($"ROUTE to {goalT}: none (CanJump={GlobalState.inventory.CanJump})");
+                            break;
+                        }
+                        var sbr = new System.Text.StringBuilder($"ROUTE to {goalT} (CanJump={GlobalState.inventory.CanJump}): {rp.Count} tiles: ");
+                        string lastKind = "", lastScr = "";
+                        foreach (var t in rp)
+                        {
+                            string scr = $"({t.X / 10},{t.Y / 10})";
+                            string kind = OnConveyor(t) ? "~" : BotNav.IsSpike(t) ? "^" : BotNav.IsGateTile(t) ? "G" : "";
+                            if (scr != lastScr)
+                            {
+                                sbr.Append(" " + scr);
+                                lastScr = scr;
+                                lastKind = "";
+                            }
+                            if (kind != "" && kind != lastKind)
+                            {
+                                sbr.Append(kind + $"{t.X},{t.Y}");
+                            }
+                            lastKind = kind;
+                        }
+                        System.Console.Error.WriteLine(sbr.ToString());
+                        break;
+                    }
+                    case '?':
+                    {
+                        // Debug: tile class of tiles x,y[,x2,y2...]
+                        var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
+                        for (int i = 0; i + 1 < a.Length; i += 2)
+                        {
+                            var (al, ev) = BotNav.CurrentMap.GetTileClass(new Point(a[i], a[i + 1]));
+                            System.Console.Error.WriteLine($"TILE {a[i]},{a[i + 1]}: {al} {ev} walkable={BotNav.Walkable(new Point(a[i], a[i + 1]))}");
+                        }
+                        break;
+                    }
+                    case 'z':
+                    {
+                        var d = BotNav.DistMap(BotNav.TileOf(Pos), true);
+                        var scr = new SortedSet<(int, int)>(d.Keys.Select(t => (t.X / 10, t.Y / 10)));
+                        System.Console.Error.WriteLine("REACHABLE(water) screens: " + string.Join(" ", scr) + $"  tiles {d.Count}");
+                        break;
+                    }
                     case 'Z':
                         System.Console.Error.WriteLine("REACHABLE screens: " + string.Join(" ", BotNav.ReachableScreens(BotNav.TileOf(Pos))));
                         break;
@@ -123,6 +193,51 @@ namespace AnodyneSharp.Recording
                             sb.Append('\n');
                         }
                         System.Console.Error.WriteLine(sb.ToString());
+                        break;
+                    }
+                    case '$':
+                    {
+                        // Debug: every entity preset of the current map whose type name contains the filter (empty = all), by screen.
+                        string f = tok.Substring(1);
+                        var sb = new System.Text.StringBuilder("PRESETS\n");
+                        foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                        {
+                            if (pr.Type.Name.Contains(f))
+                            {
+                                sb.Append($"  {pr.Type.Name} screen {(int)pr.Position.X / 160},{(int)pr.Position.Y / 160} pos {(int)pr.Position.X},{(int)pr.Position.Y} frame {pr.Frame} tv {pr.TypeValue}\n");
+                            }
+                        }
+                        System.Console.Error.WriteLine(sb);
+                        break;
+                    }
+                    case '&':
+                    {
+                        // Debug: walkability dump of screens sx,sy..ex,ey ('.' free, '#' solid, letters = tile events, 'E' entity).
+                        var a = tok.Substring(1).Split(',');
+                        int sx = int.Parse(a[0]), sy = int.Parse(a[1]), ex = int.Parse(a[2]), ey = int.Parse(a[3]);
+                        var map = BotNav.CurrentMap;
+                        var ents = new Dictionary<Point, char>();
+                        foreach (var e in BotRunner.Entities())
+                        {
+                            if (e.exists && e.width > 0)
+                            {
+                                ents[new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16)] = e.GetType().Name[0];
+                            }
+                        }
+                        var sb = new System.Text.StringBuilder();
+                        for (int ty = sy * 10; ty < ey * 10 + 10; ty++)
+                        {
+                            if (ty % 10 == 0) { sb.Append('\n'); }
+                            for (int tx = sx * 10; tx < ex * 10 + 10; tx++)
+                            {
+                                var (al, ev) = map.GetTileClass(new Point(tx, ty));
+                                char ch = ents.TryGetValue(new Point(tx, ty), out char ec) ? char.ToLower(ec) : al == Touching.ANY ? '#' : al == Touching.NONE && ev == AnodyneSharp.MapData.Tiles.CollisionEventType.NONE ? '.' : ev != AnodyneSharp.MapData.Tiles.CollisionEventType.NONE ? ev.ToString()[0] : 'o';
+                                sb.Append(ch);
+                                if (tx % 10 == 9) { sb.Append(' '); }
+                            }
+                            sb.Append('\n');
+                        }
+                        System.Console.Error.WriteLine("MAPDUMP" + sb);
                         break;
                     }
                     case 'P':
@@ -521,6 +636,365 @@ namespace AnodyneSharp.Recording
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
                     System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");
+                }
+            }
+        }
+
+        /// <summary>Walks screen by screen along the most permissive route (rafts, jumps) to the tile containing (gx,gy).</summary>
+        protected static IEnumerable<object> GoGlobal(float gx, float gy)
+        {
+            var goal = BotNav.TileOf(new Vector2(gx, gy));
+            for (int hop = 0; hop < 60; hop++)
+            {
+                var here = BotNav.TileOf(Pos);
+                var gs = new Point(goal.X / 10, goal.Y / 10);
+                if (Grid == gs)
+                {
+                    yield return GoTo(gx, gy);
+                    yield break;
+                }
+                BotNav.AllowWater = true;
+                BotNav.AllowJump = GlobalState.inventory.CanJump;
+                var route = BotNav.FindPath(here, t => t == goal, goal);
+                BotNav.AllowWater = false;
+                BotNav.AllowJump = false;
+                if (route == null)
+                {
+                    throw new InvalidOperationException($"bot: no route from {here} to {goal} on {Map}");
+                }
+                Point? next = null;
+                foreach (var t in route)
+                {
+                    var sc = new Point(t.X / 10, t.Y / 10);
+                    if (sc != Grid)
+                    {
+                        next = sc;
+                        break;
+                    }
+                }
+                if (next == null)
+                {
+                    yield return GoTo(gx, gy);
+                    yield break;
+                }
+                BotRunner.Status = $"on to screen {next.Value.X},{next.Value.Y}";
+                yield return GoScreenTo(next.Value.X, next.Value.Y);
+            }
+            throw new TimeoutException($"bot: GoGlobal({gx},{gy}) gave up on {Map}");
+        }
+
+        /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
+        protected static IEnumerable<object> OpenChests()
+        {
+            for (int n = 0; n < 30; n++)
+            {
+                var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated).ToList();
+                var d = BotNav.DistMap(BotNav.TileOf(Pos), true, null, GlobalState.inventory.CanJump);
+                var best = chests
+                    .Select(pr => (pr, t: BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17))))
+                    .Where(c => d.ContainsKey(c.t))
+                    .OrderBy(c => d[c.t]).Select(c => ((AnodyneSharp.Entities.EntityPreset pr, Point t)?)c).FirstOrDefault();
+                if (best == null)
+                {
+                    yield break;
+                }
+                var chest = best.Value.pr;
+                BotRunner.Status = $"to the chest at {chest.Position.X:0},{chest.Position.Y:0}";
+                yield return GoGlobal(chest.Position.X + 3, chest.Position.Y + 17);
+                yield return InteractAt(chest.Position.X, chest.Position.Y, 'd');
+                yield return Wait(150);
+                yield return ReadDialogue();
+                if (!chest.Activated)
+                {
+                    yield break; // could not open it; do not loop forever
+                }
+            }
+        }
+
+        private static bool OnConveyor(Point t) => BotNav.CurrentMap.GetTileClass(t).Item2 == AnodyneSharp.MapData.Tiles.CollisionEventType.CONVEYOR;
+
+        private static bool HasRaft()
+        {
+            var f = typeof(Player).GetField("raft", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+            return f != null && f.GetValue(Player) != null;
+        }
+
+        /// <summary>Sweeps up the nearest loose Dust that is on dry land and reachable (the broom then carries it).</summary>
+        protected static IEnumerable<object> PickUpDust()
+        {
+            var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            var dusts = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").ToList();
+            var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+            foreach (var d in dusts.OrderBy(d => (d.Position - Pos).LengthSquared()))
+            {
+                var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                BotNav.Avoid = dustTiles;
+                foreach (var o in o4)
+                {
+                    var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                    if (BotNav.Walkable(t) && !dustTiles.Contains(t) && BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t) != null)
+                    {
+                        BotRunner.Status = $"sweeping dust at {dt.X},{dt.Y}";
+                        try
+                        {
+                            yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                        }
+                        finally
+                        {
+                            BotNav.Avoid = null;
+                        }
+                        yield return Wait(30);
+                        yield break;
+                    }
+                }
+                BotNav.Avoid = null;
+            }
+            throw new InvalidOperationException("bot: no dust to pick up on " + Map);
+        }
+
+        /// <summary>
+        /// Walks to the tile containing (gx,gy), crossing rivers on a dust raft: the dust is set down on the first water tile of the
+        /// route and stepped onto; the raft then follows the player over the water (the current drifts it, so the route is replanned
+        /// every step) until land is reached again.
+        /// </summary>
+        private static void RaftLog(string m)
+        {
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine("  raft " + m);
+            }
+        }
+
+        protected static IEnumerable<object> RaftTo(float gx, float gy)
+        {
+            var goal = BotNav.TileOf(new Vector2(gx, gy));
+            for (int round = 0; round < 12; round++)
+            {
+                if (BotNav.TileOf(Pos) == goal)
+                {
+                    yield break;
+                }
+                if (!OnConveyor(BotNav.TileOf(Pos)))
+                {
+                    bool jump = GlobalState.inventory.CanJump;
+                    var distG = BotNav.DistMap(goal, true, null, jump);
+                    var here = BotNav.TileOf(Pos);
+                    if (!distG.ContainsKey(here))
+                    {
+                        RaftLog("closed gates: " + BotNav.DebugGates());
+                        throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
+                    }
+                    var dryAll = BotNav.DistMap(here, false, null, jump);
+                    var screen = new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10);
+                    var dry = BotNav.DistMap(here, false, screen, jump);
+                    Point? bs = null, bw = null;
+                    int best = int.MaxValue;
+                    Point[] o4 = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+                    foreach (var kv in dry)
+                    {
+                        foreach (var o in o4)
+                        {
+                            var w = new Point(kv.Key.X + o.X, kv.Key.Y + o.Y);
+                            if (screen.Contains(w) && OnConveyor(w) && distG.TryGetValue(w, out int dg) && kv.Value + dg < best)
+                            {
+                                best = kv.Value + dg;
+                                bs = kv.Key;
+                                bw = w;
+                            }
+                        }
+                    }
+                    if (dryAll.TryGetValue(goal, out int dd) && (bs == null || dd <= best + 8))
+                    {
+                        yield return GoTo(gx, gy);
+                        yield break;
+                    }
+                    if (bs == null)
+                    {
+                        throw new InvalidOperationException($"bot: no water entry on this screen from {here} towards {goal} on {Map}");
+                    }
+                    var s = bs.Value;
+                    var wt = bw.Value;
+                    RaftLog($"round {round}: from {here} entry {s}->{wt} (dist {best}) goal {goal}");
+                    BotRunner.Status = $"raft: dust onto the water at {wt.X},{wt.Y}";
+                    if (Player.broom.dust == null)
+                    {
+                        yield return PickUpDust();
+                    }
+                    yield return StandFaceAccept(s.X, s.Y, FaceChar(new Point(wt.X - s.X, wt.Y - s.Y)));
+                    yield return Wait(15);
+                    // Step onto the dust.
+                    var wc = BotNav.CentreOf(wt);
+                    for (int i = 0; i < 90 && !(OnConveyor(BotNav.TileOf(Pos)) && HasRaft()); i++)
+                    {
+                        float dx = wc.X - Pos.X, dy = wc.Y - Pos.Y;
+                        yield return K(Math.Abs(dx) > 2f ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                }
+                // Ride / walk the water route one step at a time until back on land.
+                bool wasWet = false;
+                for (int i = 0; i < 1500; i++)
+                {
+                    if (Talking)
+                    {
+                        yield return BotScript.AdvanceKeys(i);
+                        continue;
+                    }
+                    if (GlobalState.ScreenTransition)
+                    {
+                        yield return K();
+                        continue;
+                    }
+                    var here = BotNav.TileOf(Pos);
+                    if (here == goal)
+                    {
+                        yield break;
+                    }
+                    if (i % 200 == 0)
+                    {
+                        RaftLog($"ride i={i} at {here} pos {Pos} raft={HasRaft()} wasWet={wasWet}");
+                    }
+                    bool wet = OnConveyor(here);
+                    wasWet |= wet;
+                    BotNav.AllowWater = true;
+                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    var p2 = BotNav.FindPath(here, t => t == goal, goal);
+                    BotNav.AllowWater = false;
+                    BotNav.AllowJump = false;
+                    if (p2 == null || p2.Count == 0)
+                    {
+                        RaftLog($"ride ends at {here}: no route (wet={wet})");
+                        break;
+                    }
+                    if (!wet && wasWet)
+                    {
+                        RaftLog($"ride ends on land at {here}");
+                        break; // back on land: plan again from here (maybe another crossing)
+                    }
+                    var c = BotNav.CentreOf(p2[0]);
+                    float dx = c.X - Pos.X, dy = c.Y - Pos.Y;
+                    var dir = Math.Abs(dx) > 2f ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    yield return K(dir);
+                    if (!wasWet && !wet && i > 120)
+                    {
+                        break;
+                    }
+                }
+            }
+            if (BotNav.TileOf(Pos) != goal)
+            {
+                yield return GoTo(gx, gy);
+            }
+        }
+
+        /// <summary>
+        /// Sweeps every loose Dust on the screen into the hole(s) on it: pick a dust up from a free side, then stand beside a hole,
+        /// face it and set the dust down so it falls in.
+        /// </summary>
+        protected static IEnumerable<object> FillHoles()
+        {
+            var map = BotNav.CurrentMap;
+            for (int iter = 0; iter < 40; iter++)
+            {
+                var dusts = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").ToList();
+                var holes = new List<Point>();
+                for (int ty = Grid.Y * 10; ty < Grid.Y * 10 + 10; ty++)
+                {
+                    for (int tx = Grid.X * 10; tx < Grid.X * 10 + 10; tx++)
+                    {
+                        if (map.GetTileClass(new Point(tx, ty)).Item2 == AnodyneSharp.MapData.Tiles.CollisionEventType.HOLE)
+                        {
+                            holes.Add(new Point(tx, ty));
+                        }
+                    }
+                }
+                if (dusts.Count == 0 || holes.Count == 0)
+                {
+                    yield break;
+                }
+                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+                foreach (var e in BotRunner.Entities().Where(e => e.exists && System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "Monster|Chest|Statue|NPC")))
+                {
+                    dustTiles.Add(BotNav.TileOf(e.Position + new Vector2(8, 8)));
+                }
+                var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+                Entity chosen = null;
+                Point from = default;
+                foreach (var d in dusts.OrderBy(d => holes.Min(h => Math.Abs(h.X * 16 - d.Position.X) + Math.Abs(h.Y * 16 - d.Position.Y))))
+                {
+                    var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                    BotNav.Avoid = dustTiles;
+                    foreach (var o in o4)
+                    {
+                        var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                        if (BotNav.Walkable(t) && !dustTiles.Contains(t) && !holes.Contains(t) && BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t) != null)
+                        {
+                            chosen = d;
+                            from = t;
+                            break;
+                        }
+                    }
+                    BotNav.Avoid = null;
+                    if (chosen != null)
+                    {
+                        break;
+                    }
+                }
+                if (chosen == null)
+                {
+                    yield break;
+                }
+                var ct = BotNav.TileOf(chosen.Position + new Vector2(8, 8));
+                BotRunner.Status = $"sweeping dust at {ct.X},{ct.Y}";
+                BotNav.Avoid = dustTiles;
+                try
+                {
+                    yield return StandFaceAccept(from.X, from.Y, FaceChar(new Point(ct.X - from.X, ct.Y - from.Y)));
+                }
+                finally
+                {
+                    BotNav.Avoid = null;
+                }
+                yield return Wait(30);
+                if (chosen.exists && BotNav.TileOf(chosen.Position + new Vector2(8, 8)) == ct && chosen.GetType().Name == "Dust" && BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust") >= dusts.Count)
+                {
+                    continue; // not picked up; try again (maybe another dust next time)
+                }
+                var otherDust = new HashSet<Point>(BotRunner.Entities().Where(e => e.exists && System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "^Dust$|Monster|Chest|Statue|NPC")).Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+                bool placed = false;
+                foreach (var h in holes.OrderBy(h => Math.Abs(h.X - from.X) + Math.Abs(h.Y - from.Y)))
+                {
+                    foreach (var o in o4)
+                    {
+                        var t = new Point(h.X + o.X, h.Y + o.Y);
+                        BotNav.Avoid = otherDust;
+                        bool ok = BotNav.Walkable(t) && !otherDust.Contains(t) && !holes.Contains(t) && BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t) != null;
+                        if (!ok)
+                        {
+                            BotNav.Avoid = null;
+                            continue;
+                        }
+                        BotRunner.Status = $"dust into the hole at {h.X},{h.Y}";
+                        try
+                        {
+                            yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                        }
+                        finally
+                        {
+                            BotNav.Avoid = null;
+                        }
+                        yield return Wait(60);
+                        placed = true;
+                        break;
+                    }
+                    if (placed)
+                    {
+                        break;
+                    }
+                }
+                if (!placed)
+                {
+                    yield break;
                 }
             }
         }
