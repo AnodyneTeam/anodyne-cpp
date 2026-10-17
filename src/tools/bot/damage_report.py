@@ -17,7 +17,7 @@ def report(path):
         next(f)
         for line in f:
             c = line.rstrip("\n").split("\t")
-            if len(c) < 5 or not c[1]:
+            if len(c) < 5 or not c[1] or not c[2] or not c[4]:
                 prev_hp = None
                 continue
             frame, name, x, y, hp = int(c[0]), c[1], int(c[2]), int(c[3]), int(c[4])
