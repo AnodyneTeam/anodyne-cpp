@@ -668,11 +668,20 @@ namespace AnodyneSharp.Recording
                 if (!InRaft && avoidStationary == null && Enemies().Any(e => e.velocity == Vector2.Zero))
                 {
                     // Keep a berth round enemies that stand still (touching one hurts): a route that does is used if there is one.
-                    var berth = BotNav.NearEnemies(12, null, stationaryOnly: true);
-                    berth.Remove(BotNav.TileOf(Pos));
-                    BotNav.Avoid = berth;
-                    var wide = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true);
-                    BotNav.Avoid = null;
+                    List<Point> wide = null;
+                    foreach (int berthMargin in new[] { 12, 6, 1 })
+                    {
+                        var berth = BotNav.NearEnemies(berthMargin, null, stationaryOnly: true);
+                        berth.Remove(BotNav.TileOf(Pos));
+                        BotNav.Avoid = berth;
+                        wide = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true);
+                        BotNav.Avoid = null;
+                        if (wide != null && (path == null || wide.Count <= path.Count + 12))
+                        {
+                            break; // a berth that does not mean a huge detour
+                        }
+                        wide = null;
+                    }
                     if (wide != null && (path == null || wide.Count <= path.Count + 12))
                     {
                         path = wide;

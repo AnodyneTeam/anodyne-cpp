@@ -44,7 +44,7 @@ namespace AnodyneSharp.Recording
 
             // Walkthrough: east, south, west, north (through the (2,1) corridor, killing its Shieldy), north into the Seer's room (2,0):
             // the boss fight, then the health upgrade it leaves behind.
-            yield return Section("temple seer", () => Exec("O1 X1 H2,0 W200 P370,66 W80"));
+            yield return Section("temple seer", () => Exec("g4 O1 X1 H3,1 H3,2 H2,2 H2,1 H2,0 W200 P370,66 W80"));
 
             // East of the boss room: save at the checkpoint, talk to the sage, take the green key and open the Seer card chest.
             yield return Section("temple sage room", () => Exec("O1 X0 H3,0 V I547,83,l W30 I596,96,l W60 I544,32,d W60 H4,0 W30"));

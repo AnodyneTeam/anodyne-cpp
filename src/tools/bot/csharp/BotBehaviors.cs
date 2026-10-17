@@ -100,6 +100,7 @@ namespace AnodyneSharp.Recording
                     case 'K': yield return TempleLaserDust(); break;
                     case 'k': yield return FillHoles(); break;
                     case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); break;
+                    case 'g': BotRunner.BossDamageBudget = int.Parse(tok.Substring(1)); break; // g<n>: this section may cost n hearts (documented, shrinking: every one is a TODO)
                     case 'l':
                     {
                         // l<col>,<rowStart>,<rowEnd>: walk UP a beam column towards its emitter, leapfrogging two dusts (see LeapfrogUp)
