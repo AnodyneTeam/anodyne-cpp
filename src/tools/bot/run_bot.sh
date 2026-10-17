@@ -9,6 +9,7 @@ mkdir -p "$OUT"
 HERE=$(cd "$(dirname "$0")" && pwd)
 export DISPLAY=${DISPLAY:-:0}  # always the real display: never run headless
 export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
+"$(dirname "$0")/ensure_build.sh" || exit 3
 cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/${CONF:-Debug}/net10.0
 FAST=-fast; [ -n "$RT" ] && FAST=
 ./AnodyneSharp $FAST -bot="$SCRIPT" -record="$OUT/$SCRIPT.rec" -gbainput="$OUT/$SCRIPT.gbainput" -trace="$OUT/$SCRIPT.trace.tsv" 2>&1 | grep -v "AL lib" | tee "$OUT/bot.log" || true
