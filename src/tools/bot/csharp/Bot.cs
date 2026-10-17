@@ -29,6 +29,10 @@ namespace AnodyneSharp.Recording
 
         /// <summary>How many times the player has died (the respawn restarts the innermost Section).</summary>
         public static int Deaths;
+
+        /// <summary>Dev: ANODYNE_BOT_STOP_BEFORE=<section name> abandons the route when that section is about to start and runs ANODYNE_BOT_KEYS instead.</summary>
+        public static readonly string StopBefore = Environment.GetEnvironmentVariable("ANODYNE_BOT_STOP_BEFORE");
+        public static bool JumpToKeys;
         private static int _lastDeaths;
 
         /// <summary>The entities of the current screen (set by PlayState).</summary>
@@ -161,6 +165,12 @@ namespace AnodyneSharp.Recording
         {
             KeyFunctions[] held = Array.Empty<KeyFunctions>();
             _botFrame++;
+            if (JumpToKeys)
+            {
+                JumpToKeys = false;
+                _stack.Clear();
+                _stack.Push(new KeysOnlyScript().Run().GetEnumerator());
+            }
             CheckNoDamage();
             if (Deaths != _lastDeaths)
             {
@@ -311,9 +321,44 @@ namespace AnodyneSharp.Recording
         }
 
         private bool _failed;
+        private static int _secIndex;
+
+        private static void CopyDir(string from, string to)
+        {
+            System.IO.Directory.CreateDirectory(to);
+            foreach (var f in System.IO.Directory.GetFiles(from))
+            {
+                System.IO.File.Copy(f, System.IO.Path.Combine(to, System.IO.Path.GetFileName(f)), true);
+            }
+            foreach (var d in System.IO.Directory.GetDirectories(from))
+            {
+                CopyDir(d, System.IO.Path.Combine(to, System.IO.Path.GetFileName(d)));
+            }
+        }
 
         public bool MoveNext()
         {
+            if (_inner == null && Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir)
+            {
+                // Dev: snapshot a save at the start of every section so a failing section can be tried again from there (scene.sh).
+                try
+                {
+                    GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+                    GlobalState.SaveGame();
+                    var dest = System.IO.Path.Combine(secDir, $"{_secIndex++:00}_{_name.Replace(' ', '_')}");
+                    CopyDir(saveDir, dest);
+                }
+                catch (Exception e)
+                {
+                    System.Console.Error.WriteLine("secsave failed: " + e.Message);
+                }
+            }
+            if (_inner == null && BotRunner.StopBefore == _name)
+            {
+                BotRunner.JumpToKeys = true;
+                Current = Array.Empty<KeyFunctions>();
+                return true;
+            }
             if (_inner == null || _failed || BotRunner.Deaths != _deathsAtStart)
             {
                 if (_inner != null && ++_tries > 40)
@@ -591,6 +636,10 @@ namespace AnodyneSharp.Recording
                         // Arrived on another screen of a long route: its beams are only known now, so plug the ones the rest of the route crosses.
                         gridAtStart = Grid;
                         var crossing2 = EmittersCrossing(path.Skip(pi).ToList());
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  new screen {Grid}: {crossing2.Count} emitter(s) cross the route");
+                        }
                         if (crossing2.Count > 0)
                         {
                             pluggedGrids.Add(Grid);
@@ -845,6 +894,15 @@ namespace AnodyneSharp.Recording
     /// Development aid: Boot, then play the moves in $ANODYNE_BOT_KEYS, e.g. "U40 R20 A W30 Au10".
     /// U/D/L/R hold a direction N frames, A taps Accept (N times spaced 10 frames apart), C Cancel, W waits, T reads dialogue.
     /// </summary>
+    public class KeysOnlyScript : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Exec(Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS") ?? "");
+            yield return Wait(30);
+        }
+    }
+
     public class KeysScript : BotScript
     {
         public override IEnumerable<object> Run()

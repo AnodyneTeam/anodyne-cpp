@@ -319,6 +319,9 @@ namespace AnodyneSharp.Recording
 
         public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t));
 
+        /// <summary>A solid wall tile: it stops bullets (holes, water and spikes do not, they fly over them).</summary>
+        public static bool IsBeamWall(Point t) => CurrentMap == null || CurrentMap.GetTileClass(t).Item1 == Touching.ANY;
+
         public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
 
         public static bool IsSpike(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.SPIKE;
@@ -481,7 +484,7 @@ namespace AnodyneSharp.Recording
                 for (int i = 1; i < 24; i++)
                 {
                     t = new Point(t.X + d.X, t.Y + d.Y);
-                    if (!Walkable(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
+                    if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
                     {
                         break;
                     }
@@ -508,7 +511,7 @@ namespace AnodyneSharp.Recording
                     {
                         mt = new Point(mt.X + d.X, mt.Y + d.Y);
                         cells.Add(mt);
-                        if (!Walkable(mt))
+                        if (IsBeamWall(mt))
                         {
                             cells.Clear();
                             break;

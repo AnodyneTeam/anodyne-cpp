@@ -394,7 +394,7 @@ namespace AnodyneSharp.Recording
             {
                 int closed() => BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Gate" && e.Solid);
                 int before = closed();
-                yield return Fight(1500, soft: true);
+                yield return Fight(3600, soft: true);
                 // Clearing a room usually opens its gates: give them a moment so the route planner does not see them shut.
                 for (int i = 0; i < 240 && before > 0 && closed() >= before && Enemies().Count == 0; i++)
                 {
@@ -544,7 +544,20 @@ namespace AnodyneSharp.Recording
         /// <summary>The y at which the player's hitbox floats 3px above a sideways-patrolling Shieldy.</summary>
         private static int? ShieldyHoverY(Entity shieldy)
         {
-            return shieldy.Hitbox.Top - 15;
+            int y = shieldy.Hitbox.Top - 15;
+            var lanes = BotNav.LaneTiles();
+            if (lanes.Count > 0)
+            {
+                // A beam sweeps the floor above its line: hovering there is no option (the beam does the work, see the shove code).
+                for (int x = shieldy.Hitbox.Left - 40; x <= shieldy.Hitbox.Right + 40; x += 8)
+                {
+                    if (lanes.Contains(BotNav.TileOf(new Vector2(x, y))) || lanes.Contains(BotNav.TileOf(new Vector2(x, y + 11))))
+                    {
+                        return null;
+                    }
+                }
+            }
+            return y;
         }
 
         private static bool CornersWalkable(Rectangle r)
@@ -729,6 +742,24 @@ namespace AnodyneSharp.Recording
         /// </summary>
         /// <summary>Set by SafeMove when the wanted step runs into an enemy that does not move: waiting never helps, the caller must go round or kill it.</summary>
         public static Entity BlockedBy;
+
+        /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
+        protected static KeyFunctions[] StandSafe(Entity except)
+        {
+            var threats = PredictThreats(except);
+            if (threats.Count == 0 || PlanHitFrameStanding(Horizon, KeyFunctions.Right, 0, threats) == int.MaxValue)
+            {
+                return K();
+            }
+            foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
+            {
+                if (WalkableAhead(k, 8) && PlanHitFrame(k, 8, k, 0, threats) == int.MaxValue)
+                {
+                    return K(k);
+                }
+            }
+            return K();
+        }
 
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false)
         {
@@ -1153,7 +1184,7 @@ namespace AnodyneSharp.Recording
                     yield return Wait(10);
                     if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
                     {
-                        yield return Fight(1500, soft: true);
+                        yield return Fight(3600, soft: true);
                     }
                 }
             }
@@ -1790,6 +1821,7 @@ namespace AnodyneSharp.Recording
             int noProgress = 0;
             Entity lastTarget = null;
             Entity ambushFor = null;
+            bool ambushChase = false; // lining up sideways under a patroller: keep going until close (turning to face down loses ground)
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
             {
@@ -1974,6 +2006,14 @@ namespace AnodyneSharp.Recording
                     committed = enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
                 }
                 var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
+                if (i % 10 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.X},{e.Hitbox.Center.Y}")) + $" target={target.GetType().Name}");
+                }
+                if (enemies.FirstOrDefault(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < (forced == null ? 80 : 40)) is Entity nearAnnoyer)
+                {
+                    target = nearAnnoyer; // one hit kills it and it is the one that comes at us: deal with it before a patroller
+                }
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
                 BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left)";
@@ -1993,7 +2033,7 @@ namespace AnodyneSharp.Recording
                     var tb = target.Hitbox;
                     var pb = Player.Hitbox;
                     int gap = tb.Top - pb.Bottom;
-                    bool inBand = gap >= 1 && gap <= 9 && Math.Abs(pb.Center.X - tb.Center.X) < 60;
+                    bool inBand = gap >= 1 && gap <= 24 && Math.Abs(pb.Center.X - tb.Center.X) < 60 && CornersWalkable(new Rectangle(pb.X, pb.Y + 1, pb.Width, Math.Min(gap, 6) + pb.Height));
                     if (i % 20 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         System.Console.Error.WriteLine($"  ambush f{i} gap={gap} inBand={inBand} pb={pb} tb={tb} v={target.velocity}");
@@ -2045,17 +2085,28 @@ namespace AnodyneSharp.Recording
                             noKill = 1; // waiting for a patroller to come by is not "no progress"
                         }
                         float adx = tb.Center.X - pb.Center.X;
-                        if (gap < 3)
+                        // Facing down already: stay put unless it got too close or too far. Not facing down: turning costs a pixel of
+                        // gap (the Down press also walks), so make sure there are 4+ before pressing it.
+                        bool facingDown = Player.facing == Facing.DOWN;
+                        if (facingDown ? gap < 2 : gap < 4)
                         {
                             yield return K(KeyFunctions.Up);
                             continue;
                         }
-                        if (gap > 6)
+                        if (gap > 8)
                         {
                             yield return K(KeyFunctions.Down);
                             continue;
                         }
-                        if (Math.Abs(adx) <= 10)
+                        if (Math.Abs(adx) > 10)
+                        {
+                            ambushChase = true;
+                        }
+                        else if (Math.Abs(adx) <= 3)
+                        {
+                            ambushChase = false;
+                        }
+                        if (Math.Abs(adx) <= 10 && !ambushChase)
                         {
                             if (Player.facing != Facing.DOWN)
                             {
@@ -2364,6 +2415,61 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     noProgress++;
+                }
+                if (target.GetType().Name == "Annoyer" && distSq < 44 * 44)
+                {
+                    // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
+                    // what gets us hit. Stand still facing right and swing; it is in reach every time round.
+                    BotRunner.Status = "fight/annoyer hold";
+                    if (i % 6 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  annoyer f{i} me={me} ann={c} d=({dx:0},{dy:0}) facing={Player.facing}");
+                    }
+                    var holdLanes = BotNav.LaneTiles();
+                    if (holdLanes.Count > 0)
+                    {
+                        var hb = Player.Hitbox;
+                        bool exposed = false;
+                        foreach (var corner in new[] { new Vector2(hb.Left, hb.Top), new Vector2(hb.Right - 1, hb.Top), new Vector2(hb.Left, hb.Bottom - 1), new Vector2(hb.Right - 1, hb.Bottom - 1) })
+                        {
+                            exposed |= holdLanes.Contains(BotNav.TileOf(corner));
+                        }
+                        if (exposed)
+                        {
+                            // Never wait in a beam: go to the nearest floor tile that is out of every beam.
+                            var exit = BotNav.FindPath(BotNav.TileOf(Pos), t => !holdLanes.Contains(t) && !holdLanes.Contains(new Point(t.X, t.Y - 1)) && !holdLanes.Contains(new Point(t.X, t.Y + 1)) && !holdLanes.Contains(new Point(t.X - 1, t.Y)) && !holdLanes.Contains(new Point(t.X + 1, t.Y)));
+                            if (exit != null && exit.Count > 0)
+                            {
+                                var nc2 = BotNav.CentreOf(exit[0]) + new Vector2(5, 6);
+                                yield return K(StepKey(nc2.X - me.X, nc2.Y - me.Y, target));
+                                continue;
+                            }
+                        }
+                    }
+                    var safeFrame = StandSafe(target);
+                    if (safeFrame.Length > 0)
+                    {
+                        yield return safeFrame; // something else (a patroller, a beam) is about to reach this spot: not here
+                        continue;
+                    }
+                    // It homes in on a spot beside us in a straight line (through us if it comes from the other side) and then circles at
+                    // ~20px: face wherever it is and keep swinging, the broom reaches it before it touches.
+                    var annFace = Math.Abs(dx) >= Math.Abs(dy) ? (dx < 0 ? Facing.LEFT : Facing.RIGHT) : (dy < 0 ? Facing.UP : Facing.DOWN);
+                    var annKey = annFace == Facing.LEFT ? KeyFunctions.Left : annFace == Facing.RIGHT ? KeyFunctions.Right : annFace == Facing.UP ? KeyFunctions.Up : KeyFunctions.Down;
+                    if (Player.facing != annFace)
+                    {
+                        yield return K(annKey);
+                        continue;
+                    }
+                    swing++;
+                    if (distSq < 30 * 30 && swing - lastSwing >= SwingCooldown)
+                    {
+                        lastSwing = swing;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    yield return K();
+                    continue;
                 }
                 // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.
                 bool blockedClose = DodgeEnabled && noProgress > 40 && target.GetType().Name != "Annoyer";
