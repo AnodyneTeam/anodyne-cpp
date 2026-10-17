@@ -766,7 +766,26 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        protected static bool InRaft;
+
         protected static IEnumerable<object> RaftTo(float gx, float gy)
+        {
+            if (InRaft)
+            {
+                throw new InvalidOperationException("bot: nested raft request");
+            }
+            InRaft = true;
+            try
+            {
+                yield return RaftToInner(gx, gy);
+            }
+            finally
+            {
+                InRaft = false;
+            }
+        }
+
+        private static IEnumerable<object> RaftToInner(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
             for (int round = 0; round < 12; round++)
@@ -823,6 +842,7 @@ namespace AnodyneSharp.Recording
                     }
                     yield return StandFaceAccept(s.X, s.Y, FaceChar(new Point(wt.X - s.X, wt.Y - s.Y)));
                     yield return Wait(15);
+                    RaftLog($"placed: carrying={Player.broom.dust != null} dusts={BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust")} at {Pos}");
                     // Step onto the dust.
                     var wc = BotNav.CentreOf(wt);
                     for (int i = 0; i < 90 && !(OnConveyor(BotNav.TileOf(Pos)) && HasRaft()); i++)

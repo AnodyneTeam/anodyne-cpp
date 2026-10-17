@@ -84,6 +84,7 @@ namespace AnodyneSharp.Recording
             AllowWater = allowWater;
             AllowJump = allowJump;
             RefreshGates();
+            var haz = Hazards();
             var dist = new Dictionary<Point, int> { [from] = 0 };
             var q = new Queue<Point>();
             q.Enqueue(from);
@@ -94,7 +95,7 @@ namespace AnodyneSharp.Recording
                 foreach (var d in dirs)
                 {
                     var n = new Point(c.X + d.X, c.Y + d.Y);
-                    if (dist.ContainsKey(n) || (bounds.HasValue && !bounds.Value.Contains(n)) || !Walkable(n))
+                    if (dist.ContainsKey(n) || (bounds.HasValue && !bounds.Value.Contains(n)) || haz.Contains(n) || !Walkable(n))
                     {
                         continue;
                     }
@@ -181,6 +182,21 @@ namespace AnodyneSharp.Recording
                 if ((name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
+                }
+            }
+            // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor")
+                {
+                    set.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                    if (pr.Type.Name.StartsWith("Wide"))
+                    {
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            set.Add(new Point((int)(pr.Position.X + 8) / 16 + dx, (int)(pr.Position.Y + 8) / 16));
+                        }
+                    }
                 }
             }
             return set;

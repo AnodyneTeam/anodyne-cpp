@@ -455,7 +455,7 @@ namespace AnodyneSharp.Recording
                         jumping = path != null;
                     }
                     // Or a river is in the way: cross it on a dust raft.
-                    if (path == null)
+                    if (path == null && !InRaft)
                     {
                         BotNav.AllowWater = true;
                         var wet = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
@@ -470,6 +470,25 @@ namespace AnodyneSharp.Recording
                     if (path == null)
                     {
                         throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
+                    }
+                }
+                if (path != null && path.Count > 30 && !InRaft)
+                {
+                    // A long way round on dry land: a raft across the river may be far shorter.
+                    BotNav.AllowWater = true;
+                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    var shortcut = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                    BotNav.AllowWater = false;
+                    BotNav.AllowJump = false;
+                    if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)) && shortcut.Count(t => BotNav.IsConveyor(t)) <= 2)
+                    {
+                        path = shortcut;
+                    }
+                    else if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)))
+                    {
+                        var lastT = BotNav.CentreOf(shortcut[shortcut.Count - 1]);
+                        yield return RaftTo(lastT.X, lastT.Y);
+                        yield break;
                     }
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
