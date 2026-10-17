@@ -2501,7 +2501,7 @@ namespace AnodyneSharp.Recording
                 }
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
-                BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left)";
+                BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left{(only != null ? ", only" : "")}{(soft ? ", soft" : "")}) d=({dx:0},{dy:0})";
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS") is string shotDir && i % 10 == 0 && i >= int.Parse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS_FROM") ?? "0") && i < int.Parse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS_FROM") ?? "0") + 300)
                 {
                     AnodyneSharp.Drawing.SpriteDrawer.SaveRender($"{shotDir}/fight_{i:0000}.png");
@@ -2979,7 +2979,17 @@ namespace AnodyneSharp.Recording
                 {
                     // Far away: follow the tile path (walls between us), re-planned every few frames.
                     var tt = BotNav.TileOf(new Vector2(c.X - 5, c.Y - 6));
-                    var path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt);
+                    // keep a berth round enemies that stand still (touching one hurts) when there is a way that does
+                    var berthF = BotNav.NearEnemies(12, target, stationaryOnly: true);
+                    berthF.Remove(BotNav.TileOf(Pos));
+                    berthF.Remove(tt);
+                    BotNav.Avoid = berthF;
+                    var path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt, strict: true);
+                    BotNav.Avoid = null;
+                    if (path == null)
+                    {
+                        path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt);
+                    }
                     if (path != null && path.Count > 0)
                     {
                         lastStep = path[0];
