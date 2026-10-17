@@ -226,6 +226,7 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame} doing [{Status}]");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
+                DumpRing();
                 _trace?.Flush();
                 Environment.Exit(2);
             }
@@ -295,6 +296,7 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine("BOT FAILED: " + e.Message);
                     try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
+                    DumpRing();
                     _trace?.Flush();
                     Environment.Exit(2);
                     return null;
