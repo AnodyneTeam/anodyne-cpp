@@ -47,9 +47,15 @@ namespace AnodyneSharp.Recording
             yield return Section("temple seer", () => Exec("O1 X1 H3,1 H3,2 H2,2 H2,1 H2,0 W200 P370,66 W80"));
 
             // East of the boss room: save at the checkpoint, talk to the sage, take the green key and open the Seer card chest.
-            yield return Section("temple sage room", () => Exec("O1 X0 H3,0 V I547,83,l W30 I596,96,l W60 I544,32,d W60"));
+            yield return Section("temple sage room", () => Exec("O1 X0 H3,0 V I547,83,l W30 I596,96,l W60 I544,32,d W60 H4,0 W30"));
 
-            // TODO: east of the sage room (Nexus Point), then back west to the gate (green key) and the Shieldy card chest, and out.
+            // (4,0) holds a Nexus Point (activated just by loading the screen). Back west to the (1,1) key gate, which the green key opens:
+            // north of it, (1,0) has two Shieldies and two Slimes (plus two lasers) guarding the Shieldy card chest. Fighting with the
+            // dodge off and the lasers left alone works best here: they do the work on the Shieldies.
+            yield return Section("temple Shieldy card", () => Exec("O1 @0 X1 H3,0 H2,0 H2,1 H1,1 I224,160,d W40 X0 @2 H1,0 O0 F O1 I176,16,d W40 X1"));
+
+            // Out: down through the entrance door at the bottom of (2,4).
+            yield return Section("temple exit", () => Exec("O1 X1 H1,1 H2,1 H2,2 H2,3 H2,4 P405,780 W60"));
         }
     }
 }

@@ -702,6 +702,8 @@ namespace AnodyneSharp.Recording
             var startGrid = Grid;
             Vector2 lastPos = Pos;
             int stillFrames = 0;
+            int unstick = 0;
+            KeyFunctions unstickKey = KeyFunctions.Down;
             Point? lastStep = null; // the next path tile we were walking towards (blamed when we stop moving)
             for (int i = 0; i < timeoutFrames; i++)
             {
@@ -741,6 +743,19 @@ namespace AnodyneSharp.Recording
                 var me = Pos + new Vector2(5, 6);
                 stillFrames = (Pos == lastPos && !Dodged) ? stillFrames + 1 : 0;
                 lastPos = Pos;
+                if (stillFrames > 150)
+                {
+                    // Wedged for no reason we know: shake loose by walking a few frames in a changing direction.
+                    stillFrames = 0;
+                    unstick = 24;
+                    unstickKey = new[] { KeyFunctions.Down, KeyFunctions.Left, KeyFunctions.Up, KeyFunctions.Right }[(i / 150) % 4];
+                }
+                if (unstick > 0)
+                {
+                    unstick--;
+                    yield return K(unstickKey);
+                    continue;
+                }
                 if (stillFrames > 50 && lastStep.HasValue)
                 {
                     BotNav.Blocked.Add(lastStep.Value);
