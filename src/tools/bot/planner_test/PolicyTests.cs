@@ -107,6 +107,32 @@ static class PolicyTests
             check("three slimes together: all die, damage in under 3% (300 seeds)", fail == 0 && dmgRuns <= 9, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
             bad += (fail + dmgRuns > 0) ? 1 : 0;
         }
+        // 2d. the overworld strip: two slimes in a 3-tile-high corridor
+        {
+            int fail = 0, dmgRuns = 0, worst = 0, firstBadS = -1;
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var s = new Sim(seed, 24, 5);
+                for (int k = 0; k < 2; k++) { s.Enemies.Add(new Sim.Enemy { K = Sim.Kind.Slime, Pos = new Vector2(120 + s.Rng.Next(120), 20 + s.Rng.Next(20)), W = 16, H = 16 }); }
+                s.P = new Vector2(24 + s.Rng.Next(60), 20 + s.Rng.Next(20));
+                int steps = 0;
+                var mem = new PolicyMem();
+                while (!s.AllDead() && steps++ < 4000)
+                {
+                    var pb = s.PlayerBox;
+                    var t = s.Enemies.Where(e => !e.Dead).OrderBy(e => (e.Box.Center.ToVector2() - pb.Center.ToVector2()).LengthSquared()).First();
+                    // far away: walk towards it along the corridor (the bot's path follower); close: the policy
+                    var d = (t.Box.Center.ToVector2() - pb.Center.ToVector2()).Length();
+                    PKey[] k = d < 55 ? FightPolicies.Slime(Ctx(s, t), mem) : new[] { t.Box.Center.X < pb.Center.X ? PKey.Left : PKey.Right };
+                    s.Step(k ?? new PKey[0]);
+                }
+                if (!s.AllDead()) { fail++; }
+                if (s.Damage > 0) { dmgRuns++; if (firstBadS < 0) { firstBadS = seed; } }
+                worst = Math.Max(worst, s.Frame);
+            }
+            Console.WriteLine($"  first damaged strip seed: {firstBadS}");
+            check("two slimes in a 3-tile strip: all die, damage in under 3% (300 seeds)", fail == 0 && dmgRuns <= 9, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
+        }
         // 3. Shieldy walking up and down a column, we start above it
         {
             int fail = 0, dmgRuns = 0, worst = 0, firstBad = -1;

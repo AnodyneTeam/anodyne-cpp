@@ -145,8 +145,52 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
+                DumpRing();
                 _trace?.Flush();
                 Environment.Exit(2);
+            }
+        }
+
+        // The last frames of the run (player, keys, enemies): written out when the bot fails so the failure can be rebuilt in the offline simulator.
+        private static readonly Queue<string> _ring = new();
+
+        private static void RingRecord(KeyFunctions[] held)
+        {
+            try
+            {
+                var p = Player;
+                if (p == null)
+                {
+                    return;
+                }
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} E:");
+                foreach (var e in Entities())
+                {
+                    if (e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                    {
+                        sb.Append($" {e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y},{e.Hitbox.Width},{e.Hitbox.Height}v{e.velocity.X:0.#},{e.velocity.Y:0.#}");
+                    }
+                }
+                _ring.Enqueue(sb.ToString());
+                if (_ring.Count > 240)
+                {
+                    _ring.Dequeue();
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void DumpRing()
+        {
+            try
+            {
+                System.IO.File.WriteAllLines("/tmp/bot/fail_ring.txt", _ring);
+            }
+            catch
+            {
             }
         }
 
@@ -199,6 +243,17 @@ namespace AnodyneSharp.Recording
             }
             CheckNoDamage();
             CheckStuck();
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SNAP_AT") is string snap && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string sd2)
+            {
+                // Dev: ANODYNE_BOT_SNAP_AT=<frame>:<dir> writes a save of the game at that frame (for scene tests of a failure in the chain).
+                var parts = snap.Split(':', 2);
+                if (long.Parse(parts[0]) == _botFrame && Player != null)
+                {
+                    GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, Player.Position);
+                    GlobalState.SaveGame();
+                    SectionEnumerator.CopyDirPublic(sd2, parts[1]);
+                }
+            }
             if (Deaths != _lastDeaths)
             {
                 // Died and respawned at the checkpoint: drop whatever helpers were running down to the innermost Section,
@@ -267,6 +322,7 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
+            RingRecord(held);
             WriteGbaFrame(held, _stack.Count == 0);
             if (_stack.Count == 0)
             {
@@ -349,6 +405,8 @@ namespace AnodyneSharp.Recording
 
         private bool _failed;
         private static int _secIndex;
+
+        public static void CopyDirPublic(string from, string to) => CopyDir(from, to);
 
         private static void CopyDir(string from, string to)
         {
@@ -947,6 +1005,7 @@ namespace AnodyneSharp.Recording
             {
                 case "nexus": return new StartToNexus().Run();
                 case "keys": return new KeysScript().Run();
+                case "keysonly": return new KeysOnlyScript().Run();
                 default:
                     if (Array.IndexOf(PartNames, name.ToLowerInvariant()) >= 0)
                     {

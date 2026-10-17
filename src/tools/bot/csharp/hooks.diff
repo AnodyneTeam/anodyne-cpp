@@ -1,8 +1,19 @@
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
-index f25975b..de9e37e 100644
+index f25975b..f7cd04d 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
-@@ -335,6 +335,12 @@ namespace AnodyneSharp
+@@ -152,6 +152,10 @@ namespace AnodyneSharp
+ 
+ 
+             RecordingManager.FrameUpdate();
++            if (RecordingManager.ResumeAt >= 0 && RecordingManager.CurrentFrame >= RecordingManager.ResumeAt && !BotRunner.Active)
++            {
++                BotRunner.Start("keysonly"); // the recording has played up to the frame of interest: the bot takes over from this exact state
++            }
+             if (BotRunner.Active)
+             {
+                 RecordingManager.CurrentInput = BotRunner.NextFrame();
+@@ -335,6 +339,12 @@ namespace AnodyneSharp
                  graphics.SynchronizeWithVerticalRetrace = false;
              }
  
@@ -28,3 +39,37 @@ index f41eeba..9fba9f2 100644
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\StartToNexus.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\RecordingManager.cs" />
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
+index 3564914..75e6e20 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
+@@ -31,6 +31,10 @@ namespace AnodyneSharp.Recording
+         public static bool Fast { get; private set; }
+         public static bool ExitWhenPlaybackDone => Fast || BotPath != null || TracePath != null;
+         public static string BotPath { get; private set; }
++
++        /// <summary>Dev: -resumeat=N with -playback=: play the recording for N frames, then hand the game to the bot (ANODYNE_BOT_KEYS) from that exact state.</summary>
++        public static long ResumeAt { get; private set; } = -1;
++        public static long CurrentFrame => _frameNumber;
+         public static string TracePath { get; private set; }
+         public static string GbaInputPath { get; private set; }
+ 
+@@ -38,7 +42,6 @@ namespace AnodyneSharp.Recording
+         public const int DeterministicSeed = 1234;
+ 
+         public static RecordingMode Mode => _mode;
+-        public static long FrameNumber => _frameNumber;
+ 
+         /// <summary>
+         /// Parse command-line arguments for recording/playback options.
+@@ -76,6 +79,10 @@ namespace AnodyneSharp.Recording
+                 {
+                     Fast = true;
+                 }
++                else if (arg.StartsWith("-resumeat=", StringComparison.OrdinalIgnoreCase))
++                {
++                    ResumeAt = long.Parse(arg.Substring("-resumeat=".Length));
++                }
+                 else if (arg.StartsWith("-bot=", StringComparison.OrdinalIgnoreCase))
+                 {
+                     BotPath = arg.Substring("-bot=".Length);
