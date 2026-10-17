@@ -477,8 +477,8 @@ namespace AnodyneSharp.Recording
         /// <summary>Like GoTo but to the nearest tile satisfying isGoal.</summary>
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0;
-            bool pluggedTried = false;
+            int shooterFights = 0, slimeFights = 0;
+            var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
@@ -556,13 +556,13 @@ namespace AnodyneSharp.Recording
                         yield break;
                     }
                 }
-                if (DodgeEnabled && !pluggedTried && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
+                if (!pluggedGrids.Contains(Grid) && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
                 {
                     // A route through a laser beam with dust lying about: plug the emitter instead of racing (or waiting for) its shots.
                     var crossing = EmittersCrossing(path);
                     if (crossing.Count > 0)
                     {
-                        pluggedTried = true;
+                        pluggedGrids.Add(Grid);
                         Plugging = true; // BlockLasers walks with GoTo: it must not start plugging again from inside
                         try
                         {
@@ -581,9 +581,31 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  path to {what}: {path.Count} tiles from {BotNav.TileOf(Pos)} via {via}");
                 }
                 bool stuck = false;
+                var gridAtStart = Grid;
                 for (int pi = 0; pi < path.Count; pi++)
                 {
                     var tile = path[pi];
+                    if (Grid != gridAtStart && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
+                        && GlobalState.inventory.HasBroom && HaveLooseDust())
+                    {
+                        // Arrived on another screen of a long route: its beams are only known now, so plug the ones the rest of the route crosses.
+                        gridAtStart = Grid;
+                        var crossing2 = EmittersCrossing(path.Skip(pi).ToList());
+                        if (crossing2.Count > 0)
+                        {
+                            pluggedGrids.Add(Grid);
+                            Plugging = true;
+                            try
+                            {
+                                yield return BlockLasers(e => crossing2.Contains(e));
+                            }
+                            finally
+                            {
+                                Plugging = false;
+                            }
+                            goto replan;
+                        }
+                    }
                     if (jumping && BotNav.IsJumpable(tile))
                     {
                         int pj = pi;
@@ -625,6 +647,14 @@ namespace AnodyneSharp.Recording
                         if (Math.Abs(c.X - p.X) <= 2f && Math.Abs(c.Y - p.Y) <= 2f)
                         {
                             break;
+                        }
+                        if (AutoFight && slimeFights < 8 && !InRaft && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
+                        {
+                            // A slime drifting across the route hurts on contact: kill it from a safe gap first, then replan.
+                            slimeFights++;
+                            BotRunner.Status = "clear Slime on the way";
+                            yield return Fight(900, soft: true, only: e => e == slimeOnWay);
+                            goto replan;
                         }
                         if (DodgeEnabled && AutoFight && shooterFights < 3 && !InRaft && GlobalState.inventory.HasBroom && GlobalState.CUR_HEALTH >= TankMinHp && ShooterNear(80) is Entity shooter)
                         {

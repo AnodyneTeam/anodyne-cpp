@@ -497,6 +497,41 @@ namespace AnodyneSharp.Recording
             var zones = new Dictionary<Point, int>();
             foreach (var e in BotRunner.Entities())
             {
+                if (e.exists && e.GetType().Name == "PewLaser")
+                {
+                    // A plugged beam still fires its bullets across the tiles between the emitter and the plug (a bullet spawns
+                    // right at the muzzle and hits whoever stands there before it reaches the dust): walk round them if possible.
+                    var d = e.facing switch { Facing.RIGHT => new Point(1, 0), Facing.LEFT => new Point(-1, 0), Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
+                    var mt = TileOf(e.Position + new Vector2(8, 8));
+                    var cells = new List<Point>();
+                    for (int i = 1; i < 24; i++)
+                    {
+                        mt = new Point(mt.X + d.X, mt.Y + d.Y);
+                        cells.Add(mt);
+                        if (!Walkable(mt))
+                        {
+                            cells.Clear();
+                            break;
+                        }
+                        if (System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == mt))
+                        {
+                            break;
+                        }
+                        if (i > 8)
+                        {
+                            cells.Clear();
+                            break;
+                        }
+                    }
+                    foreach (var cell in cells)
+                    {
+                        if (!LaneAxes().ContainsKey(cell))
+                        {
+                            zones[cell] = Math.Max(zones.TryGetValue(cell, out int oldZone) ? oldZone : 0, 30);
+                        }
+                    }
+                    continue;
+                }
                 if (!e.exists || e.GetType().Name != "Burst_Plant")
                 {
                     continue;
@@ -604,11 +639,11 @@ namespace AnodyneSharp.Recording
                     int step = 1;
                     if (lanes.TryGetValue(n, out int axis) && ((axis == 0) == (d.Y == 0)))
                     {
-                        step += 8; // moving along the beam
+                        step += 40; // moving along the beam
                     }
                     else if (lanes.ContainsKey(n))
                     {
-                        step += 2; // crossing it
+                        step += 30; // crossing it (a fast emitter has no gap a walker can use: prefer any detour)
                     }
                     if (zones.TryGetValue(n, out int zc))
                     {

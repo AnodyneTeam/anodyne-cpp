@@ -541,6 +541,12 @@ namespace AnodyneSharp.Recording
         private static readonly System.Reflection.FieldInfo LaserFastField =
             typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
+        /// <summary>The y at which the player's hitbox floats 3px above a sideways-patrolling Shieldy.</summary>
+        private static int? ShieldyHoverY(Entity shieldy)
+        {
+            return shieldy.Hitbox.Top - 15;
+        }
+
         private static bool CornersWalkable(Rectangle r)
         {
             return BotNav.Walkable(BotNav.TileOf(new Vector2(r.Left, r.Top))) && BotNav.Walkable(BotNav.TileOf(new Vector2(r.Right - 1, r.Top))) &&
@@ -940,44 +946,104 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var lanes = BotNav.LaneTiles();
-                var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))))
-                    .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position - em.Position).LengthSquared()).FirstOrDefault();
-                if (dust == null)
-                {
-                    continue;
-                }
-                var dt = BotNav.TileOf(dust.Position + new Vector2(8, 8));
                 BotRunner.Status = $"plugging laser at {et.X},{et.Y}";
-                Point? pickFrom = null;
-                foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                // Stand on a tile next to the muzzle tile that can be reached without crossing an open beam; when there is none
+                // (the corridor beyond the muzzle is only reachable across the beam), first plug the next tile of the beam from a
+                // safe side tile, then stand on that plug (a dust is not solid, and its bullets die on it) to plug the muzzle tile.
+                var lanes0 = BotNav.LaneTiles();
+                var stand = SafeStand(target, lanes0, et);
+                if (stand.HasValue)
                 {
-                    var t = new Point(dt.X + o.X, dt.Y + o.Y);
-                    if (BotNav.Walkable(t) && !lanes.Contains(t))
+                    yield return PickUpLooseDust(null);
+                    if (!_pickedDust)
                     {
-                        pickFrom = t;
-                        yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
-                        break;
+                        continue;
                     }
+                    yield return StandFaceAccept(stand.Value.X, stand.Value.Y, FaceChar(new Point(target.X - stand.Value.X, target.Y - stand.Value.Y)));
+                    yield return Wait(30);
                 }
-                if (pickFrom == null)
+                else
                 {
-                    continue;
-                }
-                yield return Wait(30);
-                foreach (var o in new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) })
-                {
-                    var t = new Point(target.X + o.X, target.Y + o.Y);
-                    if (t != et && BotNav.Walkable(t) && !lanes.Contains(t))
+                    var t1 = new Point(target.X + step.X, target.Y + step.Y);
+                    var stand1 = SafeStand(t1, lanes0, target);
+                    if (!stand1.HasValue)
                     {
-                        yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
-                        break;
+                        continue;
                     }
+                    yield return PickUpLooseDust(null);
+                    if (!_pickedDust)
+                    {
+                        continue;
+                    }
+                    yield return StandFaceAccept(stand1.Value.X, stand1.Value.Y, FaceChar(new Point(t1.X - stand1.Value.X, t1.Y - stand1.Value.Y)));
+                    yield return Wait(30);
+                    yield return PickUpLooseDust(t1);
+                    if (!_pickedDust)
+                    {
+                        continue;
+                    }
+                    yield return StandFaceAccept(t1.X, t1.Y, FaceChar(new Point(-step.X, -step.Y)));
+                    yield return Wait(30);
                 }
-                yield return Wait(30);
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
                     System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");
+                }
+            }
+        }
+
+
+        private static bool _pickedDust;
+
+        /// <summary>A tile next to `tile` (not the emitter's) that is walkable, off every open beam and reachable without crossing one.</summary>
+        private static Point? SafeStand(Point tile, HashSet<Point> lanes, Point emitter)
+        {
+            foreach (var o in new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) })
+            {
+                var t = new Point(tile.X + o.X, tile.Y + o.Y);
+                if (t == emitter || !BotNav.Walkable(t) || lanes.Contains(t))
+                {
+                    continue;
+                }
+                var saved = BotNav.Avoid;
+                BotNav.Avoid = new HashSet<Point>(lanes);
+                bool ok = t == BotNav.TileOf(Pos) || BotNav.FindPath(BotNav.TileOf(Pos), x => x == t, t, strict: true) != null;
+                BotNav.Avoid = saved;
+                if (ok)
+                {
+                    return t;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Sweeps up a loose dust that is off the beams (not the one on tile `except`), so the broom carries it. Sets _pickedDust.</summary>
+        private static IEnumerable<object> PickUpLooseDust(Point? except)
+        {
+            _pickedDust = false;
+            if (Player.broom.dust != null)
+            {
+                _pickedDust = true;
+                yield break;
+            }
+            var lanes = BotNav.LaneTiles();
+            var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8)))
+                    && BotNav.TileOf(e.Position + new Vector2(8, 8)) != except)
+                .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+            if (dust == null)
+            {
+                yield break;
+            }
+            var dt = BotNav.TileOf(dust.Position + new Vector2(8, 8));
+            foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+            {
+                var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                if (BotNav.Walkable(t) && !lanes.Contains(t))
+                {
+                    yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                    yield return Wait(30);
+                    _pickedDust = Player.broom.dust != null;
+                    yield break;
                 }
             }
         }
@@ -1679,6 +1745,13 @@ namespace AnodyneSharp.Recording
         protected static bool IsShooter(Entity e) => e.GetType().Name is "Frog" or "Burst_Plant";
 
         /// <summary>The nearest living shooter within `radius` px of the player, or null.</summary>
+        protected static Entity SlimeNear(float radius)
+        {
+            return Enemies().Where(e => e.GetType().Name == "Slime")
+                .Where(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < radius)
+                .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
+        }
+
         protected static Entity ShooterNear(float radius)
         {
             return Enemies().Where(IsShooter)
@@ -1716,6 +1789,8 @@ namespace AnodyneSharp.Recording
             float bestDist = float.MaxValue; // closest we have got to the current target (hits knock us about, so "still" is not enough)
             int noProgress = 0;
             Entity lastTarget = null;
+            Entity ambushFor = null;
+            var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -1912,6 +1987,103 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
+                if (target.GetType().Name == "Shieldy" && target.velocity.X != 0 && target.velocity.Y == 0 && aggroFrames <= 0 && ShieldyHoverY(target) is int hoverY)
+                {
+                    // A Shieldy patrolling sideways: float 3px above its line (no contact possible), follow it in x and swing down.
+                    var tb = target.Hitbox;
+                    var pb = Player.Hitbox;
+                    int gap = tb.Top - pb.Bottom;
+                    bool inBand = gap >= 1 && gap <= 9 && Math.Abs(pb.Center.X - tb.Center.X) < 60;
+                    if (i % 20 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  ambush f{i} gap={gap} inBand={inBand} pb={pb} tb={tb} v={target.velocity}");
+                    }
+                    if (!inBand)
+                    {
+                        // Get to a floor tile above the line, in the column of it that is nearest to us.
+                        BotRunner.Status = "fight/ambush route";
+                        int row = (hoverY + 6) / 16;
+                        var here0 = BotNav.TileOf(Pos);
+                        Point? goalTile = null;
+                        int bestCost = int.MaxValue;
+                        for (int col = tb.Center.X / 16 - 12; col <= tb.Center.X / 16 + 12; col++)
+                        {
+                            var rect = new Rectangle(col * 16 + 3, hoverY, 10, 12);
+                            if (CornersWalkable(rect) && BotNav.Walkable(new Point(col, tb.Top / 16)) && Math.Abs(col - here0.X) + Math.Abs(row - here0.Y) < bestCost)
+                            {
+                                bestCost = Math.Abs(col - here0.X) + Math.Abs(row - here0.Y);
+                                goalTile = new Point(col, row);
+                            }
+                        }
+                        if (goalTile.HasValue)
+                        {
+                            List<Point> hp = null;
+                            foreach (int margin in new[] { 6, 2, -2 })
+                            {
+                                BotNav.Avoid = BotNav.NearEnemies(margin);
+                                hp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalTile.Value, goalTile.Value, strict: true);
+                                BotNav.Avoid = null;
+                                if (hp != null)
+                                {
+                                    break;
+                                }
+                            }
+                            if (hp != null && hp.Count > 0)
+                            {
+                                lastStep = hp[0];
+                                var nc = BotNav.CentreOf(hp[0]) + new Vector2(5, 6);
+                                yield return SafeMove(StepKey(nc.X - me.X, nc.Y - me.Y, target), target);
+                                continue;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        BotRunner.Status = "fight/ambush";
+                        if (noKill > 0 && noKill < 1200)
+                        {
+                            noKill = 1; // waiting for a patroller to come by is not "no progress"
+                        }
+                        float adx = tb.Center.X - pb.Center.X;
+                        if (gap < 3)
+                        {
+                            yield return K(KeyFunctions.Up);
+                            continue;
+                        }
+                        if (gap > 6)
+                        {
+                            yield return K(KeyFunctions.Down);
+                            continue;
+                        }
+                        if (Math.Abs(adx) <= 10)
+                        {
+                            if (Player.facing != Facing.DOWN)
+                            {
+                                yield return K(KeyFunctions.Down); // turns us (and nudges ~1px towards it: the gap is >= 3)
+                                continue;
+                            }
+                            swing++;
+                            if (swing - lastSwing >= SwingCooldown + 8)
+                            {
+                                lastSwing = swing;
+                                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                                {
+                                    var hf = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                    System.Console.Error.WriteLine($"  ambush SWING f{i} adx={adx:0.0} gap={gap} health={hf?.GetValue(target)} facing={Player.facing}");
+                                }
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            yield return K();
+                            continue;
+                        }
+                        var side = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                        var moved = pb;
+                        moved.Offset(adx < 0 ? -2 : 2, 0);
+                        yield return CornersWalkable(moved) ? K(side) : K();
+                        continue;
+                    }
+                }
                 if (target.GetType().Name == "Shieldy" && aggroFrames <= 0)
                 {
                     // Only a downward swing hurts it (the broom reaches ~16px below the player). Get to a standoff two
@@ -2044,9 +2216,45 @@ namespace AnodyneSharp.Recording
                     {
                         continue;
                     }
+                    if (ambushFor != target)
+                    {
+                        ambushFor = target;
+                        ambushCols.Clear();
+                    }
                     foreach (int up in new[] { 2, 1 })
                     {
-                        var standoff = new Point(et.X, et.Y - up);
+                        int standX = et.X;
+                        if (target.velocity.X != 0 && target.velocity.Y == 0)
+                        {
+                            // A sideways patroller: its x keeps changing, so a standoff that follows it never settles. Ambush it instead: pick
+                            // (once) the column of its line, with clear floor above, that is nearest to where we are, and wait there.
+                            if (!ambushCols.TryGetValue(up, out standX))
+                            {
+                                var here1 = BotNav.TileOf(Pos);
+                                int best = int.MaxValue;
+                                standX = et.X;
+                                var lanesNow = BotNav.LaneTiles();
+                                for (int dirX = -1; dirX <= 1; dirX += 2)
+                                {
+                                    for (int k = 0; k < 14; k++)
+                                    {
+                                        int col = et.X + dirX * k;
+                                        if (!BotNav.Walkable(new Point(col, et.Y)))
+                                        {
+                                            break;
+                                        }
+                                        var st = new Point(col, et.Y - up);
+                                        if (BotNav.Walkable(st) && !lanesNow.Contains(st) && Math.Abs(col - here1.X) + Math.Abs(st.Y - here1.Y) < best)
+                                        {
+                                            best = Math.Abs(col - here1.X) + Math.Abs(st.Y - here1.Y);
+                                            standX = col;
+                                        }
+                                    }
+                                }
+                                ambushCols[up] = standX;
+                            }
+                        }
+                        var standoff = new Point(standX, et.Y - up);
                         if (lanes.Contains(standoff))
                         {
                             continue; // a laser sweeps that row: let it do the work instead
