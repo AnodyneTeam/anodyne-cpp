@@ -477,7 +477,28 @@ namespace AnodyneSharp.Recording
             yield break;
         }
 
-        protected static KeyFunctions[] K(params KeyFunctions[] k) => k;
+        /// <summary>
+        /// Keys for one frame. A swing pressed in the same frame as a direction goes in the OLD facing (the turn happens after the attack
+        /// is read), so "turn and swing" must be two frames: here a direction+Accept pair is sent as the turn alone when we do not face
+        /// that way yet, and as the swing alone when we do.
+        /// </summary>
+        protected static KeyFunctions[] K(params KeyFunctions[] k)
+        {
+            if (k.Length == 2 && Player != null)
+            {
+                int ai = Array.IndexOf(k, KeyFunctions.Accept);
+                if (ai >= 0)
+                {
+                    var dir = k[1 - ai];
+                    var want = dir == KeyFunctions.Up ? Facing.UP : dir == KeyFunctions.Down ? Facing.DOWN : dir == KeyFunctions.Left ? Facing.LEFT : dir == KeyFunctions.Right ? Facing.RIGHT : (Facing?)null;
+                    if (want.HasValue)
+                    {
+                        return Player.facing == want.Value ? new[] { KeyFunctions.Accept } : new[] { dir };
+                    }
+                }
+            }
+            return k;
+        }
 
         protected static IEnumerable<object> Wait(int frames)
         {

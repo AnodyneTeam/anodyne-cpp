@@ -3012,6 +3012,10 @@ namespace AnodyneSharp.Recording
                 }
                 if (target.GetType().Name == "Slime" && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
                 {
+                    if (i % 5 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  slime policy f{i}: keys=[{string.Join("+", slimeKeys)}] P={Player.Hitbox} T={target.Hitbox} facing={Player.facing}");
+                    }
                     yield return PolicyFrame(slimeKeys, target);
                     continue;
                 }

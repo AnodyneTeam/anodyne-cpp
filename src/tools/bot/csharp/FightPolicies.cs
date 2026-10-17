@@ -225,7 +225,12 @@ namespace AnodyneSharp.Recording
             int gy = Math.Max(sb.Top - pb.Bottom, pb.Top - sb.Bottom);
             if (Math.Max(gx, gy) < 4)
             {
-                return K(gx >= gy ? (dx < 0 ? PKey.Right : PKey.Left) : (dy < 0 ? PKey.Down : PKey.Up));
+                var awayNow = gx >= gy ? (dx < 0 ? PKey.Right : PKey.Left) : (dy < 0 ? PKey.Down : PKey.Up);
+                if (Math.Max(gx, gy) < 1 || Ahead(c, awayNow, 4))
+                {
+                    return K(awayNow);
+                }
+                // pinned against a wall with it right there: backing off is not possible, so deal with it from where we are
             }
             bool horiz = Math.Abs(dx) >= Math.Abs(dy);
             float along = horiz ? dx : dy, across = horiz ? dy : dx;
@@ -236,16 +241,33 @@ namespace AnodyneSharp.Recording
             m.Swing++;
             if (Math.Abs(across) <= 7)
             {
-                if (gap < 4)
+                if (gap < 4 && (gap < 1 || Ahead(c, away, 4)))
                 {
-                    return K(away);
+                    return K(away); // room to back off: do
                 }
-                if (gap <= 9)
+                if (gap <= 9 || gap < 4)
                 {
                     if (m.Swing - m.LastSwing >= SwingCooldown)
                     {
+                        var want = face == PKey.Up ? PFacing.Up : face == PKey.Down ? PFacing.Down : face == PKey.Left ? PFacing.Left : PFacing.Right;
+                        if (c.Facing != want)
+                        {
+                            // turn first (a swing pressed with the direction goes the old way); the turn nudges us ~1px towards it, so
+                            // only with 3px to spare, else wait for it to drift off
+                            if (gap >= 3)
+                            {
+                                return K(face);
+                            }
+                            // pinned: slip sideways along the wall so it is no longer straight above/below us
+                            var slip = across <= 0 ? PKey.Right : PKey.Left;
+                            if (!Ahead(c, slip, 4))
+                            {
+                                slip = slip == PKey.Right ? PKey.Left : PKey.Right;
+                            }
+                            return Ahead(c, slip, 4) ? K(slip) : None;
+                        }
                         m.LastSwing = m.Swing;
-                        return K(face, PKey.Accept);
+                        return K(PKey.Accept);
                     }
                     return None;
                 }

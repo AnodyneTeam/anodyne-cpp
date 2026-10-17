@@ -68,6 +68,7 @@ sealed class Sim
         Frame++;
         if (Invincible > 0) { Invincible--; }
         // player
+        var facingBefore = Facing;
         float vx = 0, vy = 0;
         int dirs = 0;
         foreach (var k in keys)
@@ -78,7 +79,7 @@ sealed class Sim
             else if (k == PKey.Right) { vx += 1; Facing = PFacing.Right; dirs++; }
         }
         bool attack = Array.IndexOf(keys, PKey.Accept) >= 0;
-        if (SwingT == 0 && attack) { SwingT = SwingLen; SwingFacing = Facing; }
+        if (SwingT == 0 && attack) { SwingT = SwingLen; SwingFacing = facingBefore; } // the swing goes the way we faced BEFORE this frame's direction key
         float sp = (vx != 0 && vy != 0) ? 70f / 60f * 0.7f : 70f / 60f;
         if (SwingT > 0) { vx = 0; vy = 0; } // the player does not walk while swinging
         var np = P + new Vector2(vx * sp, 0);

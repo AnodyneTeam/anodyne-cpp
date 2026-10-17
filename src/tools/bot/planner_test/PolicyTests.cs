@@ -63,6 +63,25 @@ static class PolicyTests
             check("slime: dies, no damage (300 seeds)", fail == 0 && dmgRuns == 0, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
             bad += (fail + dmgRuns > 0) ? 1 : 0;
         }
+        // 2b. slime, we start pressed against a wall with the slime close on the open side
+        {
+            int fail = 0, dmgRuns = 0, worst = 0, firstBadC = -1;
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var s = new Sim(seed, 14, 12);
+                bool top = seed % 2 == 0;
+                s.P = new Vector2(80 + s.Rng.Next(40), top ? 16 : 192 - 16 - 12);
+                var e = new Sim.Enemy { K = Sim.Kind.Slime, Pos = new Vector2(s.P.X - 3 + s.Rng.Next(6), top ? s.P.Y + 12 + 2 + s.Rng.Next(10) : s.P.Y - 16 - 2 - s.Rng.Next(10)), W = 16, H = 16 };
+                s.Enemies.Add(e);
+                var (ok, dmg, fr) = Episode(s, (sim, en, m) => FightPolicies.Slime(Ctx(sim, en), m), 2400, 1000 + seed);
+                if (!ok) { fail++; }
+                if (dmg > 0) { dmgRuns++; if (firstBadC < 0) { firstBadC = seed; } }
+                worst = Math.Max(worst, fr);
+            }
+            Console.WriteLine($"  first damaged cornered seed: {firstBadC}");
+            check("slime, cornered against a wall: dies, damage in under 2% of pinned starts (300 seeds)", fail == 0 && dmgRuns <= 6, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
+            bad += (fail + dmgRuns > 0) ? 1 : 0;
+        }
         // 3. Shieldy walking up and down a column, we start above it
         {
             int fail = 0, dmgRuns = 0, worst = 0, firstBad = -1;
