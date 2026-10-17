@@ -1,0 +1,389 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+index b39f990..903d409 100644
+--- a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
++++ b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Logging;
++using AnodyneSharp.Logging;
+ using AnodyneSharp.Recording;
+ using AnodyneSharp.Resources;
+ using System;
+@@ -20,7 +20,30 @@ namespace AnodyneSharp.Multiplatform
+                 // Parse recording/playback options
+                 var (recordPath, playbackPath, verifyMode) = RecordingManager.ParseCommandLine(args);
+ 
++                bool deterministicRun = !string.IsNullOrEmpty(recordPath) || !string.IsNullOrEmpty(playbackPath) || !string.IsNullOrEmpty(RecordingManager.BotPath);
++                if (deterministicRun)
++                {
++                    // Recorded runs must start from a clean game and must not touch the player's real saves/config:
++                    // use a throwaway save directory (saving at checkpoints would otherwise make the next run start mid-game).
++                    // ANODYNE_BOT_SAVEDIR keeps the saves between runs: development only (to resume experiments from a
++                    // checkpoint); recordings and the golden runs never set it.
++                    string fixedDir = Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR");
++                    string dir = !string.IsNullOrEmpty(fixedDir) ? fixedDir.TrimEnd('/') + "/" : Path.Combine(Path.GetTempPath(), "anodyne_bot_" + Environment.ProcessId) + "/";
++                    Directory.CreateDirectory(dir);
++                    AnodyneSharp.Registry.GameConstants.SavePath = dir;
++                    if (string.IsNullOrEmpty(fixedDir))
++                    {
++                        AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
++                    }
++                }
++
+                 using AnodyneGame game = new AnodyneGame();
++
++                bool deterministic = !string.IsNullOrEmpty(recordPath) || !string.IsNullOrEmpty(playbackPath) || !string.IsNullOrEmpty(RecordingManager.BotPath);
++                if (deterministic)
++                {
++                    AnodyneSharp.Registry.GlobalState.RNG = new Random(RecordingManager.DeterministicSeed);
++                }
+                 
+                 // Initialize recording/playback if specified
+                 if (!string.IsNullOrEmpty(recordPath))
+@@ -32,6 +55,19 @@ namespace AnodyneSharp.Multiplatform
+                     RecordingManager.StartPlayback(playbackPath, verifyMode);
+                 }
+ 
++                if (!string.IsNullOrEmpty(RecordingManager.BotPath))
++                {
++                    BotRunner.Start(RecordingManager.BotPath);
++                    if (!string.IsNullOrEmpty(RecordingManager.GbaInputPath))
++                    {
++                        BotRunner.OpenGbaInput(RecordingManager.GbaInputPath);
++                    }
++                }
++                if (!string.IsNullOrEmpty(RecordingManager.TracePath))
++                {
++                    BotRunner.OpenTrace(RecordingManager.TracePath);
++                }
++
+                 game.Run();
+ 
+                 // Clean up recording
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+index 414a382..f25975b 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+@@ -1,4 +1,4 @@
+-﻿#region Using Statements
++#region Using Statements
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -40,6 +40,7 @@ namespace AnodyneSharp
+         public State CurrentState { get; private set; }
+ 
+         private UILabel _fpsLabel;
++        private UILabel _botLabel;
+ 
+         public AnodyneGame()
+         {
+@@ -91,6 +92,7 @@ namespace AnodyneSharp
+             base.Initialize();
+ 
+             _fpsLabel = new UILabel(new Vector2(0, GameConstants.HEADER_HEIGHT), false, "", Color.LightBlue);
++            _botLabel = new UILabel(new Vector2(0, 160), false, "", Color.Yellow);
+ 
+             Window.Title = "Anodyne Fan Remake";
+ 
+@@ -137,6 +139,12 @@ namespace AnodyneSharp
+ 
+             base.Update(gameTime);
+ 
++            if (PixelateTest.Active)
++            {
++                PixelateTest.Update();
++                return;
++            }
++
+             GameTimes.UpdateTimes(gameTime);
+             Sounds.SoundManager.Update();
+             bool isPlayback = RecordingManager.Mode == RecordingManager.RecordingMode.Playback ||
+@@ -144,10 +152,20 @@ namespace AnodyneSharp
+ 
+ 
+             RecordingManager.FrameUpdate();
+-            if (isPlayback)
++            if (BotRunner.Active)
++            {
++                RecordingManager.CurrentInput = BotRunner.NextFrame();
++                KeyInput.KeyState = RecordingManager.CurrentInput;
++                RecordingManager.SaveHardwareInputs();
++            }
++            else if (isPlayback)
+             {
+                 RecordingManager.ReadInputToInject();
+                 KeyInput.KeyState = RecordingManager.CurrentInput;
++                if (RecordingManager.PlaybackFinished && RecordingManager.ExitWhenPlaybackDone)
++                {
++                    GlobalState.ClosingGame = true;
++                }
+             }
+             else
+             {
+@@ -156,6 +174,9 @@ namespace AnodyneSharp
+                     RecordingManager.CurrentInput = KeyInput.KeyState;
+                     RecordingManager.SaveHardwareInputs();
+                     KeyInput.Update(isRecording : true);
++
++                    // TODO
++                    // RecordingManager.RecordFrameEntities()
+                 }
+                 else
+                 {
+@@ -173,6 +194,11 @@ namespace AnodyneSharp
+ 
+             CurrentState.Update();
+ 
++            if (RecordingManager.TracePath != null)
++            {
++                BotRunner.Trace();
++            }
++
+             foreach (var effect in GlobalState.AllEffects.Where(e => e.Active()))
+             {
+                 effect.Update();
+@@ -220,6 +246,12 @@ namespace AnodyneSharp
+             }
+ #endif
+ 
++            if (PixelateTest.Active)
++            {
++                PixelateTest.Draw(this);
++                return;
++            }
++
+             SpriteDrawer.BeginDraw();
+             CurrentState.Draw();
+             SpriteDrawer.EndDraw();
+@@ -232,6 +264,13 @@ namespace AnodyneSharp
+                 _fpsLabel.Draw();
+             }
+ 
++            // "Bot thinking" overlay for realtime runs (not -fast): what the bot is doing and where it is heading.
++            if (BotRunner.Active && !RecordingManager.Fast)
++            {
++                _botLabel.SetText(BotRunner.Status);
++                _botLabel.Draw();
++            }
++
+             SpriteDrawer.EndGUIDraw();
+ 
+             SpriteDrawer.Render();
+@@ -289,6 +328,12 @@ namespace AnodyneSharp
+                     graphics.SynchronizeWithVerticalRetrace = false;
+                     break;
+             }
++            
++            if (RecordingManager.Fast)
++            {
++                IsFixedTimeStep = false;
++                graphics.SynchronizeWithVerticalRetrace = false;
++            }
+ 
+             graphics.ApplyChanges();
+         }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
+index 53f5cbc..6cca9b1 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
+@@ -281,6 +281,16 @@
+     <Compile Include="$(MSBuildThisFileDirectory)Resources\Writing\InputConfigWriter.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)Sounds\SongPlayer.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)Sounds\SoundManager.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\FrameEntityData.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Bot.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotNav.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotBehaviors.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\NexusToRoadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Roadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\StartToNexus.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RecordingManager.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)States\DialogueState.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)States\IntroState.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)States\MainMenu\MainMenuState.cs" />
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+index 432bb3f..266dee4 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Drawing;
++using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Spritesheet;
+ using AnodyneSharp.Entities;
+ using AnodyneSharp.MapData.Tiles;
+@@ -109,6 +109,28 @@ namespace AnodyneSharp.MapData
+             return ret;
+         }
+ 
++        /// <summary>Bot/debug: what a map tile does (collision + event) without needing a world position.</summary>
++        public (Touching allow, AnodyneSharp.MapData.Tiles.CollisionEventType ev) GetTileClass(Point tile)
++        {
++            if (tile.X < 0 || tile.Y < 0 || tile.X >= WidthInTiles || tile.Y >= HeightInTiles)
++            {
++                return (Touching.ANY, AnodyneSharp.MapData.Tiles.CollisionEventType.NONE);
++            }
++            var t = _tileObjects[GetTile(Layer.BG, tile)];
++            Touching allow = t.allowCollisions;
++            var ev = t.collisionEventType;
++            if (GetTile(Layer.BG2, tile) != 0)
++            {
++                var t2 = _tileObjects[GetTile(Layer.BG2, tile)];
++                allow |= t2.allowCollisions;
++                if (t2.collisionEventType != AnodyneSharp.MapData.Tiles.CollisionEventType.NONE)
++                {
++                    ev = t2.collisionEventType;
++                }
++            }
++            return (allow, ev);
++        }
++
+         public int GetTile(Layer layer, Point pos)
+         {
+             int current = mapLayers[(int)layer].GetTile(pos);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
+index d1694c7..3564914 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
+@@ -28,6 +28,15 @@ namespace AnodyneSharp.Recording
+         private static string _recordingPath;
+         private static string _verificationPath;
+ 
++        public static bool Fast { get; private set; }
++        public static bool ExitWhenPlaybackDone => Fast || BotPath != null || TracePath != null;
++        public static string BotPath { get; private set; }
++        public static string TracePath { get; private set; }
++        public static string GbaInputPath { get; private set; }
++
++        // Every recorded/played-back/bot run starts from the same RNG seed so it is reproducible.
++        public const int DeterministicSeed = 1234;
++
+         public static RecordingMode Mode => _mode;
+         public static long FrameNumber => _frameNumber;
+ 
+@@ -37,14 +46,6 @@ namespace AnodyneSharp.Recording
+         /// </summary>
+         public static (string record, string playback, bool verify) ParseCommandLine(string[] args)
+         {
+-            args = new string[]
+-            {
+-                //"-record=recordings/test_recording3.bin"
+-                "-playback=recordings/test_recording3.bin"
+-                //"-verify=true"
+-            };
+-
+-
+             string recordPath = null;
+             string playbackPath = null;
+             bool verifyMode = false;
+@@ -69,6 +70,26 @@ namespace AnodyneSharp.Recording
+                 }
+             }
+ 
++            foreach (var arg in args)
++            {
++                if (arg.Equals("-fast", StringComparison.OrdinalIgnoreCase))
++                {
++                    Fast = true;
++                }
++                else if (arg.StartsWith("-bot=", StringComparison.OrdinalIgnoreCase))
++                {
++                    BotPath = arg.Substring("-bot=".Length);
++                }
++                else if (arg.StartsWith("-gbainput=", StringComparison.OrdinalIgnoreCase))
++                {
++                    GbaInputPath = arg.Substring("-gbainput=".Length);
++                }
++                else if (arg.StartsWith("-trace=", StringComparison.OrdinalIgnoreCase))
++                {
++                    TracePath = arg.Substring("-trace=".Length);
++                }
++            }
++
+             return (recordPath, playbackPath, verifyMode);
+         }
+ 
+@@ -154,18 +175,24 @@ namespace AnodyneSharp.Recording
+ 
+         public static void Write(BinaryWriter writer)
+         {
+-            writer.Write(CurrentInput.Count);
++            // Compact: idle keys are omitted (Read restores them as NONE), so old full-dictionary files still load.
++            var active = CurrentInput.Where(kvp => kvp.Value != KeyInput.InputState.NONE).ToList();
++            writer.Write(active.Count);
+ 
+-            foreach (var kvp in CurrentInput)
++            foreach (var kvp in active)
+             {
+                 writer.Write((int)kvp.Key);                 // Keys enum → int
+                 writer.Write((byte)kvp.Value);              // InputState enum → byte
+             }
+         }
+ 
++        private static readonly Dictionary<Microsoft.Xna.Framework.Input.Keys, KeyInput.InputState> IdleKeys =
++            Enum.GetValues(typeof(Microsoft.Xna.Framework.Input.Keys)).Cast<Microsoft.Xna.Framework.Input.Keys>().Distinct()
++                .ToDictionary(k => k, k => KeyInput.InputState.NONE);
++
+         public static  Dictionary<Microsoft.Xna.Framework.Input.Keys, KeyInput.InputState> Read(BinaryReader reader)
+         {
+-            var r = new Dictionary<Microsoft.Xna.Framework.Input.Keys, KeyInput.InputState>();
++            var r = new Dictionary<Microsoft.Xna.Framework.Input.Keys, KeyInput.InputState>(IdleKeys);
+ 
+             int count = reader.ReadInt32();
+ 
+@@ -183,9 +210,17 @@ namespace AnodyneSharp.Recording
+         public static Dictionary<Microsoft.Xna.Framework.Input.Keys, KeyInput.InputState> CurrentInput { get; set; } = new();
+ 
+ 
++        /// <summary>True once every recorded frame has been injected (playback is over).</summary>
++        public static bool PlaybackFinished { get; private set; }
++
+         public static void ReadInputToInject()
+         {
+-            if (_playbackQueue == null || _playbackQueue.Count == 0) return;
++            if (_playbackQueue == null) return;
++            if (_playbackQueue.Count == 0)
++            {
++                PlaybackFinished = true;
++                return;
++            }
+ 
+             CurrentInput = _playbackQueue.Dequeue();
+         }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+index b706cb3..f244f53 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Cheatz;
++using AnodyneSharp.Cheatz;
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -103,6 +103,8 @@ namespace AnodyneSharp.States
+             _oldEntities = new List<Entity>();
+ 
+             _player = new Player();
++            AnodyneSharp.Recording.BotRunner.Player = _player;
++            AnodyneSharp.Recording.BotRunner.Entities = () => _gridEntities;
+             _healthBar = new HealthBar();
+ 
+             _iconPos = new Vector2(2, 3);
+@@ -267,6 +269,8 @@ namespace AnodyneSharp.States
+             _newlySpawned.Clear();
+ 
+             bool updateEntities = _childStates.All(s => s.UpdateEntities);
++            AnodyneSharp.Recording.BotRunner.PlayBusy = _childStates.Count > 0;
++            AnodyneSharp.Recording.BotRunner.InDeathMenu = _childStates.Any(s => s is DeathState);
+ 
+             if (_childStates.Count > 0)
+             {
+@@ -279,6 +283,7 @@ namespace AnodyneSharp.States
+                     s.Update();
+                     if (s.Exit && s is DeathState)
+                     {
++                        AnodyneSharp.Recording.BotRunner.Deaths++;
+                         Warp();
+                         _state = PlayStateState.S_MAP_ENTER;
+                     }
