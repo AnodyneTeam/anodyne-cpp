@@ -105,6 +105,8 @@ static class Program
 
     static void Main(string[] args)
     {
+        if (args.Length > 1 && args[0] == "seed") { PolicyTests.VerboseSeed = int.Parse(args[1]); args = new string[0]; }
+        if (args.Length > 1 && args[0] == "dbgv") { Debug.Vertical(int.Parse(args[1])); return; }
         if (args.Length > 0) { foreach (var a in args) { Fixture(a); } return; }
         var player = new Rectangle(64, 100, 10, 12);
 
@@ -150,6 +152,7 @@ static class Program
             var (a, ms, n) = Run(player, new Vector2(250, 100), th, room);
             Check("unreachable goal: bounded cost", ms < 100 && n <= 2500, $"({ms:0.0} ms, {n} nodes, action {a})");
         }
+        fails += PolicyTests.Run((n, ok, x) => Check(n, ok, x));
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         Environment.Exit(fails == 0 ? 0 : 1);
     }

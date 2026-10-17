@@ -180,7 +180,7 @@ namespace AnodyneSharp.Recording
             if (_allowDamage) { _hpSeenAllow = hp; return; }
             if (why != null)
             {
-                System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame}");
+                System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame} doing [{Status}]");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                 _trace?.Flush();
                 Environment.Exit(2);

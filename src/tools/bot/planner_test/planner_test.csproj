@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../csharp/SpaceTime.cs" Link="SpaceTime.cs" />
+    <Compile Include="../csharp/FightPolicies.cs" Link="FightPolicies.cs" />
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.1.303" />
   </ItemGroup>
 </Project>

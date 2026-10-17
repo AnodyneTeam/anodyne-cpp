@@ -2205,6 +2205,30 @@ namespace AnodyneSharp.Recording
         /// <summary>Health we are willing to spend on charging a shooter (a volley is at most 3 bullets, and it cannot fire again until they are gone).</summary>
         protected const int TankMinHp = 4;
 
+        private static PCtx PolicyCtx(Entity target) => new PCtx
+        {
+            P = Player.Hitbox,
+            Facing = Player.facing switch { Facing.UP => PFacing.Up, Facing.DOWN => PFacing.Down, Facing.LEFT => PFacing.Left, _ => PFacing.Right },
+            T = target.Hitbox,
+            TV = target.velocity,
+            Walk = CornersWalkable
+        };
+
+        /// <summary>A policy's keys as a frame: a plain step goes through the danger-aware SafeMove, anything else (swings, standing) is sent as is.</summary>
+        private static KeyFunctions[] PolicyFrame(PKey[] keys, Entity target)
+        {
+            if (keys.Length == 0)
+            {
+                return K();
+            }
+            KeyFunctions Map(PKey k) => k switch { PKey.Up => KeyFunctions.Up, PKey.Down => KeyFunctions.Down, PKey.Left => KeyFunctions.Left, PKey.Right => KeyFunctions.Right, _ => KeyFunctions.Accept };
+            if (keys.Length == 1 && keys[0] != PKey.Accept)
+            {
+                return SafeMove(Map(keys[0]), target);
+            }
+            return K(keys.Select(Map).ToArray());
+        }
+
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
@@ -2273,7 +2297,7 @@ namespace AnodyneSharp.Recording
             int noProgress = 0;
             Entity lastTarget = null;
             Entity ambushFor = null;
-            int vRetreat = 0;
+            var pmem = new PolicyMem();
             bool ambushChase = false; // lining up sideways under a patroller: keep going until close (turning to face down loses ground)
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
@@ -2480,115 +2504,22 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
-                if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero)
+                if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero && FightPolicies.BoomStationary(PolicyCtx(target), pmem) is PKey[] boomKeys)
                 {
-                    // A Shieldy that stands still dies to two downward swings: whenever we are above it, just do that (turn down, boom),
-                    // sliding along its top to line up first. Anything fancier only matters when we are not above it yet.
-                    var tb = target.Hitbox;
-                    var pb = Player.Hitbox;
-                    int gap = tb.Top - pb.Bottom;
-                    float adx = tb.Center.X - pb.Center.X;
-                    if (pb.Center.Y < tb.Center.Y && gap <= 80)
-                    {
-                        // We are north of it: line up on its column, come down to a few px above it, turn down (the turn is one press of Down),
-                        // swing. No planning, no standoff tiles: this is the whole job.
-                        BotRunner.Status = "fight/boom";
-                        if (Math.Abs(adx) <= 6)
-                        {
-                            if (gap < 2)
-                            {
-                                yield return K(KeyFunctions.Up); // touching/overlapping: back off first
-                                continue;
-                            }
-                            if (Player.facing != Facing.DOWN)
-                            {
-                                yield return gap >= 4 ? K(KeyFunctions.Down) : K(KeyFunctions.Up);
-                                continue;
-                            }
-                            if (gap > 9 && WalkableAhead(KeyFunctions.Down, 2))
-                            {
-                                yield return K(KeyFunctions.Down);
-                                continue;
-                            }
-                            if (gap <= 12)
-                            {
-                                swing++;
-                                if (swing - lastSwing >= SwingCooldown + 8)
-                                {
-                                    lastSwing = swing;
-                                    yield return K(KeyFunctions.Accept);
-                                    continue;
-                                }
-                                yield return K();
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            var slideKey = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
-                            if (i % 60 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
-                            {
-                                System.Console.Error.WriteLine($"  boom f{i}: adx={adx:0} gap={gap} pb={pb} tb={tb} slide {slideKey} walkable={WalkableAhead(slideKey, 3)} blocked=[{string.Join(" ", BotNav.Blocked.Select(q => q.X + "," + q.Y))}] tiles L={BotNav.Walkable(new Point(26, 15))} {BotNav.Walkable(new Point(26, 14))} {BotNav.Walkable(new Point(27, 15))} {BotNav.Walkable(new Point(27, 14))}");
-                            }
-                            if (gap < 2)
-                            {
-                                yield return K(KeyFunctions.Up);
-                                continue;
-                            }
-                            if (WalkableAhead(slideKey, 3))
-                            {
-                                yield return SafeMove(slideKey, target);
-                                continue;
-                            }
-                        }
-                    }
+                    BotRunner.Status = "fight/boom";
+                    yield return PolicyFrame(boomKeys, target);
+                    continue;
                 }
-                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && Target_ColumnAboveClear(target))
+                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && Target_ColumnAboveClear(target) &&
+                    FightPolicies.VerticalShieldy(PolicyCtx(target), pmem) is PKey[] vKeys)
                 {
-                    // A Shieldy patrolling up and down a column: wait above it facing down, swing when it is in reach, back off between
-                    // swings (it keeps coming), and follow it down when it walks away.
-                    var tb = target.Hitbox;
-                    var pb = Player.Hitbox;
-                    int gap = tb.Top - pb.Bottom;
-                    float adx = tb.Center.X - pb.Center.X;
-                    if (gap >= -2)
+                    BotRunner.Status = "fight/ambush vertical";
+                    if (noKill > 0 && noKill < 1200)
                     {
-                        BotRunner.Status = "fight/ambush vertical";
-                        if (noKill > 0 && noKill < 1200)
-                        {
-                            noKill = 1;
-                        }
-                        if (Math.Abs(adx) > 4)
-                        {
-                            var sideK = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
-                            var movedV = pb;
-                            movedV.Offset(adx < 0 ? -2 : 2, 0);
-                            yield return gap < 10 ? K(KeyFunctions.Up) : (CornersWalkable(movedV) ? K(sideK) : K());
-                            continue;
-                        }
-                        if (vRetreat > 0)
-                        {
-                            vRetreat--;
-                            yield return K(KeyFunctions.Up); // back away from the one that is coming up the column while the broom recovers
-                            continue;
-                        }
-                        if (Player.facing != Facing.DOWN)
-                        {
-                            yield return gap >= 5 ? K(KeyFunctions.Down) : K(KeyFunctions.Up); // turn (it nudges us 1px down), after backing off to a gap
-                            continue;
-                        }
-                        if (gap <= 10 && swing - lastSwing >= SwingCooldown + 8)
-                        {
-                            swing++;
-                            lastSwing = swing;
-                            vRetreat = target.velocity.Y < 0 ? 14 : 0;
-                            yield return K(KeyFunctions.Accept);
-                            continue;
-                        }
-                        swing++;
-                        yield return gap < 2 ? K(KeyFunctions.Up) : ((gap > 12 && target.velocity.Y > 0) ? K(KeyFunctions.Down) : K());
-                        continue;
+                        noKill = 1; // waiting for a patroller to come by is not "no progress"
                     }
+                    yield return PolicyFrame(vKeys, target);
+                    continue;
                 }
                 if (target.GetType().Name == "Shieldy" && target.velocity.X != 0 && target.velocity.Y == 0 && aggroFrames <= 0 && ShieldyHoverY(target) is int hoverY)
                 {
@@ -3079,44 +3010,9 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if (target.GetType().Name == "Slime")
+                if (target.GetType().Name == "Slime" && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
                 {
-                    // Slimes drift at <=10 px/s and hurt on contact (their goo is harmless): line up on the broom's axis, stop with a
-                    // few px of gap and swing from there; back off if one drifts into contact range.
-                    bool horiz = Math.Abs(dx) >= Math.Abs(dy);
-                    float along = horiz ? dx : dy, across = horiz ? dy : dx;
-                    float gap = Math.Abs(along) - (horiz ? 13 : 14);
-                    var face = horiz ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                    var away = horiz ? (dx < 0 ? KeyFunctions.Right : KeyFunctions.Left) : (dy < 0 ? KeyFunctions.Down : KeyFunctions.Up);
-                    var side = horiz ? (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
-                    swing++;
-                    if (Math.Abs(across) <= 7)
-                    {
-                        if (gap < 2)
-                        {
-                            yield return K(away);
-                        }
-                        else if (gap <= 9)
-                        {
-                            if (swing - lastSwing >= SwingCooldown)
-                            {
-                                lastSwing = swing;
-                                yield return K(face, KeyFunctions.Accept);
-                            }
-                            else
-                            {
-                                yield return K();
-                            }
-                        }
-                        else
-                        {
-                            yield return K(face);
-                        }
-                    }
-                    else
-                    {
-                        yield return gap < 6 ? K(away) : K(side);
-                    }
+                    yield return PolicyFrame(slimeKeys, target);
                     continue;
                 }
                 if (Math.Abs(dx) >= Math.Abs(dy))
