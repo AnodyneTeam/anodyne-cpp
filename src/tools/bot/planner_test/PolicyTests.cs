@@ -235,3 +235,56 @@ static class Debug
         }
     }
 }
+
+static class SeerTests
+{
+    // Plays the Seer fight (the real boss logic, re-implemented) against SeerPolicy in a 10x10 tile room; returns (won, damage, frames).
+    public static (bool won, int dmg, int frames) Episode(int seed, int maxFrames = 6000, bool verbose = false)
+    {
+        var s = new Sim(seed, 10, 10);
+        var boss = new SeerBoss(new Vector2(64, 40));
+        var rng = new Random(seed * 7919 + 13);
+        s.P = new Vector2(60 + rng.Next(30), 110 + rng.Next(20));
+        // random warm-up of the boss's phase so that every seed meets a different moment of its cycle
+        int warm = rng.Next(0, 400);
+        for (int w = 0; w < warm; w++) { boss.Step(); }
+        var mem = new SeerMem();
+        int hits = 0;
+        for (int f = 0; f < maxFrames && boss.Health > 0; f++)
+        {
+            float minC = boss.Preset.Y - 32 + 12, maxC = boss.Preset.Y + 80 + 12;
+            var ctx = new SeerCtx
+            {
+                P = s.PlayerBox, Facing = s.Facing, Swinging = s.SwingT > 0, Seer = boss.Body, Orbs = boss.OrbBoxes.ToList(),
+                Wave = boss.WaveBox, Vulnerable = boss.Vulnerable, Health = boss.Health, MinCY = minC, MaxCY = maxC, Walk = s.Walk,
+                WaveStopY = boss.Dusts.Count > 0 ? boss.Dusts.Min(d => d.Y) - 8 : float.NaN
+            };
+            var keys = SeerPolicy.Decide(ctx, mem);
+            if (verbose && f % 5 == 0) { Console.WriteLine($"f{f} hp={boss.Health} vuln={boss.Vulnerable} P={s.PlayerBox} face={s.Facing} S={boss.Body} keys={string.Join("+", keys)} dmg={s.Damage} wave={boss.WaveBox}"); }
+            s.Step(keys);
+            boss.Step();
+            // contact
+            var pb = s.PlayerBox;
+            if (s.Invincible == 0 && (boss.Body.Intersects(pb) || boss.OrbBoxes.Any(o => o.Intersects(pb)) || (boss.WaveBox?.Intersects(pb) ?? false))) { s.Damage++; s.Invincible = 60; if (boss.WaveBox?.Intersects(pb) ?? false) { boss.WaveEnd = true; } hits++; }
+            if (s.SwingT > 0) { var b = s.BroomRect(); if (b.Intersects(boss.Body)) { boss.Hit(); } }
+        }
+        return (boss.Health <= 0, s.Damage, s.Frame);
+    }
+
+    public static void Run(Action<string, bool, string> check)
+    {
+        int won = 0, hurt = 0, worst = 0, total = 0, firstBad = -1;
+        const int N = 60;
+        for (int seed = 0; seed < N; seed++)
+        {
+            var (w, d, fr) = Episode(seed);
+            if (w) { won++; }
+            total += d;
+            if (d > 0) { hurt++; if (firstBad < 0) { firstBad = seed; } }
+            worst = Math.Max(worst, fr);
+        }
+        Console.WriteLine($"  seer: won {won}/{N}, fights with damage {hurt}, total hearts lost {total}, worst {worst} frames, first damaged seed {firstBad}");
+        check("seer: wins every seed", won == N, "");
+        check("seer: zero-damage fights in at least 80% of seeds", hurt <= N / 5, $"(damaged {hurt}/{N})");
+    }
+}

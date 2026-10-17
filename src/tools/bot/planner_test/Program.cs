@@ -105,6 +105,7 @@ static class Program
 
     static void Main(string[] args)
     {
+        if (args.Length > 1 && args[0] == "seer") { SeerTests.Episode(int.Parse(args[1]), 6000, true); return; }
         if (args.Length > 1 && args[0] == "seed") { PolicyTests.VerboseSeed = int.Parse(args[1]); args = new string[0]; }
         if (args.Length > 1 && args[0] == "dbgv") { Debug.Vertical(int.Parse(args[1])); return; }
         if (args.Length > 0) { foreach (var a in args) { Fixture(a); } return; }
@@ -153,6 +154,7 @@ static class Program
             Check("unreachable goal: bounded cost", ms < 100 && n <= 2500, $"({ms:0.0} ms, {n} nodes, action {a})");
         }
         PolicyTests.Run((n, ok, x) => Check(n, ok, x));
+        if (Environment.GetEnvironmentVariable("SEER") != null) { SeerTests.Run((n, ok, x) => Check(n, ok, x)); }
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         Environment.Exit(fails == 0 ? 0 : 1);
     }

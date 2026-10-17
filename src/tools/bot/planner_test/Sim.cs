@@ -48,6 +48,8 @@ sealed class Sim
 
     public Rectangle PlayerBox => new((int)P.X, (int)P.Y, 10, 12);
 
+    public Rectangle BroomRect() => Broom();
+
     Rectangle Broom()
     {
         int fr = Math.Min(4, SwingElapsed() * 14 / 60);
