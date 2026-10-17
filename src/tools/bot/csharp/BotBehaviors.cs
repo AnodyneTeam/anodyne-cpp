@@ -2210,6 +2210,46 @@ namespace AnodyneSharp.Recording
                 yield return SeerFight();
                 yield break;
             }
+            if (!Plugging && HaveLooseDust() && Player.broom != null)
+            {
+                // A beam that sweeps the floor around a Shieldy would hit us while we line up beside/above it: plug it first.
+                var lanesF = BotNav.LaneAxes();
+                var shieldies = Enemies().Where(e => e.GetType().Name == "Shieldy" && (only == null || only(e))).ToList();
+                var emittersNear = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").Where(em =>
+                {
+                    var step = FacingStep(em.facing);
+                    var t = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                    for (int i = 0; i < 24; i++)
+                    {
+                        t = new Point(t.X + step.X, t.Y + step.Y);
+                        if (!lanesF.ContainsKey(t))
+                        {
+                            return false;
+                        }
+                        foreach (var sh in shieldies)
+                        {
+                            var st = BotNav.TileOf(new Vector2(sh.Hitbox.Center.X - 5, sh.Hitbox.Center.Y - 6));
+                            if (Math.Abs(st.X - t.X) <= 2 && Math.Abs(st.Y - t.Y) <= 2)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }).ToList();
+                if (emittersNear.Count > 0)
+                {
+                    Plugging = true;
+                    try
+                    {
+                        yield return BlockLasers(e => emittersNear.Contains(e));
+                    }
+                    finally
+                    {
+                        Plugging = false;
+                    }
+                }
+            }
             int swing = 0, lastSwing = -1000;
             var startGrid = Grid;
             Vector2 lastPos = Pos;
