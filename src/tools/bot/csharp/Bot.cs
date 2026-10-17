@@ -431,8 +431,10 @@ namespace AnodyneSharp.Recording
         /// <summary>Like GoTo but to the nearest tile satisfying isGoal.</summary>
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
+            int shooterFights = 0;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
+                replan:
                 var path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                 bool jumping = false;
                 if (path == null)
@@ -543,6 +545,14 @@ namespace AnodyneSharp.Recording
                         if (Math.Abs(c.X - p.X) <= 2f && Math.Abs(c.Y - p.Y) <= 2f)
                         {
                             break;
+                        }
+                        if (DodgeEnabled && AutoFight && shooterFights < 3 && !InRaft && GlobalState.inventory.HasBroom && GlobalState.CUR_HEALTH >= TankMinHp && ShooterNear(80) is Entity shooter)
+                        {
+                            // A frog/plant on the way would keep us dancing in and out of its bubbles: kill it (2 hits), pick up the hearts, replan.
+                            shooterFights++;
+                            BotRunner.Status = $"clear {shooter.GetType().Name} on the way";
+                            yield return Fight(900, soft: true, only: e => e == shooter);
+                            goto replan;
                         }
                         still = (p == last) ? still + 1 : 0;
                         last = p;

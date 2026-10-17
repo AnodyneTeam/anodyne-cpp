@@ -323,6 +323,7 @@ namespace AnodyneSharp.Recording
         public static void ResetIntended()
         {
             _intended = null;
+            InRaft = false; // a death or failure mid-raft abandons the iterator without running its finally
         }
 
         /// <summary>A block of steps that is replayed from the top after every death.</summary>
@@ -1330,7 +1331,21 @@ namespace AnodyneSharp.Recording
             throw new TimeoutException("bot: the Seer fight timed out");
         }
 
-        protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false)
+        /// <summary>Stationary ranged enemies: they never come to us, and their volleys are what makes walking past them costly.</summary>
+        protected static bool IsShooter(Entity e) => e.GetType().Name is "Frog" or "Burst_Plant";
+
+        /// <summary>The nearest living shooter within `radius` px of the player, or null.</summary>
+        protected static Entity ShooterNear(float radius)
+        {
+            return Enemies().Where(IsShooter)
+                .Where(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < radius)
+                .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
+        }
+
+        /// <summary>Health we are willing to spend on charging a shooter (a volley is at most 3 bullets, and it cannot fire again until they are gone).</summary>
+        protected const int TankMinHp = 4;
+
+        protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
@@ -1344,6 +1359,9 @@ namespace AnodyneSharp.Recording
             int unstick = 0;
             KeyFunctions unstickKey = KeyFunctions.Down;
             Point? lastStep = null; // the next path tile we were walking towards (blamed when we stop moving)
+            float bestDist = float.MaxValue; // closest we have got to the current target (hits knock us about, so "still" is not enough)
+            int noProgress = 0;
+            Entity lastTarget = null;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -1357,6 +1375,10 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 var enemies = Enemies();
+                if (only != null)
+                {
+                    enemies = enemies.Where(only).ToList();
+                }
                 if (enemies.Count == 0)
                 {
                     yield return CollectHearts();
@@ -1610,7 +1632,20 @@ namespace AnodyneSharp.Recording
                     yield return K(KeyFunctions.Up);
                     continue;
                 }
-                if (dx * dx + dy * dy > 30 * 30)
+                float distSq = dx * dx + dy * dy;
+                if (target != lastTarget || distSq < bestDist - 16f)
+                {
+                    lastTarget = target;
+                    bestDist = distSq;
+                    noProgress = 0;
+                }
+                else
+                {
+                    noProgress++;
+                }
+                // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.
+                bool blockedClose = DodgeEnabled && noProgress > 40 && target.GetType().Name != "Annoyer";
+                if (distSq > 30 * 30 || blockedClose)
                 {
                     // Far away: follow the tile path (walls between us), re-planned every few frames.
                     var tt = BotNav.TileOf(new Vector2(c.X - 5, c.Y - 6));
@@ -1626,7 +1661,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
                         }
-                        yield return K(dir);
+                        yield return (DodgeEnabled && IsShooter(target) && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
                         continue;
                     }
                 }
@@ -1686,7 +1721,8 @@ namespace AnodyneSharp.Recording
                 }
                 else
                 {
-                    yield return K(dir);
+                    // Charging a shooter: dodging its volley only drags the fight out (it re-fires when the bullets are gone).
+                    yield return (DodgeEnabled && IsShooter(target) && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
                 }
             }
             if (!soft)

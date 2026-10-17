@@ -491,6 +491,30 @@ namespace AnodyneSharp.Recording
             return set;
         }
 
+        /// <summary>Extra path cost near stationary shooters (their bubbles always find a player walking past): 2 tiles = 12, 4 tiles = 5.</summary>
+        public static Dictionary<Point, int> ShooterZones()
+        {
+            var zones = new Dictionary<Point, int>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "Burst_Plant")
+                {
+                    continue;
+                }
+                var c = TileOf(e.Position + new Vector2(8, 8));
+                for (int dx = -4; dx <= 4; dx++)
+                {
+                    for (int dy = -4; dy <= 4; dy++)
+                    {
+                        int dist = Math.Max(Math.Abs(dx), Math.Abs(dy));
+                        var t = new Point(c.X + dx, c.Y + dy);
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int old) ? old : 0, dist <= 2 ? 12 : 5);
+                    }
+                }
+            }
+            return zones;
+        }
+
         /// <summary>Tiles within `margin` px of any living enemy except `except`.</summary>
         public static HashSet<Point> NearEnemies(int margin, Entity except = null)
         {
@@ -547,7 +571,7 @@ namespace AnodyneSharp.Recording
         /// Dijkstra variant used on screens with laser beams: walking along a beam is costly (every bullet meets you), crossing
         /// it sideways is cheap, so the route crosses beams at right angles where it can.
         /// </summary>
-        private static List<Point> FindPathWeighted(Point a, Func<Point, bool> isGoal, Point? forced, HashSet<Point> hazards, Dictionary<Point, int> lanes)
+        private static List<Point> FindPathWeighted(Point a, Func<Point, bool> isGoal, Point? forced, HashSet<Point> hazards, Dictionary<Point, int> lanes, Dictionary<Point, int> zones)
         {
             var best = new Dictionary<Point, int> { [a] = 0 };
             var prev = new Dictionary<Point, Point> { [a] = a };
@@ -586,6 +610,10 @@ namespace AnodyneSharp.Recording
                     {
                         step += 2; // crossing it
                     }
+                    if (zones.TryGetValue(n, out int zc))
+                    {
+                        step += zc;
+                    }
                     int nc = cost + step;
                     if (!best.TryGetValue(n, out int old) || nc < old)
                     {
@@ -616,9 +644,10 @@ namespace AnodyneSharp.Recording
             q.Enqueue(a);
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
             var lanes = LaneAxes();
-            if (lanes.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_WEIGHT") == null)
+            var zones = ShooterZones();
+            if ((lanes.Count > 0 || zones.Count > 0) && Environment.GetEnvironmentVariable("ANODYNE_NO_WEIGHT") == null)
             {
-                return FindPathWeighted(a, isGoal, forced, hazards, lanes);
+                return FindPathWeighted(a, isGoal, forced, hazards, lanes, zones);
             }
             while (q.Count > 0)
             {
