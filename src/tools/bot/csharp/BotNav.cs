@@ -173,10 +173,13 @@ namespace AnodyneSharp.Recording
         /// <summary>Extra tiles the next searches must avoid (e.g. tiles near enemies); set by the caller, cleared with Avoid = null.</summary>
         public static HashSet<Point> Avoid;
 
-        /// <summary>Tiles a PewLaser's beam sweeps: from the emitter in its facing direction until a wall.</summary>
-        public static HashSet<Point> LaneTiles()
+        /// <summary>Tiles a PewLaser's beam sweeps: from the emitter in its facing direction until a wall or loose dust.</summary>
+        public static HashSet<Point> LaneTiles() => new(LaneAxes().Keys);
+
+        /// <summary>The beam tiles with the axis the beam travels along (0 = horizontal, 1 = vertical).</summary>
+        public static Dictionary<Point, int> LaneAxes()
         {
-            var set = new HashSet<Point>();
+            var set = new Dictionary<Point, int>();
             foreach (var e in BotRunner.Entities())
             {
                 if (!e.exists || e.GetType().Name != "PewLaser")
@@ -194,11 +197,11 @@ namespace AnodyneSharp.Recording
                 for (int i = 1; i < 24; i++)
                 {
                     t = new Point(t.X + d.X, t.Y + d.Y);
-                    if (!Walkable(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), e => e.exists && e.GetType().Name == "Dust" && TileOf(e.Position + new Vector2(8, 8)) == t))
+                    if (!Walkable(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
                     {
                         break;
                     }
-                    set.Add(t);
+                    set[t] = d.X != 0 ? 0 : 1;
                 }
             }
             return set;
@@ -243,6 +246,61 @@ namespace AnodyneSharp.Recording
             return p;
         }
 
+        /// <summary>
+        /// Dijkstra variant used on screens with laser beams: walking along a beam is costly (every bullet meets you), crossing
+        /// it sideways is cheap, so the route crosses beams at right angles where it can.
+        /// </summary>
+        private static List<Point> FindPathWeighted(Point a, Func<Point, bool> isGoal, Point? forced, HashSet<Point> hazards, Dictionary<Point, int> lanes)
+        {
+            var best = new Dictionary<Point, int> { [a] = 0 };
+            var prev = new Dictionary<Point, Point> { [a] = a };
+            var pq = new PriorityQueue<Point, int>();
+            pq.Enqueue(a, 0);
+            Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            while (pq.TryDequeue(out var c, out int cost))
+            {
+                if (cost > best[c])
+                {
+                    continue;
+                }
+                if (c != a && isGoal(c))
+                {
+                    var path = new List<Point>();
+                    for (var p = c; p != a; p = prev[p])
+                    {
+                        path.Add(p);
+                    }
+                    path.Reverse();
+                    return path;
+                }
+                foreach (var d in dirs)
+                {
+                    var n = new Point(c.X + d.X, c.Y + d.Y);
+                    if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
+                    {
+                        continue;
+                    }
+                    int step = 1;
+                    if (lanes.TryGetValue(n, out int axis) && ((axis == 0) == (d.Y == 0)))
+                    {
+                        step += 8; // moving along the beam
+                    }
+                    else if (lanes.ContainsKey(n))
+                    {
+                        step += 2; // crossing it
+                    }
+                    int nc = cost + step;
+                    if (!best.TryGetValue(n, out int old) || nc < old)
+                    {
+                        best[n] = nc;
+                        prev[n] = c;
+                        pq.Enqueue(n, nc);
+                    }
+                }
+            }
+            return null;
+        }
+
         private static List<Point> FindPathCore(Point a, Func<Point, bool> isGoal, Point? forced)
         {
             var map = CurrentMap;
@@ -260,6 +318,11 @@ namespace AnodyneSharp.Recording
             var q = new Queue<Point>();
             q.Enqueue(a);
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            var lanes = LaneAxes();
+            if (lanes.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_WEIGHT") == null)
+            {
+                return FindPathWeighted(a, isGoal, forced, hazards, lanes);
+            }
             while (q.Count > 0)
             {
                 var c = q.Dequeue();

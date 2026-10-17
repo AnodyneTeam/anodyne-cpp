@@ -64,6 +64,22 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
+                    case '^':
+                    {
+                        // Dev only (experiments, never in a recorded route): put the player at x,y.
+                        var a = tok.Substring(1).Split(',');
+                        Player.Position = new Vector2(float.Parse(a[0]), float.Parse(a[1]));
+                        yield return Wait(5);
+                        break;
+                    }
+                    case '!':
+                        // Dev only: remove every living enemy on screen (to see what their death unlocks).
+                        foreach (var e in Enemies())
+                        {
+                            e.exists = false;
+                        }
+                        break;
+                    case '*': GlobalState.CUR_HEALTH = int.Parse(tok.Substring(1)); break;
                     case '@': LaserMargin = int.Parse(tok.Substring(1)); break;
                     case 'X': AutoFight = tok[1] == '1'; break;
                     case 'Y':
@@ -390,6 +406,35 @@ namespace AnodyneSharp.Recording
             return !WouldCollide(back, dangers) ? K(back) : K();
         }
 
+        /// <summary>True if a wall is right beside the enemy's tile on one side only (it plugs part of a narrow passage).</summary>
+        private static bool InCorridor(Entity e)
+        {
+            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
+            return BotNav.Walkable(new Point(t.X + 1, t.Y)) != BotNav.Walkable(new Point(t.X - 1, t.Y));
+        }
+
+        /// <summary>
+        /// The key to press for a tile step (px,py away): horizontal first normally, but if that would run into `solid` (an enemy
+        /// we are walking around) go the other way first.
+        /// </summary>
+        protected static KeyFunctions StepKey(float px, float py, Entity solid)
+        {
+            KeyFunctions h = px < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+            KeyFunctions v = py < 0 ? KeyFunctions.Up : KeyFunctions.Down;
+            bool wantH = Math.Abs(px) > 2f;
+            bool wantV = Math.Abs(py) > 2f;
+            var one = new List<Entity> { solid };
+            if (Environment.GetEnvironmentVariable("ANODYNE_NO_STEPKEY") == null && wantH && wantV && WouldCollide(h, one, 6) && !WouldCollide(v, one, 6))
+            {
+                return v;
+            }
+            if (wantH)
+            {
+                return h;
+            }
+            return v;
+        }
+
         /// <summary>Stand centred on tile (tx,ty), turn to face `face` (one-frame tap; the nudge is ~1px), then press Accept once.</summary>
         protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face)
         {
@@ -574,9 +619,87 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Kills every enemy on the screen with the broom (approach, face, tap Accept).</summary>
+        /// <summary>
+        /// The Seer (temple boss): two orbs circle it and it touches for damage, but any broom hit counts and it then flickers
+        /// (immune) for 1.5s. So: hit it from below when it is vulnerable, back off while it flickers, repeat (7 hits).
+        /// </summary>
+        protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
+        {
+            var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            int lastSwing = -100;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var seer = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer");
+                if (seer == null)
+                {
+                    yield break;
+                }
+                int hp = healthField != null ? (int)healthField.GetValue(seer) : -1;
+                BotRunner.Status = $"Seer fight: boss hp {hp}";
+                var sb = seer.Hitbox;
+                var pb = Player.Hitbox;
+                float dx = sb.Center.X - pb.Center.X;
+                int gap = pb.Top - sb.Bottom;
+                bool vulnerable = !seer._flickering && seer.opacity >= 1f;
+                if (seer.opacity < 1f)
+                {
+                    // Not in the fight yet: walk up until it notices us (it starts once we are close), then let the dialogue run.
+                    yield return Player.Position.Y > seer.Position.Y + 44 ? K(KeyFunctions.Up) : K();
+                    continue;
+                }
+                if (!vulnerable)
+                {
+                    // Immune: keep clear (below it) and line up for the next strike.
+                    if (gap < 36 && BotNav.Walkable(BotNav.TileOf(Pos + new Vector2(0, 10))))
+                    {
+                        yield return K(KeyFunctions.Down);
+                    }
+                    else
+                    {
+                        yield return Math.Abs(dx) > 8 ? K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : K();
+                    }
+                    continue;
+                }
+                if (Math.Abs(dx) > 5)
+                {
+                    yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                    continue;
+                }
+                if (gap > 11)
+                {
+                    yield return K(KeyFunctions.Up);
+                    continue;
+                }
+                if (Player.facing != Facing.UP)
+                {
+                    yield return K(KeyFunctions.Up);
+                    continue;
+                }
+                if (i - lastSwing >= SwingCooldown)
+                {
+                    lastSwing = i;
+                    yield return K(KeyFunctions.Accept);
+                    continue;
+                }
+                yield return K();
+            }
+            throw new TimeoutException("bot: the Seer fight timed out");
+        }
+
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false)
         {
+            if (Enemies().Any(e => e.GetType().Name == "Seer"))
+            {
+                yield return SeerFight();
+                yield break;
+            }
             int swing = 0, lastSwing = -1000;
+            var startGrid = Grid;
             Vector2 lastPos = Pos;
             int stillFrames = 0;
             Point? lastStep = null; // the next path tile we were walking towards (blamed when we stop moving)
@@ -586,6 +709,11 @@ namespace AnodyneSharp.Recording
                 {
                     yield return AdvanceKeys(i);
                     continue;
+                }
+                if (Grid != startGrid)
+                {
+                    // Knocked (or walked) onto another screen: that room's enemies are not this fight's business.
+                    yield break;
                 }
                 var enemies = Enemies();
                 if (enemies.Count == 0)
@@ -611,7 +739,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 var me = Pos + new Vector2(5, 6);
-                stillFrames = (Pos == lastPos) ? stillFrames + 1 : 0;
+                stillFrames = (Pos == lastPos && !Dodged) ? stillFrames + 1 : 0;
                 lastPos = Pos;
                 if (stillFrames > 50 && lastStep.HasValue)
                 {
@@ -676,10 +804,24 @@ namespace AnodyneSharp.Recording
                         yield return K();
                         continue;
                     }
-                    if (pb.Bottom <= tb.Top - 2 && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
-                    {
+                    if (pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
+{
                         // Standing clear above it: slide sideways to line up.
                         yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                        continue;
+                    }
+                    if (target.velocity == Vector2.Zero && InCorridor(target) && pb.Top > tb.Bottom && pb.Top - tb.Bottom < 28 && pb.Right > tb.Left - 3 && pb.Left < tb.Right + 3)
+                    {
+                        // Approaching from below and lined up with it (a Shieldy in a corridor): slide to the free side first, since
+                        // walking past its flank on the way up is what gets us hit.
+                        var here = BotNav.TileOf(Pos);
+                        var side = (tb.Center.X - pb.Center.X >= -6) ? KeyFunctions.Left : KeyFunctions.Right;
+                        var sideTile = new Point(here.X + (side == KeyFunctions.Left ? -1 : 1), here.Y);
+                        if (!BotNav.Walkable(sideTile))
+                        {
+                            side = side == KeyFunctions.Left ? KeyFunctions.Right : KeyFunctions.Left;
+                        }
+                        yield return K(side);
                         continue;
                     }
                     var et = BotNav.TileOf(new Vector2(c.X - 5, c.Y - 6));
@@ -737,7 +879,7 @@ namespace AnodyneSharp.Recording
                             lastStep = bp[0];
                             var nc = BotNav.CentreOf(bp[0]) + new Vector2(5, 6);
                             float px = nc.X - me.X, py = nc.Y - me.Y;
-                            yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down), target);
+                            yield return SafeMove(StepKey(px, py, target), target);
                             acted = true;
                             break;
                         }
@@ -753,15 +895,22 @@ namespace AnodyneSharp.Recording
                         {
                             continue; // a laser sweeps that row: let it do the work instead
                         }
+                        // Widest berth first, but not at the price of a huge detour (a Shieldy in a corridor: squeeze past it).
+                        var cands = new List<List<Point>>();
                         foreach (int margin in new[] { 5, 1, -3 })
                         {
                             BotNav.Avoid = BotNav.NearEnemies(margin);
-                            sp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == standoff, standoff, strict: true);
+                            var cp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == standoff, standoff, strict: true);
                             BotNav.Avoid = null;
-                            if (sp != null)
+                            if (cp != null)
                             {
-                                break;
+                                cands.Add(cp);
                             }
+                        }
+                        if (cands.Count > 0)
+                        {
+                            int shortest = cands.Min(x => x.Count);
+                            sp = Environment.GetEnvironmentVariable("ANODYNE_NO_CHOOSER") == null ? cands.First(x => x.Count <= shortest + 25) : cands[0];
                         }
                         if (sp != null)
                         {
@@ -777,7 +926,7 @@ namespace AnodyneSharp.Recording
                         lastStep = sp[0];
                         var nc = BotNav.CentreOf(sp[0]) + new Vector2(5, 6);
                         float px = nc.X - me.X, py = nc.Y - me.Y;
-                        yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down), target);
+                        yield return SafeMove(StepKey(px, py, target), target);
                         continue;
                     }
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
@@ -819,6 +968,10 @@ namespace AnodyneSharp.Recording
                         float px = nc.X - me.X, py = nc.Y - me.Y;
                         dir = Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                                                 : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                        {
+                            System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
+                        }
                         yield return K(dir);
                         continue;
                     }

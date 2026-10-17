@@ -39,7 +39,17 @@ namespace AnodyneSharp.Recording
             // Back up to (3,2): the key block (@544,320) on its north wall opens with the second key.
             yield return Section("temple key block", () => Exec("O1 X1 H3,3 H3,2 I544,320,d W60"));
 
-            // TODO: (3,1) and on: the checkpoint @496,128 and the Seer.
+            // (3,1): Annoyers and side lasers. Its west exit leads into a nook of (2,1) where a Slime sits; killing it opens (2,1)'s north gate.
+            yield return Section("temple slime nook", () => Exec("O1 @0 X1 H3,1 H2,1 @2 X0"));
+
+            // Walkthrough: east, south, west, north (through the (2,1) corridor, killing its Shieldy), north into the Seer's room (2,0):
+            // the boss fight, then the health upgrade it leaves behind.
+            yield return Section("temple seer", () => Exec("O1 X1 H3,1 H3,2 H2,2 H2,1 H2,0 W200 P370,66 W80"));
+
+            // East of the boss room: save at the checkpoint, talk to the sage, take the green key and open the Seer card chest.
+            yield return Section("temple sage room", () => Exec("O1 X0 H3,0 V I547,83,l W30 I596,96,l W60 I544,32,d W60"));
+
+            // TODO: east of the sage room (Nexus Point), then back west to the gate (green key) and the Shieldy card chest, and out.
         }
     }
 }
