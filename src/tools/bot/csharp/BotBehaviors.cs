@@ -177,6 +177,17 @@ namespace AnodyneSharp.Recording
                         }
                         break;
                     }
+                    case 'w':
+                    {
+                        // dev: w<MAP>:<x>,<y> warps the player straight into a map position (quick tests of a problem screen from a copied save)
+                        var a = tok.Substring(1).Split(':');
+                        var xy = a[1].Split(',');
+                        GlobalState.NEXT_MAP_NAME = a[0];
+                        GlobalState.PLAYER_WARP_TARGET = new Vector2(float.Parse(xy[0]), float.Parse(xy[1]));
+                        GlobalState.WARP = true;
+                        yield return Wait(200);
+                        break;
+                    }
                     case 'n':
                     {
                         // n<tab>: pause menu -> tab number <tab> (the Map tab) -> "return to the Nexus pad" -> yes
@@ -508,11 +519,201 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
+        // ---- space-time danger prediction ----
+        /// <summary>Frames of the future that are predicted (the plans below look this far ahead).</summary>
+        private const int Horizon = 90;
+
+        /// <summary>Where a danger will be, frame by frame (null = gone / not a danger at that frame).</summary>
+        private sealed class Threat
+        {
+            public Rectangle?[] At = new Rectangle?[Horizon + 1];
+            public int Margin = 2;
+            public string Name = "";
+        }
+
+        private static readonly System.Reflection.FieldInfo PewTimerField =
+            typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo PewPoolField =
+            typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo LaserFastField =
+            typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        private static bool CornersWalkable(Rectangle r)
+        {
+            return BotNav.Walkable(BotNav.TileOf(new Vector2(r.Left, r.Top))) && BotNav.Walkable(BotNav.TileOf(new Vector2(r.Right - 1, r.Top))) &&
+                   BotNav.Walkable(BotNav.TileOf(new Vector2(r.Left, r.Bottom - 1))) && BotNav.Walkable(BotNav.TileOf(new Vector2(r.Right - 1, r.Bottom - 1)));
+        }
+
+        /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
+        private static Threat PredictPatroller(Entity e)
+        {
+            var t = new Threat { Name = e.GetType().Name };
+            var r = e.Hitbox;
+            var v = e.velocity;
+            float fx = 0, fy = 0; // sub-pixel remainder
+            for (int f = 0; f <= Horizon; f++)
+            {
+                t.At[f] = r;
+                if (v == Vector2.Zero)
+                {
+                    continue;
+                }
+                fx += v.X / 60f;
+                fy += v.Y / 60f;
+                int mx = (int)fx, my = (int)fy;
+                fx -= mx;
+                fy -= my;
+                var n = r;
+                n.Offset(mx, my);
+                if (!CornersWalkable(n))
+                {
+                    v = -v;
+                    fx = fy = 0;
+                }
+                else
+                {
+                    r = n;
+                }
+            }
+            return t;
+        }
+
+        /// <summary>The bullets an emitter has not fired yet: it shoots every 31 frames, from the timer's real phase.</summary>
+        private static IEnumerable<Threat> PredictEmitter(Entity em, Dictionary<Point, int> lanes)
+        {
+            var emThreat = new Threat { Name = "PewLaser", Margin = 1 };
+            for (int f = 0; f <= Horizon; f++)
+            {
+                emThreat.At[f] = em.Hitbox;
+            }
+            yield return emThreat;
+            if (PewTimerField == null || PewPoolField == null)
+            {
+                yield break;
+            }
+            var pool = (PewPoolField.GetValue(em) as System.Collections.Generic.IEnumerable<Entity>)
+                ?? (PewPoolField.GetValue(em)?.GetType().GetProperty("Entities")?.GetValue(PewPoolField.GetValue(em)) as System.Collections.Generic.IEnumerable<Entity>);
+            var sample = pool?.FirstOrDefault();
+            if (sample == null)
+            {
+                yield break;
+            }
+            bool fast = LaserFastField != null && LaserFastField.GetValue(sample) is bool b && b;
+            float speed = fast ? 70f : 40f;
+            float timer = (float)PewTimerField.GetValue(em);
+            int first = (int)Math.Floor(Math.Max(timer, 0f) * 60f) + 1;
+            var dir = em.facing switch { Facing.RIGHT => new Vector2(1, 0), Facing.LEFT => new Vector2(-1, 0), Facing.UP => new Vector2(0, -1), _ => new Vector2(0, 1) };
+            var spawnOffset = em.facing switch
+            {
+                Facing.DOWN => new Vector2(0, 11),
+                Facing.UP => new Vector2(0, 8),
+                Facing.LEFT => new Vector2(8, 0),
+                _ => Vector2.Zero
+            };
+            var spawnPos = em.Position + spawnOffset;
+            var box = sample.Hitbox;
+            var boxAtSpawn = new Rectangle((int)(box.X + (spawnPos.X - sample.Position.X)), (int)(box.Y + (spawnPos.Y - sample.Position.Y)), box.Width, box.Height);
+            for (int s = first; s <= Horizon; s += 31)
+            {
+                var bt = new Threat { Name = "Laser(future)", Margin = LaserMargin };
+                for (int f = s; f <= Horizon; f++)
+                {
+                    var off = dir * speed * (f - s) / 60f;
+                    var r = boxAtSpawn;
+                    r.Offset((int)off.X, (int)off.Y);
+                    // The bullet is gone once it reaches a wall (or a dust plug): lanes only holds the open beam tiles.
+                    if (lanes.Count > 0 && !lanes.ContainsKey(BotNav.TileOf(new Vector2(r.Center.X - 5, r.Center.Y - 6))))
+                    {
+                        break;
+                    }
+                    bt.At[f] = r;
+                }
+                yield return bt;
+            }
+        }
+
+        private static List<Threat> PredictThreats(Entity except)
+        {
+            var result = new List<Threat>();
+            var lanes = BotNav.LaneAxes();
+            foreach (var d in Dangers(except))
+            {
+                string name = d.GetType().Name;
+                if (name == "PewLaser")
+                {
+                    result.AddRange(PredictEmitter(d, lanes));
+                    continue;
+                }
+                if (name == "Shieldy")
+                {
+                    result.Add(PredictPatroller(d));
+                    continue;
+                }
+                bool bolt = name == "Laser";
+                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : 2 };
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    var r = d.Hitbox;
+                    r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                    if (bolt && lanes.Count > 0 && d.GetType().DeclaringType == typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser) &&
+                        !lanes.ContainsKey(BotNav.TileOf(new Vector2(r.Center.X - 5, r.Center.Y - 6))))
+                    {
+                        break;
+                    }
+                    t.At[f] = r;
+                }
+                result.Add(t);
+            }
+            return result;
+        }
+
         /// <summary>
-        /// Turns a wanted movement key into a safe frame: the same key if the next few frames are clear, else a perpendicular
-        /// sidestep or standing still. `except` = an enemy we are deliberately closing in on.
+        /// First frame (1..) at which the plan runs the player into a predicted danger, or int.MaxValue if it is clear.
+        /// The plan: hold `first` for `firstFrames`, then `then` for `thenFrames`.
         /// </summary>
-        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null)
+        private static int PlanHitFrame(KeyFunctions first, int firstFrames, KeyFunctions then, int thenFrames, List<Threat> threats)
+        {
+            var pos = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+            var pb = Player.Hitbox;
+            var v1 = DirVector(first) * WalkPxPerFrame;
+            var v2 = DirVector(then) * WalkPxPerFrame;
+            int total = Math.Min(firstFrames + thenFrames, Horizon);
+            for (int f = 1; f <= total; f++)
+            {
+                pos += f <= firstFrames ? v1 : v2;
+                var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
+                foreach (var th in threats)
+                {
+                    var r = th.At[f];
+                    if (r == null)
+                    {
+                        continue;
+                    }
+                    var rr = r.Value;
+                    rr.Inflate(th.Margin, th.Margin);
+                    if (mine.Intersects(rr))
+                    {
+                        return f;
+                    }
+                }
+            }
+            return int.MaxValue;
+        }
+
+        private static bool WalkableAhead(KeyFunctions dir, int frames)
+        {
+            var v = DirVector(dir) * WalkPxPerFrame * frames;
+            var pb = Player.Hitbox;
+            var r = new Rectangle((int)(pb.X + v.X), (int)(pb.Y + v.Y), pb.Width, pb.Height);
+            return CornersWalkable(r);
+        }
+
+        /// <summary>
+        /// Turns a wanted movement key into a safe frame. Looks ~1.5s ahead at where every danger will be (moving bullets, the
+        /// shots an emitter has yet to fire, Shieldy patrols) and takes the first plan that gets through: go now, stand and wait
+        /// for the gap, or sidestep first. `except` = an enemy we are deliberately closing in on; `dist` = how far (px) the step goes.
+        /// </summary>
+        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f)
         {
             Dodged = false;
             if (!DodgeEnabled)
@@ -520,42 +721,122 @@ namespace AnodyneSharp.Recording
                 return K(wanted);
             }
             var dangers = Dangers(except);
-            if (dangers.Count == 0 || !WouldCollide(wanted, dangers))
+            if (dangers.Count == 0)
             {
-                if (_dodgeStreak > 0 && _dodgeStreak <= 45)
-                {
-                    _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
-                }
+                _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
             }
-            // Waiting for a gap that never comes would stall the route: after a while accept the risk and go.
-            if (++_dodgeStreak > 45)
+            var threats = PredictThreats(except);
+            // Frames of walking after the wait: only as far as the step we are taking (the next waypoint), not past it.
+            int Run = Math.Clamp((int)Math.Ceiling(dist / WalkPxPerFrame) + 3, 6, 40);
+            if (PlanHitFrame(wanted, 0, wanted, Run, threats) == int.MaxValue)
             {
-                if (_dodgeStreak > 90)
+                _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
+                return K(wanted);
+            }
+            // Waiting forever for a gap that never comes would stall the route: after a long while accept the risk and go.
+            if (++_dodgeStreak > 240)
+            {
+                if (_dodgeStreak > 300)
                 {
                     _dodgeStreak = 0;
                 }
-                Dodged = false;
                 return K(wanted);
             }
             Dodged = true;
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && BotRunner.Frame % 60 == 0)
             {
-                System.Console.Error.WriteLine($"  dodge: wanted {wanted} at {Player.Hitbox} dangers: " + string.Join(" ", dangers.Select(d => $"{d.GetType().Name}{d.Hitbox}")));
+                System.Console.Error.WriteLine($"  dodge: wanted {wanted} at {Player.Hitbox} threats: " + string.Join(" ", threats.Where(t => t.At[0] != null).Select(t => $"{t.Name}{t.At[0]}")));
             }
             KeyFunctions[] sides = (wanted == KeyFunctions.Up || wanted == KeyFunctions.Down)
                 ? new[] { KeyFunctions.Left, KeyFunctions.Right }
                 : new[] { KeyFunctions.Up, KeyFunctions.Down };
-            foreach (var s in sides)
+            var back = wanted switch { KeyFunctions.Up => KeyFunctions.Down, KeyFunctions.Down => KeyFunctions.Up, KeyFunctions.Left => KeyFunctions.Right, _ => KeyFunctions.Left };
+            // (a) stand still for w frames, then go: the gap-waiting plan (standing must itself be safe).
+            // (b) sidestep for k frames, then go: slip into a neighbouring lane.
+            // (c) back off a little, then go.
+            int bestFrame = -1;
+            KeyFunctions bestKey = KeyFunctions.Up;
+            bool haveBest = false;
+            void Consider(KeyFunctions first, int ff, bool stand)
             {
-                if (!WouldCollide(s, dangers))
+                if (!stand && !WalkableAhead(first, ff))
                 {
-                    return K(s);
+                    return;
+                }
+                int hit = stand ? PlanHitFrameStanding(ff, wanted, Run, threats) : PlanHitFrame(first, ff, wanted, Run, threats);
+                if (hit == int.MaxValue)
+                {
+                    bestFrame = int.MaxValue;
+                    bestKey = stand ? KeyFunctions.Up : first;
+                    haveBest = true;
+                    _standing = stand;
+                    return;
+                }
+                if (!haveBest || hit > bestFrame)
+                {
+                    bestFrame = hit;
+                    bestKey = stand ? KeyFunctions.Up : first;
+                    haveBest = true;
+                    _standing = stand;
                 }
             }
-            // Cornered by the wanted direction: back off if that is clear, else hold still.
-            var back = wanted switch { KeyFunctions.Up => KeyFunctions.Down, KeyFunctions.Down => KeyFunctions.Up, KeyFunctions.Left => KeyFunctions.Right, _ => KeyFunctions.Left };
-            return !WouldCollide(back, dangers) ? K(back) : K();
+            for (int w = 4; w <= 60 && bestFrame != int.MaxValue; w += 4)
+            {
+                Consider(KeyFunctions.Up, w, true);
+            }
+            foreach (var sd in sides)
+            {
+                for (int k = 6; k <= 18 && bestFrame != int.MaxValue; k += 6)
+                {
+                    Consider(sd, k, false);
+                }
+            }
+            if (bestFrame != int.MaxValue)
+            {
+                for (int k = 6; k <= 18 && bestFrame != int.MaxValue; k += 6)
+                {
+                    Consider(back, k, false);
+                }
+            }
+            if (!haveBest)
+            {
+                return K();
+            }
+            return _standing ? K() : K(bestKey);
+        }
+
+        private static bool _standing;
+
+        private static int PlanHitFrameStanding(int waitFrames, KeyFunctions then, int thenFrames, List<Threat> threats)
+        {
+            var pb = Player.Hitbox;
+            var pos = new Vector2(pb.X, pb.Y);
+            var v2 = DirVector(then) * WalkPxPerFrame;
+            int total = Math.Min(waitFrames + thenFrames, Horizon);
+            for (int f = 1; f <= total; f++)
+            {
+                if (f > waitFrames)
+                {
+                    pos += v2;
+                }
+                var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
+                foreach (var th in threats)
+                {
+                    var r = th.At[f];
+                    if (r == null)
+                    {
+                        continue;
+                    }
+                    var rr = r.Value;
+                    rr.Inflate(th.Margin, th.Margin);
+                    if (mine.Intersects(rr))
+                    {
+                        return f;
+                    }
+                }
+            }
+            return int.MaxValue;
         }
 
         /// <summary>True if a wall is right beside the enemy's tile on one side only (it plugs part of a narrow passage).</summary>
@@ -622,9 +903,9 @@ namespace AnodyneSharp.Recording
         /// Plugs every PewLaser on the screen with loose dust: pick a dust up by sweeping it with the broom, then stand next to
         /// the tile in front of the emitter, face it and press Accept to set the dust down there.
         /// </summary>
-        protected static IEnumerable<object> BlockLasers()
+        protected static IEnumerable<object> BlockLasers(Func<Entity, bool> only = null)
         {
-            var emitters = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").ToList();
+            var emitters = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser" && (only == null || only(e))).ToList();
             foreach (var em in emitters)
             {
                 var step = FacingStep(em.facing);
@@ -675,6 +956,40 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");
                 }
             }
+        }
+
+        /// <summary>The emitters whose open beam passes over any tile of the path.</summary>
+        protected static List<Entity> EmittersCrossing(List<Point> path)
+        {
+            var lanes = BotNav.LaneAxes();
+            var onPath = new HashSet<Point>(path);
+            var result = new List<Entity>();
+            foreach (var em in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser"))
+            {
+                var step = FacingStep(em.facing);
+                var t = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                for (int i = 0; i < 24; i++)
+                {
+                    t = new Point(t.X + step.X, t.Y + step.Y);
+                    if (!lanes.ContainsKey(t))
+                    {
+                        break;
+                    }
+                    if (onPath.Contains(t))
+                    {
+                        result.Add(em);
+                        break;
+                    }
+                }
+            }
+            return result;
+        }
+
+        /// <summary>True if there is loose dust on the screen that the broom could carry to an emitter.</summary>
+        protected static bool HaveLooseDust()
+        {
+            var lanes = BotNav.LaneTiles();
+            return Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))));
         }
 
         /// <summary>Walks screen by screen along the most permissive route (rafts, jumps) to the tile containing (gx,gy).</summary>

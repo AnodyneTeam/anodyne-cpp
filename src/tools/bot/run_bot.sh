@@ -12,7 +12,9 @@ if [ -n "$SHOW" ]; then export DISPLAY=${DISPLAY:-:0}; else export DISPLAY=$("$H
 export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
 cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0
 FAST=-fast; [ -n "$RT" ] && FAST=
-./AnodyneSharp $FAST -bot="$SCRIPT" -record="$OUT/$SCRIPT.rec" -gbainput="$OUT/$SCRIPT.gbainput" -trace="$OUT/$SCRIPT.trace.tsv" 2>&1 | grep -v "AL lib" || true
+./AnodyneSharp $FAST -bot="$SCRIPT" -record="$OUT/$SCRIPT.rec" -gbainput="$OUT/$SCRIPT.gbainput" -trace="$OUT/$SCRIPT.trace.tsv" 2>&1 | grep -v "AL lib" | tee "$OUT/bot.log" || true
+# A failed bot run leaves a recording that cannot replay (it would only sit on the title screen): skip the determinism replay.
+if grep -q "BOT FAILED" "$OUT/bot.log"; then echo "BOT RUN FAILED: replay skipped"; exit 2; fi
 DISPLAY=$("$HERE/xvfb.sh") ./AnodyneSharp -fast -playback="$OUT/$SCRIPT.rec" -trace="$OUT/$SCRIPT.play.tsv" 2>&1 | grep -v "AL lib" || true
 N=$(wc -l < "$OUT/$SCRIPT.trace.tsv")
 if head -"$N" "$OUT/$SCRIPT.play.tsv" | diff -q - "$OUT/$SCRIPT.trace.tsv" >/dev/null; then

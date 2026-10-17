@@ -432,6 +432,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
             int shooterFights = 0;
+            bool pluggedTried = false;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 replan:
@@ -473,6 +474,11 @@ namespace AnodyneSharp.Recording
                     }
                     if (path == null)
                     {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}")));
+                            yield return Exec($"&{Grid.X},{Grid.Y},{Grid.X},{Grid.Y}");
+                        }
                         throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
                     }
                 }
@@ -493,6 +499,17 @@ namespace AnodyneSharp.Recording
                         var lastT = BotNav.CentreOf(shortcut[shortcut.Count - 1]);
                         yield return RaftTo(lastT.X, lastT.Y);
                         yield break;
+                    }
+                }
+                if (DodgeEnabled && !pluggedTried && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
+                {
+                    // A route through a laser beam with dust lying about: plug the emitter instead of racing (or waiting for) its shots.
+                    var crossing = EmittersCrossing(path);
+                    if (crossing.Count > 0)
+                    {
+                        pluggedTried = true;
+                        yield return BlockLasers(e => crossing.Contains(e));
+                        goto replan;
                     }
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -577,7 +594,7 @@ namespace AnodyneSharp.Recording
                         KeyFunctions dir = Math.Abs(dx) > 2f
                             ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                             : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                        var safe = SafeMove(dir);
+                        var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy));
                         if (Dodged)
                         {
                             still = 0;
