@@ -2488,6 +2488,13 @@ namespace AnodyneSharp.Recording
                 {
                     target = nearAnnoyer; // one hit kills it and it is the one that comes at us: deal with it before a patroller
                 }
+                if (target.GetType().Name == "Slime" && forced == null)
+                {
+                    // Slimes drift: whichever is nearest is the one that can touch us, so it is always the one to deal with (not the one chosen earlier).
+                    var meBox = Player.Hitbox;
+                    target = enemies.Where(e => e.GetType().Name == "Slime")
+                        .OrderBy(e => Math.Max(Math.Max(e.Hitbox.Left - meBox.Right, meBox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - meBox.Bottom, meBox.Top - e.Hitbox.Bottom))).First();
+                }
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
                 BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left)";
