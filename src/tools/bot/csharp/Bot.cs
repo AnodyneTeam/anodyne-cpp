@@ -325,6 +325,10 @@ namespace AnodyneSharp.Recording
             }
             if (DebtBaseline >= 0 && why == null)
             {
+                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+                {
+                    _debtSince++; // the game is paused for text: no time passes in which a heart could be won back
+                }
                 if (hp >= Math.Min(DebtBaseline, GlobalState.MAX_HEALTH))
                 {
                     DebtBaseline = -1; // recovered
@@ -494,6 +498,10 @@ namespace AnodyneSharp.Recording
             if (_stack.Count == 0)
             {
                 PrintSwingAudit();
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_END_SNAP") is string endSnap && !string.IsNullOrEmpty(endSnap))
+                {
+                    SectionEnumerator.SnapshotNow(endSnap); // the game as the script left it: the start of the next part (dev)
+                }
                 Active = false;
                 GlobalState.ClosingGame = true;
             }

@@ -2673,6 +2673,45 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// Keys to stand off a still target ~5px short of its box, line up with it, face it and swing (gap up to 11px: the broom reaches ~12
+        /// beyond us). `swingWait` counts frames since the last swing; `cooldown` is the frames between swings.
+        /// </summary>
+        private static KeyFunctions[] StandoffKeys(Rectangle tg, Rectangle pb, ref int swingWait, int cooldown)
+        {
+            float dx = tg.Center.X - pb.Center.X, dy = tg.Center.Y - pb.Center.Y;
+            bool vert = Math.Abs(dy) >= Math.Abs(dx);
+            var faceKey = vert ? (dy > 0 ? KeyFunctions.Down : KeyFunctions.Up) : (dx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
+            var backKey = vert ? (dy > 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx > 0 ? KeyFunctions.Left : KeyFunctions.Right);
+            int gap = vert ? (dy > 0 ? tg.Top - pb.Bottom : pb.Top - tg.Bottom) : (dx > 0 ? tg.Left - pb.Right : pb.Left - tg.Right);
+            float cross = vert ? dx : dy;
+            var wantFacing = faceKey == KeyFunctions.Up ? Facing.UP : faceKey == KeyFunctions.Down ? Facing.DOWN : faceKey == KeyFunctions.Left ? Facing.LEFT : Facing.RIGHT;
+            swingWait++;
+            if (gap < 3)
+            {
+                return K(backKey);
+            }
+            if (Math.Abs(cross) > 4)
+            {
+                var slide = vert ? (cross > 0 ? KeyFunctions.Right : KeyFunctions.Left) : (cross > 0 ? KeyFunctions.Down : KeyFunctions.Up);
+                return K(WalkableAhead(slide, 4) ? slide : faceKey);
+            }
+            if (Player.facing != wantFacing)
+            {
+                return K(gap >= 5 ? faceKey : backKey); // turning nudges ~1px towards it
+            }
+            if (gap > 11)
+            {
+                return K(faceKey);
+            }
+            if (swingWait >= cooldown && !(Player.broom != null && Player.broom.exists))
+            {
+                swingWait = 0;
+                return K(KeyFunctions.Accept);
+            }
+            return K();
+        }
+
+        /// <summary>
         /// Where the dog's hitbox will be f frames from now, given that its attack began `e` frames ago aimed at `tPos` (our position then):
         /// three one-second dashes towards (tPos.X-44, tPos.Y-8), (tPos.X+36, tPos.Y-8), (tPos.X-44, tPos.Y-8) at 66, 84, 84 px/s.
         /// </summary>
@@ -2757,7 +2796,7 @@ namespace AnodyneSharp.Recording
         {
             int beamPushes = 0, ambushWaited = 0;
             bool dogDashing = false;
-            int dogAttackFrame = 0, dogSwingWait = 70;
+            int dogAttackFrame = 0, dogSwingWait = 70, plantSwingWait = 60;
             Vector2 dogTPos = Vector2.Zero;
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
@@ -2805,6 +2844,7 @@ namespace AnodyneSharp.Recording
                 }
             }
             int swing = 0, lastSwing = -1000;
+            var ignoredTargets = new HashSet<Entity>();
             var startGrid = Grid;
             Vector2 lastPos = Pos;
             int stillFrames = 0;
@@ -2848,6 +2888,14 @@ namespace AnodyneSharp.Recording
                     planHold--;
                 }
                 var enemies = Enemies();
+                if (soft && ignoredTargets.Count > 0)
+                {
+                    enemies = enemies.Where(e => !ignoredTargets.Contains(e)).ToList();
+                    if (enemies.Count == 0)
+                    {
+                        yield break; // what is left cannot be reached from here (across water, behind a wall): a soft fight leaves it
+                    }
+                }
                 if (only != null)
                 {
                     enemies = enemies.Where(only).ToList();
@@ -2877,6 +2925,17 @@ namespace AnodyneSharp.Recording
                 if (aggroFrames > 0)
                 {
                     aggroFrames--;
+                }
+                if (soft && noKill >= 220 && committed != null && !ignoredTargets.Contains(committed))
+                {
+                    // Nothing waiting-on-purpose (those reset the count) and nothing dying for this long: this one is out of reach.
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  soft fight: giving up on the unreachable {committed.GetType().Name}@{committed.Hitbox.X},{committed.Hitbox.Y}");
+                    }
+                    ignoredTargets.Add(committed);
+                    committed = null;
+                    noKill = 1;
                 }
                 if (noKill > 0 && noKill % 300 == 0)
                 {
@@ -3175,6 +3234,42 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                         yield return K();
+                        continue;
+                    }
+                }
+                // A Burst Plant cannot hurt by touch (the player walks straight through it); its bullets can. They spawn on the plant, one aimed at
+                // us and seven lobbed round it, and are only dangerous while they fly. So: while any are in the air stay well away; when the air is
+                // clear go in to a standoff beside it, line up, face it and swing (two hits, a second apart), and back out when it fires.
+                if (target.GetType().Name is "Burst_Plant" or "Frog") // (a Frog also hurts by touch: the standoff keeps 3px clear)
+                {
+                    var pl = target.Hitbox;
+                    var pbp = Player.Hitbox;
+                    bool bulletsUp = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "BurstBullet");
+                    float pdist = (new Vector2(pl.Center.X, pl.Center.Y) - new Vector2(pbp.Center.X, pbp.Center.Y)).Length();
+                    if (noKill > 0 && noKill < 1200 && (bulletsUp || pdist < 50))
+                    {
+                        noKill = 1; // waiting out its bullets / working at it from the standoff is progress; walking at it for ever is not
+                    }
+                    if (bulletsUp)
+                    {
+                        if (pdist < 70)
+                        {
+                            BotRunner.Status = "fight/plant: back off while its bullets fly";
+                            var offKey = Math.Abs(pbp.Center.X - pl.Center.X) >= Math.Abs(pbp.Center.Y - pl.Center.Y)
+                                ? (pbp.Center.X >= pl.Center.X ? KeyFunctions.Right : KeyFunctions.Left)
+                                : (pbp.Center.Y >= pl.Center.Y ? KeyFunctions.Down : KeyFunctions.Up);
+                            yield return SafeMove(offKey, target, 12f);
+                            continue;
+                        }
+                        BotRunner.Status = "fight/plant: wait for its bullets to land";
+                        yield return K();
+                        continue;
+                    }
+                    if (pdist < 50)
+                    {
+                        var sk = StandoffKeys(pl, pbp, ref plantSwingWait, 45);
+                        BotRunner.Status = "fight/plant: standoff";
+                        yield return sk;
                         continue;
                     }
                 }
@@ -3725,7 +3820,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
                         }
-                        yield return (DodgeEnabled && IsShooter(target) && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
+                        yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
                         continue;
                     }
                 }
@@ -3795,7 +3890,7 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     // Charging a shooter: dodging its volley only drags the fight out (it re-fires when the bullets are gone).
-                    yield return (DodgeEnabled && IsShooter(target) && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
+                    yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
                 }
             }
             if (!soft)
