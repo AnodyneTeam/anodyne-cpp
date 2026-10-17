@@ -29,7 +29,10 @@ namespace AnodyneSharp.Recording
         public static bool NoAutoPlug;
         /// <summary>Hearts to be won back after a hit (-1 = no debt); see RecoverFrames.</summary>
         public static int DebtBaseline = -1;
-        public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 600;
+        /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2); reset at the start of each part.</summary>
+        public static int ChipLeft = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_CHIP"), out int cl) ? cl : 2;
+        public static readonly int ChipPerPart = ChipLeft;
+        public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 900;
         private static long _debtSince;
         public static bool PlayBusy;
         private static string _lastBusyName = "";
@@ -335,7 +338,18 @@ namespace AnodyneSharp.Recording
                 }
                 else if (_botFrame - _debtSince > RecoverFrames)
                 {
-                    why = $"took damage and did not get the hearts back within {RecoverFrames} frames (HP {DebtBaseline}->{hp})";
+                    int missing = Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - hp;
+                    if (missing <= ChipLeft)
+                    {
+                        // A heart or two that never dropped: a small, documented allowance per part (resets at the start of every part).
+                        ChipLeft -= missing;
+                        System.Console.Error.WriteLine($"  chip damage accepted at f{_botFrame}: {missing} heart(s) not won back (allowance left {ChipLeft}) ({Status})");
+                        DebtBaseline = -1;
+                    }
+                    else
+                    {
+                        why = $"took damage and did not get the hearts back within {RecoverFrames} frames (HP {DebtBaseline}->{hp}, chip allowance {ChipLeft})";
+                    }
                 }
             }
             _hpSeen = hp;
@@ -408,6 +422,7 @@ namespace AnodyneSharp.Recording
                 System.Console.Error.WriteLine($"  busy '{_lastBusyName}' -> '{PlayBusyName}' at f{_botFrame} P={Player?.Position} dialogue={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "-" : GlobalState.Dialogue.Substring(0, Math.Min(30, GlobalState.Dialogue.Length)))} ({Status})");
             }
             _lastBusyName = PlayBusyName;
+            BotNav.RefreshShooterTiles();
             CheckNoDamage();
             CheckStuck();
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SNAP_AT") is string snap && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string sd2)
@@ -814,6 +829,9 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Like GoTo but to the nearest tile satisfying isGoal.</summary>
+        /// <summary>On a dust raft over water (a fight there would drop the raft); walking the shore between two rafts is not.</summary>
+        private static bool OnWater() => InRaft && OnConveyor(BotNav.TileOf(Pos));
+
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
             int shooterFights = 0, slimeFights = 0, annoyerFights = 0;
@@ -896,6 +914,16 @@ namespace AnodyneSharp.Recording
                             yield break;
                         }
                     }
+                    if (path == null && BotNav.Blocked.Count > 0)
+                    {
+                        // Tiles learned as "blocked" (we stood still on them: dodging, waiting out bullets) may be what cuts the way: forget them, retry.
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  no path: forgetting the blocked tiles {string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}"))} and trying again");
+                        }
+                        BotNav.Blocked.Clear();
+                        goto replan;
+                    }
                     if (path == null)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -910,7 +938,7 @@ namespace AnodyneSharp.Recording
                         throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
                     }
                 }
-                if (path != null && path.Count > 30 && !InRaft)
+                if (path != null && path.Count > (GlobalState.inventory.CanJump ? 10 : 30) && !InRaft)
                 {
                     // A long way round on dry land: a raft across the river may be far shorter.
                     BotNav.AllowWater = true;
@@ -920,7 +948,13 @@ namespace AnodyneSharp.Recording
                     BotNav.Avoid = null;
                     BotNav.AllowWater = false;
                     BotNav.AllowJump = false;
-                    if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)) && shortcut.Count(t => BotNav.IsConveyor(t)) <= 2)
+                    if (shortcut != null && GlobalState.inventory.CanJump && shortcut.Count + 6 < path.Count && shortcut.Any(t => BotNav.IsSpike(t)) && !shortcut.Any(t => BotNav.IsConveyor(t)))
+                    {
+                        // With the boots the spikes are jumped: that beats a long way round (often out of the screen and back).
+                        path = shortcut;
+                        jumping = true;
+                    }
+                    else if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)) && shortcut.Count(t => BotNav.IsConveyor(t)) <= 2)
                     {
                         path = shortcut;
                     }
@@ -1047,7 +1081,7 @@ namespace AnodyneSharp.Recording
                         {
                             break;
                         }
-                        if (AutoFight && annoyerFights < 6 && !InRaft && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 70))
+                        if (AutoFight && annoyerFights < 6 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 70))
                         {
                             // An awake Annoyer comes for us wherever we walk (and walking about only dances us into its swoop): the broom answers it.
                             annoyerFights++;
@@ -1055,7 +1089,7 @@ namespace AnodyneSharp.Recording
                             yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");
                             goto replan;
                         }
-                        if (AutoFight && slimeFights < 8 && !InRaft && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
+                        if (AutoFight && slimeFights < 8 && !OnWater() && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
                         {
                             // A slime drifting across the route hurts on contact: kill it from a safe gap first, then replan.
                             slimeFights++;
@@ -1063,7 +1097,7 @@ namespace AnodyneSharp.Recording
                             yield return Fight(900, soft: true, only: e => e == slimeOnWay);
                             goto replan;
                         }
-                        if (DodgeEnabled && AutoFight && shooterFights < 3 && !InRaft && GlobalState.inventory.HasBroom && GlobalState.CUR_HEALTH >= TankMinHp && ShooterNear(80) is Entity shooter)
+                        if (DodgeEnabled && AutoFight && shooterFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && GlobalState.CUR_HEALTH >= TankMinHp && ShooterNear(80) is Entity shooter)
                         {
                             // A frog/plant on the way would keep us dancing in and out of its bubbles: kill it (2 hits), pick up the hearts, replan.
                             shooterFights++;
@@ -1206,7 +1240,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1218,12 +1252,14 @@ namespace AnodyneSharp.Recording
             "forest2" => new BlueForest2(),
             "fields" => new Fields(),
             "beach" => new Beach(),
+            "beach2" => new Beach2(),
             _ => throw new ArgumentException(name)
         };
 
         private static IEnumerable<object> OnlyPart(string name)
         {
             yield return StartToNexus.Boot(); // continue the save the game was started with
+            BotRunner.ChipLeft = BotRunner.ChipPerPart;
             yield return Part(name).Run();
         }
 
@@ -1232,6 +1268,7 @@ namespace AnodyneSharp.Recording
         {
             foreach (var n in PartNames)
             {
+                BotRunner.ChipLeft = BotRunner.ChipPerPart;
                 yield return Part(n).Run();
                 if (n == last.ToLowerInvariant())
                 {

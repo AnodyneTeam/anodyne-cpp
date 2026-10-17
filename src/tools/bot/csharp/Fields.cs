@@ -39,6 +39,10 @@ namespace AnodyneSharp.Recording
             // Mitra's south bank); the button there opens the gate in the channel.
             yield return Section("fields lake", () => Exec("O1 X1 >1056,1203 W90"));
 
+            // The southern chests: the Miao the Cat card and the Mitra card (the walkthrough's long way over dust rafts, spikes and the
+            // gate in the channel). `+` plans the whole map (rafts, jumps, buttons, shut gates) and opens every reachable card chest.
+            yield return Section("fields southern cards", () => Exec("O1 X1 + W60"));
+
             // The pause menu's map tab warps back to the Nexus; its middle door returns to the Fields pad (no trip back over the lake).
             yield return Section("fields menu to nexus", () => Exec("n0 W60"));
             yield return Section("fields nexus to pad", () => Exec("P712,1060 U30 A W300"));

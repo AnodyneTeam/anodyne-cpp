@@ -124,6 +124,23 @@ namespace AnodyneSharp.Recording
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
                     case '+': yield return OpenChests(); break;
+                    case 'i': yield return CollectCicada(); break;
+                    case 'c':
+                    {
+                        // DEV ONLY (ANODYNE_BOT_DEV=1): top the card count up to n without earning the cards, to develop the later parts while the
+                        // southern Fields chests (rafts) are unfinished. A route that uses it is not a real completion.
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEV") != "1")
+                        {
+                            throw new InvalidOperationException("bot: token c grants cards: development only (ANODYNE_BOT_DEV=1)");
+                        }
+                        var cs = GlobalState.inventory.CardStatus;
+                        for (int ci = 0; ci < cs.Length && GlobalState.inventory.CardCount < n; ci++)
+                        {
+                            cs[ci] = true;
+                        }
+                        System.Console.Error.WriteLine($"DEV: cards topped up to {GlobalState.inventory.CardCount} (not earned)");
+                        break;
+                    }
                     case '>':
                     {
                         // >x,y: walk to world point x,y across screens (fighting, rafting and jumping as needed)
@@ -503,7 +520,7 @@ namespace AnodyneSharp.Recording
         protected static List<Entity> Dangers(Entity except = null)
         {
             return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 &&
-                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name))).ToList();
+                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap")).ToList();
         }
 
         private static Vector2 DirVector(KeyFunctions k) => k switch
@@ -714,6 +731,51 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        private static readonly System.Reflection.FieldInfo FourTimerField =
+            typeof(AnodyneSharp.Entities.Enemy.Redcave.Four_Shooter).GetField("timer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// A Four_Shooter fires four 4px bullets (50px/s, spawned 8px from its centre) every 1.5s, along the axes (preset frame 0) or the
+        /// diagonals (any other frame); its timer says when the next volley is. Its body is solid; the volleys to come are the threat.
+        /// </summary>
+        private static IEnumerable<Threat> PredictFourShooter(Entity sh)
+        {
+            var body = new Threat { Name = "Four_Shooter", Margin = 1, Source = sh, Stationary = true };
+            for (int f = 0; f <= Horizon; f++)
+            {
+                body.At[f] = sh.Hitbox;
+            }
+            yield return body;
+            if (FourTimerField == null)
+            {
+                yield break;
+            }
+            float timer = (float)FourTimerField.GetValue(sh);
+            var dirs = sh.Frame == 0
+                ? new[] { new Vector2(1, 0), new Vector2(-1, 0), new Vector2(0, 1), new Vector2(0, -1) }
+                : new[] { Vector2.Normalize(new Vector2(1, 1)), Vector2.Normalize(new Vector2(-1, -1)), Vector2.Normalize(new Vector2(-1, 1)), Vector2.Normalize(new Vector2(1, -1)) };
+            var c = new Vector2(sh.Hitbox.Center.X, sh.Hitbox.Center.Y);
+            int first = (int)Math.Floor(Math.Max(timer, 0f) * 60f) + 1;
+            for (int s = first; s <= Horizon; s += 90)
+            {
+                foreach (var d in dirs)
+                {
+                    var th = new Threat { Name = "Four_Shooter(bullet)", Margin = 1 };
+                    for (int f = s; f <= Horizon; f++)
+                    {
+                        var pos = c + d * (8f + 50f * (f - s) / 60f) - new Vector2(2, 2);
+                        var r = new Rectangle((int)pos.X, (int)pos.Y, 4, 4);
+                        if (!CornersWalkable(r))
+                        {
+                            break; // it pops on the first wall
+                        }
+                        th.At[f] = r;
+                    }
+                    yield return th;
+                }
+            }
+        }
+
         private static List<Threat> PredictThreats(Entity except)
         {
             var result = new List<Threat>();
@@ -726,9 +788,14 @@ namespace AnodyneSharp.Recording
                     result.AddRange(PredictEmitter(d, lanes));
                     continue;
                 }
-                if (name == "Shieldy")
+                if (name == "Four_Shooter")
                 {
-                    result.Add(PredictPatroller(d));
+                    result.AddRange(PredictFourShooter(d));
+                    continue;
+                }
+                if (name is "Shieldy" or "BounceDashTrap")
+                {
+                    result.Add(PredictPatroller(d)); // both walk a line and turn round at the first wall (the trap at 80px/s)
                     continue;
                 }
                 bool bolt = name == "Laser";
@@ -898,7 +965,13 @@ namespace AnodyneSharp.Recording
                 return _stCache < 0 ? null : StActions[_stCache];
             }
             var swPlan = System.Diagnostics.Stopwatch.StartNew();
-            var fastWalk = FastWalkable();
+            var fastWalk0 = FastWalkable();
+            // A dodge (survive) plan stays on this screen: backing out through the edge into the previous one hands the fight to a screen
+            // transition (and the enemies there); there is nearly always room to sidestep up or down instead.
+            var gridNow = Grid;
+            Func<Rectangle, bool> fastWalk = survive
+                ? r => fastWalk0(r) && r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160
+                : fastWalk0;
             int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700, survive: survive);
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
@@ -1197,6 +1270,12 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face)
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
+            if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
+            {
+                // A shooter is about: its bullets are aimed at the middle of us. Stand at the top of the tile (still the same tile): the volley
+                // lands a few pixels short and mostly misses, which is enough while we do slow work (setting dust down) here.
+                c.Y -= 5;
+            }
             BotRunner.Status += $" [stand {tx},{ty}]";
             yield return GoTo(c.X, c.Y);
             yield return WalkTo(c.X, c.Y, tol: 1f);
@@ -1470,6 +1549,38 @@ namespace AnodyneSharp.Recording
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
         private static readonly HashSet<System.Guid> _failedChests = new();
         private static readonly HashSet<System.Guid> _pressedButtons = new();
+
+        /// <summary>
+        /// Token i: the Health Cicada of this map (a HealthCicadaSentinel preset that has not been used): walk to it at once (it flies off
+        /// if we stray 80px once it has come down), then sit through its cutscene (it heals, gnaws a new heart into the bar).
+        /// </summary>
+        protected static IEnumerable<object> CollectCicada()
+        {
+            var pr = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                .FirstOrDefault(p => p.Type != null && p.Type.Name == "HealthCicadaSentinel" && p.Alive);
+            if (pr == null)
+            {
+                yield break;
+            }
+            int maxBefore = GlobalState.MAX_HEALTH;
+            BotRunner.Status = $"to the health cicada at {pr.Position.X:0},{pr.Position.Y:0}";
+            yield return GoGlobal(pr.Position.X, pr.Position.Y);
+            bool sawBusy = false;
+            for (int i = 0; i < 1800; i++)
+            {
+                sawBusy |= Talking;
+                if (GlobalState.MAX_HEALTH > maxBefore && !Talking && i > 60)
+                {
+                    break;
+                }
+                if (!sawBusy && i > 240)
+                {
+                    break; // it never came: nothing more to wait for
+                }
+                yield return Talking ? AdvanceKeys(i) : K();
+            }
+            yield return Wait(30);
+        }
 
         protected static IEnumerable<object> OpenChests()
         {
@@ -1755,7 +1866,9 @@ namespace AnodyneSharp.Recording
                     {
                         RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos}");
                     }
-                    yield return K(Math.Abs(ddx) > 2f ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    // The 10px hitbox has ~3px of slack in a 16px tile: only correct sideways when well off, else go along the route (a raft
+                    // that cannot slide the last pixel sideways would otherwise sit there for ever).
+                    yield return K(Math.Abs(ddx) > 3.5f || (Math.Abs(ddx) > 2f && Math.Abs(ddy) < 3f) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     if (!wasWet && !wet && i > 120)
                     {
                         break;
@@ -2171,8 +2284,21 @@ namespace AnodyneSharp.Recording
 
         public static string DebugEnemies() => string.Join(" ", Enemies().Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}v{e.velocity.X:0},{e.velocity.Y:0}"));
 
-        protected static List<Entity> Enemies() =>
-            BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false)).ToList();
+        /// <summary>Enemies the bot has decided are not worth the trouble on this screen (out of reach, asleep behind a wall): no fight or route looks at them again.</summary>
+        protected static readonly HashSet<Entity> IgnoredEnemies = new();
+        private static Point _ignoredGrid = new(-1, -1);
+        private static string _ignoredMap = "";
+
+        protected static List<Entity> Enemies()
+        {
+            if (_ignoredGrid != Grid || _ignoredMap != Map)
+            {
+                IgnoredEnemies.Clear();
+                _ignoredGrid = Grid;
+                _ignoredMap = Map;
+            }
+            return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e)).ToList();
+        }
 
         /// <summary>Walks over any dropped hearts on the screen while health is not full (they time out, so be quick).</summary>
         protected static IEnumerable<object> CollectHearts()
@@ -2796,7 +2922,10 @@ namespace AnodyneSharp.Recording
         {
             int beamPushes = 0, ambushWaited = 0;
             bool dogDashing = false;
-            int dogAttackFrame = 0, dogSwingWait = 70, plantSwingWait = 60;
+            int dogAttackFrame = 0, dogSwingWait = 70, plantSwingWait = 60, frogLaunch = -100, annoyerStill = 0;
+            Vector2 annoyerLastPos = Vector2.Zero;
+            bool frogWasUp = false;
+            Vector2 frogAim = Vector2.Zero;
             Vector2 dogTPos = Vector2.Zero;
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
@@ -2844,7 +2973,7 @@ namespace AnodyneSharp.Recording
                 }
             }
             int swing = 0, lastSwing = -1000;
-            var ignoredTargets = new HashSet<Entity>();
+            var ignoredTargets = IgnoredEnemies;
             var startGrid = Grid;
             Vector2 lastPos = Pos;
             int stillFrames = 0;
@@ -2888,7 +3017,7 @@ namespace AnodyneSharp.Recording
                     planHold--;
                 }
                 var enemies = Enemies();
-                if (soft && ignoredTargets.Count > 0)
+                if (ignoredTargets.Count > 0)
                 {
                     enemies = enemies.Where(e => !ignoredTargets.Contains(e)).ToList();
                     if (enemies.Count == 0)
@@ -2926,8 +3055,9 @@ namespace AnodyneSharp.Recording
                 {
                     aggroFrames--;
                 }
-                if (soft && noKill >= 220 && committed != null && !ignoredTargets.Contains(committed))
+                if (soft && noKill >= 220 && (committed ?? lastTarget) is Entity unreachable && !ignoredTargets.Contains(unreachable))
                 {
+                    committed = unreachable;
                     // Nothing waiting-on-purpose (those reset the count) and nothing dying for this long: this one is out of reach.
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
@@ -3036,6 +3166,18 @@ namespace AnodyneSharp.Recording
                 var me = Pos + new Vector2(5, 6);
                 stillFrames = (Pos == lastPos && !Dodged) ? stillFrames + 1 : 0;
                 lastPos = Pos;
+                if (stillFrames > 100 && lastTarget != null && lastTarget.GetType().Name == "Annoyer" && !ignoredTargets.Contains(lastTarget))
+                {
+                    // Walking up to a sleeping Annoyer and not getting anywhere (something between us): it is not worth it, leave it asleep.
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {lastTarget.Hitbox.X},{lastTarget.Hitbox.Y}: leaving it");
+                    }
+                    ignoredTargets.Add(lastTarget);
+                    committed = null;
+                    stillFrames = 0;
+                    continue;
+                }
                 if (stillFrames > 150)
                 {
                     // Wedged for no reason we know: shake loose by walking a few frames in a changing direction.
@@ -3077,17 +3219,29 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.X},{e.Hitbox.Center.Y}")) + $" target={target.GetType().Name} status=[{BotRunner.Status}]");
                 }
+                {
+                    // Whatever the plan (even a forced one): a Slime that is right beside us is the one that touches us next.
+                    var bx = Player.Hitbox;
+                    int GapTo(Entity e) => Math.Max(Math.Max(e.Hitbox.Left - bx.Right, bx.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - bx.Bottom, bx.Top - e.Hitbox.Bottom));
+                    var besideUs = enemies.Where(e => e.GetType().Name == "Slime" && GapTo(e) < 40).OrderBy(GapTo).FirstOrDefault();
+                    if (besideUs != null)
+                    {
+                        target = besideUs;
+                    }
+                }
                 if (enemies.FirstOrDefault(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < (forced == null ? 80 : 40)) is Entity nearAnnoyer)
                 {
                     target = nearAnnoyer; // one hit kills it and it is the one that comes at us: deal with it before a patroller
                 }
-                if (target.GetType().Name == "Slime" && forced == null)
+                if (forced == null && enemies.Any(e => e.GetType().Name == "Slime") && (target.GetType().Name == "Slime" ||
+                    enemies.Where(e => e.GetType().Name == "Slime").Any(e => Math.Max(Math.Max(e.Hitbox.Left - Player.Hitbox.Right, Player.Hitbox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - Player.Hitbox.Bottom, Player.Hitbox.Top - e.Hitbox.Bottom)) < 44)))
                 {
+                    // (a Slime that has come up beside us comes first whatever we were doing: a plant or a patroller is not what touches us now)
                     // Slimes drift: whichever is nearest is the one that can touch us, so it is always the one to deal with (not the one chosen earlier).
                     var meBox = Player.Hitbox;
                     int SlimeGap(Entity e) => Math.Max(Math.Max(e.Hitbox.Left - meBox.Right, meBox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - meBox.Bottom, meBox.Top - e.Hitbox.Bottom));
                     var nearestSlime = enemies.Where(e => e.GetType().Name == "Slime").OrderBy(SlimeGap).First();
-                    if (SlimeGap(nearestSlime) < 60)
+                    if (SlimeGap(nearestSlime) < (target.GetType().Name == "Slime" ? 60 : 44))
                     {
                         target = nearestSlime; // within reach of us: it is the one to deal with
                     }
@@ -3250,6 +3404,17 @@ namespace AnodyneSharp.Recording
                     {
                         noKill = 1; // waiting out its bullets / working at it from the standoff is progress; walking at it for ever is not
                     }
+                    bool isFrog = target.GetType().Name == "Frog";
+                    if (isFrog && pdist < 64)
+                    {
+                        // A frog fires again the moment its bullets land for as long as we are inside 64px: there is no gap to wait for. Go in at
+                        // once, stepping round the bullets already flying, and swing from the standoff (touching it hurts too).
+                        noKill = 1;
+                        BotRunner.Status = "fight/frog: in to the standoff";
+                        var fk = StandoffKeys(pl, pbp, ref plantSwingWait, 40);
+                        yield return fk.Length == 1 && fk[0] != KeyFunctions.Accept ? SafeMove(fk[0], target, 12f) : fk;
+                        continue;
+                    }
                     if (bulletsUp)
                     {
                         if (pdist < 70)
@@ -3260,6 +3425,19 @@ namespace AnodyneSharp.Recording
                                 : (pbp.Center.Y >= pl.Center.Y ? KeyFunctions.Down : KeyFunctions.Up);
                             yield return SafeMove(offKey, target, 12f);
                             continue;
+                        }
+                        // Standing still is what the aimed bullet is looking for (it lands where we stood when it fired): if any is coming our way,
+                        // step out of its line (the planner knows where each flying bullet will be); otherwise wait for them to land.
+                        var comingThreats = PredictThreats(null).Where(t => t.Name.Contains("Bullet") || t.Name.Contains("Burst")).ToList();
+                        if (comingThreats.Count > 0 && PlanHitFrameStanding(30, KeyFunctions.Right, 0, comingThreats) != int.MaxValue)
+                        {
+                            var stepAside = SpaceTimeMove(new Vector2(pbp.X, pbp.Y), comingThreats, useCache: false, survive: true);
+                            if (stepAside != null && stepAside.Length > 0)
+                            {
+                                BotRunner.Status = "fight/plant: step out of its bullets' way";
+                                yield return K(stepAside);
+                                continue;
+                            }
                         }
                         BotRunner.Status = "fight/plant: wait for its bullets to land";
                         yield return K();
@@ -3721,6 +3899,20 @@ namespace AnodyneSharp.Recording
                     // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
                     // what gets us hit. Stand still facing right and swing; it is in reach every time round.
                     BotRunner.Status = "fight/annoyer hold";
+                    // Not getting anywhere towards a sleeping Annoyer (something between us)? Leave it asleep.
+                    annoyerStill = Pos == annoyerLastPos && target.velocity == Vector2.Zero ? annoyerStill + 1 : 0;
+                    annoyerLastPos = Pos;
+                    if (annoyerStill > 90)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {target.Hitbox.X},{target.Hitbox.Y}: leaving it");
+                        }
+                        ignoredTargets.Add(target);
+                        committed = null;
+                        annoyerStill = 0;
+                        continue;
+                    }
                     if (i % 6 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         System.Console.Error.WriteLine($"  annoyer f{i} me={me} ann={c} d=({dx:0},{dy:0}) facing={Player.facing}");

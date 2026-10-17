@@ -33,6 +33,7 @@ namespace AnodyneSharp.Recording
                 _added[p] = BotRunner.Frame;
             }
             public void Clear() => _added.Clear();
+            public int Count => _added.Count;
 
             public bool Contains(Point p) => _added.TryGetValue(p, out long f) && BotRunner.Frame - f < LifetimeFrames;
 
@@ -332,11 +333,44 @@ namespace AnodyneSharp.Recording
 
         public static bool IsGateTile(Point p) => _gatesOpen.Contains(p) || _gatesClosed.Contains(p);
 
+        private static HashSet<Point> _shooterTiles = new();
+        private static long _shooterTilesFrame = -1;
+
+        /// <summary>Tiles under living Burst_Plants and Frogs (not solid in the game, but standing there is the one sure way to be shot).</summary>
+        public static void RefreshShooterTiles()
+        {
+            if (_shooterTilesFrame == BotRunner.Frame)
+            {
+                return;
+            }
+            _shooterTilesFrame = BotRunner.Frame;
+            var set = new HashSet<Point>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e.GetType().Name is "Burst_Plant" or "Frog")
+                {
+                    var r = e.Hitbox;
+                    for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
+                    {
+                        for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
+                        {
+                            set.Add(new Point(tx, ty));
+                        }
+                    }
+                }
+            }
+            _shooterTiles = set;
+        }
+
         public static bool Walkable(Point t)
         {
             if (HardAvoid != null && HardAvoid.Contains(t))
             {
                 return false;
+            }
+            if (_shooterTiles.Contains(t))
+            {
+                return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
             }
             if (_gatesOpen.Contains(t))
             {
