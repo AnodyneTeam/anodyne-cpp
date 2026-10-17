@@ -124,6 +124,9 @@ namespace AnodyneSharp.Recording
         private static readonly bool _allowDamage = Environment.GetEnvironmentVariable("ANODYNE_BOT_ALLOW_DAMAGE") != null;
         private static int _hpSeen = -1, _hpSeenAllow = -1;
 
+        /// <summary>Hearts the run may lose in total during a boss fight (set by the boss routine): the Seer is not dodge-proof yet, everything else is fatal.</summary>
+        public static int BossDamageBudget;
+
         /// <summary>Dev only: let a failing step restart its section (the old behaviour). By default a step that fails is a fatal error.</summary>
         private static readonly bool _allowRetry = Environment.GetEnvironmentVariable("ANODYNE_BOT_RETRY") != null;
 
@@ -167,7 +170,7 @@ namespace AnodyneSharp.Recording
                 sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} E:");
                 foreach (var e in Entities())
                 {
-                    if (e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                    if (e.exists && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || e.GetType().Name.StartsWith("Seer")))
                     {
                         sb.Append($" {e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y},{e.Hitbox.Width},{e.Hitbox.Height}v{e.velocity.X:0.#},{e.velocity.Y:0.#}");
                     }
@@ -208,7 +211,15 @@ namespace AnodyneSharp.Recording
             }
             else if (_hpSeen >= 0 && hp < _hpSeen)
             {
-                why = $"took damage (HP {_hpSeen}->{hp})";
+                if (BossDamageBudget >= _hpSeen - hp)
+                {
+                    BossDamageBudget -= _hpSeen - hp; // a boss fight with a heart budget: logged, not fatal
+                    System.Console.Error.WriteLine($"  boss hit f{_botFrame}: HP {_hpSeen}->{hp}, budget left {BossDamageBudget} P={Player.Hitbox} " + string.Join(" ", Entities().Where(e => e.exists && e.GetType().Name.StartsWith("Seer")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}")));
+                }
+                else
+                {
+                    why = $"took damage (HP {_hpSeen}->{hp})";
+                }
             }
             _hpSeen = hp;
             if (why != null || (_allowDamage && _hpSeenAllow >= 0 && hp < _hpSeenAllow))
@@ -409,6 +420,17 @@ namespace AnodyneSharp.Recording
         private static int _secIndex;
 
         public static void CopyDirPublic(string from, string to) => CopyDir(from, to);
+
+        /// <summary>Dev: snapshot the game now as <ANODYNE_BOT_SECSAVE>/<index>_<name> (token `<name>), so the later sections can be rerun from it.</summary>
+        public static void SnapshotNow(string name)
+        {
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir && BotRunner.Player != null)
+            {
+                GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+                GlobalState.SaveGame();
+                CopyDir(saveDir, System.IO.Path.Combine(secDir, name));
+            }
+        }
 
         private static void CopyDir(string from, string to)
         {

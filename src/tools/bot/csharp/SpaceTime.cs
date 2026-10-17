@@ -27,6 +27,7 @@ namespace AnodyneSharp.Recording
         };
 
         public static int Nodes; // nodes expanded by the last Plan (for performance tests)
+        public static bool Reached; // did the last Plan reach the goal (true) or only find a plan that stays alive (false)?
 
         /// <returns>The index into Actions of the first block of a surviving plan, or -1 if none survives the horizon.</returns>
         public static int Plan(Rectangle start, Vector2 goal, IReadOnlyList<StThreat> threats, Func<Rectangle, bool> walkable, int horizon,
@@ -43,6 +44,7 @@ namespace AnodyneSharp.Recording
             int bestLate = -1;
             int deepest = 0; // fallback: the survivor that lasted longest (ties: nearest the goal)
             Nodes = 0;
+            Reached = false;
             while (open.TryDequeue(out int idx, out _) && xs.Count < maxNodes)
             {
                 Nodes++;
@@ -54,6 +56,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (Hh(nx, ny) * Walk <= tol)
                 {
+                    Reached = true;
                     return first[idx];
                 }
                 if (nt + block > horizon)

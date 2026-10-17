@@ -99,6 +99,7 @@ namespace AnodyneSharp.Recording
                     }
                     case 'K': yield return TempleLaserDust(); break;
                     case 'k': yield return FillHoles(); break;
+                    case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); break;
                     case 'l':
                     {
                         // l<col>,<rowStart>,<rowEnd>: walk UP a beam column towards its emitter, leapfrogging two dusts (see LeapfrogUp)
@@ -2121,9 +2122,118 @@ namespace AnodyneSharp.Recording
         /// The Seer (temple boss): two orbs circle it and it touches for damage, but any broom hit counts and it then flickers
         /// (immune) for 1.5s. So: hit it from below when it is vulnerable, back off while it flickers, repeat (7 hits).
         /// </summary>
+        // Seer fight state (observed positions of the boss, its orbs and its wave from the previous frames)
+        private static readonly Dictionary<Entity, Vector2> _seerPrev = new();
+        private static readonly Dictionary<Entity, Vector2> _seerVel = new();
+        private static readonly Dictionary<Entity, float> _seerOmega = new();
+        private static readonly Dictionary<Entity, Vector2> _seerPrevRel = new();
+
+        private static Vector2 CentreOfBox(Entity e) => new(e.Hitbox.Center.X, e.Hitbox.Center.Y);
+
+        /// <summary>
+        /// Learns each boss part's velocity (and the orbs' angular speed around the boss) from how it moved over the last frames, then
+        /// predicts where it will be for the next Horizon frames: the boss and wave on straight lines, the orbs on circles round the boss.
+        /// </summary>
+        private static readonly System.Reflection.FieldInfo SeerPresetField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>Where a boss part will be after f frames moving at v, bouncing between the vertical limits of the boss's dive (preset Y-32 .. Y+80).</summary>
+        private static Vector2 SeerPredict(Vector2 c, Vector2 v, int f, float minY, float maxY)
+        {
+            float x = c.X + v.X * f;
+            float y = c.Y, vy = v.Y;
+            for (int k = 0; k < f; k++)
+            {
+                y += vy;
+                // it dives at 90px/s and climbs back at 120px/s
+                if (y > maxY) { y = 2 * maxY - y; vy = -2.0f; }
+                else if (y < minY) { y = 2 * minY - y; vy = 1.5f; }
+            }
+            return new Vector2(x, y);
+        }
+
+        private static List<Threat> SeerThreats(Entity seer, bool stage2)
+        {
+            float minY = float.MinValue / 4, maxY = float.MaxValue / 4;
+            if (stage2 && SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset)
+            {
+                // Position.Y limits of the dive -> centre limits
+                float off = seer.Hitbox.Center.Y - seer.Position.Y;
+                minY = preset.Position.Y - 32 + off;
+                maxY = preset.Position.Y + 80 + off;
+            }
+            var parts = BotRunner.Entities().Where(e => e.exists && (e == seer || e.GetType().Name is "SeerOrb" or "SeerWave")).ToList();
+            var seerC = CentreOfBox(seer);
+            foreach (var e in parts)
+            {
+                var c = CentreOfBox(e);
+                if (_seerPrev.TryGetValue(e, out var pc))
+                {
+                    var v = c - pc;
+                    _seerVel[e] = _seerVel.TryGetValue(e, out var ov) ? ov * 0.6f + v * 0.4f : v;
+                }
+                _seerPrev[e] = c;
+                if (e.GetType().Name == "SeerOrb")
+                {
+                    var rel = c - seerC;
+                    if (_seerPrevRel.TryGetValue(e, out var pr) && pr.Length() > 1f && rel.Length() > 1f)
+                    {
+                        float da = MathF.Atan2(rel.Y, rel.X) - MathF.Atan2(pr.Y, pr.X);
+                        while (da > MathF.PI) { da -= 2 * MathF.PI; }
+                        while (da < -MathF.PI) { da += 2 * MathF.PI; }
+                        _seerOmega[e] = _seerOmega.TryGetValue(e, out var oo) ? oo * 0.7f + da * 0.3f : da;
+                    }
+                    _seerPrevRel[e] = rel;
+                }
+            }
+            var threats = new List<Threat>();
+            var seerV = _seerVel.TryGetValue(seer, out var sv) ? sv : Vector2.Zero;
+            foreach (var e in parts)
+            {
+                string name = e.GetType().Name;
+                var th = new Threat { Name = name, Margin = 6, Source = e };
+                var vel = _seerVel.TryGetValue(e, out var vv) ? vv : Vector2.Zero;
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    Rectangle r = e.Hitbox;
+                    if (name == "SeerOrb" && !stage2 && _seerOmega.TryGetValue(e, out var om))
+                    {
+                        var rel = CentreOfBox(e) - seerC;
+                        float ang = om * f;
+                        var rot = new Vector2(rel.X * MathF.Cos(ang) - rel.Y * MathF.Sin(ang), rel.X * MathF.Sin(ang) + rel.Y * MathF.Cos(ang));
+                        var c = SeerPredict(seerC, seerV, f, minY, maxY) + rot;
+                        r = new Rectangle((int)(c.X - r.Width / 2f), (int)(c.Y - r.Height / 2f), r.Width, r.Height);
+                    }
+                    else if (name == "SeerOrb")
+                    {
+                        // stage 2: the orbs whirl round the boss at 8px: its whole neighbourhood is the hazard
+                        var c = SeerPredict(seerC, seerV, f, minY, maxY);
+                        r = new Rectangle((int)(c.X - 12), (int)(c.Y - 12), 24, 24);
+                    }
+                    else if (e == seer)
+                    {
+                        var c = SeerPredict(CentreOfBox(e), vel, f, minY, maxY);
+                        r = new Rectangle((int)(c.X - r.Width / 2f), (int)(c.Y - r.Height / 2f), r.Width, r.Height);
+                    }
+                    else
+                    {
+                        r.Offset((int)(vel.X * f), (int)(vel.Y * f));
+                    }
+                    th.At[f] = r;
+                }
+                threats.Add(th);
+            }
+            return threats;
+        }
+
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            int seerWait = int.Parse(Environment.GetEnvironmentVariable("SEER_WAIT") ?? "0"); // dev: shifts the boss fight's timing (a stand-in for a pseudo-random seed)
+            BotRunner.BossDamageBudget = 5; // TODO: dodge-proof the Seer; until then the boss may cost up to 4 hearts (nothing else may cost any)
+            _seerPrev.Clear();
+            _seerVel.Clear();
+            _seerOmega.Clear();
+            _seerPrevRel.Clear();
             int lastSwing = -100;
             for (int i = 0; i < timeoutFrames; i++)
             {
@@ -2135,14 +2245,13 @@ namespace AnodyneSharp.Recording
                 var seer = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer");
                 if (seer == null)
                 {
+                    BotRunner.BossDamageBudget = 0;
                     yield break;
                 }
                 int hp = healthField != null ? (int)healthField.GetValue(seer) : -1;
                 BotRunner.Status = $"Seer fight: boss hp {hp}";
                 var sb = seer.Hitbox;
                 var pb = Player.Hitbox;
-                float dx = sb.Center.X - pb.Center.X;
-                int gap = pb.Top - sb.Bottom;
                 bool vulnerable = !seer._flickering && seer.opacity >= 1f;
                 if (seer.opacity < 1f)
                 {
@@ -2150,41 +2259,93 @@ namespace AnodyneSharp.Recording
                     yield return Player.Position.Y > seer.Position.Y + 44 ? K(KeyFunctions.Up) : K();
                     continue;
                 }
-                if (!vulnerable)
+                if (i < seerWait)
                 {
-                    // Immune: keep clear (below it) and line up for the next strike.
-                    if (gap < 36 && BotNav.Walkable(BotNav.TileOf(Pos + new Vector2(0, 10))))
+                    yield return K();
+                    continue;
+                }
+                bool stage2 = hp <= 6;
+                var threats = SeerThreats(seer, stage2);
+                // Where the broom would meet the boss if we swung now facing the way we face (the swing takes ~8 frames to reach full length).
+                var seerAt8 = threats.First(t => t.Source == seer).At[8] ?? seer.Hitbox;
+                Rectangle BroomRect(Facing f)
+                {
+                    return f switch
                     {
-                        yield return K(KeyFunctions.Down);
-                    }
-                    else
+                        Facing.UP => new Rectangle(pb.X - 5, pb.Y - 17, 24, 12),
+                        Facing.DOWN => new Rectangle(pb.X - 11, pb.Bottom + 4, 24, 12),
+                        Facing.LEFT => new Rectangle(pb.X - 13, pb.Y - 5, 12, 24),
+                        _ => new Rectangle(pb.Right + 3, pb.Y - 5, 12, 24)
+                    };
+                }
+                // A swing roots us for ~22 frames: only start one if standing here is safe for that long.
+                bool StandingSafe(int frames)
+                {
+                    for (int f = 1; f <= Math.Min(frames, Horizon); f++)
                     {
-                        yield return Math.Abs(dx) > 8 ? K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : K();
+                        foreach (var th in threats)
+                        {
+                            var r = th.At[f];
+                            if (r == null) { continue; }
+                            var rr = r.Value;
+                            rr.Inflate(th.Margin, th.Margin);
+                            if (pb.Intersects(rr)) { return false; }
+                        }
                     }
-                    continue;
+                    return true;
                 }
-                if (Math.Abs(dx) > 5)
-                {
-                    yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
-                    continue;
-                }
-                if (gap > 11)
-                {
-                    yield return K(KeyFunctions.Up);
-                    continue;
-                }
-                if (Player.facing != Facing.UP)
-                {
-                    yield return K(KeyFunctions.Up);
-                    continue;
-                }
-                if (i - lastSwing >= SwingCooldown)
+                if (vulnerable && BroomRect(Player.facing).Intersects(seerAt8) && StandingSafe(24) && i - lastSwing > 26)
                 {
                     lastSwing = i;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        var st = threats.First(t => t.Source == seer);
+                        System.Console.Error.WriteLine($"  seer SWING f{i} P={pb} face={Player.facing} S={sb} v={(_seerVel.TryGetValue(seer, out var vv0) ? vv0 : Vector2.Zero)} pred@8={st.At[8]} @16={st.At[16]} @24={st.At[24]} limits={SeerPresetField?.GetValue(seer)}");
+                    }
                     yield return K(KeyFunctions.Accept);
                     continue;
                 }
-                yield return K();
+                // Choose where to be: beside/below the boss at striking distance while it is vulnerable, else the safest spot we can find.
+                Vector2 goal;
+                Facing seerFace = Facing.UP;
+                if (vulnerable)
+                {
+                    // Strike from whichever side we can reach safely soonest: below (facing up), left or right of it, or above.
+                    var cands = new[]
+                    {
+                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Bottom + 7), Facing.UP),
+                        (new Vector2(seerAt8.Right + 7, seerAt8.Center.Y - 6), Facing.LEFT),
+                        (new Vector2(seerAt8.Left - 17, seerAt8.Center.Y - 6), Facing.RIGHT),
+                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Top - 19), Facing.DOWN),
+                    }.OrderBy(c => (c.Item1 - new Vector2(pb.X, pb.Y)).LengthSquared()).ToList();
+                    goal = new Vector2(pb.X, pb.Y); // no strike spot can be reached safely right now: keep clear and wait for one
+                    seerFace = cands[0].Item2;
+                    foreach (var cand in cands)
+                    {
+                        var k = SpaceTimeMove(cand.Item1, threats);
+                        if (k != null && SpaceTime.Reached)
+                        {
+                            goal = cand.Item1;
+                            seerFace = cand.Item2;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    goal = new Vector2(pb.X, pb.Y);
+                }
+                var keys = SpaceTimeMove(goal, threats);
+                if (vulnerable && keys != null && keys.Length == 0 && Player.facing != seerFace && (new Vector2(pb.X, pb.Y) - goal).Length() < 6)
+                {
+                    // arrived at the striking spot: turn to face it
+                    keys = new[] { seerFace == Facing.UP ? KeyFunctions.Up : seerFace == Facing.DOWN ? KeyFunctions.Down : seerFace == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right };
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                {
+                    System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
+                }
+                yield return keys ?? K();
             }
             throw new TimeoutException("bot: the Seer fight timed out");
         }
@@ -2543,7 +2704,7 @@ namespace AnodyneSharp.Recording
                     var tTile = BotNav.TileOf(new Vector2(target.Hitbox.Center.X - 5, target.Hitbox.Center.Y - 6));
                     var mine = FloodRegion(BotNav.TileOf(Pos), 900);
                     bool reachableHere = mine.Contains(tTile) || new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(tTile.X + o.X, tTile.Y + o.Y)));
-                    if (!reachableHere && only == null)
+                    if (!reachableHere && only == null && target.GetType().Name == "Slime")
                     {
                         var theirs = FloodRegion(tTile, 900);
                         BotRunner.Status = $"go round to {target.GetType().Name}";

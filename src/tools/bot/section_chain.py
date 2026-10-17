@@ -16,7 +16,11 @@ for m in re.finditer(r'Section\("([^"]+)",\s*\(\)\s*=>\s*Exec\(([^;]*?)\)\);', s
         elif part in consts:
             toks += consts[part]
     bodies.append((m.group(1), toks))
+import os
+snap = os.environ.get('SNAPS') == '1'
 for i, (name, toks) in enumerate(bodies):
     if i >= n:
+        if snap:
+            print('`s%02d_%s' % (i, name.replace(' ', '_')), end=' ')
         print(toks, end=' ')
 print()
