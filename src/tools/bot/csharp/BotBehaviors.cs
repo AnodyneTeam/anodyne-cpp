@@ -550,7 +550,7 @@ namespace AnodyneSharp.Recording
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
         private static Threat PredictPatroller(Entity e)
         {
-            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero };
+            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero, Margin = e.velocity == Vector2.Zero ? 0 : 2 };
             var r = e.Hitbox;
             var v = e.velocity;
             float fx = 0, fy = 0; // sub-pixel remainder
@@ -653,7 +653,8 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 bool bolt = name == "Laser";
-                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : 2, Source = d, Stationary = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) };
+                bool still = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
+                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still };
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = d.Hitbox;
@@ -723,7 +724,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Set by SafeMove when the wanted step runs into an enemy that does not move: waiting never helps, the caller must go round or kill it.</summary>
         public static Entity BlockedBy;
 
-        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f)
+        protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false)
         {
             Dodged = false;
             BlockedBy = null;
@@ -745,7 +746,7 @@ namespace AnodyneSharp.Recording
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
             }
-            if (_lastHitThreat != null && _lastHitThreat.Stationary && _lastHitThreat.Source != null && BlockerBudget > 0)
+            if (stopForBlockers && _lastHitThreat != null && _lastHitThreat.Stationary && _lastHitThreat.Source != null && BlockerBudget > 0)
             {
                 // An enemy that stands still blocks the way: no gap will ever open. Stop and let the walker replan or kill it.
                 BlockedBy = _lastHitThreat.Source;
@@ -799,7 +800,9 @@ namespace AnodyneSharp.Recording
                     _standing = stand;
                 }
             }
-            for (int w = 4; w <= 60 && bestFrame != int.MaxValue; w += 4)
+            // Standing and waiting only makes sense for things that move: a stationary enemy never leaves a gap.
+            bool hitStationary = _lastHitThreat != null && _lastHitThreat.Stationary;
+            for (int w = 4; w <= 60 && !hitStationary && bestFrame != int.MaxValue; w += 4)
             {
                 Consider(KeyFunctions.Up, w, true);
             }
@@ -1704,6 +1707,7 @@ namespace AnodyneSharp.Recording
             var rng = new Random(unchecked((int)(BotRunner.Frame * 7919 + 13)));
             int lastCount = -1, noKill = 0;
             Entity forced = null;
+            Entity committed = null; // the target we are working on: switching to whichever is nearest every frame means never finishing an approach
             int forcedFrames = 0, aggroFrames = 0, relocFrames = 0;
             Point? reloc = null;
             List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
@@ -1761,6 +1765,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (noKill > 0 && noKill % 300 == 0)
                 {
+                    committed = null;
                     BotNav.Blocked.Clear(); // learned "blocked" tiles may have been wrong
                     int strategy = rng.Next(3);
                     heldPlan = null;
@@ -1889,8 +1894,11 @@ namespace AnodyneSharp.Recording
                     }
                     _lastHp = GlobalState.CUR_HEALTH;
                 }
-                var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced
-                    : enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
+                if (committed == null || !committed.exists || !enemies.Contains(committed))
+                {
+                    committed = enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
+                }
+                var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
                 BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left)";
@@ -1942,7 +1950,9 @@ namespace AnodyneSharp.Recording
                         yield return K();
                         continue;
                     }
-                    if (planHold <= 0 && pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
+                    var slideRect = pb;
+                    slideRect.Offset(dx < 0 ? -3 : 3, 0);
+                    if (planHold <= 0 && CornersWalkable(slideRect) && pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
 {
                         if (target.velocity != Vector2.Zero)
                         {

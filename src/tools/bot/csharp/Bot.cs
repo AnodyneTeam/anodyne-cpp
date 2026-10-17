@@ -173,7 +173,7 @@ namespace AnodyneSharp.Recording
                 if (top.Current is KeyFunctions[] frame)
                 {
                     held = frame;
-                    if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + 60)
+                    if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
                     {
                         System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={AnodyneSharp.Registry.GlobalState.CUR_HEALTH} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
                     }
@@ -615,7 +615,7 @@ namespace AnodyneSharp.Recording
                         KeyFunctions dir = Math.Abs(dx) > 2f
                             ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                             : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                        var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy));
+                        var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true);
                         if (BlockedBy != null && blockerHandled < 6)
                         {
                             // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
