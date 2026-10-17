@@ -335,6 +335,7 @@ namespace AnodyneSharp.Recording
         {
             _intended = null;
             InRaft = false; // a death or failure mid-raft abandons the iterator without running its finally
+            Plugging = false;
         }
 
         /// <summary>A block of steps that is replayed from the top after every death.</summary>
@@ -744,9 +745,9 @@ namespace AnodyneSharp.Recording
                 return K(wanted);
             }
             Dodged = true;
-            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && BotRunner.Frame % 60 == 0)
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && _dodgeStreak % 40 == 1)
             {
-                System.Console.Error.WriteLine($"  dodge: wanted {wanted} at {Player.Hitbox} threats: " + string.Join(" ", threats.Where(t => t.At[0] != null).Select(t => $"{t.Name}{t.At[0]}")));
+                System.Console.Error.WriteLine($"  dodge(streak {_dodgeStreak}): wanted {wanted} at {Player.Hitbox} threats: " + string.Join(" ", threats.Where(t => t.At[0] != null).Select(t => $"{t.Name}{t.At[0]}")));
             }
             KeyFunctions[] sides = (wanted == KeyFunctions.Up || wanted == KeyFunctions.Down)
                 ? new[] { KeyFunctions.Left, KeyFunctions.Right }
@@ -1238,6 +1239,9 @@ namespace AnodyneSharp.Recording
 
         protected static bool InRaft;
 
+        /// <summary>True while the automatic emitter plugging runs (its own walking must not trigger more plugging).</summary>
+        protected static bool Plugging;
+
         protected static IEnumerable<object> RaftTo(float gx, float gy)
         {
             if (InRaft)
@@ -1674,6 +1678,9 @@ namespace AnodyneSharp.Recording
             int unstick = 0;
             KeyFunctions unstickKey = KeyFunctions.Down;
             Point? lastStep = null; // the next path tile we were walking towards (blamed when we stop moving)
+            List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
+            int heldAge = 0;
+            int planHold = 0; // frames during which a chosen route around a Shieldy is followed without re-deciding (no flip-flopping)
             float bestDist = float.MaxValue; // closest we have got to the current target (hits knock us about, so "still" is not enough)
             int noProgress = 0;
             Entity lastTarget = null;
@@ -1688,6 +1695,10 @@ namespace AnodyneSharp.Recording
                 {
                     // Knocked (or walked) onto another screen: that room's enemies are not this fight's business.
                     yield break;
+                }
+                if (planHold > 0)
+                {
+                    planHold--;
                 }
                 var enemies = Enemies();
                 if (only != null)
@@ -1773,7 +1784,7 @@ namespace AnodyneSharp.Recording
                     var pb = Player.Hitbox;
                     int gap = tb.Top - pb.Bottom;
                     bool aligned = Math.Abs(dx) <= 4;
-                    if (aligned && gap >= -2 && gap <= 40 && pb.Bottom <= tb.Top + 2)
+                    if (aligned && gap >= -4 && gap <= 40 && pb.Bottom <= tb.Top + 4)
                     {
                         if (gap > 10)
                         {
@@ -1782,7 +1793,15 @@ namespace AnodyneSharp.Recording
                         }
                         if (Player.facing != Facing.DOWN)
                         {
-                            yield return gap >= 1 ? K(KeyFunctions.Down) : K(KeyFunctions.Up);
+                            // Turning to face down means pressing Down, which also moves us into it: back off to a clear gap first,
+                            // then one frame of Down turns us with ~5px to spare (the broom reaches ~16px, so no need to touch it).
+                            yield return gap >= 6 ? K(KeyFunctions.Down) : K(KeyFunctions.Up);
+                            continue;
+                        }
+                        if (gap < 3)
+                        {
+                            // Facing down but too close (overlap = contact damage): step back, re-turn on the way in.
+                            yield return K(KeyFunctions.Up);
                             continue;
                         }
                         swing++;
@@ -1795,13 +1814,14 @@ namespace AnodyneSharp.Recording
                         yield return K();
                         continue;
                     }
-                    if (pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
+                    if (planHold <= 0 && pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
 {
                         // Standing clear above it: slide sideways to line up.
+                        BotRunner.Status = "fight/slide";
                         yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
                         continue;
                     }
-                    if (target.velocity == Vector2.Zero && InCorridor(target) && pb.Top > tb.Bottom && pb.Top - tb.Bottom < 28 && pb.Right > tb.Left - 3 && pb.Left < tb.Right + 3)
+                    if (planHold <= 0 && target.velocity == Vector2.Zero && InCorridor(target) && pb.Top > tb.Bottom && pb.Top - tb.Bottom < 28 && pb.Right > tb.Left - 3 && pb.Left < tb.Right + 3)
                     {
                         // Approaching from below and lined up with it (a Shieldy in a corridor): slide to the free side first, since
                         // walking past its flank on the way up is what gets us hit.
@@ -1908,6 +1928,32 @@ namespace AnodyneSharp.Recording
                             break;
                         }
                     }
+                    {
+                        // Keep following the route chosen a moment ago while we are on it: the margin-5 and margin-1 searches differ by a
+                        // pixel of position, and flipping between them every frame made the bot jitter on the spot.
+                        var here0 = BotNav.TileOf(Pos);
+                        if (heldPlan != null && heldAge++ < 45)
+                        {
+                            int at = heldPlan.IndexOf(here0);
+                            if (at >= 0 && at < heldPlan.Count - 1)
+                            {
+                                sp = heldPlan.Skip(at + 1).ToList();
+                            }
+                            else
+                            {
+                                heldPlan = null;
+                            }
+                        }
+                        else
+                        {
+                            heldPlan = null;
+                        }
+                        if (heldPlan == null && sp != null && sp.Count > 0)
+                        {
+                            heldPlan = new List<Point>(sp.Prepend(here0));
+                            heldAge = 0;
+                        }
+                    }
                     if (sp != null && sp.Count > 0)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
@@ -1917,7 +1963,14 @@ namespace AnodyneSharp.Recording
                         lastStep = sp[0];
                         var nc = BotNav.CentreOf(sp[0]) + new Vector2(5, 6);
                         float px = nc.X - me.X, py = nc.Y - me.Y;
-                        yield return SafeMove(StepKey(px, py, target), target);
+                        planHold = 30;
+                        var skey = SafeMove(StepKey(px, py, target), target);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
+                        {
+                            System.Console.Error.WriteLine($"    step px={px:0.0} py={py:0.0} key={string.Join("+", skey)} dodged={Dodged} still={stillFrames} facing={Player.facing} dontMove={Player.dontMove} state={Player.state} talk={Talking} trans={GlobalState.ScreenTransition} vel={Player.velocity}");
+                        }
+                        BotRunner.Status = "fight/plan";
+                        yield return skey;
                         continue;
                     }
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
@@ -1944,6 +1997,7 @@ namespace AnodyneSharp.Recording
                         yield return K();
                         continue;
                     }
+                    BotRunner.Status = "fight/up-fallback";
                     yield return K(KeyFunctions.Up);
                     continue;
                 }

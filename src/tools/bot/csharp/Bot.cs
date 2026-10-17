@@ -173,6 +173,10 @@ namespace AnodyneSharp.Recording
                 if (top.Current is KeyFunctions[] frame)
                 {
                     held = frame;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + 60)
+                    {
+                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} [{string.Join("+", frame)}]");
+                    }
                     break;
                 }
                 if (top.Current is IEnumerable<object> nested)
@@ -501,14 +505,22 @@ namespace AnodyneSharp.Recording
                         yield break;
                     }
                 }
-                if (DodgeEnabled && !pluggedTried && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
+                if (DodgeEnabled && !pluggedTried && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
                 {
                     // A route through a laser beam with dust lying about: plug the emitter instead of racing (or waiting for) its shots.
                     var crossing = EmittersCrossing(path);
                     if (crossing.Count > 0)
                     {
                         pluggedTried = true;
-                        yield return BlockLasers(e => crossing.Contains(e));
+                        Plugging = true; // BlockLasers walks with GoTo: it must not start plugging again from inside
+                        try
+                        {
+                            yield return BlockLasers(e => crossing.Contains(e));
+                        }
+                        finally
+                        {
+                            Plugging = false;
+                        }
                         goto replan;
                     }
                 }

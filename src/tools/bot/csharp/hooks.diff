@@ -1,0 +1,17 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+index f25975b..de9e37e 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+@@ -335,6 +335,12 @@ namespace AnodyneSharp
+                 graphics.SynchronizeWithVerticalRetrace = false;
+             }
+ 
++            if (RecordingManager.Fast || RecordingManager.BotPath != null)
++            {
++                // Bot/replay runs must not slow down (or sleep) when their window has no focus.
++                InactiveSleepTime = TimeSpan.Zero;
++            }
++
+             graphics.ApplyChanges();
+         }
+ 
