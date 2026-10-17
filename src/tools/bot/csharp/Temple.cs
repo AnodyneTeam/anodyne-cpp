@@ -11,7 +11,7 @@ namespace AnodyneSharp.Recording
             yield return Exec("O0 V");
 
             // Shieldy room (2,2): its three Shieldies only take damage from a downward swing. The room has a checkpoint.
-            yield return Section("temple Shieldy room", () => Exec("X0 H0,2 # H2,2 F X1 V"));
+            yield return Section("temple Shieldy room", () => Exec("O1 X0 H0,2 # H2,2 F X1 V"));
 
             // West wing: the key chest on (0,4) behind the pit column.
             yield return Section("temple key 1", () => Exec("H0,4 I16,656,d W20"));
@@ -23,7 +23,7 @@ namespace AnodyneSharp.Recording
             yield return Section("temple key 2", () => Exec("X0 O1 K X1 H0,2 H0,3 H1,3 I176,496,d W20"));
 
             // Back to the (2,2) checkpoint to save with both keys in the inventory (deaths then respawn there, not at the entrance).
-            yield return Section("temple resave", () => Exec("X0 H0,2 # H2,2 F X1 V"));
+            yield return Section("temple resave", () => Exec("O1 X0 H0,2 # H2,2 F X1 V"));
 
             // (0,1): two buttons open the gate east; a Shieldy has to be shoved onto one while we stand on the other.
             // NOTE: the small-key gate on (1,1)'s north wall (chest room (1,0): 2 lasers, 2 Shieldies, 2 Slimes) is a side room; it would

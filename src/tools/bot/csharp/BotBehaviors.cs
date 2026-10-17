@@ -117,8 +117,9 @@ namespace AnodyneSharp.Recording
                     }
                     case '#': yield return TempleButtonRoom(); break;
                     case 'N':
+                        System.Console.Error.WriteLine("LANES: " + string.Join(" ", BotNav.LaneAxes().Keys.Select(q => $"{q.X},{q.Y}")) + " EMITTERS: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").Select(e => $"{(int)e.Position.X / 16},{(int)e.Position.Y / 16}{e.facing}")));
                         System.Console.Error.WriteLine("BLOCKED: " + string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}")));
-                        for (int r = 20; r <= 28; r++) { System.Console.Error.WriteLine(BotNav.DebugRow(r, 14, 30)); }
+                        for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
                     case '+': yield return OpenChests(); break;
                     case '>':
@@ -445,6 +446,7 @@ namespace AnodyneSharp.Recording
             bool Open() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Gate" && !e.Solid);
             for (int i = 0; i < timeoutFrames && !Open(); i++)
             {
+                BotRunner.NotStuck();
                 if (Talking)
                 {
                     yield return AdvanceKeys(i);
@@ -948,7 +950,8 @@ namespace AnodyneSharp.Recording
                 return K(wanted);
             }
             var threats = PredictThreats(except);
-            if (look != null && look.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null && PathPlanHit(look, threats) != int.MaxValue)
+            if (look != null && look.Count > 0 && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null && PathPlanHit(look, threats) != int.MaxValue
+                && PathPlanHit(look, threats.Where(t => !t.Stationary).ToList()) != int.MaxValue) // a stationary blocker never moves away: waiting for it is pointless, the blocker logic below deals with it
             {
                 // Walking the planned route as it is would meet something that moves (a patroller in a one-tile corridor, a beam):
                 // plan the dash through space and time instead of just the next step.
@@ -1169,6 +1172,7 @@ namespace AnodyneSharp.Recording
             var emitters = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser" && (only == null || only(e))).ToList();
             foreach (var em in emitters)
             {
+                BotNav.HardAvoid = null; // an earlier emitter that gave up (`continue`) must not leave its beam lanes walled off
                 var step = FacingStep(em.facing);
                 var et = BotNav.TileOf(em.Position + new Vector2(8, 8));
                 var target = new Point(et.X + step.X, et.Y + step.Y);
@@ -1186,6 +1190,7 @@ namespace AnodyneSharp.Recording
                 var stand = SafeStand(target, lanes0, et);
                 if (stand.HasValue)
                 {
+                    BotRunner.Status = $"plugging laser at {et.X},{et.Y}: fetch dust, stand {stand.Value.X},{stand.Value.Y}";
                     yield return PickUpLooseDust(null);
                     if (!_pickedDust)
                     {
@@ -1202,6 +1207,7 @@ namespace AnodyneSharp.Recording
                     {
                         continue;
                     }
+                    BotRunner.Status = $"plugging laser at {et.X},{et.Y}: two-step, fetch dust, stand {stand1.Value.X},{stand1.Value.Y}";
                     yield return PickUpLooseDust(null);
                     if (!_pickedDust)
                     {
@@ -1223,6 +1229,7 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");
                 }
             }
+            BotNav.HardAvoid = null;
         }
 
 
@@ -1291,6 +1298,11 @@ namespace AnodyneSharp.Recording
             {
                 var step = FacingStep(em.facing);
                 var t = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                if (onPath.Contains(t))
+                {
+                    result.Add(em); // the route squeezes past the emitter itself: its muzzle bullets are on the path
+                    continue;
+                }
                 for (int i = 0; i < 24; i++)
                 {
                     t = new Point(t.X + step.X, t.Y + step.Y);
@@ -2082,7 +2094,17 @@ namespace AnodyneSharp.Recording
                 yield return K();
             }
             BotRunner.Status = "on the lower button";
-            yield return StandUntilGateOpens(112, 272);
+            // The corridor Shieldy we shoved east can end up right under the button: it is only touching distance, never in the way.
+            bool savedDodge = DodgeEnabled;
+            DodgeEnabled = false;
+            try
+            {
+                yield return StandUntilGateOpens(112, 272);
+            }
+            finally
+            {
+                DodgeEnabled = savedDodge;
+            }
         }
 
         public static string DebugEnemies() => string.Join(" ", Enemies().Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}v{e.velocity.X:0},{e.velocity.Y:0}"));
@@ -2141,12 +2163,18 @@ namespace AnodyneSharp.Recording
         private static readonly System.Reflection.FieldInfo SeerPresetField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Where a boss part will be after f frames moving at v, bouncing between the vertical limits of the boss's dive (preset Y-32 .. Y+80).</summary>
+        private static float _seerMinX = float.MinValue / 4, _seerMaxX = float.MaxValue / 4;
+
         private static Vector2 SeerPredict(Vector2 c, Vector2 v, int f, float minY, float maxY)
         {
-            float x = c.X + v.X * f;
+            float x = c.X, vx = v.X;
             float y = c.Y, vy = v.Y;
             for (int k = 0; k < f; k++)
             {
+                x += vx;
+                // it slides sideways at 50px/s between two fixed limits
+                if (x > _seerMaxX) { x = 2 * _seerMaxX - x; vx = -MathF.Abs(vx); }
+                else if (x < _seerMinX) { x = 2 * _seerMinX - x; vx = MathF.Abs(vx); }
                 y += vy;
                 // it dives at 90px/s and climbs back at 120px/s
                 if (y > maxY) { y = 2 * maxY - y; vy = -2.0f; }
@@ -2165,6 +2193,12 @@ namespace AnodyneSharp.Recording
                 minY = preset.Position.Y - 32 + off;
                 maxY = preset.Position.Y + 80 + off;
             }
+            if (SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset2)
+            {
+                float offX = seer.Hitbox.Center.X - seer.Position.X;
+                _seerMinX = preset2.Position.X - 50 + offX;
+                _seerMaxX = preset2.Position.X + 60 + offX;
+            }
             var parts = BotRunner.Entities().Where(e => e.exists && (e == seer || e.GetType().Name is "SeerOrb" or "SeerWave")).ToList();
             var seerC = CentreOfBox(seer);
             foreach (var e in parts)
@@ -2173,7 +2207,10 @@ namespace AnodyneSharp.Recording
                 if (_seerPrev.TryGetValue(e, out var pc))
                 {
                     var v = c - pc;
-                    _seerVel[e] = _seerVel.TryGetValue(e, out var ov) ? ov * 0.6f + v * 0.4f : v;
+                    var smooth = _seerVel.TryGetValue(e, out var ov) ? ov * 0.6f + v * 0.4f : v;
+                    // a dive moves 1.5-2px a frame: its direction is plain at once, no need to wait for the average to turn
+                    if (e == seer && MathF.Abs(v.Y) >= 1f) { smooth.Y = v.Y; }
+                    _seerVel[e] = smooth;
                 }
                 _seerPrev[e] = c;
                 if (e.GetType().Name == "SeerOrb")
@@ -2191,10 +2228,15 @@ namespace AnodyneSharp.Recording
             }
             var threats = new List<Threat>();
             var seerV = _seerVel.TryGetValue(seer, out var sv) ? sv : Vector2.Zero;
+            int waveStopBottom = int.MaxValue;
+            foreach (var d in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust"))
+            {
+                waveStopBottom = Math.Min(waveStopBottom, d.Hitbox.Top - 1);
+            }
             foreach (var e in parts)
             {
                 string name = e.GetType().Name;
-                var th = new Threat { Name = name, Margin = 6, Source = e };
+                var th = new Threat { Name = name, Margin = name == "SeerWave" ? 1 : 6, Source = e };
                 var vel = _seerVel.TryGetValue(e, out var vv) ? vv : Vector2.Zero;
                 for (int f = 0; f <= Horizon; f++)
                 {
@@ -2211,7 +2253,7 @@ namespace AnodyneSharp.Recording
                     {
                         // stage 2: the orbs whirl round the boss at 8px: its whole neighbourhood is the hazard
                         var c = SeerPredict(seerC, seerV, f, minY, maxY);
-                        r = new Rectangle((int)(c.X - 12), (int)(c.Y - 12), 24, 24);
+                        r = new Rectangle((int)(c.X - 8), (int)(c.Y - 8), 32, 32); // 16px orbs on a ring of 8 round the centre, anchored by their corner: -8..+24 each way
                     }
                     else if (e == seer)
                     {
@@ -2221,6 +2263,10 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         r.Offset((int)(vel.X * f), (int)(vel.Y * f));
+                        if (name == "SeerWave" && waveStopBottom < int.MaxValue && r.Bottom > waveStopBottom)
+                        {
+                            r.Offset(0, waveStopBottom - r.Bottom); // the wave dies on the first dust it meets: it never goes lower than that
+                        }
                     }
                     th.At[f] = r;
                 }
@@ -2239,6 +2285,11 @@ namespace AnodyneSharp.Recording
             _seerOmega.Clear();
             _seerPrevRel.Clear();
             int lastSwing = -100;
+            bool seerStarted = false;
+            int awake = 0;
+            int seerLastHearts = GlobalState.CUR_HEALTH;
+            string seerLastKeys = "";
+            Vector2 seerStart0 = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer")?.Position ?? Vector2.Zero;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -2252,20 +2303,36 @@ namespace AnodyneSharp.Recording
                     BotRunner.BossDamageBudget = 0;
                     yield break;
                 }
+                BotRunner.NotStuck(); // the fight has its own timeout; the boss's waves and dives keep us still for long stretches
                 int hp = healthField != null ? (int)healthField.GetValue(seer) : -1;
                 BotRunner.Status = $"Seer fight: boss hp {hp}";
+                if (GlobalState.CUR_HEALTH < seerLastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  SEER HURT f{i} hearts {seerLastHearts}->{GlobalState.CUR_HEALTH} bosshp={hp} P={Player.Hitbox} face={Player.facing} keysLast={seerLastKeys} boss={seer.Hitbox} v={seer.velocity} orbs={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerOrb").Select(e => e.Hitbox.ToString()))} wave={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerWave").Select(e => e.Hitbox.ToString()))} dusts={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").Select(e => e.Hitbox.ToString()))}");
+                }
+                seerLastHearts = GlobalState.CUR_HEALTH;
                 var sb = seer.Hitbox;
                 var pb = Player.Hitbox;
                 bool vulnerable = !seer._flickering && seer.opacity >= 1f;
+                if (!seerStarted && (seer.velocity != Vector2.Zero || seer.Position != seerStart0))
+                {
+                    seerStarted = true;
+                }
+                if (!seerStarted && Player.Position.Y > seer.Position.Y + 46)
+                {
+                    // The boss sleeps until the player is within 48px below it (its intro dialogue starts then).
+                    yield return K(KeyFunctions.Up);
+                    continue;
+                }
                 if (seer.opacity < 1f)
                 {
                     // Not in the fight yet: walk up until it notices us (it starts once we are close), then let the dialogue run.
                     yield return Player.Position.Y > seer.Position.Y + 44 ? K(KeyFunctions.Up) : K();
                     continue;
                 }
-                if (i < seerWait)
+                if (awake++ < seerWait)
                 {
-                    yield return K();
+                    yield return K(); // dev: idle this many frames once the intro is over (a stand-in for a pseudo-random seed of the fight)
                     continue;
                 }
                 bool stage2 = hp <= 6;
@@ -2321,7 +2388,8 @@ namespace AnodyneSharp.Recording
                         (new Vector2(seerAt8.Right + 7, seerAt8.Center.Y - 6), Facing.LEFT),
                         (new Vector2(seerAt8.Left - 17, seerAt8.Center.Y - 6), Facing.RIGHT),
                         (new Vector2(seerAt8.Center.X - 5, seerAt8.Top - 19), Facing.DOWN),
-                    }.OrderBy(c => (c.Item1 - new Vector2(pb.X, pb.Y)).LengthSquared()).ToList();
+                    }.Where(c => !stage2 || c.Item2 == Facing.RIGHT || c.Item2 == Facing.DOWN) // its orbs whirl out to the right of and below the body: only its left side and top are safe to strike from
+                     .OrderBy(c => (c.Item1 - new Vector2(pb.X, pb.Y)).LengthSquared()).ToList();
                     goal = new Vector2(pb.X, pb.Y); // no strike spot can be reached safely right now: keep clear and wait for one
                     seerFace = cands[0].Item2;
                     foreach (var cand in cands)
@@ -2339,6 +2407,13 @@ namespace AnodyneSharp.Recording
                 {
                     goal = new Vector2(pb.X, pb.Y);
                 }
+                var waveE = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "SeerWave");
+                if (waveE != null && waveE.Hitbox.Bottom < pb.Top + 60 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
+                {
+                    // The wave sweeps down the whole floor-plan width and dies on the first dust it meets: the only safe place is below the dust line.
+                    goal = new Vector2(Math.Clamp(pb.X, 338, 450), 129);
+                    BotRunner.Status = "Seer fight: ducking the wave";
+                }
                 var keys = SpaceTimeMove(goal, threats);
                 if (vulnerable && keys != null && keys.Length == 0 && Player.facing != seerFace && (new Vector2(pb.X, pb.Y) - goal).Length() < 6)
                 {
@@ -2349,6 +2424,51 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
                 }
+                if ((keys == null || keys.Length == 0) && !StandingSafe(12))
+                {
+                    // Nothing safe was found and the boss is about to reach us: standing still is the one sure way to be hit. Run for the
+                    // direction that keeps us clear of the predicted boss/orb boxes the longest, and furthest from them.
+                    KeyFunctions[][] opts =
+                    {
+                        new[] { KeyFunctions.Up }, new[] { KeyFunctions.Down }, new[] { KeyFunctions.Left }, new[] { KeyFunctions.Right },
+                        new[] { KeyFunctions.Up, KeyFunctions.Left }, new[] { KeyFunctions.Up, KeyFunctions.Right },
+                        new[] { KeyFunctions.Down, KeyFunctions.Left }, new[] { KeyFunctions.Down, KeyFunctions.Right },
+                    };
+                    float bestScore = float.MinValue;
+                    KeyFunctions[] bestOpt = null;
+                    foreach (var opt in opts)
+                    {
+                        var mv = Vector2.Zero;
+                        foreach (var k in opt) { mv += DirVector(k); }
+                        mv *= WalkPxPerFrame * (opt.Length > 1 ? 0.7071f : 1f);
+                        float score = 0;
+                        var pos = new Vector2(pb.X, pb.Y);
+                        bool ok = true;
+                        for (int f = 1; f <= 16 && ok; f++)
+                        {
+                            pos += mv;
+                            var mine = new Rectangle((int)pos.X, (int)pos.Y, pb.Width, pb.Height);
+                            if (!CornersWalkable(mine)) { ok = false; break; }
+                            foreach (var th in threats)
+                            {
+                                var r = th.At[Math.Min(f, Horizon)];
+                                if (r == null) { continue; }
+                                var rr = r.Value;
+                                rr.Inflate(th.Margin, th.Margin);
+                                if (mine.Intersects(rr)) { score -= 100 + (17 - f) * 10; }
+                                else
+                                {
+                                    float dx = Math.Max(0, Math.Max(rr.Left - mine.Right, mine.Left - rr.Right));
+                                    float dy = Math.Max(0, Math.Max(rr.Top - mine.Bottom, mine.Top - rr.Bottom));
+                                    score += Math.Min(30f, MathF.Sqrt(dx * dx + dy * dy)) * 0.2f;
+                                }
+                            }
+                        }
+                        if (ok && score > bestScore) { bestScore = score; bestOpt = opt; }
+                    }
+                    if (bestOpt != null) { keys = bestOpt; }
+                }
+                seerLastKeys = keys == null ? "none" : string.Join("+", keys);
                 yield return keys ?? K();
             }
             throw new TimeoutException("bot: the Seer fight timed out");

@@ -134,6 +134,12 @@ namespace AnodyneSharp.Recording
         private static string _stuckSig = "";
         private static long _stuckSince;
 
+        /// <summary>Frames without any change (position, health, dialogue, keys, screen) before the run is called stuck. Deliberate waits reset the clock.</summary>
+        public static int StuckLimit = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_STUCK"), out int sl) ? sl : 300;
+
+        /// <summary>Called by steps that stand still on purpose (Wait, standing on a button).</summary>
+        public static void NotStuck() => _stuckSince = _botFrame;
+
         private static void CheckStuck()
         {
             var p = Player;
@@ -144,7 +150,8 @@ namespace AnodyneSharp.Recording
                 _stuckSince = _botFrame;
                 return;
             }
-            if (_botFrame - _stuckSince > 2400 && !_allowRetry)
+            // a long dialogue changes nothing we can see between its pages (same text, same place), so it gets a much longer leash
+            if (_botFrame - _stuckSince > (string.IsNullOrEmpty(GlobalState.Dialogue) ? StuckLimit : 3000) && !_allowRetry)
             {
                 System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
@@ -167,7 +174,7 @@ namespace AnodyneSharp.Recording
                     return;
                 }
                 var sb = new System.Text.StringBuilder();
-                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} E:");
+                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
                 foreach (var e in Entities())
                 {
                     if (e.exists && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || e.GetType().Name.StartsWith("Seer")))
@@ -586,6 +593,7 @@ namespace AnodyneSharp.Recording
         {
             for (int i = 0; i < frames; i++)
             {
+                BotRunner.NotStuck();
                 yield return K();
             }
         }

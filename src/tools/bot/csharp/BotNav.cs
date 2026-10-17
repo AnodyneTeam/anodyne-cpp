@@ -488,6 +488,7 @@ namespace AnodyneSharp.Recording
                     _ => new Point(0, 1)
                 };
                 var t = TileOf(e.Position + new Vector2(8, 8));
+                set[t] = d.X != 0 ? 0 : 1; // the emitter tile itself: every bullet is born there and dwells a while, it is no shortcut past the beam
                 for (int i = 1; i < 24; i++)
                 {
                     t = new Point(t.X + d.X, t.Y + d.Y);
