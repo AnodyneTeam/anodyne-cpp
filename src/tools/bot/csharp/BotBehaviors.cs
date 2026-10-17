@@ -548,6 +548,21 @@ namespace AnodyneSharp.Recording
         private static readonly System.Reflection.FieldInfo LaserFastField =
             typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
+        /// <summary>True if the floor above a vertically patrolling Shieldy is free of beams (we float up there).</summary>
+        private static bool Target_ColumnAboveClear(Entity e)
+        {
+            var lanes = BotNav.LaneTiles();
+            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Top));
+            for (int k = 1; k <= 4; k++)
+            {
+                if (lanes.Contains(new Point(t.X, t.Y - k)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /// <summary>The y at which the player's hitbox floats 3px above a sideways-patrolling Shieldy.</summary>
         private static int? ShieldyHoverY(Entity shieldy)
         {
@@ -2216,6 +2231,7 @@ namespace AnodyneSharp.Recording
             int noProgress = 0;
             Entity lastTarget = null;
             Entity ambushFor = null;
+            int vRetreat = 0;
             bool ambushChase = false; // lining up sideways under a patroller: keep going until close (turning to face down loses ground)
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
@@ -2422,6 +2438,53 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
+                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && Target_ColumnAboveClear(target))
+                {
+                    // A Shieldy patrolling up and down a column: wait above it facing down, swing when it is in reach, back off between
+                    // swings (it keeps coming), and follow it down when it walks away.
+                    var tb = target.Hitbox;
+                    var pb = Player.Hitbox;
+                    int gap = tb.Top - pb.Bottom;
+                    float adx = tb.Center.X - pb.Center.X;
+                    if (gap >= -2)
+                    {
+                        BotRunner.Status = "fight/ambush vertical";
+                        if (noKill > 0 && noKill < 1200)
+                        {
+                            noKill = 1;
+                        }
+                        if (Math.Abs(adx) > 4)
+                        {
+                            var sideK = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                            var movedV = pb;
+                            movedV.Offset(adx < 0 ? -2 : 2, 0);
+                            yield return gap < 10 ? K(KeyFunctions.Up) : (CornersWalkable(movedV) ? K(sideK) : K());
+                            continue;
+                        }
+                        if (vRetreat > 0)
+                        {
+                            vRetreat--;
+                            yield return K(KeyFunctions.Up); // back away from the one that is coming up the column while the broom recovers
+                            continue;
+                        }
+                        if (Player.facing != Facing.DOWN)
+                        {
+                            yield return gap >= 5 ? K(KeyFunctions.Down) : K(KeyFunctions.Up); // turn (it nudges us 1px down), after backing off to a gap
+                            continue;
+                        }
+                        if (gap <= 10 && swing - lastSwing >= SwingCooldown + 8)
+                        {
+                            swing++;
+                            lastSwing = swing;
+                            vRetreat = target.velocity.Y < 0 ? 14 : 0;
+                            yield return K(KeyFunctions.Accept);
+                            continue;
+                        }
+                        swing++;
+                        yield return gap < 2 ? K(KeyFunctions.Up) : ((gap > 12 && target.velocity.Y > 0) ? K(KeyFunctions.Down) : K());
+                        continue;
+                    }
+                }
                 if (target.GetType().Name == "Shieldy" && target.velocity.X != 0 && target.velocity.Y == 0 && aggroFrames <= 0 && ShieldyHoverY(target) is int hoverY)
                 {
                     // A Shieldy patrolling sideways: float 3px above its line (no contact possible), follow it in x and swing down.
