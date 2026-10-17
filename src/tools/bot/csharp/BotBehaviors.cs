@@ -1132,6 +1132,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face)
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
+            BotRunner.Status += $" [stand {tx},{ty}]";
             yield return GoTo(c.X, c.Y);
             yield return WalkTo(c.X, c.Y, tol: 1f);
             var key = face == 'u' ? KeyFunctions.Up : face == 'd' ? KeyFunctions.Down : face == 'l' ? KeyFunctions.Left : KeyFunctions.Right;
@@ -1181,7 +1182,7 @@ namespace AnodyneSharp.Recording
                 // (the corridor beyond the muzzle is only reachable across the beam), first plug the next tile of the beam from a
                 // safe side tile, then stand on that plug (a dust is not solid, and its bullets die on it) to plug the muzzle tile.
                 var lanes0 = BotNav.LaneTiles();
-                BotNav.HardAvoid = new HashSet<Point>(lanes0); // the walks to the dust and to the plug spot must not cross a live beam
+                BotNav.HardAvoid = new HashSet<Point>(lanes0); BotNav.HardAvoid.UnionWith(BotNav.NearEnemies(14, null, stationaryOnly: true)); // keep clear of stationary shields too; the walks to the dust and to the plug spot must not cross a live beam
                 var stand = SafeStand(target, lanes0, et);
                 if (stand.HasValue)
                 {
@@ -1233,7 +1234,7 @@ namespace AnodyneSharp.Recording
             foreach (var o in new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) })
             {
                 var t = new Point(tile.X + o.X, tile.Y + o.Y);
-                if (t == emitter || !BotNav.Walkable(t) || lanes.Contains(t))
+                if (t == emitter || !BotNav.Walkable(t) || lanes.Contains(t) || BotNav.NearEnemies(14, null, stationaryOnly: true).Contains(t))
                 {
                     continue;
                 }
@@ -1270,7 +1271,7 @@ namespace AnodyneSharp.Recording
             foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
             {
                 var t = new Point(dt.X + o.X, dt.Y + o.Y);
-                if (BotNav.Walkable(t) && !lanes.Contains(t))
+                if (BotNav.Walkable(t) && !lanes.Contains(t) && !BotNav.NearEnemies(14, null, stationaryOnly: true).Contains(t))
                 {
                     yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
                     yield return Wait(30);
