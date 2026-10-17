@@ -1157,6 +1157,15 @@ namespace AnodyneSharp.Recording
             {
                 return v;
             }
+            // A wall corner in the way (the 10px hitbox overhangs a tile edge by a pixel or two): slide along it with the other axis first.
+            if (wantH && !WalkableAhead(h, 3) && Math.Abs(py) > 0.5f && WalkableAhead(v, 2))
+            {
+                return v;
+            }
+            if (!wantH && wantV && !WalkableAhead(v, 3) && Math.Abs(px) > 0.5f && WalkableAhead(h, 2))
+            {
+                return h;
+            }
             if (wantH)
             {
                 return h;
@@ -2216,7 +2225,7 @@ namespace AnodyneSharp.Recording
             return new Vector2(x, y);
         }
 
-        private static List<Threat> SeerThreats(Entity seer, bool stage2)
+        private static List<Threat> SeerThreats(Entity seer, bool stage2, bool charge = false)
         {
             float minY = float.MinValue / 4, maxY = float.MaxValue / 4;
             if (stage2 && SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset)
@@ -2282,6 +2291,11 @@ namespace AnodyneSharp.Recording
                         var c = SeerPredict(seerC, seerV, f, minY, maxY) + rot;
                         r = new Rectangle((int)(c.X - r.Width / 2f), (int)(c.Y - r.Height / 2f), r.Width, r.Height);
                     }
+                    else if (name == "SeerOrb" && charge)
+                    {
+                        // charging its wave: the orbs are pulled out sideways along the top at a steady 18px/s, away from the boss
+                        r.Offset((int)(vel.X * f), (int)(vel.Y * f));
+                    }
                     else if (name == "SeerOrb")
                     {
                         // stage 2: the orbs whirl round the boss at 8px: its whole neighbourhood is the hazard
@@ -2312,7 +2326,7 @@ namespace AnodyneSharp.Recording
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             int seerWait = int.Parse(Environment.GetEnvironmentVariable("SEER_WAIT") ?? "0"); // dev: shifts the boss fight's timing (a stand-in for a pseudo-random seed)
-            BotRunner.BossDamageBudget = 5; // TODO: dodge-proof the Seer; until then the boss may cost up to 4 hearts (nothing else may cost any)
+            BotRunner.BossDamageBudget = 0; // the strikes are timed to the boss's pauses (wave charge, settling after the wave): the fight costs no hearts
             _seerPrev.Clear();
             _seerVel.Clear();
             _seerOmega.Clear();
@@ -2374,6 +2388,24 @@ namespace AnodyneSharp.Recording
                 }
                 bool stage2 = hp <= 6;
                 var threats = SeerThreats(seer, stage2);
+                var waveE = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "SeerWave");
+                // Stage 2 plan: it dives through the whole room, so never strike while it moves. After its wave it drifts back to its post
+                // (nearly still, high up): that is when to hit it, from just under its orbs, then step out of the column before it dives.
+                var seerSpeed = _seerVel.TryGetValue(seer, out var seerV0) ? seerV0.Length() : 9f;
+                bool settle = stage2 && waveE == null && seerSpeed < 0.45f && seer.Hitbox.Center.Y <= 66;
+                if (settle)
+                {
+                    foreach (var th in threats) { th.Margin = 1; } // it is not going anywhere: no buffer needed for prediction error
+                }
+                // The wave appears on the boss and hangs there still (and flickering) while the orbs are drawn out to the sides: the boss itself
+                // is then a stationary target up top with nothing under it. Hit it from just below before the wave starts to fall.
+                bool charge = stage2 && waveE != null && waveE.velocity == Vector2.Zero;
+                if (charge)
+                {
+                    threats = SeerThreats(seer, stage2, charge: true);
+                    foreach (var th in threats) { th.Margin = 2; }
+                }
+                bool wantStrike = vulnerable && (!stage2 || settle || charge);
                 // Where the broom would meet the boss if we swung now facing the way we face (the swing takes ~8 frames to reach full length).
                 var seerAt8 = threats.First(t => t.Source == seer).At[8] ?? seer.Hitbox;
                 Rectangle BroomRect(Facing f)
@@ -2402,7 +2434,7 @@ namespace AnodyneSharp.Recording
                     }
                     return true;
                 }
-                if (vulnerable && BroomRect(Player.facing).Intersects(seerAt8) && StandingSafe(24) && i - lastSwing > 26)
+                if (wantStrike && BroomRect(Player.facing).Intersects(seerAt8) && StandingSafe(24) && i - lastSwing > 26)
                 {
                     lastSwing = i;
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
@@ -2422,16 +2454,16 @@ namespace AnodyneSharp.Recording
                 // Choose where to be: beside/below the boss at striking distance while it is vulnerable, else the safest spot we can find.
                 Vector2 goal;
                 Facing seerFace = Facing.UP;
-                if (vulnerable)
+                if (wantStrike)
                 {
                     // Strike from whichever side we can reach safely soonest: below (facing up), left or right of it, or above.
                     var cands = new[]
                     {
-                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Bottom + 7), Facing.UP),
+                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Bottom + (charge ? 5 : stage2 ? 14 : 7)), Facing.UP), // stage 2: just clear of the orbs, which hang 12px under the body
                         (new Vector2(seerAt8.Right + 7, seerAt8.Center.Y - 6), Facing.LEFT),
                         (new Vector2(seerAt8.Left - 17, seerAt8.Center.Y - 6), Facing.RIGHT),
                         (new Vector2(seerAt8.Center.X - 5, seerAt8.Top - 19), Facing.DOWN),
-                    }.Where(c => !stage2 || c.Item2 == Facing.RIGHT || c.Item2 == Facing.DOWN) // its orbs whirl out to the right of and below the body: only its left side and top are safe to strike from
+                    }.Where(c => !stage2 || c.Item2 == Facing.UP) // its orbs whirl out to the right of and below the body: only its left side and top are safe to strike from
                      .OrderBy(c => (c.Item1 - new Vector2(pb.X, pb.Y)).LengthSquared()).ToList();
                     goal = new Vector2(pb.X, pb.Y); // no strike spot can be reached safely right now: keep clear and wait for one
                     seerFace = cands[0].Item2;
@@ -2450,22 +2482,21 @@ namespace AnodyneSharp.Recording
                 {
                     goal = new Vector2(pb.X, pb.Y);
                 }
-                var waveE = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "SeerWave");
-                if (waveE != null && waveE.Hitbox.Bottom < pb.Top + 60 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
+                if (waveE != null && !charge && waveE.Hitbox.Bottom < pb.Top + 60 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
                 {
                     // The wave sweeps down the whole floor-plan width and dies on the first dust it meets: the only safe place is below the dust line.
                     goal = new Vector2(Math.Clamp(pb.X, 338, 450), 131);
                     BotRunner.Status = "Seer fight: ducking the wave";
                 }
                 var keys = SpaceTimeMove(goal, threats, useCache: false);
-                if (vulnerable && keys != null && keys.Length == 0 && Player.facing != seerFace && (new Vector2(pb.X, pb.Y) - goal).Length() < 6)
+                if (wantStrike && keys != null && keys.Length == 0 && Player.facing != seerFace && (new Vector2(pb.X, pb.Y) - goal).Length() < 6)
                 {
                     // arrived at the striking spot: turn to face it
                     keys = new[] { seerFace == Facing.UP ? KeyFunctions.Up : seerFace == Facing.DOWN ? KeyFunctions.Down : seerFace == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right };
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (i % 10 == 0 || (i >= seerTraceA && i <= seerTraceB)))
                 {
-                    System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
+                    System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} settle={settle} spd={seerSpeed:0.00} wave={(waveE != null ? 1 : 0)} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
                 }
                 if ((keys == null || keys.Length == 0) && !StandingSafe(12) && !(waveE != null && pb.Y >= 129))
                 {
@@ -2681,6 +2712,7 @@ namespace AnodyneSharp.Recording
             int heldAge = 0;
             int planHold = 0; // frames during which a chosen route around a Shieldy is followed without re-deciding (no flip-flopping)
             float bestDist = float.MaxValue; // closest we have got to the current target (hits knock us about, so "still" is not enough)
+            KeyFunctions[] safeKeep = null; int safeKeepLeft = 0;
             int noProgress = 0;
             Entity lastTarget = null;
             Entity ambushFor = null;
@@ -2904,7 +2936,8 @@ namespace AnodyneSharp.Recording
                         var theirs = FloodRegion(tTile, 900);
                         BotRunner.Status = $"go round to {target.GetType().Name}";
                         int farEnough = theirs.Any(t => Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= 3) ? 3 : 2; // a small pocket has nothing farther than 2 tiles from it
-                        yield return GoToWhere(t => theirs.Contains(t) && Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= farEnough, "the enemy's side");
+                        var sideLanes = BotNav.LaneTiles(); // never end the walk standing in a beam
+                        yield return GoToWhere(t => theirs.Contains(t) && !sideLanes.Contains(t) && Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= farEnough, "the enemy's side");
                         startGrid = Grid;
                         routedFor = null;
                         committed = null;
@@ -3367,13 +3400,20 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    var safeFrame = StandSafe(target, ignoreAnnoyers: true);
+                    var safeFrame = safeKeepLeft > 0 ? safeKeep : StandSafe(target, ignoreAnnoyers: true);
                     if (safeFrame.Length > 0)
                     {
                         BotRunner.Status = "fight/annoyer hold: stand safe";
+                        if (safeKeepLeft <= 0)
+                        {
+                            safeKeep = safeFrame;
+                            safeKeepLeft = 8; // commit to the sidestep: flipping between two "safe" keys every frame goes nowhere (and never swings)
+                        }
+                        safeKeepLeft--;
                         yield return safeFrame; // something else (a patroller, a beam) is about to reach this spot: not here
                         continue;
                     }
+                    safeKeepLeft = 0;
                     // It homes in on a spot beside us in a straight line (through us if it comes from the other side) and then circles at
                     // ~20px: face wherever it is and keep swinging, the broom reaches it before it touches.
                     var annCtx = PolicyCtx(target);
@@ -3396,8 +3436,27 @@ namespace AnodyneSharp.Recording
                     var berthF = BotNav.NearEnemies(12, target, stationaryOnly: true);
                     berthF.Remove(BotNav.TileOf(Pos));
                     berthF.Remove(tt);
-                    BotNav.Avoid = berthF;
+                    // and keep out of live beams (and the tiles right beside their emitters) when there is a way round: loitering there is how we get shot
+                    var laneAvoid = new HashSet<Point>(berthF);
+                    foreach (var lt in BotNav.LaneTiles())
+                    {
+                        for (int ox = -1; ox <= 1; ox++)
+                        {
+                            for (int oy = -1; oy <= 1; oy++)
+                            {
+                                laneAvoid.Add(new Point(lt.X + ox, lt.Y + oy));
+                            }
+                        }
+                    }
+                    laneAvoid.Remove(BotNav.TileOf(Pos));
+                    laneAvoid.Remove(tt);
+                    BotNav.Avoid = laneAvoid;
                     var path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt, strict: true);
+                    if (path == null)
+                    {
+                        BotNav.Avoid = berthF;
+                        path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt, strict: true);
+                    }
                     BotNav.Avoid = null;
                     if (path == null)
                     {

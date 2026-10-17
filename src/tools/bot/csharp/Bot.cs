@@ -739,6 +739,11 @@ namespace AnodyneSharp.Recording
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
+            // Beams only become known on arriving at their screen: a route that was planned to end inside one is re-planned to end beside it.
+            HashSet<Point> goalLaneBan = null;
+            var laneReplanned = new HashSet<Point>();
+            var userGoal = isGoal;
+            isGoal = t => userGoal(t) && (goalLaneBan == null || !goalLaneBan.Contains(t));
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 replan:
@@ -869,6 +874,22 @@ namespace AnodyneSharp.Recording
                 for (int pi = 0; pi < path.Count; pi++)
                 {
                     var tile = path[pi];
+                    if (Grid != gridAtStart && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && !laneReplanned.Contains(Grid))
+                    {
+                        var dl = BotNav.LaneTiles();
+                        System.Console.Error.WriteLine($"  arrived on {Grid}: {dl.Count} beam tiles, route ends at {(path.Count > 0 ? path[path.Count - 1].ToString() : "-")} {(path.Count > 0 && dl.Contains(path[path.Count - 1]) ? "(in a beam)" : "")} trans={GlobalState.ScreenTransition}");
+                    }
+                    if (Grid != gridAtStart && !laneReplanned.Contains(Grid) && !InRaft && !GlobalState.ScreenTransition && path.Count > 0 && BotNav.LaneTiles() is { Count: > 0 } newLanes
+                        && (newLanes.Contains(path[path.Count - 1]) || path.Skip(pi).Count(newLanes.Contains) >= 3))
+                    {
+                        laneReplanned.Add(Grid);
+                        goalLaneBan = new HashSet<Point>(newLanes);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  new screen {Grid}: the route would run along a beam: re-planning with the beams known");
+                        }
+                        goto replan;
+                    }
                     if (Grid != gridAtStart && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
                         && GlobalState.inventory.HasBroom && HaveLooseDust())
                     {
