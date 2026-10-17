@@ -10,7 +10,7 @@ leapfrog_column     | 04_temple_east        | W30 wBEDROOM:182,262 W10 O1 l16,17
 corridor_shove      | 04_temple_east        | W30 X0 O1 K X1 H0,2 F X0 # H1,1 | 400
 red_slime_card      | 05_temple_red_slime_card | W30 O1 X1 H3,2 H3,3 H2,3 I448,592,d W60 | 400
 slime_nook          | 07_temple_slime_nook | W30 O1 @0 X1 H3,1 H2,1 @2 X0 | 400
-seer_approach       | 08_temple_seer | W30 O1 X1 H3,1 H3,2 H2,2 H2,1 | 600
+seer_approach       | 08_temple_seer | W30 O1 X1 H3,1 H2,1 H2,0 | 700
 slime_street_w20    | save_f1                | W60 wSTREET:83,695 W20 F                                              | 90
 slime_street_w88    | save_f1                | W60 wSTREET:83,695 W88 F                                              | 90
 slime_street_w130   | save_f1                | W60 wSTREET:83,695 W130 F                                             | 90
