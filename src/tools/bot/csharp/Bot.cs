@@ -116,10 +116,41 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Produces this frame's key states. Sets Active=false (and closes the game) when the script ends.</summary>
+        /// <summary>Taking damage or dying (game over) is a fatal error for the bot, unless ANODYNE_BOT_ALLOW_DAMAGE is set (scene tests).</summary>
+        private static readonly bool _allowDamage = Environment.GetEnvironmentVariable("ANODYNE_BOT_ALLOW_DAMAGE") != null;
+        private static int _hpSeen = -1;
+
+        private static void CheckNoDamage()
+        {
+            if (_allowDamage || Player == null)
+            {
+                return;
+            }
+            int hp = GlobalState.CUR_HEALTH;
+            string why = null;
+            if (Deaths != _lastDeaths)
+            {
+                why = "game over (died)";
+            }
+            else if (_hpSeen >= 0 && hp < _hpSeen)
+            {
+                why = $"took damage (HP {_hpSeen}->{hp})";
+            }
+            _hpSeen = hp;
+            if (why != null)
+            {
+                System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame}");
+                try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
+                _trace?.Flush();
+                Environment.Exit(2);
+            }
+        }
+
         public static Dictionary<Keys, KeyInput.InputState> NextFrame()
         {
             KeyFunctions[] held = Array.Empty<KeyFunctions>();
             _botFrame++;
+            CheckNoDamage();
             if (Deaths != _lastDeaths)
             {
                 // Died and respawned at the checkpoint: drop whatever helpers were running down to the innermost Section,

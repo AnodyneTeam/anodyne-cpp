@@ -6,6 +6,7 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 SAVE=$1; TOK=$2; SECS=${3:-120}
 D=$(mktemp -d /tmp/bot/scene_XXXXXX); cp -r "$SAVE"/. "$D"/
+export ANODYNE_BOT_ALLOW_DAMAGE=1
 export DISPLAY=${DISPLAY:-:0}; FAST=-fast   # always the real display (never headless), unlocked speed
 export DOTNET_ROOT=$HOME/.dotnet PATH=$HOME/.dotnet:$PATH
 cd /home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0
