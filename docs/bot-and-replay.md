@@ -91,16 +91,56 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Retry sections must repeat their own prerequisites: a death resets the room (e.g. placed dust is gone).
 - Experiments: `ANODYNE_BOT_SAVEDIR` runs mutate the save, so copy a base save first (`/tmp/bot/exp.sh`-style) or runs differ.
 
+## Rules the bot runs under (current)
+
+- **Damage is fatal.** Any hit ends the run with the ring buffer of the last 240 frames (`/tmp/bot/fail_ring.txt`: player, keys, the
+  step chain, enemies, everything within 40px) and a screenshot (`/tmp/bot/fail.png`). Exceptions, all explicit:
+  - `g<n>` token / `BotRunner.BossDamageBudget`: this stretch may cost n hearts (documented per section, shrinking; the Temple's beam
+    column costs 2, Blue Forest 2's north rooms 3, the Seer fight 0).
+  - **Recoverable hits:** a hit is tolerated if the hearts are won back (drops from kills) within `ANODYNE_BOT_RECOVER` frames
+    (default 600; the clock stops while text is open). Dying is always fatal.
+- **Watchdogs.** 300 unchanged frames (position, health, text, keys, screen) = stuck (`ANODYNE_BOT_STUCK`); deliberate waits and open
+  dialogue/cutscenes reset it (9000-frame cap on those); the bot's own time per frame must stay under 12ms on average (a 300-frame
+  window; frames over 40ms are reported with their space-time search counts). Builds are made optimised (`ensure_build.sh`, used by
+  every run script): the planners are 4x slower unoptimised.
+- **Soft fights** (the auto-fight when entering a screen) give up on an enemy that cannot be reached (no kill for 220 frames).
+
+## Tooling for fast iteration
+
+- `from.sh <snapshot|section> [TOKENS=...]`: run from a saved game (`/tmp/bot/sec/<name>`, made by `` `name `` tokens,
+  `ANODYNE_BOT_SNAP_AT=<frame>:<dir>`, `SNAPS=1`) instead of replaying the route: 20 seconds per try for one room. A save respawns the
+  enemies and the game RNG is not saved, so a failure that depends on RNG may not reproduce: take the snapshot from the real run.
+- `part.sh <part> <from dir> <to name>`: one route part from the previous part's end state (`ANODYNE_BOT_ONLY=1`), leaving its own end
+  state in `/tmp/bot/keep/<to>`. Chain: `temple_end2` -> forest2 -> `forest2_end` -> fields -> `fields_end` -> beach -> `beach_end`.
+- `regress.sh`: planner unit tests (`planner_test/`: pure fight policies and the space-time planner against a fake screen with
+  pseudo-random scenarios) plus the scene snapshots in `scenes/` (each must lose no health). `ANODYNE_BOT_SWING_AUDIT=1`: where the
+  broom is swung with nothing near.
+- Extra tokens: `` `name `` snapshot - `g<n>` heart budget - `y<percent>` scale the path cost of beam tiles - `p1` no fetching dust
+  on the way - `l<col>,<r0>,<r1>` dust leapfrog up a beam column - `Pb<x>,<y>` walk only while still on the dungeon map.
+- Debug output: `ANODYNE_BOT_DEBUG=1` (paths, fights, hits), `ANODYNE_FIGHT_TRACE=1` (per-frame policy traces), `SEER_WAIT` /
+  `SEER_TRACE_A/B` (Seer fight timing and frame traces).
+
+## Enemy tactics that turned out to matter
+
+- Seer (Temple boss): never strike while it dives. Strike (a) while its wave hangs still on it during the charge (stand just under it,
+  the orbs are drawn out to the sides) and (b) right after the wave, while it drifts back to its post, from just under its orbs; duck
+  to the floor behind a dust when the wave falls (it dies on the first dust).
+- Dog: three one-second dashes aimed at points fixed when the attack starts: predict them (`DogPath`), keep out of the way with the
+  planner, hit it while it barks from a standoff.
+- Burst Plant / Frog: not dangerous by touch (plant) / touch only (frog); bullets only while in flight. Stand off 3px, back away while
+  bullets fly, swing when clear.
+- Shieldy: never chase a patrolling one: wait still and swing when its predicted position meets the broom; push it into a beam
+  with a front hit; keep clear of a patroller about to walk into us.
+- Laser lanes must cover every tile row/column the emitter's 16px box touches (emitters need not be on the tile grid).
+
 ## Status
 
-- C# bot: title -> Nexus -> Roadway -> Blue Forest -> the whole temple -> Blue Forest 2 -> Fields (boots) -> Beach, 6 cards
-  (`beach` golden, 98,463 frames, replay identical).
-- Work in progress (not in the goldens): crossing the Fields lake on dust rafts (the planner finds the walkthrough's route and a
-  dev run from a save reaches the button on Mitra's screen, but inside the retry-section chain a failed first attempt leaves the bot
-  somewhere the planner cannot recover from), the Miao and Mitra cards (the Beach card gate on (0,4) needs more than 6 cards),
-  and the Beach button/gate rooms.
-- Not done: everything after the Beach (whirlpool, Red Sea, Red Cave, ...), the 100% route and a separate speedrun route.
-  The walkthroughs are room-level, so every room needs its own puzzle/combat logic - this is a long, incremental job.
-- GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the
-  C# run (`compare_milestones.py`); the Nexus Sage, Roadway and later have no behaviour on the GBA yet, so the later goldens
-  are the target the GBA port should reproduce as it grows.
+- C# bot (single-part chain, every part runs to its end with no unrecovered damage): title -> Nexus -> Roadway -> Blue Forest -> the
+  whole Temple (Seer with no damage, Shieldy and Red Slime cards) -> Blue Forest 2 -> Fields -> Beach (Fisherman card, ends at the
+  whirlpool screen). The goldens in `golden/` predate this work and are stale; playback/determinism checking is parked on purpose
+  (`REPLAY=1 run_bot.sh` turns it back on) until the bot can finish the whole game.
+- Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
+  The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.
+- GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the C# run
+  (`compare_milestones.py`); the Nexus Sage, Roadway and later have no behaviour on the GBA yet, so the later routes are the target
+  the GBA port should reproduce as it grows.
