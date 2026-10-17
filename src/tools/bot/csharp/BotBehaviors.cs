@@ -530,6 +530,8 @@ namespace AnodyneSharp.Recording
             public Rectangle?[] At = new Rectangle?[Horizon + 1];
             public int Margin = 2;
             public string Name = "";
+            public Entity Source;
+            public bool Stationary;
         }
 
         private static readonly System.Reflection.FieldInfo PewTimerField =
@@ -548,7 +550,7 @@ namespace AnodyneSharp.Recording
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
         private static Threat PredictPatroller(Entity e)
         {
-            var t = new Threat { Name = e.GetType().Name };
+            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero };
             var r = e.Hitbox;
             var v = e.velocity;
             float fx = 0, fy = 0; // sub-pixel remainder
@@ -651,7 +653,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 bool bolt = name == "Laser";
-                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : 2 };
+                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : 2, Source = d, Stationary = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) };
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = d.Hitbox;
@@ -672,8 +674,11 @@ namespace AnodyneSharp.Recording
         /// First frame (1..) at which the plan runs the player into a predicted danger, or int.MaxValue if it is clear.
         /// The plan: hold `first` for `firstFrames`, then `then` for `thenFrames`.
         /// </summary>
+        private static Threat _lastHitThreat;
+
         private static int PlanHitFrame(KeyFunctions first, int firstFrames, KeyFunctions then, int thenFrames, List<Threat> threats)
         {
+            _lastHitThreat = null;
             var pos = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
             var pb = Player.Hitbox;
             var v1 = DirVector(first) * WalkPxPerFrame;
@@ -694,6 +699,7 @@ namespace AnodyneSharp.Recording
                     rr.Inflate(th.Margin, th.Margin);
                     if (mine.Intersects(rr))
                     {
+                        _lastHitThreat = th;
                         return f;
                     }
                 }
@@ -714,9 +720,13 @@ namespace AnodyneSharp.Recording
         /// shots an emitter has yet to fire, Shieldy patrols) and takes the first plan that gets through: go now, stand and wait
         /// for the gap, or sidestep first. `except` = an enemy we are deliberately closing in on; `dist` = how far (px) the step goes.
         /// </summary>
+        /// <summary>Set by SafeMove when the wanted step runs into an enemy that does not move: waiting never helps, the caller must go round or kill it.</summary>
+        public static Entity BlockedBy;
+
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f)
         {
             Dodged = false;
+            BlockedBy = null;
             if (!DodgeEnabled)
             {
                 return K(wanted);
@@ -734,6 +744,13 @@ namespace AnodyneSharp.Recording
             {
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
+            }
+            if (_lastHitThreat != null && _lastHitThreat.Stationary && _lastHitThreat.Source != null && BlockerBudget > 0)
+            {
+                // An enemy that stands still blocks the way: no gap will ever open. Stop and let the walker replan or kill it.
+                BlockedBy = _lastHitThreat.Source;
+                Dodged = true;
+                return K();
             }
             // Waiting forever for a gap that never comes would stall the route: after a long while accept the risk and go.
             if (++_dodgeStreak > 240)
@@ -808,6 +825,9 @@ namespace AnodyneSharp.Recording
         }
 
         private static bool _standing;
+
+        /// <summary>How many times the walker may still stop for a stationary blocker (then it takes its chances, as before).</summary>
+        public static int BlockerBudget = 6;
 
         private static int PlanHitFrameStanding(int waitFrames, KeyFunctions then, int thenFrames, List<Threat> threats)
         {
@@ -1543,6 +1563,8 @@ namespace AnodyneSharp.Recording
             yield return StandUntilGateOpens(112, 272);
         }
 
+        public static string DebugEnemies() => string.Join(" ", Enemies().Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}v{e.velocity.X:0},{e.velocity.Y:0}"));
+
         protected static List<Entity> Enemies() =>
             BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false)).ToList();
 
@@ -1922,7 +1944,14 @@ namespace AnodyneSharp.Recording
                     }
                     if (planHold <= 0 && pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
 {
-                        // Standing clear above it: slide sideways to line up.
+                        if (target.velocity != Vector2.Zero)
+                        {
+                            // A patroller comes to us: wait just above its line, facing down (chasing it sideways ends in contact).
+                            BotRunner.Status = "fight/wait-above";
+                            yield return gap > 10 ? K(KeyFunctions.Down) : (Player.facing != Facing.DOWN && gap >= 6 ? K(KeyFunctions.Down) : K());
+                            continue;
+                        }
+                        // Standing clear above a stationary one: slide sideways to line up.
                         BotRunner.Status = "fight/slide";
                         yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
                         continue;

@@ -175,7 +175,7 @@ namespace AnodyneSharp.Recording
                     held = frame;
                     if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + 60)
                     {
-                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} [{string.Join("+", frame)}]");
+                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={AnodyneSharp.Registry.GlobalState.CUR_HEALTH} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
                     }
                     break;
                 }
@@ -437,10 +437,17 @@ namespace AnodyneSharp.Recording
         {
             int shooterFights = 0;
             bool pluggedTried = false;
+            HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
+            int blockerHandled = 0;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 replan:
+                if (avoidStationary != null)
+                {
+                    BotNav.Avoid = avoidStationary;
+                }
                 var path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                BotNav.Avoid = null;
                 bool jumping = false;
                 if (path == null)
                 {
@@ -491,7 +498,9 @@ namespace AnodyneSharp.Recording
                     // A long way round on dry land: a raft across the river may be far shorter.
                     BotNav.AllowWater = true;
                     BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    BotNav.Avoid = avoidStationary;
                     var shortcut = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                    BotNav.Avoid = null;
                     BotNav.AllowWater = false;
                     BotNav.AllowJump = false;
                     if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)) && shortcut.Count(t => BotNav.IsConveyor(t)) <= 2)
@@ -607,6 +616,33 @@ namespace AnodyneSharp.Recording
                             ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                             : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
                         var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy));
+                        if (BlockedBy != null && blockerHandled < 6)
+                        {
+                            // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
+                            var blocker = BlockedBy;
+                            blockerHandled++;
+                            var avoid = BotNav.NearEnemies(12);
+                            BotNav.Avoid = avoid;
+                            var detour = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                            BotNav.Avoid = null;
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  blocked by stationary {blocker.GetType().Name}@{blocker.Hitbox.X},{blocker.Hitbox.Y} at {Pos}: " + (detour != null ? $"detour of {detour.Count} tiles via {string.Join(">", detour.Take(8).Select(q => $"{q.X},{q.Y}"))} from tile {BotNav.TileOf(Pos)} (dir {dir})" : "no detour, fighting it"));
+                            }
+                            if (detour != null && detour.Count > 0 && (detour.Count <= path.Count + 20 || !GlobalState.inventory.HasBroom))
+                            {
+                                avoidStationary = avoid;
+                            }
+                            else if (GlobalState.inventory.HasBroom)
+                            {
+                                yield return Fight(1200, soft: true, only: e => e == blocker);
+                            }
+                            goto replan;
+                        }
+                        if (BlockedBy != null)
+                        {
+                            safe = K(dir); // every way of dealing with the blocker has been tried: take the chance
+                        }
                         if (Dodged)
                         {
                             still = 0;
