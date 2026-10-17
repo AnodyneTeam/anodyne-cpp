@@ -225,7 +225,16 @@ namespace AnodyneSharp.Recording
         {
             try
             {
-                System.IO.File.WriteAllLines("/tmp/bot/fail_ring.txt", _ring);
+                var lines = new List<string>(_ring);
+                var pl = Player;
+                if (pl != null)
+                {
+                    // everything within 40px of the player (solid or not): what a failed walk is pressing against
+                    var pc = new Vector2(pl.Hitbox.Center.X, pl.Hitbox.Center.Y);
+                    lines.Add("NEAR (within 40px): " + string.Join(" ", Entities().Where(e => e.exists && e != pl && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - pc).Length() < 40)
+                        .Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y},{e.Hitbox.Width}x{e.Hitbox.Height}{(e.Solid ? "S" : "")}")));
+                }
+                System.IO.File.WriteAllLines("/tmp/bot/fail_ring.txt", lines);
             }
             catch
             {

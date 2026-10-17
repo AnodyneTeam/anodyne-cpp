@@ -11,7 +11,7 @@ namespace AnodyneSharp.Recording
             yield return Exec("O0 V");
 
             // Shieldy room (2,2): its three Shieldies only take damage from a downward swing. The room has a checkpoint.
-            yield return Section("temple Shieldy room", () => Exec("O1 X0 H0,2 # H2,2 F X1 V"));
+            yield return Section("temple Shieldy room", () => Exec("X0 H2,2 F X1 V"));
 
             // West wing: the key chest on (0,4) behind the pit column.
             yield return Section("temple key 1", () => Exec("H0,4 I16,656,d W20"));
