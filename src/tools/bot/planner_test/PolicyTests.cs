@@ -133,6 +133,54 @@ static class PolicyTests
             Console.WriteLine($"  first damaged strip seed: {firstBadS}");
             check("two slimes in a 3-tile strip: all die, damage in under 3% (300 seeds)", fail == 0 && dmgRuns <= 9, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
         }
+        // 2e. an Annoyer wakes when we come within 64px, flies in, orbits, swoops: it must die before the swoop, no damage
+        {
+            int fail = 0, dmgRuns = 0, worst = 0, firstBadA = -1;
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var s = new Sim(seed, 16, 14);
+                s.P = new Vector2(90 + s.Rng.Next(30), 80 + s.Rng.Next(30));
+                double a = s.Rng.NextDouble() * Math.PI * 2; float d = 40 + (float)s.Rng.NextDouble() * 20;
+                var e = new Sim.Enemy { K = Sim.Kind.Annoyer, W = 8, H = 7, Health = 1, Pos = new Vector2(s.P.X + (float)Math.Cos(a) * d, s.P.Y + (float)Math.Sin(a) * d), V = Vector2.Zero };
+                s.Enemies.Add(e);
+                var (ok, dmg, fr) = Episode(s, (sim, en, m) => FightPolicies.AnnoyerHold(Ctx(sim, en), m), 1200, 3000 + seed);
+                if (!ok) { fail++; }
+                if (dmg > 0) { dmgRuns++; if (firstBadA < 0) { firstBadA = seed; } }
+                worst = Math.Max(worst, fr);
+            }
+            Console.WriteLine($"  first damaged annoyer seed: {firstBadA}");
+            check("annoyer: dies, damage in under 1% (300 seeds)", fail == 0 && dmgRuns <= 3, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
+        }
+        // 2f. two Annoyers at once
+        {
+            int fail = 0, dmgRuns = 0, worst = 0, firstBadA2 = -1, firstFail2 = -1;
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var s = new Sim(seed, 16, 14);
+                s.P = new Vector2(90 + s.Rng.Next(30), 80 + s.Rng.Next(30));
+                for (int k = 0; k < 2; k++)
+                {
+                    double a = s.Rng.NextDouble() * Math.PI * 2; float d = 40 + (float)s.Rng.NextDouble() * 25;
+                    s.Enemies.Add(new Sim.Enemy { K = Sim.Kind.Annoyer, W = 8, H = 7, Health = 1, Pos = new Vector2(s.P.X + (float)Math.Cos(a) * d, s.P.Y + (float)Math.Sin(a) * d) });
+                }
+                var mem = new PolicyMem(); int steps = 0;
+                while (!s.AllDead() && steps++ < 1500)
+                {
+                    var pb = s.PlayerBox;
+                    var alive = s.Enemies.Where(e => !e.Dead).ToList();
+                    var t = alive[0];
+                    var cx = Ctx(s, t); cx.Others = alive.Skip(1).Select(o => o.Box).ToList();
+                    var kk = FightPolicies.AnnoyersHold(cx, mem) ?? new PKey[0];
+                    if (PolicyTests.VerboseSeed == 5000 + seed && steps % 5 == 0) { Console.WriteLine($"f{steps} P={pb} face={s.Facing} keys={string.Join("+", kk)} swing={s.SwingT} dmg={s.Damage} A=" + string.Join(" ", alive.Select(e => $"{e.Box.X},{e.Box.Y}/st{e.State}"))); }
+                    s.Step(kk);
+                }
+                if (!s.AllDead()) { fail++; if (firstFail2 < 0) { firstFail2 = seed; } }
+                if (s.Damage > 0) { dmgRuns++; if (firstBadA2 < 0) { firstBadA2 = seed; } }
+                worst = Math.Max(worst, s.Frame);
+            }
+            Console.WriteLine($"  first damaged 2-annoyer seed: {firstBadA2}  first unfinished: {firstFail2}");
+            check("two annoyers: both die, damage in under 5% (300 seeds)", fail <= 3 && dmgRuns <= 15, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
+        }
         // 3. Shieldy walking up and down a column, we start above it
         {
             int fail = 0, dmgRuns = 0, worst = 0, firstBad = -1;

@@ -16,7 +16,7 @@ sealed class Sim
     public int Frame;
     public Random Rng;
 
-    public enum Kind { Shieldy, Slime }
+    public enum Kind { Shieldy, Slime, Annoyer }
     public sealed class Enemy
     {
         public Kind K;
@@ -24,6 +24,8 @@ sealed class Sim
         public Vector2 V;       // px/s
         public int W, H, Health = 2, HitTimer, HurtT;
         public bool Dead;
+        public int State;       // annoyer: 0 wait, 1 approach, 2 circle, 3 swoop, 4 hit
+        public float Angle; public int StateT; public Vector2 SwoopTo;
         public Rectangle Box => new((int)Pos.X, (int)Pos.Y, W, H);
     }
     public readonly List<Enemy> Enemies = new();
@@ -98,6 +100,45 @@ sealed class Sim
                 {
                     if (Walk(new Rectangle((int)n.X, (int)n.Y, e.W, e.H))) { e.Pos = n; } else { e.V = -e.V; }
                 }
+            }
+            else if (e.K == Kind.Annoyer)
+            {
+                var pc = new Vector2(P.X + 5, P.Y + 6);      // player visual centre
+                var ec = new Vector2(e.Pos.X + 4, e.Pos.Y + 3.5f);
+                e.StateT++;
+                switch (e.State)
+                {
+                    case 0: if ((e.Pos - P).Length() < 64 && Frame % 15 == 0) { e.State = 1; e.StateT = 0; } break;
+                    case 1:
+                    {
+                        var tgt = pc + new Vector2(20, 0) - new Vector2(5, 6);
+                        var d = tgt - e.Pos; float step = 36f / 60f;
+                        e.Pos += d.Length() <= step ? d : Vector2.Normalize(d) * step;
+                        if ((tgt - e.Pos).Length() < 2) { e.State = 2; e.StateT = 0; e.Angle = 0; }
+                        break;
+                    }
+                    case 2:
+                        e.Angle += 8.4f / 60f;
+                        e.Pos = pc + new Vector2((float)Math.Cos(e.Angle), (float)Math.Sin(e.Angle)) * 20 - new Vector2(5, 6);
+                        if (e.StateT >= 180) { e.State = 3; e.StateT = 0; e.SwoopTo = e.Pos + 3 * (P - e.Pos); }
+                        break;
+                    case 3:
+                    {
+                        var d = e.SwoopTo - e.Pos; float step = 150f / 60f;
+                        e.Pos += d.Length() <= step ? d : Vector2.Normalize(d) * step;
+                        if ((e.SwoopTo - e.Pos).Length() < 1) { e.State = 1; e.StateT = 0; }
+                        break;
+                    }
+                    case 4:
+                        e.Pos += e.V / 60f; e.V *= 0.97f;
+                        if (e.StateT > 24) { e.State = 1; e.StateT = 0; }
+                        break;
+                }
+                // contact
+                if (e.State != 4 && Invincible == 0 && e.Box.Intersects(PlayerBox)) { Damage++; Invincible = 60; }
+                if (SwingT > 0 && e.State != 4 && Broom().Intersects(e.Box)) { e.Health--; e.State = 4; e.StateT = 0; e.V = Dir(SwingFacing) * 150; }
+                if (e.Health <= 0) { e.Dead = true; }
+                continue;
             }
             else
             {

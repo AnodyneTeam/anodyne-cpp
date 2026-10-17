@@ -630,7 +630,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Like GoTo but to the nearest tile satisfying isGoal.</summary>
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -821,6 +821,14 @@ namespace AnodyneSharp.Recording
                         if (Math.Abs(c.X - p.X) <= 2f && Math.Abs(c.Y - p.Y) <= 2f)
                         {
                             break;
+                        }
+                        if (AutoFight && annoyerFights < 6 && !InRaft && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 70))
+                        {
+                            // An awake Annoyer comes for us wherever we walk (and walking about only dances us into its swoop): the broom answers it.
+                            annoyerFights++;
+                            BotRunner.Status = "clear Annoyer(s) on the way";
+                            yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");
+                            goto replan;
                         }
                         if (AutoFight && slimeFights < 8 && !InRaft && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
                         {

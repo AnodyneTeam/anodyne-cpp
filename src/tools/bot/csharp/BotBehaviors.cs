@@ -909,9 +909,14 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
-        protected static KeyFunctions[] StandSafe(Entity except)
+        protected static KeyFunctions[] StandSafe(Entity except, bool ignoreAnnoyers = false)
         {
             var threats = PredictThreats(except);
+            if (ignoreAnnoyers)
+            {
+                // they orbit us (their positions are set directly, so they read as standing still): the broom, not dodging, answers them
+                threats = threats.Where(t => t.Source == null || t.Source.GetType().Name != "Annoyer").ToList();
+            }
             if (threats.Count == 0 || PlanHitFrameStanding(Horizon, KeyFunctions.Right, 0, threats) == int.MaxValue)
             {
                 return K();
@@ -2324,6 +2329,7 @@ namespace AnodyneSharp.Recording
             Entity ambushFor = null;
             var pmem = new PolicyMem();
             Entity routedFor = null;
+            Vector2? annPrev = null;
             bool ambushChase = false; // lining up sideways under a patroller: keep going until close (turning to face down loses ground)
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
@@ -2967,7 +2973,7 @@ namespace AnodyneSharp.Recording
                 {
                     noProgress++;
                 }
-                if (target.GetType().Name == "Annoyer" && distSq < 44 * 44)
+                if (target.GetType().Name == "Annoyer" && distSq < 75 * 75)
                 {
                     // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
                     // what gets us hit. Stand still facing right and swing; it is in reach every time round.
@@ -2991,35 +2997,30 @@ namespace AnodyneSharp.Recording
                             var exit = BotNav.FindPath(BotNav.TileOf(Pos), t => !holdLanes.Contains(t) && !holdLanes.Contains(new Point(t.X, t.Y - 1)) && !holdLanes.Contains(new Point(t.X, t.Y + 1)) && !holdLanes.Contains(new Point(t.X - 1, t.Y)) && !holdLanes.Contains(new Point(t.X + 1, t.Y)));
                             if (exit != null && exit.Count > 0)
                             {
+                                BotRunner.Status = "fight/annoyer hold: leave the beam";
                                 var nc2 = BotNav.CentreOf(exit[0]) + new Vector2(5, 6);
                                 yield return K(StepKey(nc2.X - me.X, nc2.Y - me.Y, target));
                                 continue;
                             }
                         }
                     }
-                    var safeFrame = StandSafe(target);
+                    var safeFrame = StandSafe(target, ignoreAnnoyers: true);
                     if (safeFrame.Length > 0)
                     {
+                        BotRunner.Status = "fight/annoyer hold: stand safe";
                         yield return safeFrame; // something else (a patroller, a beam) is about to reach this spot: not here
                         continue;
                     }
                     // It homes in on a spot beside us in a straight line (through us if it comes from the other side) and then circles at
                     // ~20px: face wherever it is and keep swinging, the broom reaches it before it touches.
-                    var annFace = Math.Abs(dx) >= Math.Abs(dy) ? (dx < 0 ? Facing.LEFT : Facing.RIGHT) : (dy < 0 ? Facing.UP : Facing.DOWN);
-                    var annKey = annFace == Facing.LEFT ? KeyFunctions.Left : annFace == Facing.RIGHT ? KeyFunctions.Right : annFace == Facing.UP ? KeyFunctions.Up : KeyFunctions.Down;
-                    if (Player.facing != annFace)
+                    var annCtx = PolicyCtx(target);
+                    annCtx.Others = Enemies().Where(e => e != target && e.GetType().Name == "Annoyer").Select(e => e.Hitbox).ToList();
+                    var annKeys = FightPolicies.AnnoyersHold(annCtx, pmem);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
-                        yield return K(annKey);
-                        continue;
+                        System.Console.Error.WriteLine($"  annoyers policy f{i}: keys=[{string.Join("+", annKeys)}] P={Player.Hitbox} face={Player.facing} T={annCtx.T} others={annCtx.Others.Count} hold={pmem.HoldFace}/{pmem.HoldUntil} swing={pmem.Swing}/{pmem.LastSwing}");
                     }
-                    swing++;
-                    if (distSq < 30 * 30 && swing - lastSwing >= SwingCooldown)
-                    {
-                        lastSwing = swing;
-                        yield return K(KeyFunctions.Accept);
-                        continue;
-                    }
-                    yield return K();
+                    yield return PolicyFrame(annKeys, target);
                     continue;
                 }
                 // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.

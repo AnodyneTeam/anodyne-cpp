@@ -22,6 +22,11 @@ namespace AnodyneSharp.Recording
     {
         public int Swing, LastSwing = -1000, VRetreat, DodgeLeft;
         public PKey DodgeKey;
+        public Vector2? PrevT;
+        public PFacing HoldFace = PFacing.Right;
+        public int HoldUntil;
+        public System.Collections.Generic.List<Vector2> PrevCentres = new();
+        public System.Collections.Generic.Dictionary<int, Vector2> PrevAll = new();
     }
 
     /// <summary>
@@ -40,6 +45,125 @@ namespace AnodyneSharp.Recording
             var r = c.P;
             r.Offset(dir == PKey.Left ? (int)-v : dir == PKey.Right ? (int)v : 0, dir == PKey.Up ? (int)-v : dir == PKey.Down ? (int)v : 0);
             return c.Walk(r);
+        }
+
+        /// <summary>
+        /// An Annoyer flies in on a straight line (through us if it comes from the far side) to a spot 20px to our right, then orbits there for
+        /// 3s before it swoops. The swing only reaches straight ahead for ~0.36s: line up level with it while it flies in, face it, swing as
+        /// it arrives; once it orbits, hold one direction and swing (it passes the broom on most laps).
+        /// </summary>
+        public static PKey[] AnnoyerHold(PCtx c, PolicyMem m)
+        {
+            var tc = new Vector2(c.T.Center.X, c.T.Center.Y);
+            var pc = new Vector2(c.P.Center.X, c.P.Center.Y);
+            float dx = tc.X - pc.X, dy = tc.Y - pc.Y;
+            float dist = (float)Math.Sqrt(dx * dx + dy * dy);
+            float speed = m.PrevT.HasValue ? (tc - m.PrevT.Value).Length() : 0f;
+            m.PrevT = tc;
+            bool orbiting = speed > 1.4f && dist < 26;
+            bool horiz = Math.Abs(dx) >= Math.Abs(dy);
+            var face = (orbiting || dist < 12) ? PKey.Right : horiz ? (dx < 0 ? PKey.Left : PKey.Right) : (dy < 0 ? PKey.Up : PKey.Down);
+            var faceF = face == PKey.Left ? PFacing.Left : face == PKey.Right ? PFacing.Right : face == PKey.Up ? PFacing.Up : PFacing.Down;
+            float across = horiz ? dy : dx;
+            if (!orbiting && dist >= 12 && Math.Abs(across) > 8 && dist > 22)
+            {
+                // flying in on a diagonal: line up level with it first, so that the swing (which only reaches straight ahead) meets it
+                return horiz ? K(dy < 0 ? PKey.Up : PKey.Down) : K(dx < 0 ? PKey.Left : PKey.Right);
+            }
+            if (c.Facing != faceF)
+            {
+                return K(face);
+            }
+            m.Swing++;
+            float reach = orbiting ? 34 : 27;
+            if (dist < reach && m.Swing - m.LastSwing >= SwingCooldown)
+            {
+                m.LastSwing = m.Swing;
+                return K(PKey.Accept);
+            }
+            return None;
+        }
+
+        /// <summary>
+        /// All awake Annoyers at once (ctx.T = the primary, ctx.Others = the rest, in a stable order): one that is still flying in is handled
+        /// first (face it, line up, swing as it arrives); when they are all orbiting, hold one direction and swing every lap.
+        /// </summary>
+        public static PKey[] AnnoyersHold(PCtx c, PolicyMem m)
+        {
+            // Just broom them: when one is close, face the nearest one, hold that facing for a while (they orbit at 168px/s, so turning to
+            // follow one is pointless) and swing on every cooldown; a swing held out to one side meets one on almost every lap.
+            var pc = new Vector2(c.P.Center.X, c.P.Center.Y);
+            var all = new System.Collections.Generic.List<Rectangle> { c.T };
+            all.AddRange(c.Others);
+            Rectangle near = c.T;
+            float bestD = 1e9f;
+            foreach (var a in all)
+            {
+                float d = (new Vector2(a.Center.X, a.Center.Y) - pc).Length();
+                if (d < bestD)
+                {
+                    bestD = d;
+                    near = a;
+                }
+            }
+            m.Swing++;
+            // speed of the nearest one: match it to the closest centre of the previous frame (they come in a list, not with identities)
+            var nc = new Vector2(near.Center.X, near.Center.Y);
+            float speed = 0f;
+            float bestPrev = 1e9f;
+            foreach (var pv in m.PrevCentres)
+            {
+                float d = (pv - nc).Length();
+                if (d < bestPrev)
+                {
+                    bestPrev = d;
+                }
+            }
+            if (m.PrevCentres.Count > 0)
+            {
+                speed = bestPrev;
+            }
+            m.PrevCentres = all.ConvertAll(a => new Vector2(a.Center.X, a.Center.Y));
+            if (bestD > 36)
+            {
+                if (speed < 0.3f && bestD > 50)
+                {
+                    // asleep (it wakes when we come within ~64px): walk up to it
+                    float wx = near.Center.X - pc.X, wy = near.Center.Y - pc.Y;
+                    return Math.Abs(wx) >= Math.Abs(wy) ? K(wx < 0 ? PKey.Left : PKey.Right) : K(wy < 0 ? PKey.Up : PKey.Down);
+                }
+                return None; // flying in: stay put, it comes to us
+            }
+            bool orbiting = speed > 1.4f;
+            float ddx = near.Center.X - pc.X, ddy = near.Center.Y - pc.Y;
+            PFacing want;
+            if (orbiting)
+            {
+                if (m.Swing >= m.HoldUntil)
+                {
+                    m.HoldFace = Math.Abs(ddx) >= Math.Abs(ddy) ? (ddx < 0 ? PFacing.Left : PFacing.Right) : (ddy < 0 ? PFacing.Up : PFacing.Down);
+                    m.HoldUntil = m.Swing + 40;
+                }
+                want = m.HoldFace;
+            }
+            else
+            {
+                // still flying in: face where it comes from (live) and swing as it arrives
+                bool curHoriz = c.Facing == PFacing.Left || c.Facing == PFacing.Right;
+                bool horizNow = curHoriz ? Math.Abs(ddy) <= Math.Abs(ddx) + 8 : Math.Abs(ddx) > Math.Abs(ddy) + 8; // hysteresis: do not flip axis on a near-diagonal
+                want = horizNow ? (ddx < 0 ? PFacing.Left : PFacing.Right) : (ddy < 0 ? PFacing.Up : PFacing.Down);
+                m.HoldUntil = 0;
+            }
+            if (c.Facing != want)
+            {
+                return K(want == PFacing.Left ? PKey.Left : want == PFacing.Right ? PKey.Right : want == PFacing.Up ? PKey.Up : PKey.Down);
+            }
+            if ((orbiting || bestD < 27) && m.Swing - m.LastSwing >= SwingCooldown)
+            {
+                m.LastSwing = m.Swing;
+                return K(PKey.Accept);
+            }
+            return None;
         }
 
         /// <summary>A Shieldy that stands still dies to two downward swings: when we are north of it, line up, come down, turn down, swing.</summary>
