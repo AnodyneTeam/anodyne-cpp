@@ -64,6 +64,8 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
+                    case 'y': BotNav.LaneScale = n / 100f; break;
+                    case 'p': BotRunner.NoAutoPlug = n == 1; break; // p1: no fetching dust to plug beams on the way
                     case '^':
                     {
                         // Dev only (experiments, never in a recorded route): put the player at x,y.
@@ -340,6 +342,10 @@ namespace AnodyneSharp.Recording
             {
                 return i % 12 == 0 ? new[] { KeyFunctions.Up } : i % 12 == 6 ? new[] { KeyFunctions.Accept } : new KeyFunctions[0];
             }
+            if (!Talking)
+            {
+                return new KeyFunctions[0]; // nothing to advance (a screen scroll, say): an Accept here would only swing the broom
+            }
             return i % 4 == 0 ? new[] { KeyFunctions.Accept } : new KeyFunctions[0];
         }
 
@@ -395,7 +401,10 @@ namespace AnodyneSharp.Recording
             yield return GoToWhere(t => t.X * 16 >= tx * 160 && t.X * 16 < tx * 160 + 160 && t.Y * 16 >= ty * 160 && t.Y * 16 < ty * 160 + 160,
                 $"screen {tx},{ty}");
             yield return Until(() => !GlobalState.ScreenTransition && Grid == new Point(tx, ty), 600, $"arrive on screen {tx},{ty}");
-            yield return Wait(10);
+            if (!(AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0))
+            {
+                yield return Wait(10); // let the scroll settle; with enemies about there is no time to stand around: straight into the fight
+            }
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
                 System.Console.Error.WriteLine($"  -> screen {tx},{ty} on {Map}, hp {GlobalState.CUR_HEALTH}");
@@ -876,7 +885,7 @@ namespace AnodyneSharp.Recording
         };
 
         /// <summary>Keys for the next frame of a plan to `goal` (hitbox top-left) that never meets a predicted danger; null if none (see SpaceTime).</summary>
-        private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats, bool useCache = true)
+        private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats, bool useCache = true, bool survive = false)
         {
             var st = new List<StThreat>(threats.Count);
             foreach (var t in threats)
@@ -890,7 +899,7 @@ namespace AnodyneSharp.Recording
             }
             var swPlan = System.Diagnostics.Stopwatch.StartNew();
             var fastWalk = FastWalkable();
-            int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700);
+            int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700, survive: survive);
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
             {
@@ -899,7 +908,7 @@ namespace AnodyneSharp.Recording
                 {
                     t.Margin = 0;
                 }
-                a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 400);
+                a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 400, survive: survive);
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_RANGE") is string rng && Environment.GetEnvironmentVariable("ANODYNE_ST_DUMP") is string rdir)
             {
@@ -963,7 +972,7 @@ namespace AnodyneSharp.Recording
             if (Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null)
             {
                 var pbs = Player.Hitbox;
-                var stay = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), threats, useCache: false);
+                var stay = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), threats, useCache: false, survive: true);
                 if (stay != null && stay.Length > 0)
                 {
                     return K(stay);
@@ -1163,7 +1172,7 @@ namespace AnodyneSharp.Recording
             KeyFunctions v = py < 0 ? KeyFunctions.Up : KeyFunctions.Down;
             bool wantH = Math.Abs(px) > 2f;
             bool wantV = Math.Abs(py) > 2f;
-            var one = new List<Entity> { solid };
+            var one = solid == null ? new List<Entity>() : new List<Entity> { solid };
             if (Environment.GetEnvironmentVariable("ANODYNE_NO_STEPKEY") == null && wantH && wantV && WouldCollide(h, one, 6) && !WouldCollide(v, one, 6))
             {
                 return v;
@@ -2627,6 +2636,11 @@ namespace AnodyneSharp.Recording
                 return K();
             }
             KeyFunctions Map(PKey k) => k switch { PKey.Up => KeyFunctions.Up, PKey.Down => KeyFunctions.Down, PKey.Left => KeyFunctions.Left, PKey.Right => KeyFunctions.Right, _ => KeyFunctions.Accept };
+            if (DodgeEnabled && keys.Length == 1 && keys[0] != PKey.Accept && BotNav.LaneTiles().Count > 0)
+            {
+                // beams about: a plain step must time its crossing of them (the policies know the enemy, not the beams)
+                return SafeMove(Map(keys[0]), target, 12f);
+            }
             return K(keys.Select(Map).ToArray()); // the policies do their own avoiding: SafeMove would second-guess a retreat and stand still
         }
 
@@ -2658,8 +2672,49 @@ namespace AnodyneSharp.Recording
             return seen;
         }
 
+        /// <summary>The direction (towards a beam lane that is at most 4 shoves away over open floor) in which to push a Shieldy, or null.</summary>
+        private static KeyFunctions? BeamPushDirection(Entity shieldy, HashSet<Point> lanes)
+        {
+            var c = new Vector2(shieldy.Hitbox.Center.X - 5, shieldy.Hitbox.Center.Y - 6);
+            var t0 = BotNav.TileOf(c);
+            if (lanes.Contains(t0))
+            {
+                return null; // already in a beam: let it burn
+            }
+            KeyFunctions? best = null;
+            int bestN = 99;
+            foreach (var (d, dir) in new[] { (new Point(1, 0), KeyFunctions.Right), (new Point(-1, 0), KeyFunctions.Left), (new Point(0, 1), KeyFunctions.Down), (new Point(0, -1), KeyFunctions.Up) })
+            {
+                // we have to be able to stand behind it (the side opposite the push) on floor
+                var behind = new Point(t0.X - d.X, t0.Y - d.Y);
+                if (!BotNav.Walkable(behind))
+                {
+                    continue;
+                }
+                for (int n = 1; n <= 4; n++)
+                {
+                    var t = new Point(t0.X + d.X * n, t0.Y + d.Y * n);
+                    if (!BotNav.Walkable(t))
+                    {
+                        break;
+                    }
+                    if (lanes.Contains(t))
+                    {
+                        if (n < bestN)
+                        {
+                            bestN = n;
+                            best = dir;
+                        }
+                        break;
+                    }
+                }
+            }
+            return best;
+        }
+
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
+            int beamPushes = 0, ambushWaited = 0;
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
                 yield return SeerFight();
@@ -2692,7 +2747,7 @@ namespace AnodyneSharp.Recording
                     }
                     return false;
                 }).ToList();
-                if (emittersNear.Count > 0)
+                if (emittersNear.Count > 0 && !BotRunner.NoAutoPlug)
                 {
                     Plugging = true;
                     try
@@ -2966,6 +3021,52 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={GlobalState.CUR_HEALTH} enemies={enemies.Count}");
                 }
+                // Whatever the plan is, a patrolling Shieldy that is about to walk into where we stand comes first: clear of it, then carry on.
+                if (!(Player.broom != null && Player.broom.exists))
+                {
+                    var walkers = PredictThreats(null).Where(t => t.Source != null && t.Source.GetType().Name == "Shieldy" && !t.Stationary).ToList();
+                    if (walkers.Count > 0 && PlanHitFrameStanding(14, KeyFunctions.Right, 0, walkers) != int.MaxValue)
+                    {
+                        var clear = SpaceTimeMove(new Vector2(Player.Hitbox.X, Player.Hitbox.Y), walkers, useCache: false, survive: true);
+                        if (clear != null && clear.Length > 0)
+                        {
+                            BotRunner.Status = "fight/step clear of a patrolling Shieldy";
+                            yield return K(clear);
+                            continue;
+                        }
+                    }
+                }
+                // Hit and owing hearts: a dropped heart that is near and not guarded by an enemy is worth more than the fight (they time out).
+                if (BotRunner.DebtBaseline >= 0 || GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH)
+                {
+                    var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup")).OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length()).FirstOrDefault();
+                    if (heart != null && (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length() < 110 &&
+                        !Enemies().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y)).Length() < 22))
+                    {
+                        var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
+                        var hpath = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
+                        if (hpath != null && hpath.Count > 0 && hpath.Count < 12)
+                        {
+                            BotRunner.Status = "fight/collect the dropped heart";
+                            var hc = BotNav.CentreOf(hpath[0]) + new Vector2(5, 6);
+                            yield return SafeMove(StepKey(hc.X - me.X, hc.Y - me.Y, null), null);
+                            continue;
+                        }
+                    }
+                }
+                // A beam is the best weapon against a Shieldy (its shield only turns the broom, but bullets hurt it): a hit from the front shoves
+                // it 8px the way we face, so line up on the side away from a nearby lane and push it into the beam.
+                if (target.GetType().Name == "Shieldy" && BotNav.LaneTiles() is { Count: > 0 } pushLanes && beamPushes < 3)
+                {
+                    var pushDir = BeamPushDirection(target, pushLanes);
+                    if (pushDir.HasValue)
+                    {
+                        beamPushes++;
+                        BotRunner.Status = $"fight/push the Shieldy {pushDir.Value} into a beam";
+                        yield return PushBlocker(target, pushDir.Value, 4);
+                        continue;
+                    }
+                }
                 KeyFunctions dir;
                 bool attack = false;
                 if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero && FightPolicies.BoomStationary(PolicyCtx(target), pmem) is PKey[] boomKeys)
@@ -3062,40 +3163,38 @@ namespace AnodyneSharp.Recording
                             yield return K(KeyFunctions.Down);
                             continue;
                         }
-                        if (Math.Abs(adx) > 10)
+                        // Never chase it: a Shieldy that patrols sideways at 30px/s cannot be caught, and following it only gets us walked into. Stand
+                        // still facing down at the standoff and swing when its predicted position meets the broom (the swing takes ~8 frames to reach).
+                        if (Player.facing != Facing.DOWN)
                         {
-                            ambushChase = true;
-                        }
-                        else if (Math.Abs(adx) <= 3)
-                        {
-                            ambushChase = false;
-                        }
-                        if (Math.Abs(adx) <= 10 && !ambushChase)
-                        {
-                            if (Player.facing != Facing.DOWN)
-                            {
-                                yield return K(KeyFunctions.Down); // turns us (and nudges ~1px towards it: the gap is >= 3)
-                                continue;
-                            }
-                            swing++;
-                            if (swing - lastSwing >= SwingCooldown + 8)
-                            {
-                                lastSwing = swing;
-                                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
-                                {
-                                    var hf = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                                    System.Console.Error.WriteLine($"  ambush SWING f{i} adx={adx:0.0} gap={gap} health={hf?.GetValue(target)} facing={Player.facing}");
-                                }
-                                yield return K(KeyFunctions.Accept);
-                                continue;
-                            }
-                            yield return K();
+                            yield return K(KeyFunctions.Down); // turns us (and nudges ~1px towards it: the gap is >= 3)
                             continue;
                         }
-                        var side = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
-                        var moved = pb;
-                        moved.Offset(adx < 0 ? -2 : 2, 0);
-                        yield return CornersWalkable(moved) ? K(side) : K();
+                        var at8 = PredictPatroller(target).At[8] ?? target.Hitbox;
+                        var downBroom = new Rectangle(pb.X - 11, pb.Bottom + 4, 24, 12);
+                        ambushWaited++;
+                        swing++;
+                        if (downBroom.Intersects(at8) && swing - lastSwing >= SwingCooldown + 8)
+                        {
+                            lastSwing = swing;
+                            ambushWaited = 0;
+                            yield return K(KeyFunctions.Accept);
+                            continue;
+                        }
+                        if (ambushWaited > 300)
+                        {
+                            // it does not pass under this spot (its beat is elsewhere): shift one step towards where it is, then wait again
+                            ambushWaited = 0;
+                            var shift = adx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                            var moved2 = pb;
+                            moved2.Offset(adx < 0 ? -16 : 16, 0);
+                            if (CornersWalkable(moved2))
+                            {
+                                yield return Hold(12, shift);
+                                continue;
+                            }
+                        }
+                        yield return K();
                         continue;
                     }
                 }

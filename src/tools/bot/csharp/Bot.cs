@@ -5,6 +5,7 @@ using AnodyneSharp.Registry;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using System;
+using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -24,6 +25,12 @@ namespace AnodyneSharp.Recording
         /// <summary>PlayState has a child state (dialogue, cutscene, menu...) consuming input.</summary>
         /// <summary>ANODYNE_ROUTE=100: take the side rooms (cards, secrets) as well as the walkthrough's main path.</summary>
         public static readonly bool Full100 = Environment.GetEnvironmentVariable("ANODYNE_ROUTE") == "100";
+        /// <summary>Token p1: do not fetch dust to plug beams on the way (the way on is through them, at a documented cost in hearts).</summary>
+        public static bool NoAutoPlug;
+        /// <summary>Hearts to be won back after a hit (-1 = no debt); see RecoverFrames.</summary>
+        public static int DebtBaseline = -1;
+        public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 240;
+        private static long _debtSince;
         public static bool PlayBusy;
         private static string _lastBusyName = "";
         public static string PlayBusyName = ""; // which child states of the play state are open (for the failure ring)
@@ -192,6 +199,46 @@ namespace AnodyneSharp.Recording
         // The last frames of the run (player, keys, enemies): written out when the bot fails so the failure can be rebuilt in the offline simulator.
         private static readonly Queue<string> _ring = new();
 
+        // Audit of broom swings that have nothing to hit: every Accept press while no dialogue/cutscene is open and no enemy, dust or
+        // interactable is within reach is counted by the status that asked for it, and the totals are printed at exit (ANODYNE_BOT_SWING_AUDIT=1).
+        private static readonly Dictionary<string, int> _swingsUseful = new(), _swingsIdle = new();
+
+        private static void SwingAudit(KeyFunctions[] held)
+        {
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SWING_AUDIT") == null || held == null || !held.Contains(KeyFunctions.Accept) || Player == null)
+            {
+                return;
+            }
+            if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+            {
+                return; // text being advanced
+            }
+            var pc = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+            bool near = Entities().Any(e => e.exists && e != Player && !(e is AnodyneSharp.Entities.Player) &&
+                (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - pc).Length() < 40 && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) ||
+                 Regex.IsMatch(e.GetType().Name, "Dust|Sage|Chest|Button|Statue|Block|Console|Sentinel|Gate|Checkpoint|Treasure|Slime|Shieldy|Annoyer|Seer")));
+            var key = Regex.Replace(Status ?? "", @"[\d,.\-]+", "#");
+            var d = near ? _swingsUseful : _swingsIdle;
+            d[key] = d.TryGetValue(key, out int n) ? n + 1 : 1;
+            if (!near && _swingsIdle[key] == 1)
+            {
+                System.Console.Error.WriteLine($"IDLE SWING f{_botFrame} P={Player.Hitbox} ({Status})");
+            }
+        }
+
+        public static void PrintSwingAudit()
+        {
+            if (_swingsIdle.Count + _swingsUseful.Count == 0)
+            {
+                return;
+            }
+            System.Console.Error.WriteLine("SWING AUDIT: idle (nothing within 40px) / with a target near, by status:");
+            foreach (var k in _swingsIdle.Keys.Union(_swingsUseful.Keys).OrderByDescending(k => _swingsIdle.GetValueOrDefault(k)))
+            {
+                System.Console.Error.WriteLine($"  {_swingsIdle.GetValueOrDefault(k),5} / {_swingsUseful.GetValueOrDefault(k),5}  {k}");
+            }
+        }
+
         private static void RingRecord(KeyFunctions[] held)
         {
             try
@@ -202,7 +249,7 @@ namespace AnodyneSharp.Recording
                     return;
                 }
                 var sb = new System.Text.StringBuilder();
-                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} busy={PlayBusyName} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
+                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} chain={string.Join("<", _stack.Take(3).Select(en => System.Text.RegularExpressions.Regex.Replace(en.GetType().Name, "^<|>d__\\d+$", "")))} busy={PlayBusyName} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
                 foreach (var e in Entities())
                 {
                     if (e.exists && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || e.GetType().Name.StartsWith("Seer")))
@@ -223,6 +270,7 @@ namespace AnodyneSharp.Recording
 
         private static void DumpRing()
         {
+            PrintSwingAudit();
             try
             {
                 var lines = new List<string>(_ring);
@@ -260,9 +308,30 @@ namespace AnodyneSharp.Recording
                     BossDamageBudget -= _hpSeen - hp; // a boss fight with a heart budget: logged, not fatal
                     System.Console.Error.WriteLine($"  boss hit f{_botFrame}: HP {_hpSeen}->{hp}, budget left {BossDamageBudget} P={Player.Hitbox} " + string.Join(" ", Entities().Where(e => e.exists && e.GetType().Name.StartsWith("Seer")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}")));
                 }
+                else if (hp > 0 && RecoverFrames > 0)
+                {
+                    // A hit is tolerated if the hearts it cost are picked up again (drops from kills) within RecoverFrames: that is how a human tanks one.
+                    if (DebtBaseline < 0)
+                    {
+                        DebtBaseline = _hpSeen;
+                        _debtSince = _botFrame;
+                    }
+                    System.Console.Error.WriteLine($"  hit f{_botFrame}: HP {_hpSeen}->{hp}, back to {DebtBaseline} by f{_debtSince + RecoverFrames} or it is fatal ({Status})");
+                }
                 else
                 {
                     why = $"took damage (HP {_hpSeen}->{hp})";
+                }
+            }
+            if (DebtBaseline >= 0 && why == null)
+            {
+                if (hp >= Math.Min(DebtBaseline, GlobalState.MAX_HEALTH))
+                {
+                    DebtBaseline = -1; // recovered
+                }
+                else if (_botFrame - _debtSince > RecoverFrames)
+                {
+                    why = $"took damage and did not get the hearts back within {RecoverFrames} frames (HP {DebtBaseline}->{hp})";
                 }
             }
             _hpSeen = hp;
@@ -388,6 +457,8 @@ namespace AnodyneSharp.Recording
                 catch (Exception e)
                 {
                     System.Console.Error.WriteLine("BOT FAILED: " + e.Message);
+                    // which steps were running (innermost first): the enumerators on the bot's stack are the call chain of the step that threw
+                    System.Console.Error.WriteLine("  step chain: " + string.Join(" <- ", _stack.Select(en => System.Text.RegularExpressions.Regex.Replace(en.GetType().Name, "^<|>d__\\d+$", ""))));
                     try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                     DumpRing();
                     _trace?.Flush();
@@ -417,10 +488,12 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
+            SwingAudit(held);
             RingRecord(held);
             WriteGbaFrame(held, _stack.Count == 0);
             if (_stack.Count == 0)
             {
+                PrintSwingAudit();
                 Active = false;
                 GlobalState.ClosingGame = true;
             }
@@ -850,7 +923,7 @@ namespace AnodyneSharp.Recording
                         yield break;
                     }
                 }
-                if (!pluggedGrids.Contains(Grid) && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
+                if (!BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
                 {
                     // A route through a laser beam with dust lying about: plug the emitter instead of racing (or waiting for) its shots.
                     var crossing = EmittersCrossing(path);
@@ -899,7 +972,7 @@ namespace AnodyneSharp.Recording
                         }
                         goto replan;
                     }
-                    if (Grid != gridAtStart && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
+                    if (Grid != gridAtStart && !BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
                         && GlobalState.inventory.HasBroom && HaveLooseDust())
                     {
                         // Arrived on another screen of a long route: its beams are only known now, so plug the ones the rest of the route crosses.
@@ -1140,6 +1213,12 @@ namespace AnodyneSharp.Recording
             _ => throw new ArgumentException(name)
         };
 
+        private static IEnumerable<object> OnlyPart(string name)
+        {
+            yield return StartToNexus.Boot(); // continue the save the game was started with
+            yield return Part(name).Run();
+        }
+
         /// <summary>Plays the route from the title screen up to and including the named part.</summary>
         public static IEnumerable<object> Through(string last)
         {
@@ -1163,7 +1242,8 @@ namespace AnodyneSharp.Recording
                 default:
                     if (Array.IndexOf(PartNames, name.ToLowerInvariant()) >= 0)
                     {
-                        return Through(name);
+                        // ANODYNE_BOT_ONLY=1: just this part, for a game that was loaded from the save the previous part ended on (dev: no replay of the route so far)
+                        return Environment.GetEnvironmentVariable("ANODYNE_BOT_ONLY") == "1" ? OnlyPart(name.ToLowerInvariant()) : Through(name);
                     }
                     throw new ArgumentException($"unknown bot script '{name}'");
             }

@@ -467,6 +467,9 @@ namespace AnodyneSharp.Recording
         /// <summary>Tiles that count as walls for every search (set by a routine that must not cross them, e.g. the beams while carrying dust to an emitter).</summary>
         public static HashSet<Point> HardAvoid;
 
+        /// <summary>Scale of the path cost of beam tiles (token y&lt;percent&gt;): where the only way on is down a beam, a long detour is not better.</summary>
+        public static float LaneScale = 1f;
+
         /// <summary>Tiles a PewLaser's beam sweeps: from the emitter in its facing direction until a wall or loose dust.</summary>
         public static HashSet<Point> LaneTiles() => new(LaneAxes().Keys);
 
@@ -487,16 +490,37 @@ namespace AnodyneSharp.Recording
                     Facing.UP => new Point(0, -1),
                     _ => new Point(0, 1)
                 };
-                var t = TileOf(e.Position + new Vector2(8, 8));
-                set[t] = d.X != 0 ? 0 : 1; // the emitter tile itself: every bullet is born there and dwells a while, it is no shortcut past the beam
-                for (int i = 1; i < 24; i++)
+                // An emitter need not sit on the tile grid (a laser at y=38 fires along y 38..54, over two tile rows): the beam covers every
+                // row (column) its 16px box touches. Pixel -> tile directly (TileOf would add a hitbox half-size).
+                var starts = new List<Point>();
+                int cx = (int)Math.Floor((e.Position.X + 8) / 16f), cy = (int)Math.Floor((e.Position.Y + 8) / 16f);
+                if (d.X != 0)
                 {
-                    t = new Point(t.X + d.X, t.Y + d.Y);
-                    if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
+                    for (int ty = (int)Math.Floor(e.Position.Y / 16f); ty <= (int)Math.Floor((e.Position.Y + 15) / 16f); ty++)
                     {
-                        break;
+                        starts.Add(new Point(cx, ty));
                     }
-                    set[t] = d.X != 0 ? 0 : 1;
+                }
+                else
+                {
+                    for (int tx = (int)Math.Floor(e.Position.X / 16f); tx <= (int)Math.Floor((e.Position.X + 15) / 16f); tx++)
+                    {
+                        starts.Add(new Point(tx, cy));
+                    }
+                }
+                foreach (var start in starts)
+                {
+                    var t = start;
+                    set[t] = d.X != 0 ? 0 : 1; // the emitter tile itself: every bullet is born there and dwells a while, it is no shortcut past the beam
+                    for (int i = 1; i < 24; i++)
+                    {
+                        t = new Point(t.X + d.X, t.Y + d.Y);
+                        if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
+                        {
+                            break;
+                        }
+                        set[t] = d.X != 0 ? 0 : 1;
+                    }
                 }
             }
             return set;
@@ -650,11 +674,11 @@ namespace AnodyneSharp.Recording
                     int step = 1;
                     if (lanes.TryGetValue(n, out int axis) && ((axis == 0) == (d.Y == 0)))
                     {
-                        step += 40; // moving along the beam
+                        step += (int)(40 * LaneScale); // moving along the beam
                     }
                     else if (lanes.ContainsKey(n))
                     {
-                        step += 30; // crossing it (a fast emitter has no gap a walker can use: prefer any detour)
+                        step += (int)(30 * LaneScale); // crossing it (a fast emitter has no gap a walker can use: prefer any detour)
                     }
                     if (zones.TryGetValue(n, out int zc))
                     {

@@ -32,7 +32,7 @@ namespace AnodyneSharp.Recording
 
         /// <returns>The index into Actions of the first block of a surviving plan, or -1 if none survives the horizon.</returns>
         public static int Plan(Rectangle start, Vector2 goal, IReadOnlyList<StThreat> threats, Func<Rectangle, bool> walkable, int horizon,
-            float tol = 3f, int block = 3, int maxNodes = 2500, float weight = 2.5f)
+            float tol = 3f, int block = 3, int maxNodes = 2500, float weight = 2.5f, bool survive = false)
         {
             var xs = new List<float> { start.X };
             var ys = new List<float> { start.Y };
@@ -40,7 +40,7 @@ namespace AnodyneSharp.Recording
             var first = new List<int> { -1 };
             var open = new PriorityQueue<int, float>();
             var seen = new HashSet<(int, int, int)>();
-            float Hh(float x, float y) => (goal - new Vector2(x, y)).Length() / Walk;
+            float Hh(float x, float y) => survive ? 1000f : (goal - new Vector2(x, y)).Length() / Walk; // survive: no goal, any plan that lasts the horizon will do
             open.Enqueue(0, weight * Hh(start.X, start.Y));
             int bestLate = -1;
             int deepest = 0; // fallback: the survivor that lasted longest (ties: nearest the goal)
@@ -57,7 +57,7 @@ namespace AnodyneSharp.Recording
                 {
                     deepest = idx;
                 }
-                if (Hh(nx, ny) * Walk <= tol)
+                if (!survive && Hh(nx, ny) * Walk <= tol)
                 {
                     Reached = true;
                     return first[idx];
