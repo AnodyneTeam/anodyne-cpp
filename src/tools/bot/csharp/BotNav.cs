@@ -146,25 +146,22 @@ namespace AnodyneSharp.Recording
             bool oldJ = AllowJump, oldW = AllowWater;
             AllowJump = jump;
             AllowWater = false;
-            var prev = new Dictionary<(Point, bool), (Point, bool)>();
-            var q = new Queue<(Point, bool)>();
-            var start = (from, wet);
+            // State: tile, on a raft, and "the raft we just got off is lying here on this screen" (usable for the next crossing).
+            var prev = new Dictionary<(Point, bool, bool), (Point, bool, bool)>();
+            var q = new Queue<(Point, bool, bool)>();
+            var start = (from, wet, false);
             prev[start] = start;
             q.Enqueue(start);
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
-            (Point, bool)? found = null;
+            (Point, bool, bool)? found = null;
             while (q.Count > 0 && found == null)
             {
-                var (c, w) = q.Dequeue();
+                var (c, w, carry) = q.Dequeue();
                 foreach (var d in dirs)
                 {
                     var n = new Point(c.X + d.X, c.Y + d.Y);
                     bool nw = IsConveyor(n);
-                    var key = (n, nw);
-                    if (prev.ContainsKey(key))
-                    {
-                        continue;
-                    }
+                    bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
                     {
                         if (haz.Contains(n))
@@ -174,7 +171,7 @@ namespace AnodyneSharp.Recording
                         if (nw)
                         {
                             var (al, _) = CurrentMap.GetTileClass(n);
-                            if (al != Touching.NONE || (!w && !ScreenHasDust(c.X / 10, c.Y / 10)))
+                            if (al != Touching.NONE || (!w && !carry && !ScreenHasDust(c.X / 10, c.Y / 10)))
                             {
                                 continue;
                             }
@@ -184,7 +181,13 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                     }
-                    prev[key] = (c, w);
+                    bool ncarry = nw ? false : (w ? true : (carry && !screenChanged));
+                    var key = (n, nw, ncarry);
+                    if (prev.ContainsKey(key))
+                    {
+                        continue;
+                    }
+                    prev[key] = (c, w, carry);
                     if (n == goal)
                     {
                         found = key;

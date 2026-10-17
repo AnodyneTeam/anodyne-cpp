@@ -126,7 +126,7 @@ namespace AnodyneSharp.Recording
                         var goalT = BotNav.TileOf(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
                         BotNav.AllowWater = true;
                         BotNav.AllowJump = true;
-                        var rp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalT, goalT);
+                        var rp = a.Length > 2 ? BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), goalT, GlobalState.inventory.CanJump) : BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalT, goalT);
                         BotNav.AllowWater = false;
                         BotNav.AllowJump = false;
                         if (rp == null)
@@ -644,41 +644,42 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> GoGlobal(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
-            for (int hop = 0; hop < 60; hop++)
+            bool jump = GlobalState.inventory.CanJump;
+            for (int hop = 0; hop < 80; hop++)
             {
+                BotNav.ResetDustCache();
                 var here = BotNav.TileOf(Pos);
                 var gs = new Point(goal.X / 10, goal.Y / 10);
                 if (Grid == gs)
                 {
-                    yield return GoTo(gx, gy);
+                    yield return RaftTo(gx, gy);
                     yield break;
                 }
-                BotNav.AllowWater = true;
-                BotNav.AllowJump = GlobalState.inventory.CanJump;
-                var route = BotNav.FindPath(here, t => t == goal, goal);
-                BotNav.AllowWater = false;
-                BotNav.AllowJump = false;
+                var route = BotNav.RaftPath(here, OnConveyor(here), goal, jump);
                 if (route == null)
                 {
                     throw new InvalidOperationException($"bot: no route from {here} to {goal} on {Map}");
                 }
-                Point? next = null;
-                foreach (var t in route)
+                // Waypoint: the first tile on land that lies on another screen (or the end of the water run that leads there).
+                Point way = route[route.Count - 1];
+                for (int i = 0; i < route.Count; i++)
                 {
-                    var sc = new Point(t.X / 10, t.Y / 10);
-                    if (sc != Grid)
+                    var t = route[i];
+                    if (new Point(t.X / 10, t.Y / 10) != Grid && !OnConveyor(t))
                     {
-                        next = sc;
+                        way = t;
                         break;
                     }
                 }
-                if (next == null)
+                BotRunner.Status = $"on to {way.X},{way.Y}";
+                var wc = BotNav.CentreOf(way);
+                yield return RaftTo(wc.X - BotNav.HalfW, wc.Y - BotNav.HalfH);
+                yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
+                yield return Wait(10);
+                if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
                 {
-                    yield return GoTo(gx, gy);
-                    yield break;
+                    yield return Fight(1500, soft: true);
                 }
-                BotRunner.Status = $"on to screen {next.Value.X},{next.Value.Y}";
-                yield return GoScreenTo(next.Value.X, next.Value.Y);
             }
             throw new TimeoutException($"bot: GoGlobal({gx},{gy}) gave up on {Map}");
         }
