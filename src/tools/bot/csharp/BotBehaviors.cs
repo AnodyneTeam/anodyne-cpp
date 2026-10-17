@@ -2226,6 +2226,34 @@ namespace AnodyneSharp.Recording
             return K(keys.Select(Map).ToArray()); // the policies do their own avoiding: SafeMove would second-guess a retreat and stand still
         }
 
+        /// <summary>The walkable tiles connected to `start` (within `limit` tiles), ignoring enemies.</summary>
+        private static HashSet<Point> FloodRegion(Point start, int limit)
+        {
+            var g = new Point(start.X / 10, start.Y / 10); // stay on this screen: the question is what can be reached without leaving it
+            return FloodRegion(start, limit, g);
+        }
+
+        private static HashSet<Point> FloodRegion(Point start, int limit, Point screen)
+        {
+            var seen = new HashSet<Point> { start };
+            var q = new Queue<Point>();
+            q.Enqueue(start);
+            while (q.Count > 0 && seen.Count < limit)
+            {
+                var t = q.Dequeue();
+                foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var n = new Point(t.X + o.X, t.Y + o.Y);
+                    if (!seen.Contains(n) && n.X / 10 == screen.X && n.Y / 10 == screen.Y && n.X >= 0 && n.Y >= 0 && BotNav.Walkable(n))
+                    {
+                        seen.Add(n);
+                        q.Enqueue(n);
+                    }
+                }
+            }
+            return seen;
+        }
+
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
@@ -2295,6 +2323,7 @@ namespace AnodyneSharp.Recording
             Entity lastTarget = null;
             Entity ambushFor = null;
             var pmem = new PolicyMem();
+            Entity routedFor = null;
             bool ambushChase = false; // lining up sideways under a patroller: keep going until close (turning to face down loses ground)
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
@@ -2497,6 +2526,26 @@ namespace AnodyneSharp.Recording
                     if (SlimeGap(nearestSlime) < 60)
                     {
                         target = nearestSlime; // within reach of us: it is the one to deal with
+                    }
+                }
+                if (target != routedFor)
+                {
+                    routedFor = target;
+                    // An enemy walled off from where we stand (the slime in the pocket whose door is on the other screen): the fight is
+                    // there, so go round to the side it can be reached from first.
+                    var tTile = BotNav.TileOf(new Vector2(target.Hitbox.Center.X - 5, target.Hitbox.Center.Y - 6));
+                    var mine = FloodRegion(BotNav.TileOf(Pos), 900);
+                    bool reachableHere = mine.Contains(tTile) || new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(tTile.X + o.X, tTile.Y + o.Y)));
+                    if (!reachableHere && only == null)
+                    {
+                        var theirs = FloodRegion(tTile, 900);
+                        BotRunner.Status = $"go round to {target.GetType().Name}";
+                        int farEnough = theirs.Any(t => Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= 3) ? 3 : 2; // a small pocket has nothing farther than 2 tiles from it
+                        yield return GoToWhere(t => theirs.Contains(t) && Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= farEnough, "the enemy's side");
+                        startGrid = Grid;
+                        routedFor = null;
+                        committed = null;
+                        continue;
                     }
                 }
                 var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
