@@ -500,10 +500,10 @@ namespace AnodyneSharp.Recording
                 for (int pi = 0; pi < path.Count; pi++)
                 {
                     var tile = path[pi];
-                    if (jumping && BotNav.IsSpike(tile))
+                    if (jumping && BotNav.IsJumpable(tile))
                     {
                         int pj = pi;
-                        while (pj < path.Count && BotNav.IsSpike(path[pj]))
+                        while (pj < path.Count && BotNav.IsJumpable(path[pj]))
                         {
                             pj++;
                         }
@@ -634,7 +634,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -645,6 +645,7 @@ namespace AnodyneSharp.Recording
             "temple1" => new Temple(),
             "forest2" => new BlueForest2(),
             "fields" => new Fields(),
+            "beach" => new Beach(),
             _ => throw new ArgumentException(name)
         };
 

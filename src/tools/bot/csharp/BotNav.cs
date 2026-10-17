@@ -219,6 +219,32 @@ namespace AnodyneSharp.Recording
         /// <summary>Set once the boots are on: spike tiles count as walkable (they are jumped over).</summary>
         public static bool AllowJump;
 
+        /// <summary>Water only one or two tiles across (in some straight line, with dry land on both sides): jumpable with the boots.</summary>
+        public static bool NarrowWater(Point t)
+        {
+            bool Land(Point q)
+            {
+                var (al, ev) = CurrentMap.GetTileClass(q);
+                return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.PUDDLE;
+            }
+            foreach (var d in new[] { new Point(1, 0), new Point(0, 1) })
+            {
+                int a = 0, b = 0;
+                var p = new Point(t.X - d.X, t.Y - d.Y);
+                while (a < 3 && IsConveyor(p)) { a++; p = new Point(p.X - d.X, p.Y - d.Y); }
+                var landA = Land(p);
+                p = new Point(t.X + d.X, t.Y + d.Y);
+                while (b < 3 && IsConveyor(p)) { b++; p = new Point(p.X + d.X, p.Y + d.Y); }
+                if (landA && Land(p) && a + b + 1 <= 2)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t));
+
         public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
 
         public static bool IsSpike(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.SPIKE;
@@ -266,7 +292,7 @@ namespace AnodyneSharp.Recording
                 case CollisionEventType.SPIKE:
                     return AllowJump && allow == Touching.NONE;
                 case CollisionEventType.CONVEYOR:
-                    return AllowWater && allow == Touching.NONE;
+                    return allow == Touching.NONE && (AllowWater || (AllowJump && NarrowWater(t)));
             }
             return allow == Touching.NONE;
         }

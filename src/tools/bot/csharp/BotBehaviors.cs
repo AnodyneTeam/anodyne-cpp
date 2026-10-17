@@ -155,6 +155,7 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine(sbr.ToString());
                         break;
                     }
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -673,12 +674,20 @@ namespace AnodyneSharp.Recording
                 }
                 BotRunner.Status = $"on to {way.X},{way.Y}";
                 var wc = BotNav.CentreOf(way);
-                yield return RaftTo(wc.X - BotNav.HalfW, wc.Y - BotNav.HalfH);
-                yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
-                yield return Wait(10);
-                if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
+                int wayIdx = route.IndexOf(way);
+                bool wet = route.Take(wayIdx + 1).Any(t => OnConveyor(t) || BotNav.IsSpike(t));
+                if (false)
                 {
-                    yield return Fight(1500, soft: true);
+                }
+                else
+                {
+                    yield return RaftTo(wc.X - BotNav.HalfW, wc.Y - BotNav.HalfH);
+                    yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
+                    yield return Wait(10);
+                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
+                    {
+                        yield return Fight(1500, soft: true);
+                    }
                 }
             }
             throw new TimeoutException($"bot: GoGlobal({gx},{gy}) gave up on {Map}");
