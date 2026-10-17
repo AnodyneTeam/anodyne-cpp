@@ -554,12 +554,12 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Tiles within `margin` px of any living enemy except `except`.</summary>
-        public static HashSet<Point> NearEnemies(int margin, Entity except = null)
+        public static HashSet<Point> NearEnemies(int margin, Entity except = null, bool stationaryOnly = false)
         {
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e == except || !e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                if (!e.exists || e == except || !e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || (stationaryOnly && e.velocity != Vector2.Zero))
                 {
                     continue;
                 }
