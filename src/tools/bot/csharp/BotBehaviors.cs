@@ -894,12 +894,17 @@ namespace AnodyneSharp.Recording
             var goal = BotNav.TileOf(new Vector2(gx, gy));
             bool jump = GlobalState.inventory.CanJump;
             BotNav.ResetDustCache();
+            int budget = 6000;
             for (int round = 0; round < 20; round++)
             {
                 var here = BotNav.TileOf(Pos);
                 if (here == goal)
                 {
                     yield break;
+                }
+                if (budget <= 0)
+                {
+                    throw new TimeoutException($"bot: RaftTo({gx},{gy}) made no headway from {here} on {Map}");
                 }
                 bool wetNow = OnConveyor(here);
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
@@ -945,6 +950,7 @@ namespace AnodyneSharp.Recording
                 bool wasWet = false;
                 for (int i = 0; i < 1500; i++)
                 {
+                    budget--;
                     if (Talking)
                     {
                         yield return BotScript.AdvanceKeys(i);
