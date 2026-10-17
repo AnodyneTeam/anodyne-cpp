@@ -1181,6 +1181,7 @@ namespace AnodyneSharp.Recording
                 // (the corridor beyond the muzzle is only reachable across the beam), first plug the next tile of the beam from a
                 // safe side tile, then stand on that plug (a dust is not solid, and its bullets die on it) to plug the muzzle tile.
                 var lanes0 = BotNav.LaneTiles();
+                BotNav.HardAvoid = new HashSet<Point>(lanes0); // the walks to the dust and to the plug spot must not cross a live beam
                 var stand = SafeStand(target, lanes0, et);
                 if (stand.HasValue)
                 {
@@ -1215,6 +1216,7 @@ namespace AnodyneSharp.Recording
                     yield return StandFaceAccept(t1.X, t1.Y, FaceChar(new Point(-step.X, -step.Y)));
                     yield return Wait(30);
                 }
+                BotNav.HardAvoid = null;
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
                     System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");

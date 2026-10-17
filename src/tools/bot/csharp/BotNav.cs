@@ -334,6 +334,10 @@ namespace AnodyneSharp.Recording
 
         public static bool Walkable(Point t)
         {
+            if (HardAvoid != null && HardAvoid.Contains(t))
+            {
+                return false;
+            }
             if (_gatesOpen.Contains(t))
             {
                 return !Blocked.Contains(t);
@@ -459,6 +463,9 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Extra tiles the next searches must avoid (e.g. tiles near enemies); set by the caller, cleared with Avoid = null.</summary>
         public static HashSet<Point> Avoid;
+
+        /// <summary>Tiles that count as walls for every search (set by a routine that must not cross them, e.g. the beams while carrying dust to an emitter).</summary>
+        public static HashSet<Point> HardAvoid;
 
         /// <summary>Tiles a PewLaser's beam sweeps: from the emitter in its facing direction until a wall or loose dust.</summary>
         public static HashSet<Point> LaneTiles() => new(LaneAxes().Keys);
