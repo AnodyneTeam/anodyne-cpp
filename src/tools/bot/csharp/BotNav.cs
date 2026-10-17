@@ -108,6 +108,102 @@ namespace AnodyneSharp.Recording
             return dist;
         }
 
+        private static HashSet<(int, int)> _dustScreens;
+
+        /// <summary>Screens (grid coords) that have loose dust to make a raft of, per the map's entity presets and what is loaded.</summary>
+        public static bool ScreenHasDust(int sx, int sy)
+        {
+            if (_dustScreens == null)
+            {
+                _dustScreens = new HashSet<(int, int)>();
+                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                {
+                    if (pr.Type != null && pr.Type.Name == "Dust")
+                    {
+                        _dustScreens.Add(((int)pr.Position.X / 160, (int)pr.Position.Y / 160));
+                    }
+                }
+            }
+            return _dustScreens.Contains((sx, sy));
+        }
+
+        public static void ResetDustCache() => _dustScreens = null;
+
+        /// <summary>
+        /// Route that may cross water only on a raft: a raft can be made where the land tile you step off from lies on a screen with
+        /// dust, and stays under you until you step back onto land. `wet` = already on a raft at `from`.
+        /// </summary>
+        public static List<Point> RaftPath(Point from, bool wet, Point goal, bool jump)
+        {
+            RefreshGates();
+            var haz = Hazards();
+            bool oldJ = AllowJump, oldW = AllowWater;
+            AllowJump = jump;
+            AllowWater = false;
+            var prev = new Dictionary<(Point, bool), (Point, bool)>();
+            var q = new Queue<(Point, bool)>();
+            var start = (from, wet);
+            prev[start] = start;
+            q.Enqueue(start);
+            Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            (Point, bool)? found = null;
+            while (q.Count > 0 && found == null)
+            {
+                var (c, w) = q.Dequeue();
+                foreach (var d in dirs)
+                {
+                    var n = new Point(c.X + d.X, c.Y + d.Y);
+                    bool nw = IsConveyor(n);
+                    var key = (n, nw);
+                    if (prev.ContainsKey(key))
+                    {
+                        continue;
+                    }
+                    if (n != goal)
+                    {
+                        if (haz.Contains(n))
+                        {
+                            continue;
+                        }
+                        if (nw)
+                        {
+                            var (al, _) = CurrentMap.GetTileClass(n);
+                            if (al != Touching.NONE || (!w && !ScreenHasDust(c.X / 10, c.Y / 10)))
+                            {
+                                continue;
+                            }
+                        }
+                        else if (!Walkable(n))
+                        {
+                            continue;
+                        }
+                    }
+                    prev[key] = (c, w);
+                    if (n == goal)
+                    {
+                        found = key;
+                        break;
+                    }
+                    q.Enqueue(key);
+                }
+            }
+            AllowJump = oldJ;
+            AllowWater = oldW;
+            if (found == null)
+            {
+                return null;
+            }
+            var path = new List<Point>();
+            var cur = found.Value;
+            while (cur != start)
+            {
+                path.Add(cur.Item1);
+                cur = prev[cur];
+            }
+            path.Reverse();
+            return path;
+        }
+
         /// <summary>Set while riding a dust raft: conveyor (river) tiles count as walkable then.</summary>
         public static bool AllowWater;
 

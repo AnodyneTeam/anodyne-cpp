@@ -720,37 +720,53 @@ namespace AnodyneSharp.Recording
             return f != null && f.GetValue(Player) != null;
         }
 
+        private static bool ReachableWithJump(Point t)
+        {
+            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            var p = BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t);
+            BotNav.AllowJump = false;
+            return p != null;
+        }
+
         /// <summary>Sweeps up the nearest loose Dust that is on dry land and reachable (the broom then carries it).</summary>
-        protected static IEnumerable<object> PickUpDust()
+        protected static IEnumerable<object> PickUpDust(bool optional = false)
         {
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
-            var dusts = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").ToList();
-            var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
-            foreach (var d in dusts.OrderBy(d => (d.Position - Pos).LengthSquared()))
+            // Loose dust on a river drifts with the current, so keep looking for a while.
+            for (int attempt = 0; attempt < (optional ? 1 : 40); attempt++)
             {
-                var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
-                BotNav.Avoid = dustTiles;
-                foreach (var o in o4)
+                var dusts = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").ToList();
+                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+                foreach (var d in dusts.OrderBy(d => (d.Position - Pos).LengthSquared()))
                 {
-                    var t = new Point(dt.X + o.X, dt.Y + o.Y);
-                    if (BotNav.Walkable(t) && !dustTiles.Contains(t) && BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t) != null)
+                    var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                    BotNav.Avoid = dustTiles;
+                    foreach (var o in o4)
                     {
-                        BotRunner.Status = $"sweeping dust at {dt.X},{dt.Y}";
-                        try
+                        var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                        if (BotNav.Walkable(t) && !dustTiles.Contains(t) && ReachableWithJump(t))
                         {
-                            yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                            BotRunner.Status = $"sweeping dust at {dt.X},{dt.Y}";
+                            try
+                            {
+                                yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                            }
+                            finally
+                            {
+                                BotNav.Avoid = null;
+                            }
+                            yield return Wait(30);
+                            yield break;
                         }
-                        finally
-                        {
-                            BotNav.Avoid = null;
-                        }
-                        yield return Wait(30);
-                        yield break;
                     }
+                    BotNav.Avoid = null;
                 }
-                BotNav.Avoid = null;
+                yield return Wait(30);
             }
-            throw new InvalidOperationException("bot: no dust to pick up on " + Map);
+            if (!optional)
+            {
+                throw new InvalidOperationException("bot: no dust to pick up on " + Map + " (player " + Pos + " carrying " + (Player.broom.dust != null) + "; dust: " + string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{(int)e.Position.X},{(int)e.Position.Y}{(e.exists ? "" : "x")}")) + ")");
+            }
         }
 
         /// <summary>
@@ -788,53 +804,41 @@ namespace AnodyneSharp.Recording
         private static IEnumerable<object> RaftToInner(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
-            for (int round = 0; round < 12; round++)
+            bool jump = GlobalState.inventory.CanJump;
+            BotNav.ResetDustCache();
+            for (int round = 0; round < 20; round++)
             {
-                if (BotNav.TileOf(Pos) == goal)
+                var here = BotNav.TileOf(Pos);
+                if (here == goal)
                 {
                     yield break;
                 }
-                if (!OnConveyor(BotNav.TileOf(Pos)))
+                bool wetNow = OnConveyor(here) || HasRaft();
+                var path = BotNav.RaftPath(here, wetNow, goal, jump);
+                if (path == null)
                 {
-                    bool jump = GlobalState.inventory.CanJump;
-                    var distG = BotNav.DistMap(goal, true, null, jump);
-                    var here = BotNav.TileOf(Pos);
-                    if (!distG.ContainsKey(here))
+                    throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
+                }
+                int wi = path.FindIndex(OnConveyor);
+                if (wi < 0)
+                {
+                    yield return GoTo(gx, gy);
+                    yield break;
+                }
+                RaftLog($"round {round}: from {here} (wet={wetNow}) first water {path[wi]} goal {goal}, {path.Count} tiles");
+                if (!wetNow)
+                {
+                    var s = wi == 0 ? here : path[wi - 1];
+                    var wt = path[wi];
+                    if (s != here)
                     {
-                        RaftLog("closed gates: " + BotNav.DebugGates());
-                        throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
-                    }
-                    var dryAll = BotNav.DistMap(here, false, null, jump);
-                    var screen = new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10);
-                    var dry = BotNav.DistMap(here, false, screen, jump);
-                    Point? bs = null, bw = null;
-                    int best = int.MaxValue;
-                    Point[] o4 = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
-                    foreach (var kv in dry)
-                    {
-                        foreach (var o in o4)
+                        var sc = BotNav.CentreOf(s);
+                        yield return GoTo(sc.X - BotNav.HalfW, sc.Y - BotNav.HalfH);
+                        if (BotNav.TileOf(Pos) != s && BotNav.TileOf(Pos) != here)
                         {
-                            var w = new Point(kv.Key.X + o.X, kv.Key.Y + o.Y);
-                            if (screen.Contains(w) && OnConveyor(w) && distG.TryGetValue(w, out int dg) && kv.Value + dg < best)
-                            {
-                                best = kv.Value + dg;
-                                bs = kv.Key;
-                                bw = w;
-                            }
+                            continue; // crossed a screen or got pushed: plan again from here
                         }
                     }
-                    if (dryAll.TryGetValue(goal, out int dd) && (bs == null || dd <= best + 8))
-                    {
-                        yield return GoTo(gx, gy);
-                        yield break;
-                    }
-                    if (bs == null)
-                    {
-                        throw new InvalidOperationException($"bot: no water entry on this screen from {here} towards {goal} on {Map}");
-                    }
-                    var s = bs.Value;
-                    var wt = bw.Value;
-                    RaftLog($"round {round}: from {here} entry {s}->{wt} (dist {best}) goal {goal}");
                     BotRunner.Status = $"raft: dust onto the water at {wt.X},{wt.Y}";
                     if (Player.broom.dust == null)
                     {
@@ -842,8 +846,6 @@ namespace AnodyneSharp.Recording
                     }
                     yield return StandFaceAccept(s.X, s.Y, FaceChar(new Point(wt.X - s.X, wt.Y - s.Y)));
                     yield return Wait(15);
-                    RaftLog($"placed: carrying={Player.broom.dust != null} dusts={BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust")} at {Pos}");
-                    // Step onto the dust.
                     var wc = BotNav.CentreOf(wt);
                     for (int i = 0; i < 90 && !(OnConveyor(BotNav.TileOf(Pos)) && HasRaft()); i++)
                     {
@@ -865,36 +867,35 @@ namespace AnodyneSharp.Recording
                         yield return K();
                         continue;
                     }
-                    var here = BotNav.TileOf(Pos);
-                    if (here == goal)
+                    var cur = BotNav.TileOf(Pos);
+                    if (cur == goal)
                     {
                         yield break;
                     }
-                    if (i % 200 == 0)
-                    {
-                        RaftLog($"ride i={i} at {here} pos {Pos} raft={HasRaft()} wasWet={wasWet}");
-                    }
-                    bool wet = OnConveyor(here);
+                    bool wet = OnConveyor(cur);
                     wasWet |= wet;
-                    BotNav.AllowWater = true;
-                    BotNav.AllowJump = GlobalState.inventory.CanJump;
-                    var p2 = BotNav.FindPath(here, t => t == goal, goal);
-                    BotNav.AllowWater = false;
-                    BotNav.AllowJump = false;
-                    if (p2 == null || p2.Count == 0)
-                    {
-                        RaftLog($"ride ends at {here}: no route (wet={wet})");
-                        break;
-                    }
                     if (!wet && wasWet)
                     {
-                        RaftLog($"ride ends on land at {here}");
-                        break; // back on land: plan again from here (maybe another crossing)
+                        RaftLog($"ride ends on land at {cur}");
+                        if (Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && (e.Position - Pos).Length() < 40))
+                        {
+                            yield return PickUpDust(true);
+                        }
+                        break;
+                    }
+                    var p2 = BotNav.RaftPath(cur, wet || HasRaft(), goal, jump);
+                    if (p2 == null || p2.Count == 0)
+                    {
+                        RaftLog($"ride ends at {cur}: no route (wet={wet})");
+                        break;
                     }
                     var c = BotNav.CentreOf(p2[0]);
-                    float dx = c.X - Pos.X, dy = c.Y - Pos.Y;
-                    var dir = Math.Abs(dx) > 2f ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                    yield return K(dir);
+                    float ddx = c.X - Pos.X, ddy = c.Y - Pos.Y;
+                    if (i % 20 == 0 && i < 200)
+                    {
+                        RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos}");
+                    }
+                    yield return K(Math.Abs(ddx) > 2f ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     if (!wasWet && !wet && i > 120)
                     {
                         break;
