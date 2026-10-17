@@ -437,22 +437,24 @@ namespace AnodyneSharp.Recording
                 bool jumping = false;
                 if (path == null)
                 {
-                    // A strip of river only a tile or two wide is simply waded across.
-                    BotNav.AllowWater = true;
-                    var wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
-                    BotNav.AllowWater = false;
-                    if (wade != null && wade.Count(t => BotNav.IsConveyor(t)) <= 2)
-                    {
-                        path = wade;
-                    }
-                    // Spikes: with the boots they are jumped over.
-                    if (path == null)
+                    // Spikes and narrow rivers: with the boots they are jumped over.
                     if (GlobalState.inventory.CanJump)
                     {
                         BotNav.AllowJump = true;
                         path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                         BotNav.AllowJump = false;
                         jumping = path != null;
+                    }
+                    // Without boots a strip of river only a tile or two wide is simply waded across.
+                    if (path == null)
+                    {
+                        BotNav.AllowWater = true;
+                        var wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                        BotNav.AllowWater = false;
+                        if (wade != null && wade.Count(t => BotNav.IsConveyor(t)) <= 2)
+                        {
+                            path = wade;
+                        }
                     }
                     // Or a river is in the way: cross it on a dust raft.
                     if (path == null && !InRaft)
@@ -522,6 +524,7 @@ namespace AnodyneSharp.Recording
                     var c = BotNav.CentreOf(tile);
                     Vector2 last = Pos;
                     int still = 0;
+                    int edgePushes = 0;
                     for (int i = 0; i < 200; i++)
                     {
                         if (Talking)
@@ -543,6 +546,16 @@ namespace AnodyneSharp.Recording
                         }
                         still = (p == last) ? still + 1 : 0;
                         last = p;
+                        if (still > 40 && edgePushes < 3 && new Point(tile.X / 10, tile.Y / 10) != Grid)
+                        {
+                            // Right at a screen edge without crossing it: shove on in that direction before calling the tile blocked.
+                            edgePushes++;
+                            var here0 = BotNav.TileOf(Pos);
+                            var pushDir = tile.X > here0.X ? KeyFunctions.Right : tile.X < here0.X ? KeyFunctions.Left : tile.Y > here0.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                            yield return Hold(25, pushDir);
+                            still = 0;
+                            continue;
+                        }
                         if (still > 40)
                         {
                             BotNav.Blocked.Add(tile);

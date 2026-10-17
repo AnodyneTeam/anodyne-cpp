@@ -155,6 +155,16 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine(sbr.ToString());
                         break;
                     }
+                    case 'j':
+                    {
+                        var a = tok.Substring(1).Split(',');
+                        var gt = BotNav.TileOf(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
+                        BotNav.AllowJump = true;
+                        var jp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == gt, gt);
+                        BotNav.AllowJump = false;
+                        System.Console.Error.WriteLine("JUMPPATH " + (jp == null ? "none" : string.Join(">", jp.Select(q => $"{q.X},{q.Y}{(BotNav.IsJumpable(q) ? "^" : "")}"))) + $" narrow(76,81)={BotNav.NarrowWater(new Point(76, 81))} narrow(76,82)={BotNav.NarrowWater(new Point(76, 82))}");
+                        break;
+                    }
                     case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos}"); break;
                     case '?':
                     {

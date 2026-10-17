@@ -111,29 +111,103 @@ namespace AnodyneSharp.Recording
         private static HashSet<(int, int)> _dustScreens;
 
         /// <summary>Screens (grid coords) that have loose dust to make a raft of, per the map's entity presets and what is loaded.</summary>
-        public static bool ScreenHasDust(int sx, int sy)
+        private static Dictionary<(int, int), Dictionary<Point, int>> _screenComps = new();
+        private static Dictionary<(int, int), HashSet<int>> _dustComps = new();
+
+        private static void BuildComps(int sx, int sy)
         {
-            if (_dustScreens == null)
+            if (_screenComps.ContainsKey((sx, sy)))
             {
-                _dustScreens = new HashSet<(int, int)>();
-                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                return;
+            }
+            var comp = new Dictionary<Point, int>();
+            int id = 0;
+            bool oldW = AllowWater, oldJ = AllowJump;
+            AllowWater = false;
+            AllowJump = false;
+            RefreshGates();
+            var rect = new Rectangle(sx * 10, sy * 10, 10, 10);
+            Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            for (int y = rect.Y; y < rect.Y + 10; y++)
+            {
+                for (int x = rect.X; x < rect.X + 10; x++)
                 {
-                    if (pr.Type != null && pr.Type.Name == "Dust")
+                    var t = new Point(x, y);
+                    if (comp.ContainsKey(t) || !Walkable(t))
                     {
-                        _dustScreens.Add(((int)pr.Position.X / 160, (int)pr.Position.Y / 160));
+                        continue;
+                    }
+                    id++;
+                    var q = new Queue<Point>();
+                    q.Enqueue(t);
+                    comp[t] = id;
+                    while (q.Count > 0)
+                    {
+                        var c = q.Dequeue();
+                        foreach (var d in dirs)
+                        {
+                            var n = new Point(c.X + d.X, c.Y + d.Y);
+                            if (rect.Contains(n) && !comp.ContainsKey(n) && Walkable(n))
+                            {
+                                comp[n] = id;
+                                q.Enqueue(n);
+                            }
+                        }
                     }
                 }
             }
-            if (_dustScreens.Contains((sx, sy)))
+            AllowWater = oldW;
+            AllowJump = oldJ;
+            var dc = new HashSet<int>();
+            var dustTiles = new List<Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
             {
-                return true;
+                if (pr.Type != null && pr.Type.Name == "Dust" && (int)pr.Position.X / 160 == sx && (int)pr.Position.Y / 160 == sy)
+                {
+                    dustTiles.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                }
             }
-            // A raft left behind (or dust carried) on the screen we are on can be used again.
             var g = GlobalState.CurrentMapGrid;
-            return g.X == sx && g.Y == sy && (BotRunner.Player.broom.dust != null || System.Linq.Enumerable.Any(BotRunner.Entities(), e => e.GetType().Name == "Dust"));
+            if (g.X == sx && g.Y == sy)
+            {
+                foreach (var e in BotRunner.Entities())
+                {
+                    if (e.GetType().Name == "Dust")
+                    {
+                        dustTiles.Add(TileOf(e.Position + new Vector2(8, 8)));
+                    }
+                }
+            }
+            foreach (var dt in dustTiles)
+            {
+                foreach (var o in new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    if (comp.TryGetValue(new Point(dt.X + o.X, dt.Y + o.Y), out int cid))
+                    {
+                        dc.Add(cid);
+                    }
+                }
+            }
+            _screenComps[(sx, sy)] = comp;
+            _dustComps[(sx, sy)] = dc;
         }
 
-        public static void ResetDustCache() => _dustScreens = null;
+        /// <summary>True if a dust can be reached on dry land from tile t within its screen (so a raft can be made there).</summary>
+        public static bool DustReachableFrom(Point t)
+        {
+            int sx = t.X / 10, sy = t.Y / 10;
+            BuildComps(sx, sy);
+            return _screenComps[(sx, sy)].TryGetValue(t, out int cid) && _dustComps[(sx, sy)].Contains(cid);
+        }
+
+        public static bool ScreenHasDust(int sx, int sy) => false;
+
+        public static void ResetDustCache()
+        {
+            _dustScreens = null;
+            _screenComps = new();
+            _dustComps = new();
+        }
 
         /// <summary>
         /// Route that may cross water only on a raft: a raft can be made where the land tile you step off from lies on a screen with
@@ -171,7 +245,7 @@ namespace AnodyneSharp.Recording
                         if (nw)
                         {
                             var (al, _) = CurrentMap.GetTileClass(n);
-                            if (al != Touching.NONE || (!w && !carry && !ScreenHasDust(c.X / 10, c.Y / 10)))
+                            if (al != Touching.NONE || _gatesClosed.Contains(n) || (!w && !carry && !DustReachableFrom(c)))
                             {
                                 continue;
                             }
