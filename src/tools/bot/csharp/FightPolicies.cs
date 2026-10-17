@@ -14,6 +14,7 @@ namespace AnodyneSharp.Recording
         public Rectangle T;          // target hitbox
         public Vector2 TV;           // target velocity (px/s)
         public Func<Rectangle, bool> Walk = _ => true; // is this player-sized rectangle on floor?
+        public System.Collections.Generic.IList<Rectangle> Others = new Rectangle[0]; // the other living enemies on the screen
     }
 
     /// <summary>Per-fight memory of a policy (swing cooldown etc.).</summary>
@@ -231,6 +232,20 @@ namespace AnodyneSharp.Recording
                     return K(awayNow);
                 }
                 // pinned against a wall with it right there: backing off is not possible, so deal with it from where we are
+            }
+            // Another one drifting into reach while we deal with this one: step away from it first.
+            foreach (var o in c.Others)
+            {
+                int ox = Math.Max(o.Left - pb.Right, pb.Left - o.Right);
+                int oy = Math.Max(o.Top - pb.Bottom, pb.Top - o.Bottom);
+                if (Math.Max(ox, oy) < 6)
+                {
+                    var awayO = ox >= oy ? (o.Center.X < pb.Center.X ? PKey.Right : PKey.Left) : (o.Center.Y < pb.Center.Y ? PKey.Down : PKey.Up);
+                    if (Ahead(c, awayO, 4))
+                    {
+                        return K(awayO);
+                    }
+                }
             }
             bool horiz = Math.Abs(dx) >= Math.Abs(dy);
             float along = horiz ? dx : dy, across = horiz ? dy : dx;

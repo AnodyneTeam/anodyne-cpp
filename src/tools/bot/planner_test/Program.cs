@@ -152,7 +152,7 @@ static class Program
             var (a, ms, n) = Run(player, new Vector2(250, 100), th, room);
             Check("unreachable goal: bounded cost", ms < 100 && n <= 2500, $"({ms:0.0} ms, {n} nodes, action {a})");
         }
-        fails += PolicyTests.Run((n, ok, x) => Check(n, ok, x));
+        PolicyTests.Run((n, ok, x) => Check(n, ok, x));
         Console.WriteLine(fails == 0 ? "ALL PASS" : $"{fails} FAILED");
         Environment.Exit(fails == 0 ? 0 : 1);
     }

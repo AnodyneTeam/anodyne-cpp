@@ -2,10 +2,11 @@ using AnodyneSharp.Recording;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 static class PolicyTests
 {
-    static PCtx Ctx(Sim s, Sim.Enemy e) => new PCtx { P = s.PlayerBox, Facing = s.Facing, T = e.Box, TV = e.V, Walk = s.Walk };
+    static PCtx Ctx(Sim s, Sim.Enemy e) => new PCtx { P = s.PlayerBox, Facing = s.Facing, T = e.Box, TV = e.V, Walk = s.Walk, Others = s.Enemies.Where(o => o != e && !o.Dead).Select(o => o.Box).ToList() };
 
     // Runs one episode; returns (killed, damage, frames).
     public static int VerboseSeed = -1;
@@ -80,6 +81,30 @@ static class PolicyTests
             }
             Console.WriteLine($"  first damaged cornered seed: {firstBadC}");
             check("slime, cornered against a wall: dies, damage in under 2% of pinned starts (300 seeds)", fail == 0 && dmgRuns <= 6, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
+            bad += (fail + dmgRuns > 0) ? 1 : 0;
+        }
+        // 2c. three slimes close together: kill them all one after another (nearest first), no damage
+        {
+            int fail = 0, dmgRuns = 0, worst = 0;
+            for (int seed = 0; seed < 300; seed++)
+            {
+                var s = new Sim(seed, 16, 14);
+                for (int k = 0; k < 3; k++) { s.Enemies.Add(new Sim.Enemy { K = Sim.Kind.Slime, Pos = new Vector2(90 + s.Rng.Next(50), 80 + s.Rng.Next(50)), W = 16, H = 16 }); }
+                s.P = new Vector2(30 + s.Rng.Next(150), 24 + s.Rng.Next(30));
+                int steps = 0;
+                var mem = new PolicyMem();
+                while (!s.AllDead() && steps++ < 4000)
+                {
+                    var pb = s.PlayerBox;
+                    var t = s.Enemies.Where(e => !e.Dead).OrderBy(e => (e.Box.Center.ToVector2() - pb.Center.ToVector2()).LengthSquared()).First();
+                    var k = FightPolicies.Slime(Ctx(s, t), mem) ?? new PKey[0];
+                    s.Step(k);
+                }
+                if (!s.AllDead()) { fail++; }
+                if (s.Damage > 0) { dmgRuns++; }
+                worst = Math.Max(worst, s.Frame);
+            }
+            check("three slimes together: all die, damage in under 3% (300 seeds)", fail == 0 && dmgRuns <= 9, $"(fail {fail}, damaged {dmgRuns}, worst {worst} frames)");
             bad += (fail + dmgRuns > 0) ? 1 : 0;
         }
         // 3. Shieldy walking up and down a column, we start above it

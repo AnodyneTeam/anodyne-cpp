@@ -2211,7 +2211,8 @@ namespace AnodyneSharp.Recording
             Facing = Player.facing switch { Facing.UP => PFacing.Up, Facing.DOWN => PFacing.Down, Facing.LEFT => PFacing.Left, _ => PFacing.Right },
             T = target.Hitbox,
             TV = target.velocity,
-            Walk = CornersWalkable
+            Walk = CornersWalkable,
+            Others = Enemies().Where(e => e != target).Select(e => e.Hitbox).ToList()
         };
 
         /// <summary>A policy's keys as a frame: a plain step goes through the danger-aware SafeMove, anything else (swings, standing) is sent as is.</summary>
