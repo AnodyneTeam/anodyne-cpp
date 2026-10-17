@@ -194,7 +194,7 @@ namespace AnodyneSharp.Recording
                 for (int i = 1; i < 24; i++)
                 {
                     t = new Point(t.X + d.X, t.Y + d.Y);
-                    if (!Walkable(t))
+                    if (!Walkable(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), e => e.exists && e.GetType().Name == "Dust" && TileOf(e.Position + new Vector2(8, 8)) == t))
                     {
                         break;
                     }

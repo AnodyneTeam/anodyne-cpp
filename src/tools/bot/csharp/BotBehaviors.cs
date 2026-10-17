@@ -56,6 +56,7 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'V': yield return SaveHere(); break;
+                    case '%': yield return BlockLasers(); break;
                     case 'B':
                     {
                         var a = tok.Substring(1).Split(',');
@@ -63,6 +64,7 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
+                    case '@': LaserMargin = int.Parse(tok.Substring(1)); break;
                     case 'X': AutoFight = tok[1] == '1'; break;
                     case 'Y':
                     {
@@ -282,6 +284,9 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Off by default so the already-verified early route is unchanged; parts that need it switch it on (token O1).</summary>
         public static bool DodgeEnabled;
+
+        /// <summary>Extra px kept around beam bullets (they leave 12px gaps for a 10px player, so 0 is needed to slip through a dense row).</summary>
+        public static int LaserMargin = 2;
         private static int _dodgeStreak;
 
         private const float WalkPxPerFrame = 70f / 60f;
@@ -322,7 +327,10 @@ namespace AnodyneSharp.Recording
                     }
                     var r = d.Hitbox;
                     r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
-                    r.Inflate(2, 2);
+                    // The beam's bullets are 8px apart-gaps of 12px for a 10px-wide player: no extra margin or it never fits.
+                    bool bolt = d.GetType().Name.Contains("Laser");
+                    int m = bolt ? LaserMargin : 2;
+                    r.Inflate(m, m);
                     if (mine.Intersects(r))
                     {
                         return true;
@@ -395,6 +403,83 @@ namespace AnodyneSharp.Recording
             yield return Wait(12);
         }
 
+        private static Point FacingStep(Facing f) => f switch
+        {
+            Facing.RIGHT => new Point(1, 0),
+            Facing.LEFT => new Point(-1, 0),
+            Facing.UP => new Point(0, -1),
+            _ => new Point(0, 1)
+        };
+
+        /// <summary>True if the dust sits right at the end of a beam (picking it up there means loitering in the line of fire).</summary>
+        private static bool NextToLane(Entity dust, HashSet<Point> lanes)
+        {
+            var t = BotNav.TileOf(dust.Position + new Vector2(8, 8));
+            return lanes.Contains(new Point(t.X + 1, t.Y)) || lanes.Contains(new Point(t.X - 1, t.Y)) ||
+                   lanes.Contains(new Point(t.X, t.Y + 1)) || lanes.Contains(new Point(t.X, t.Y - 1));
+        }
+
+        private static char FaceChar(Point toward) => toward.Y < 0 ? 'u' : toward.Y > 0 ? 'd' : toward.X < 0 ? 'l' : 'r';
+
+        /// <summary>
+        /// Plugs every PewLaser on the screen with loose dust: pick a dust up by sweeping it with the broom, then stand next to
+        /// the tile in front of the emitter, face it and press Accept to set the dust down there.
+        /// </summary>
+        protected static IEnumerable<object> BlockLasers()
+        {
+            var emitters = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").ToList();
+            foreach (var em in emitters)
+            {
+                var step = FacingStep(em.facing);
+                var et = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                var target = new Point(et.X + step.X, et.Y + step.Y);
+                bool plugged() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && BotNav.TileOf(e.Position + new Vector2(8, 8)) == target);
+                if (plugged())
+                {
+                    continue;
+                }
+                var lanes = BotNav.LaneTiles();
+                var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))))
+                    .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position - em.Position).LengthSquared()).FirstOrDefault();
+                if (dust == null)
+                {
+                    continue;
+                }
+                var dt = BotNav.TileOf(dust.Position + new Vector2(8, 8));
+                BotRunner.Status = $"plugging laser at {et.X},{et.Y}";
+                Point? pickFrom = null;
+                foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var t = new Point(dt.X + o.X, dt.Y + o.Y);
+                    if (BotNav.Walkable(t) && !lanes.Contains(t))
+                    {
+                        pickFrom = t;
+                        yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                        break;
+                    }
+                }
+                if (pickFrom == null)
+                {
+                    continue;
+                }
+                yield return Wait(30);
+                foreach (var o in new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) })
+                {
+                    var t = new Point(target.X + o.X, target.Y + o.Y);
+                    if (t != et && BotNav.Walkable(t) && !lanes.Contains(t))
+                    {
+                        yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
+                        break;
+                    }
+                }
+                yield return Wait(30);
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  laser {et.X},{et.Y} plugged: {plugged()}");
+                }
+            }
+        }
+
         /// <summary>
         /// Temple screen (1,2): blocks the left laser column with dust unless it is already blocked (rooms reset on a death,
         /// and again whenever the screen is reloaded).
@@ -419,13 +504,17 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> TempleButtonRoom()
         {
             yield return GoScreenTo(0, 1);
-            yield return GoTo(70, 246);
+            if (!BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Gate"))
+            {
+                yield break; // solved on an earlier visit: opened gates stay gone
+            }
+            yield return GoTo(70, 240);
             yield return Hold(1, KeyFunctions.Up);
             int lastSwing = -100;
             bool pushed = false;
             for (int i = 0; i < 2400 && !pushed; i++)
             {
-                var patroller = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Shieldy" && e.Hitbox.Y >= 218 && e.Hitbox.Y <= 236);
+                var patroller = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Shieldy" && e.Hitbox.Y >= 205 && e.Hitbox.Y <= 236 && e.velocity.X != 0);
                 if (Player.facing != Facing.UP)
                 {
                     yield return K(KeyFunctions.Up);
@@ -437,9 +526,10 @@ namespace AnodyneSharp.Recording
                     if (sx >= 56 && sx <= 80 && i - lastSwing > 20)
                     {
                         lastSwing = i;
+                        int y0 = patroller.Hitbox.Y;
                         yield return K(KeyFunctions.Accept);
                         yield return Wait(8);
-                        pushed = patroller.Hitbox.Y < 222;
+                        pushed = patroller.Hitbox.Y < y0 - 4;
                         continue;
                     }
                 }
@@ -595,44 +685,47 @@ namespace AnodyneSharp.Recording
                     var et = BotNav.TileOf(new Vector2(c.X - 5, c.Y - 6));
                     List<Point> sp = null;
                     var lanes = BotNav.LaneTiles();
-                    if (lanes.Contains(new Point(et.X, et.Y - 1)) && BotNav.Walkable(new Point(et.X, et.Y + 2)))
+                    bool acted = false;
+                    foreach (var pd in new[] { new Point(0, -1), new Point(-1, 0), new Point(1, 0) })
                     {
-                        // A beam runs along the row just above it: shove it up into the beam from below (a front hit moves it 8px).
-                        int gapb = pb.Top - tb.Bottom;
-                        if (Math.Abs(dx) <= 4 && gapb >= -2 && gapb <= 40)
+                        // A beam runs along the tile next to it: shove it into the beam from the far side (a front hit moves it 8px).
+                        if (!lanes.Contains(new Point(et.X + pd.X, et.Y + pd.Y)) || lanes.Contains(new Point(et.X - pd.X, et.Y - pd.Y)) ||
+                            !BotNav.Walkable(new Point(et.X - 2 * pd.X, et.Y - 2 * pd.Y)))
                         {
-                            if (gapb > 10)
+                            continue;
+                        }
+                        bool vert = pd.X == 0;
+                        var key = pd.Y < 0 ? KeyFunctions.Up : pd.Y > 0 ? KeyFunctions.Down : pd.X < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                        var face = pd.Y < 0 ? Facing.UP : pd.Y > 0 ? Facing.DOWN : pd.X < 0 ? Facing.LEFT : Facing.RIGHT;
+                        // Signed gap between us and it along the push axis, measured from the far side (positive = clear of it).
+                        int gapb = pd.Y < 0 ? pb.Top - tb.Bottom : pd.Y > 0 ? tb.Top - pb.Bottom : pd.X < 0 ? pb.Left - tb.Right : tb.Left - pb.Right;
+                        float across = vert ? dx : dy;
+                        if (Math.Abs(across) <= 4 && gapb >= -2 && gapb <= 40)
+                        {
+                            if (gapb > 10 || Player.facing != face)
                             {
-                                yield return K(KeyFunctions.Up);
-                                continue;
-                            }
-                            if (Player.facing != Facing.UP)
-                            {
-                                yield return K(KeyFunctions.Up);
-                                continue;
+                                yield return K(key);
+                                acted = true;
+                                break;
                             }
                             swing++;
                             if (swing - lastSwing >= SwingCooldown)
                             {
                                 lastSwing = swing;
                                 yield return K(KeyFunctions.Accept);
-                                continue;
+                                acted = true;
+                                break;
                             }
                             yield return K();
-                            continue;
+                            acted = true;
+                                break;
                         }
-                        if (Math.Abs(dx) > 4 && Math.Abs(dy) < 16 && Math.Abs(dx) < 26 && BotNav.Walkable(BotNav.TileOf(Pos + new Vector2(0, 16))))
-                        {
-                            // Level with it and close: its flanks hurt too, so drop down out of its row before circling to the south side.
-                            yield return K(KeyFunctions.Down);
-                            continue;
-                        }
-                        var below = new Point(et.X, et.Y + 2);
+                        var behind = new Point(et.X - 2 * pd.X, et.Y - 2 * pd.Y);
                         List<Point> bp = null;
                         foreach (int margin in new[] { 20, 12, 5 })
                         {
                             BotNav.Avoid = BotNav.NearEnemies(margin, target);
-                            bp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == below, below, strict: true);
+                            bp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == behind, behind, strict: true);
                             BotNav.Avoid = null;
                             if (bp != null)
                             {
@@ -645,8 +738,13 @@ namespace AnodyneSharp.Recording
                             var nc = BotNav.CentreOf(bp[0]) + new Vector2(5, 6);
                             float px = nc.X - me.X, py = nc.Y - me.Y;
                             yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down), target);
-                            continue;
+                            acted = true;
+                            break;
                         }
+                    }
+                    if (acted)
+                    {
+                        continue;
                     }
                     foreach (int up in new[] { 2, 1 })
                     {

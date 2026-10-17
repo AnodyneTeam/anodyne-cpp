@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace AnodyneSharp.Recording
 {
@@ -26,14 +26,20 @@ namespace AnodyneSharp.Recording
             yield return Section("temple resave", () => Exec("X0 H2,2 V X1"));
 
             // (0,1): two buttons open the gate east; a Shieldy has to be shoved onto one while we stand on the other.
-            // (1,1): the small-key gate on the north wall leads on towards the upper rooms (the hole by the east exit is not a
-            // way across). One self-contained section: after a death the rooms reset, so it redoes the dust and the fights.
-            const string ToKeyGate = "X0 O1 K X1 H0,2 F X0 # H1,1 I224,160,d W40 X1";
-            yield return Section("temple buttons + key gate", () => Exec(ToKeyGate));
+            // NOTE: the small-key gate on (1,1)'s north wall (chest room (1,0): 2 lasers, 2 Shieldies, 2 Slimes) is a side room; it would
+            // spend a key the walkthrough needs later, so it is left for the 100% route.
+            // (1,1) -> (2,1): plug the laser over the gap column (dodge off for the dash up it), cross east to the room whose button
+            // opens its gates, step on it, slip through the bullet row and the corridor down to the (2,2) checkpoint and save.
+            const string ToEast = "X0 O1 K X1 H0,2 F X0 # H1,1 O0 % O1 @0 H2,1 B336,176 H2,2 @2 F V";
+            yield return Section("temple east", () => Exec(ToEast + " X1"));
 
-            // TODO: the upper rooms (2,0)/(2,1) (button @336,176), the Red Slime card (chest @448,592), the second key block (@544,320), the
-            // checkpoint @496,128 and the Seer. An attempt at (2,0)/(2,1) failed: the chain up to the key gate leaves the bot at 1 HP
-            // (lasers on (1,1), Shieldies), so it dies on arrival and loops. Needs better laser dodging / HP handling first.
+            // East wing: (3,2) Shieldies/Annoyer, then south (3,3) and west (2,3) to the chest with the Red Slime card (@448,592).
+            yield return Section("temple red slime card", () => Exec("O1 X1 H3,2 H3,3 H2,3 I448,592,d W60"));
+
+            // Back up to (3,2): the key block (@544,320) on its north wall opens with the second key.
+            yield return Section("temple key block", () => Exec("O1 X1 H3,3 H3,2 I544,320,d W60"));
+
+            // TODO: (3,1) and on: the checkpoint @496,128 and the Seer.
         }
     }
 }
