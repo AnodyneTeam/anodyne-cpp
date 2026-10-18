@@ -132,6 +132,10 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Shieldy: never chase a patrolling one: wait still and swing when its predicted position meets the broom; push it into a beam
   with a front hit; keep clear of a patroller about to walk into us.
 - Laser lanes must cover every tile row/column the emitter's 16px box touches (emitters need not be on the tile grid).
+- Red Cave: lure Movers into beams/buttons instead of fighting them (`m<s>` soft-fight, `|<s>` lure tokens, `F<n>` fixed waits);
+  Slashers cost 1-3 hearts each (budget with `g<n>`). Stab a room's Red_Pillar chain ("tail") with the broom before fighting the
+  reaper in that room. Jump boots make the player airborne and immune except to steam, which has no AIR check. Plants, frogs,
+  solid shooters and pillars count as non-walkable in the nav grid.
 
 ## Status
 
@@ -139,6 +143,8 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   whole Temple (Seer with no damage, Shieldy and Red Slime cards) -> Blue Forest 2 -> Fields -> Beach (Fisherman card, ends at the
   whirlpool screen). The goldens in `golden/` predate this work and are stale; playback/determinism checking is parked on purpose
   (`REPLAY=1 run_bot.sh` turns it back on) until the bot can finish the whole game.
+- Red Sea reaches the Red Cave door and `RedCave.cs` (Part 9) runs through the first rooms, the hub, the steam crossings and (5,1).
+  The (5,1) pillar stab at (832,208) and everything after it are unverified; the Beach 2 raft crossing still uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.
 - GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the C# run
