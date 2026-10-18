@@ -1128,6 +1128,10 @@ namespace AnodyneSharp.Recording
                         KeyFunctions dir = Math.Abs(dx) > 2f
                             ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                             : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        if (Math.Abs(dy) > 2f && Math.Abs(dx) > 2f && NearSteamJet(24) && (pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1]).Y != tile.Y)
+                        {
+                            dir = dy < 0 ? KeyFunctions.Up : KeyFunctions.Down; // crossing a steam jet: straight over it, the sidestep afterwards
+                        }
                         var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true, look: path.Skip(pi).Take(4).Select(BotNav.CentreOf).ToList());
                         if (BlockedBy != null && blockerHandled < 6)
                         {
@@ -1240,7 +1244,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1255,6 +1259,7 @@ namespace AnodyneSharp.Recording
             "beach2" => new Beach2(),
             "beach3" => new Beach3(),
             "redsea" => new RedSea(),
+            "redcave" => new RedCave(),
             _ => throw new ArgumentException(name)
         };
 

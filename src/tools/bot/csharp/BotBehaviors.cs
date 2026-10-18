@@ -31,7 +31,7 @@ namespace AnodyneSharp.Recording
                     case 'W': yield return Wait(n); break;
                     case 'T': yield return ReadDialogue(); break;
                     case 'Q': yield return GoScreen(tok[1]); break;
-                    case 'F': yield return Fight(); break;
+                    case 'F': yield return n > 1 ? Fight(n, soft: true) : Fight(); break; // F<n>: soft fight, give up after n frames
                     case 'I':
                     {
                         // Ix,y,side e.g. I768,672,l
@@ -124,6 +124,8 @@ namespace AnodyneSharp.Recording
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
                     case '+': yield return OpenChests(); break;
+                    case '|': yield return MoverOnButton(n); break; // &<s>: get a Mover onto one button while we stand on the other (until PUZZLES_SOLVED >= 2)
+                    case 'm': yield return LureMovers(n); break; // m<s>: lure every Mover on the screen into a steam beam (or a button), at most s seconds
                     case 'i': yield return CollectCicada(); break;
                     case 'o': yield return EnterDoorTo(tok.Substring(1)); break; // o<MAP>: walk through this map's door that leads to MAP
                     case 'e': yield return Tap(KeyFunctions.Cancel); yield return Wait(30); break; // e: jump (the boots)
@@ -518,10 +520,40 @@ namespace AnodyneSharp.Recording
         private static readonly System.Text.RegularExpressions.Regex ProjectileName =
             new("Laser|Goo|Bullet|Fire|Spit|Shot|Bolt|Slash|Burst|Spike|Wave", System.Text.RegularExpressions.RegexOptions.Compiled);
 
+        private static readonly Dictionary<Entity, long> _steamLastUp = new();
+
+        /// <summary>True if the player is within `margin` px of a Red Cave steam jet's beam.</summary>
+        protected static bool NearSteamJet(int margin)
+        {
+            var pb = Player.Hitbox;
+            pb.Inflate(margin, margin);
+            return BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.Hitbox.Intersects(pb));
+        }
+
+        protected static bool IsSteamBeam(Entity e) => e.GetType().DeclaringType?.Name == "OnOffLaser";
+
+        /// <summary>
+        /// A Red Cave steam jet is hidden 2s, then rises harmlessly for ~0.6s, then burns for 2s. It counts as a danger while it burns, and in the last
+        /// third of its hidden time (a crossing begun then would meet the burn): so a walker enters only in the first ~70 frames after it went down.
+        /// </summary>
+        protected static bool SteamDangerous(Entity e)
+        {
+            if (e.visible)
+            {
+                _steamLastUp[e] = BotRunner.Frame;
+                return e.CurAnimName == "steam_is_harmful";
+            }
+            if (!_steamLastUp.TryGetValue(e, out long last))
+            {
+                _steamLastUp[e] = last = BotRunner.Frame; // first seen: the 2s idle timer started when the screen loaded
+            }
+            return BotRunner.Frame - last > 70;
+        }
+
         /// <summary>Things that hurt on contact: living enemies and their projectiles (not `except`).</summary>
         protected static List<Entity> Dangers(Entity except = null)
         {
-            return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 &&
+            return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) &&
                 (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap")).ToList();
         }
 
@@ -550,6 +582,10 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                     var r = d.Hitbox;
+                    if (IsSteamBeam(d) && pb.Intersects(r))
+                    {
+                        continue; // already in the jet: standing still is no better, let it walk out
+                    }
                     r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
                     // The beam's bullets are 8px apart-gaps of 12px for a 10px-wide player: no extra margin or it never fits.
                     bool bolt = d.GetType().Name.Contains("Laser");
@@ -1076,6 +1112,11 @@ namespace AnodyneSharp.Recording
             {
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
+            }
+            if (dangers.All(IsSteamBeam))
+            {
+                // only steam jets (burning or about to): hold back from stepping in, but never stand still inside one
+                return WouldCollide(wanted, dangers, 8) ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
             if (GlobalState.inventory.CanJump && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
@@ -2379,6 +2420,151 @@ namespace AnodyneSharp.Recording
             return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e)).ToList();
         }
 
+        /// <summary>
+        /// Two-button gate with a Mover: stand on one button, and make the Mover cross the other on its way to us. Lure the Mover to a spot
+        /// beyond the other button (on the line from our button through it), then walk onto our button; it follows and presses its button.
+        /// </summary>
+        protected static IEnumerable<object> MoverOnButton(int seconds)
+        {
+            int attempt = 0;
+            for (int f = 0; f < seconds * 60 && GlobalState.PUZZLES_SOLVED < 2; attempt++)
+            {
+                var buttons = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Button").ToList();
+                var mover = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Mover");
+                if (buttons.Count < 2 || mover == null)
+                {
+                    yield break;
+                }
+                var mine = buttons[attempt % buttons.Count];
+                var theirs = buttons[(attempt + 1) % buttons.Count];
+                var dir = theirs.Position - mine.Position;
+                dir.Normalize();
+                // the lure spot: beyond their button, as far as a walkable tile allows
+                Point? spot = null;
+                for (int d = 5; d >= 2 && spot == null; d--)
+                {
+                    var q = theirs.Position + dir * (d * 16);
+                    var t = BotNav.TileOf(q);
+                    if (t.X >= Grid.X * 10 + 1 && t.X < Grid.X * 10 + 9 && t.Y >= Grid.Y * 10 + 1 && t.Y < Grid.Y * 10 + 9 && BotNav.FindPath(BotNav.TileOf(Pos), t) != null)
+                    {
+                        spot = t;
+                    }
+                }
+                if (spot == null)
+                {
+                    continue;
+                }
+                BotRunner.Status = $"buttons: lure mover to {spot.Value.X},{spot.Value.Y}, then stand on {mine.Position}";
+                yield return GoTo(spot.Value.X * 16, spot.Value.Y * 16);
+                for (int w = 0; w < 10 && (mover.Position - Pos).Length() > 24; w++)
+                {
+                    yield return Wait(30);
+                    f += 30;
+                }
+                yield return GoTo(mine.Position.X, mine.Position.Y);
+                for (int w = 0; w < 8 && GlobalState.PUZZLES_SOLVED < 2; w++)
+                {
+                    yield return Wait(30);
+                    f += 30;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Red Cave Movers home in on the player in 1s bursts and die in an On-Off steam beam. Stand where the straight line from the mover to
+        /// us crosses a beam but we are well clear of every beam, and wait; try another spot if nothing happens.
+        /// </summary>
+        protected static IEnumerable<object> LureMovers(int seconds)
+        {
+            int attempt = 0;
+            for (int f = 0; f < seconds * 60; f += 30)
+            {
+                var movers = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Mover").ToList();
+                if (movers.Count == 0)
+                {
+                    yield break;
+                }
+                var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
+                var rects = beams.Select(b => new Rectangle((int)b.Position.X, (int)b.Position.Y, b.width, b.height)).ToList();
+                var m = movers.OrderBy(e => (e.Position - Pos).Length()).First();
+                var mc = m.Position + new Vector2(8, 8);
+                var here = BotNav.TileOf(Pos);
+                var cands = new List<(Point t, int cost)>();
+                for (int tx = Grid.X * 10; tx < Grid.X * 10 + 10; tx++)
+                {
+                    for (int ty = Grid.Y * 10; ty < Grid.Y * 10 + 10; ty++)
+                    {
+                        var c = new Vector2(tx * 16 + 8, ty * 16 + 8);
+                        var box = new Rectangle(tx * 16 - 20, ty * 16 - 20, 56, 56);
+                        if (rects.Any(r => r.Intersects(box)))
+                        {
+                            continue;
+                        }
+                        bool crosses = false;
+                        var dir = c - mc;
+                        int steps = (int)(dir.Length() / 4);
+                        for (int i = 1; i < steps && !crosses; i++)
+                        {
+                            var q = mc + dir * i / steps;
+                            crosses = rects.Any(r => r.Contains((int)q.X, (int)q.Y));
+                        }
+                        if (!crosses)
+                        {
+                            continue;
+                        }
+                        var path = BotNav.FindPath(here, new Point(tx, ty));
+                        if (path != null)
+                        {
+                            bool through = path.Any(pt => rects.Any(r => r.Intersects(new Rectangle(pt.X * 16 - 6, pt.Y * 16 - 6, 28, 28))));
+                            cands.Add((new Point(tx, ty), path.Count + (int)(dir.Length() / 16) + (through ? 30 : 0)));
+                        }
+                    }
+                }
+                if (cands.Count == 0)
+                {
+                    BotRunner.Status = "lure: no spot";
+                    yield return Wait(30);
+                    continue;
+                }
+                var pick = cands.OrderBy(c => c.cost).ElementAt(Math.Min(attempt, cands.Count - 1)).t;
+                BotRunner.Status = $"lure mover to beam: stand at {pick.X},{pick.Y}";
+                if (pick != here)
+                {
+                    var pickPath = BotNav.FindPath(here, pick);
+                    if (pickPath != null && pickPath.Any(pt => rects.Any(r => r.Intersects(new Rectangle(pt.X * 16 - 6, pt.Y * 16 - 6, 28, 28)))))
+                    {
+                        // the way crosses a steam jet: go the moment it has just gone down (it stays hidden for 2s, a crossing takes under a second)
+                        BotRunner.Status = "lure: wait for the jet to go down";
+                        bool wasUp = beams.Any(b => b.visible);
+                        for (int w = 0; w < 600; w++)
+                        {
+                            bool up = beams.Any(b => b.visible);
+                            if (wasUp && !up)
+                            {
+                                break;
+                            }
+                            wasUp = up;
+                            yield return Wait(1);
+                        }
+                    }
+                    yield return GoTo(pick.X * 16, pick.Y * 16);
+                }
+                for (int w = 0; w < 4; w++)
+                {
+                    yield return Wait(30);
+                    f += 30;
+                    if (!movers.Any(e => e.exists))
+                    {
+                        break;
+                    }
+                }
+                if (movers.Any(e => e.exists))
+                {
+                    attempt++;
+                }
+            }
+        }
+
         /// <summary>Walks over any dropped hearts on the screen while health is not full (they time out, so be quick).</summary>
         protected static IEnumerable<object> CollectHearts()
         {
@@ -3001,6 +3187,7 @@ namespace AnodyneSharp.Recording
         {
             int beamPushes = 0, ambushWaited = 0;
             bool dogDashing = false;
+            int slFloat = -1000; string slPrev = ""; Point? slGoal = null;
             int dogAttackFrame = 0, dogSwingWait = 70, plantSwingWait = 60, frogLaunch = -100, annoyerStill = 0;
             Vector2 annoyerLastPos = Vector2.Zero;
             bool frogWasUp = false;
@@ -3124,7 +3311,8 @@ namespace AnodyneSharp.Recording
                 }
                 else
                 {
-                    noKill++;
+                    // a Slasher takes ~3.5s per hit (float, wind-up, cut): waiting out its cycle is not "no progress"
+                    noKill = enemies.Any(en => en.GetType().Name == "Slasher") && noKill > 0 && noKill < 900 ? Math.Min(noKill + 1, 100) : noKill + 1;
                 }
                 if (forcedFrames > 0 && --forcedFrames == 0)
                 {
@@ -3368,6 +3556,104 @@ namespace AnodyneSharp.Recording
                         {
                             BotRunner.Status = "fight/step clear of a patrolling Shieldy";
                             yield return K(clear);
+                            continue;
+                        }
+                    }
+                }
+                // A Slasher drifts after us at 20px/s, winds up for 0.5s (still tracking) and then cuts once: a thin strip in front of it (long, 36px
+                // beyond its body) when we are further than 36px, a strip across its front otherwise. The cut is only there for 0.25s, fixed where it
+                // was made. Neither strip reaches a spot diagonal to it (30px off on both axes), so during the wind-up step out to such a spot,
+                // and hit it while it floats or after its cut has gone.
+                if (target.GetType().Name == "Slasher")
+                {
+                    string anim = target.CurAnimName ?? "";
+                    bool cutting = anim.StartsWith("attack") && target.SubEntities().Any(sub => sub.exists);
+                    bool floating = anim.StartsWith("float");
+                    if (floating && !slPrev.StartsWith("float"))
+                    {
+                        slGoal = null;
+                        slFloat = i; // the float lasts 1.4s: strike in the first second, then get clear before the wind-up ends
+                    }
+                    slPrev = anim;
+                    if (anim.StartsWith("warning") || cutting || (floating && i - slFloat >= 50))
+                    {
+                        var sc = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
+                        var pcen = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+                        float ddx = pcen.X - sc.X, ddy = pcen.Y - sc.Y;
+                        bool safe = Math.Min(Math.Abs(ddx), Math.Abs(ddy)) >= 30 || Math.Sqrt(ddx * ddx + ddy * ddy) >= 70;
+                        BotRunner.Status = safe ? "fight/slasher: clear of the cut" : "fight/slasher: out of line of the cut";
+                        if (safe)
+                        {
+                            yield return K();
+                            continue;
+                        }
+                        // the nearest tile (by path) that is out of both strips; the greedy step below is the fallback
+                        var hereT = BotNav.TileOf(Pos);
+                        if (slGoal == null)
+                        {
+                            // The Slasher drifts 10px closer in the wind-up (on both axes), so aim for ~48px along the axis it faces and 24px off it:
+                            // it ends up beyond 36px (a long cut, 10px wide, down its own row) and still 12px off that row.
+                            var cands = new HashSet<Point>();
+                            foreach (var (ax, ay) in new[] { (1, 1), (1, -1), (-1, 1), (-1, -1) })
+                            {
+                                foreach (var (lx, ly) in new[] { (48, 24), (24, 48), (64, 0), (0, 64) })
+                                {
+                                    var ct = BotNav.TileOf(new Vector2(sc.X + ax * lx - 5, sc.Y + ay * ly - 6));
+                                    if (BotNav.Walkable(ct))
+                                    {
+                                        cands.Add(ct);
+                                    }
+                                }
+                            }
+                            var found = BotNav.FindPath(hereT, t => cands.Contains(t), hereT);
+                            if (found != null && found.Count > 0)
+                            {
+                                slGoal = found[found.Count - 1]; // chosen once per wind-up, so the dash does not dither as the Slasher drifts
+                            }
+                        }
+                        var goalPath = slGoal.HasValue && slGoal.Value != hereT ? BotNav.FindPath(hereT, t => t == slGoal.Value, slGoal.Value) : null;
+                        if (goalPath != null && goalPath.Count > 0)
+                        {
+                            var nc2 = BotNav.CentreOf(goalPath[0]) + new Vector2(5, 6);
+                            var me2 = Pos + new Vector2(5, 6);
+                            float qx = nc2.X - me2.X, qy = nc2.Y - me2.Y;
+                            yield return K(Math.Abs(qx) > 2f ? (qx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (qy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                            continue;
+                        }
+                        var kx = ddx >= 0 ? KeyFunctions.Right : KeyFunctions.Left;
+                        var ky = ddy >= 0 ? KeyFunctions.Down : KeyFunctions.Up;
+                        var order = Math.Abs(ddx) < Math.Abs(ddy)
+                            ? new[] { kx, ky, ddx >= 0 ? KeyFunctions.Left : KeyFunctions.Right, ddy >= 0 ? KeyFunctions.Up : KeyFunctions.Down }
+                            : new[] { ky, kx, ddy >= 0 ? KeyFunctions.Up : KeyFunctions.Down, ddx >= 0 ? KeyFunctions.Left : KeyFunctions.Right };
+                        var pick = order.FirstOrDefault(k => WalkableAhead(k, 4));
+                        yield return pick == default ? K() : K(pick);
+                        continue;
+                    }
+                    // striking: walk the path to it (it can be stuck behind a corner while we stand in a straight line to it)
+                    var slHere = BotNav.TileOf(Pos);
+                    var slCen = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
+                    var slNear = new HashSet<Point>();
+                    for (int ox = -16; ox <= 16; ox += 8)
+                    {
+                        for (int oy = -16; oy <= 16; oy += 8)
+                        {
+                            var nt = BotNav.TileOf(new Vector2(slCen.X + ox - 5, slCen.Y + oy - 6));
+                            if (BotNav.Walkable(nt))
+                            {
+                                slNear.Add(nt);
+                            }
+                        }
+                    }
+                    if ((target.Position - Pos).Length() > 20 && !slNear.Contains(slHere))
+                    {
+                        var approach = BotNav.FindPath(slHere, t => slNear.Contains(t), slHere);
+                        if (approach != null && approach.Count > 0)
+                        {
+                            BotRunner.Status = "fight/slasher: round to it";
+                            var ncA = BotNav.CentreOf(approach[0]) + new Vector2(5, 6);
+                            var meA = Pos + new Vector2(5, 6);
+                            float apx = ncA.X - meA.X, apy = ncA.Y - meA.Y;
+                            yield return K(Math.Abs(apx) > 2f ? (apx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (apy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                             continue;
                         }
                     }

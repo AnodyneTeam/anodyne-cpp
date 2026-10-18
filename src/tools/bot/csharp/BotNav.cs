@@ -347,7 +347,7 @@ namespace AnodyneSharp.Recording
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
             {
-                if (e.exists && e.GetType().Name is "Burst_Plant" or "Frog")
+                if (e.exists && e.GetType().Name is "Burst_Plant" or "Frog" or "Red_Pillar" or "Chain" or "Four_Shooter")
                 {
                     var r = e.Hitbox;
                     for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
@@ -613,6 +613,24 @@ namespace AnodyneSharp.Recording
                         int dist = Math.Max(Math.Abs(dx), Math.Abs(dy));
                         var t = new Point(c.X + dx, c.Y + dy);
                         zones[t] = Math.Max(zones.TryGetValue(t, out int old) ? old : 0, dist <= 2 ? 12 : 5);
+                    }
+                }
+            }
+            // Red Cave steam jets: walking along or across one is a gamble with its 2s cycle, so the route keeps off them where it can
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "OnOffLaser")
+                {
+                    continue;
+                }
+                foreach (var sub in e.SubEntities())
+                {
+                    for (int ty = (int)Math.Floor(sub.Position.Y / 16f); ty <= (int)Math.Floor((sub.Position.Y + sub.height - 1) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor(sub.Position.X / 16f); tx <= (int)Math.Floor((sub.Position.X + sub.width - 1) / 16f); tx++)
+                        {
+                            zones[new Point(tx, ty)] = Math.Max(zones.TryGetValue(new Point(tx, ty), out int z0) ? z0 : 0, 40);
+                        }
                     }
                 }
             }
