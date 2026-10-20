@@ -1049,10 +1049,27 @@ namespace AnodyneSharp.Recording
                         var land = pj < path.Count ? path[pj] : path[pj - 1];
                         var from = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
                         var jk = tile.X > from.X ? KeyFunctions.Right : tile.X < from.X ? KeyFunctions.Left : tile.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                        // Steam burns in the air too: a jump whose spikes or landing lie in a Red Cave jet waits for the jet to have just gone down.
+                        var jumpTiles = path.GetRange(pi, Math.Min(pj + 1, path.Count) - pi);
+                        jumpTiles.Add(from);
+                        for (int w = 0; w < 400 && SteamUnsafeOver(jumpTiles); w++)
+                        {
+                            BotRunner.Status = "jump over the spikes: wait for the steam to go down";
+                            BotRunner.NotStuck();
+                            yield return K();
+                        }
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  jump {string.Join(">", jumpTiles.Select(q => $"{q.X},{q.Y}"))} land {land.X},{land.Y} enemies near landing: {BotNav.NearEnemies(10).Contains(land)}");
+                        }
                         BotRunner.Status = "jump over the spikes";
                         yield return K(jk, KeyFunctions.Cancel);
                         for (int j = 0; j < 90 && !(BotNav.TileOf(Pos) == land && Player.state != PlayerState.AIR); j++)
                         {
+                            if (j > 4 && Player.state != PlayerState.AIR && BotNav.IsJumpable(BotNav.TileOf(Pos)) == false && (land.X - BotNav.TileOf(Pos).X) * (jk == KeyFunctions.Left ? -1 : jk == KeyFunctions.Right ? 1 : 0) + (land.Y - BotNav.TileOf(Pos).Y) * (jk == KeyFunctions.Up ? -1 : jk == KeyFunctions.Down ? 1 : 0) < 0)
+                            {
+                                break; // landed past the landing tile: stop pushing on (the walker steps back with its dodging), into whatever is beyond
+                            }
                             yield return K(jk);
                         }
                         pi = pj - 1;
@@ -1062,6 +1079,7 @@ namespace AnodyneSharp.Recording
                     Vector2 last = Pos;
                     int still = 0;
                     int edgePushes = 0;
+                    int steamWaits = 0;
                     for (int i = 0; i < 200; i++)
                     {
                         if (Talking)
@@ -1107,6 +1125,14 @@ namespace AnodyneSharp.Recording
                         }
                         still = (p == last) ? still + 1 : 0;
                         last = p;
+                        if (SteamWait && steamWaits < 600)
+                        {
+                            // held back for a steam jet's cycle on purpose: neither this tile's time nor the stuck clock runs
+                            steamWaits++;
+                            still = 0;
+                            i--;
+                            BotRunner.NotStuck();
+                        }
                         if (still > 40 && edgePushes < 3 && new Point(tile.X / 10, tile.Y / 10) != Grid)
                         {
                             // Right at a screen edge without crossing it: shove on in that direction before calling the tile blocked.

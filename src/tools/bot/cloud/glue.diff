@@ -1,0 +1,294 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Multiplatform/AnodyneSharp.Multiplatform.csproj b/AnodyneSharp/AnodyneSharp.Multiplatform/AnodyneSharp.Multiplatform.csproj
+index 9ac1c28..e0d8da5 100644
+--- a/AnodyneSharp/AnodyneSharp.Multiplatform/AnodyneSharp.Multiplatform.csproj
++++ b/AnodyneSharp/AnodyneSharp.Multiplatform/AnodyneSharp.Multiplatform.csproj
+@@ -1,7 +1,7 @@
+ ﻿<Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+     <OutputType>WinExe</OutputType>
+-    <TargetFramework>net6.0</TargetFramework>
++    <TargetFramework>net10.0</TargetFramework>
+     <PublishReadyToRun>false</PublishReadyToRun>
+     <TieredCompilation>false</TieredCompilation>
+   </PropertyGroup>
+diff --git a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+index b00ba97..5068cd4 100644
+--- a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
++++ b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Logging;
++using AnodyneSharp.Logging;
+ using AnodyneSharp.Resources;
+ using System;
+ using System.Collections.Generic;
+@@ -10,10 +10,22 @@ namespace AnodyneSharp.Multiplatform
+     public static class Program
+     {
+         [STAThread]
+-        static void Main()
++        static void Main(string[] args)
+         {
+             try
+             {
++                AnodyneSharp.Recording.RecordingManager.ParseCommandLine(args);
++                string saveDir = Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR");
++                if (saveDir == null && AnodyneSharp.Recording.RecordingManager.Deterministic)
++                {
++                    // Bot runs never continue an old save: a throwaway save directory each time.
++                    saveDir = Path.Combine(Path.GetTempPath(), "anodyne_bot_" + Guid.NewGuid().ToString("N"));
++                }
++                if (saveDir != null)
++                {
++                    Directory.CreateDirectory(saveDir);
++                    AnodyneSharp.Registry.GameConstants.SavePath = saveDir.TrimEnd('/') + "/";
++                }
+                 ResourceManager.BaseDir = AppDomain.CurrentDomain.BaseDirectory;
+ 
+                 using AnodyneGame game = new AnodyneGame();
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+index 588030f..6fdd594 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+@@ -1,4 +1,4 @@
+-﻿#region Using Statements
++#region Using Statements
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -6,6 +6,7 @@ using AnodyneSharp.Entities;
+ using AnodyneSharp.Entities.Gadget;
+ using AnodyneSharp.Input;
+ using AnodyneSharp.Modding;
++using AnodyneSharp.Recording;
+ using AnodyneSharp.Registry;
+ using AnodyneSharp.Resources;
+ using AnodyneSharp.Resources.Loading;
+@@ -123,6 +124,8 @@ namespace AnodyneSharp
+             {
+                 effect.Load(Content, graphics.GraphicsDevice);
+             }
++
++            RecordingManager.Start();
+         }
+ 
+         /// <summary>
+@@ -139,12 +142,28 @@ namespace AnodyneSharp
+             GameTimes.UpdateTimes(gameTime);
+             KeyInput.Update();
+ 
+-            if (GlobalState.settings.pause_on_unfocus && !IsActive)
++            if (RecordingManager.Deterministic)
++            {
++                GameTimes.ForceDeltaTime(RecordingManager.FixedStep);
++            }
++            RecordingManager.FrameUpdate();
++            if (BotRunner.Active)
++            {
++                KeyInput.KeyState = BotRunner.NextFrame();
++            }
++
++            if (GlobalState.settings.pause_on_unfocus && !IsActive && !RecordingManager.Deterministic)
+             {
+                 return;
+             }
+ 
+             CurrentState.Update();
++            BotRunner.Trace();
++
++            if (RecordingManager.Fast && RecordingManager.DrawEvery > 1 && RecordingManager.CurrentFrame % RecordingManager.DrawEvery != 0)
++            {
++                SuppressDraw(); // headless bot runs: rendering (software GL) is most of the frame time
++            }
+ 
+             foreach (var effect in GlobalState.AllEffects.Where(e => e.Active()))
+             {
+@@ -263,6 +282,15 @@ namespace AnodyneSharp
+                     break;
+             }
+ 
++            if (RecordingManager.Deterministic)
++            {
++                // Bot runs: a fixed 60 fps step, or as fast as possible with -fast; never slowed down without focus.
++                IsFixedTimeStep = !RecordingManager.Fast;
++                TargetElapsedTime = TimeSpan.FromSeconds(RecordingManager.FixedStep);
++                graphics.SynchronizeWithVerticalRetrace = false;
++                InactiveSleepTime = TimeSpan.Zero;
++            }
++
+             graphics.ApplyChanges();
+         }
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
+index 53f5cbc..09e84f4 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
+@@ -328,6 +328,23 @@
+     <Compile Include="$(MSBuildThisFileDirectory)Utilities\MathUtilities.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)FSM\TimerState.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)Utilities\TextUtilities.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Beach.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest2.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Bot.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RecordingManager.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotBehaviors.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotNav.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Fields.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\FightPolicies.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\NexusToRoadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedCave.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedSea.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Roadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\SeerPolicy.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\SpaceTime.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\StartToNexus.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
+   </ItemGroup>
+   <ItemGroup>
+     <MonoGameContentReference Include="$(MSBuildThisFileDirectory)Content\Content.mgcb" />
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+index 8359c04..6112e08 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+@@ -67,6 +67,14 @@ namespace AnodyneSharp.Drawing
+             return (_secondary, res.GetNext());
+         }
+ 
++        /// <summary>Bot: writes the last rendered frame (160x180, HUD on top) to a PNG.</summary>
++        public static void SaveRender(string path)
++        {
++            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
++            using var f = System.IO.File.Create(path);
++            _render.SaveAsPng(f, _render.Width, _render.Height);
++        }
++
+         public static void Load(ContentManager c)
+         {
+             _depthrender = c.Load<Effect>("effects/render_depth");
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs b/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
+index ae200cb..fbcdb7e 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
+@@ -1,4 +1,4 @@
+-﻿using Microsoft.Xna.Framework;
++using Microsoft.Xna.Framework;
+ using System.Collections.Generic;
+ using System.Linq;
+ 
+@@ -33,6 +33,12 @@ namespace AnodyneSharp
+             TrueDeltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
+         }
+ 
++        /// <summary>Bot runs: every frame is exactly this long, however long it really took.</summary>
++        public static void ForceDeltaTime(float dt)
++        {
++            TrueDeltaTime = dt;
++        }
++
+         public static void UpdateFPS(GameTime gameTime)
+         {
+             if (_fpsQueue.Count > _maxSamples)
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Input/KeyInput.cs b/AnodyneSharp/AnodyneSharp.Shared/Input/KeyInput.cs
+index e258ecb..b7cd8be 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Input/KeyInput.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Input/KeyInput.cs
+@@ -30,7 +30,7 @@ namespace AnodyneSharp.Input
+     /// </summary>
+     public static class KeyInput
+     {
+-        private enum InputState
++        public enum InputState
+         {
+             NONE,
+             HELD,
+@@ -67,7 +67,7 @@ namespace AnodyneSharp.Input
+ 
+         public static bool FaceButtonsSwitched { get; private set; }
+ 
+-        private static Dictionary<Keys, InputState> KeyState;
++        public static Dictionary<Keys, InputState> KeyState;
+         private static Dictionary<Buttons, InputState>[] ControllerState;
+ 
+         static KeyInput()
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+index 432bb3f..d305409 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+@@ -109,6 +109,28 @@ namespace AnodyneSharp.MapData
+             return ret;
+         }
+ 
++        /// <summary>Bot: the collision directions and event of a tile (BG, with BG2 on top when it is not empty).</summary>
++        public (Touching, CollisionEventType) GetTileClass(Point p)
++        {
++            if (p.X < 0 || p.Y < 0 || p.X >= WidthInTiles || p.Y >= HeightInTiles)
++            {
++                return (Touching.ANY, CollisionEventType.NONE); // off the map: a wall (keeps the bot's searches bounded)
++            }
++            Tile bg = _tileObjects[GetTile(Layer.BG, p)];
++            Touching al = bg.allowCollisions;
++            CollisionEventType ev = bg.collisionEventType;
++            int bg2 = GetTile(Layer.BG2, p);
++            if (bg2 != 0)
++            {
++                al |= _tileObjects[bg2].allowCollisions;
++                if (_tileObjects[bg2].collisionEventType != CollisionEventType.NONE)
++                {
++                    ev = _tileObjects[bg2].collisionEventType;
++                }
++            }
++            return (al, ev);
++        }
++
+         public int GetTile(Layer layer, Point pos)
+         {
+             int current = mapLayers[(int)layer].GetTile(pos);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+index b706cb3..5d9f201 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Cheatz;
++using AnodyneSharp.Cheatz;
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -103,6 +103,8 @@ namespace AnodyneSharp.States
+             _oldEntities = new List<Entity>();
+ 
+             _player = new Player();
++            AnodyneSharp.Recording.BotRunner.Player = _player;
++            AnodyneSharp.Recording.BotRunner.Entities = () => _gridEntities;
+             _healthBar = new HealthBar();
+ 
+             _iconPos = new Vector2(2, 3);
+@@ -267,6 +269,9 @@ namespace AnodyneSharp.States
+             _newlySpawned.Clear();
+ 
+             bool updateEntities = _childStates.All(s => s.UpdateEntities);
++            AnodyneSharp.Recording.BotRunner.PlayBusy = _childStates.Count > 0;
++            AnodyneSharp.Recording.BotRunner.PlayBusyName = _childStates.Count > 0 ? string.Join("+", _childStates.Select(c => c.GetType().Name)) : "";
++            AnodyneSharp.Recording.BotRunner.InDeathMenu = _childStates.Any(s => s is DeathState);
+ 
+             if (_childStates.Count > 0)
+             {
+@@ -279,6 +284,7 @@ namespace AnodyneSharp.States
+                     s.Update();
+                     if (s.Exit && s is DeathState)
+                     {
++                        AnodyneSharp.Recording.BotRunner.Deaths++;
+                         Warp();
+                         _state = PlayStateState.S_MAP_ENTER;
+                     }
+diff --git a/AnodyneSharp/Directory.Build.props b/AnodyneSharp/Directory.Build.props
+index 47f5b7f..a95ac95 100644
+--- a/AnodyneSharp/Directory.Build.props
++++ b/AnodyneSharp/Directory.Build.props
+@@ -1,5 +1,5 @@
+ <Project>
+  <PropertyGroup>
+-   <LangVersion>9.0</LangVersion>
++   <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+ </Project>
+\ No newline at end of file

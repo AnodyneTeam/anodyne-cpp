@@ -59,8 +59,9 @@ namespace AnodyneSharp.Recording
                     case '%': yield return BlockLasers(); break;
                     case 'B':
                     {
+                        // B<x>,<y>: stand on the button at x,y (tile centre); B<x>,<y>,<px>,<py>: stand with the player at exactly px,py on it
                         var a = tok.Substring(1).Split(',');
-                        yield return StandUntilGateOpens(float.Parse(a[0]), float.Parse(a[1]));
+                        yield return StandUntilGateOpens(float.Parse(a[0]), float.Parse(a[1]), exact: a.Length >= 4 ? new Vector2(float.Parse(a[2]), float.Parse(a[3])) : null);
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
@@ -474,7 +475,7 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Walks onto (x,y) and stands there until some gate on the screen opens (e.g. a second button pressed by an enemy).</summary>
-        protected static IEnumerable<object> StandUntilGateOpens(float x, float y, int timeoutFrames = 3000)
+        protected static IEnumerable<object> StandUntilGateOpens(float x, float y, int timeoutFrames = 3000, Vector2? exact = null)
         {
             yield return GoTo(x, y);
             BotRunner.Status = "standing on a button until a gate opens";
@@ -491,8 +492,9 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine("  buttons: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name == "Shieldy" || e.GetType().Name == "Button")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}({e.Hitbox.Width}x{e.Hitbox.Height}) v={e.velocity.X:0},{e.velocity.Y:0}")) + $" hp={GlobalState.CUR_HEALTH} solved={GlobalState.PUZZLES_SOLVED}");
                 }
-                // Stay on the button: nudge back if something pushed us off.
-                var c = BotNav.CentreOf(BotNav.TileOf(new Vector2(x, y)));
+                // Stay on the button: nudge back if something pushed us off. With an exact spot the player stands off-centre on purpose (a
+                // Mover homes in on the player's position, so where we stand decides where it stops).
+                var c = exact ?? BotNav.CentreOf(BotNav.TileOf(new Vector2(x, y)));
                 float dx = c.X - Pos.X, dy = c.Y - Pos.Y;
                 yield return Math.Abs(dx) > 3 ? K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)
                            : Math.Abs(dy) > 3 ? K(dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : K();
@@ -521,6 +523,7 @@ namespace AnodyneSharp.Recording
             new("Laser|Goo|Bullet|Fire|Spit|Shot|Bolt|Slash|Burst|Spike|Wave", System.Text.RegularExpressions.RegexOptions.Compiled);
 
         private static readonly Dictionary<Entity, long> _steamLastUp = new();
+        private static readonly HashSet<Entity> _steamSeenUp = new(); // jets seen up at least once (so the time since they went down is known)
 
         /// <summary>True if the player is within `margin` px of a Red Cave steam jet's beam.</summary>
         protected static bool NearSteamJet(int margin)
@@ -538,22 +541,54 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static bool SteamDangerous(Entity e)
         {
-            if (e.visible)
+            if (e.visible || e._flickering)
             {
                 _steamLastUp[e] = BotRunner.Frame;
-                return e.CurAnimName == "steam_is_harmful";
+                _steamSeenUp.Add(e);
+                // rising counts too: a walker that steps in while it emerges is still in it when the burn starts
+                return e.CurAnimName != "recede";
             }
-            if (!_steamLastUp.TryGetValue(e, out long last))
+            if (!_steamSeenUp.Contains(e) || !_steamLastUp.TryGetValue(e, out long last))
             {
-                _steamLastUp[e] = last = BotRunner.Frame; // first seen: the 2s idle timer started when the screen loaded
+                // Not seen up since the screen loaded: where it is in its cycle is unknown (its idle timer starts when the screen loads, which
+                // is during the scroll, and a walk that assumed a fresh 2s once met the burn). Keep out until it has risen once.
+                return true;
             }
             return BotRunner.Frame - last > 70;
+        }
+
+        /// <summary>
+        /// True if a steam jet lies over (or within 6px of) any of `tiles` and a crossing begun now could meet its burn: it is up (or rising),
+        /// or it has been down for more than ~40 frames, or it has not been seen go down yet. A crossing of a few tiles takes well under a second.
+        /// </summary>
+        protected static bool SteamUnsafeOver(List<Point> tiles)
+        {
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || !IsSteamBeam(e))
+                {
+                    continue;
+                }
+                SteamDangerous(e); // keeps the jet's last-seen-up frame current
+                var r = e.Hitbox;
+                r.Inflate(6, 6);
+                if (!tiles.Any(t => r.Intersects(new Rectangle(t.X * 16, t.Y * 16, 16, 16))))
+                {
+                    continue;
+                }
+                if (e.visible || e._flickering || !_steamSeenUp.Contains(e) || BotRunner.Frame - _steamLastUp[e] > 40)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>Things that hurt on contact: living enemies and their projectiles (not `except`).</summary>
         protected static List<Entity> Dangers(Entity except = null)
         {
-            return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) &&
+            // the steam jet's nozzle (OnOffLaser) is a harmless solid block that only matches the projectile names: its beam is the danger
+            return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) && e.GetType().Name != "OnOffLaser" &&
                 (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap")).ToList();
         }
 
@@ -1099,10 +1134,15 @@ namespace AnodyneSharp.Recording
             return K();
         }
 
+        /// <summary>The last SafeMove held still only to let a steam jet go down (a wait of up to a whole cycle, ~5s: not "stuck").</summary>
+        protected static bool SteamWait;
+
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
             BlockedBy = null;
+            SteamWait = false;
+            if (Environment.GetEnvironmentVariable("DBG_SAFEMOVE") != null) { System.Console.Error.WriteLine($"SAFEMOVE f{BotRunner.Frame} dodge={DodgeEnabled} dangers={string.Join(",", Dangers(except).Select(d => d.GetType().Name))} steam={string.Join(",", BotRunner.Entities().Where(IsSteamBeam).Select(e => $"{e.visible}/{e._flickering}/{e.CurAnimName}"))}"); }
             if (!DodgeEnabled)
             {
                 return K(wanted);
@@ -1116,7 +1156,8 @@ namespace AnodyneSharp.Recording
             if (dangers.All(IsSteamBeam))
             {
                 // only steam jets (burning or about to): hold back from stepping in, but never stand still inside one
-                return WouldCollide(wanted, dangers, 8) ? K() : K(wanted);
+                SteamWait = WouldCollide(wanted, dangers, 8);
+                return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
             if (GlobalState.inventory.CanJump && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
@@ -2479,7 +2520,8 @@ namespace AnodyneSharp.Recording
             int attempt = 0;
             for (int f = 0; f < seconds * 60; f += 30)
             {
-                var movers = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Mover").ToList();
+                // a Mover caught by the steam plays its death animation for a while before it stops existing: it is done already
+                var movers = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Mover" && e.CurAnimName != "Die").ToList();
                 if (movers.Count == 0)
                 {
                     yield break;
@@ -2535,10 +2577,12 @@ namespace AnodyneSharp.Recording
                     {
                         // the way crosses a steam jet: go the moment it has just gone down (it stays hidden for 2s, a crossing takes under a second)
                         BotRunner.Status = "lure: wait for the jet to go down";
-                        bool wasUp = beams.Any(b => b.visible);
+                        // "up" includes the flicker of emerging/receding: a flickering jet is invisible every other 3 frames, which once
+                        // passed for "just gone down" while it was rising, and the crossing then met the burn
+                        bool wasUp = beams.Any(b => b.visible || b._flickering);
                         for (int w = 0; w < 600; w++)
                         {
-                            bool up = beams.Any(b => b.visible);
+                            bool up = beams.Any(b => b.visible || b._flickering);
                             if (wasUp && !up)
                             {
                                 break;
@@ -2553,12 +2597,12 @@ namespace AnodyneSharp.Recording
                 {
                     yield return Wait(30);
                     f += 30;
-                    if (!movers.Any(e => e.exists))
+                    if (!movers.Any(e => e.exists && e.CurAnimName != "Die"))
                     {
                         break;
                     }
                 }
-                if (movers.Any(e => e.exists))
+                if (movers.Any(e => e.exists && e.CurAnimName != "Die"))
                 {
                     attempt++;
                 }
