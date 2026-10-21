@@ -1216,7 +1216,7 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Walks in a straight line (one axis at a time, x first unless yFirst) until within tol of the target.</summary>
-        protected static IEnumerable<object> WalkTo(float x, float y, float tol = 2f, bool yFirst = false, int timeout = 900)
+        protected static IEnumerable<object> WalkTo(float x, float y, float tol = 2f, bool yFirst = false, int timeout = 900, bool diagonal = false)
         {
             BotRunner.Status = $"walk to {x:0},{y:0}  (at {Pos.X:0},{Pos.Y:0})";
             Vector2 last = Pos;
@@ -1252,6 +1252,12 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
+                if (diagonal && !xDone && !yDone)
+                {
+                    // both axes at once: full speed on each (the quickest way through water that drowns you after 3s)
+                    yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right, dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    continue;
+                }
                 KeyFunctions dir;
                 if (yFirst ? (!yDone) : xDone)
                 {
@@ -1270,7 +1276,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1286,6 +1292,7 @@ namespace AnodyneSharp.Recording
             "beach3" => new Beach3(),
             "redsea" => new RedSea(),
             "redcave" => new RedCave(),
+            "redcave2" => new RedCaveRightWing(),
             _ => throw new ArgumentException(name)
         };
 

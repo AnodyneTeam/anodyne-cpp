@@ -65,6 +65,8 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
+                    case 's': yield return SteamJustOff(); break; // s: wait for the screen's steam jets to finish burning (then ~3s before they burn again)
+                    case 'a': BotNav.Wade = tok[1] == '1'; break; // a1: wade through water instead of rafting or going round (short stretches: Red Cave water drowns you after 3s)
                     case 'y': BotNav.LaneScale = n / 100f; break;
                     case 'p': BotRunner.NoAutoPlug = n == 1; break; // p1: no fetching dust to plug beams on the way
                     case '^':
@@ -335,7 +337,7 @@ namespace AnodyneSharp.Recording
                     case 'G':
                     {
                         var xy = tok.Substring(1).Split(',');
-                        yield return WalkTo(float.Parse(xy[0]), float.Parse(xy[1]), yFirst: xy.Length > 2);
+                        yield return WalkTo(float.Parse(xy[0]), float.Parse(xy[1]), yFirst: xy.Length > 2 && xy[2] != "d", diagonal: xy.Length > 2 && xy[2] == "d"); // G<x>,<y>[,y|,d]: y first, or diagonally
                         break;
                     }
                     case 'S': yield return Wait(2); AnodyneSharp.Drawing.SpriteDrawer.SaveRender($"/tmp/bot/shot{n}.png"); break;
@@ -531,6 +533,19 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             pb.Inflate(margin, margin);
             return BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.Hitbox.Intersects(pb));
+        }
+
+        /// <summary>Token s: waits until the screen's steam jets have burned and just stopped: the start of their ~3s harmless spell.</summary>
+        protected static IEnumerable<object> SteamJustOff()
+        {
+            bool Burning() => BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.CurAnimName == "steam_is_harmful");
+            if (!BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e)))
+            {
+                yield break;
+            }
+            BotRunner.Status = "wait for the steam to burn and stop";
+            yield return Until(Burning, 400, "steam jets burning");
+            yield return Until(() => !Burning(), 200, "steam jets stopping");
         }
 
         protected static bool IsSteamBeam(Entity e) => e.GetType().DeclaringType?.Name == "OnOffLaser";
@@ -1137,12 +1152,14 @@ namespace AnodyneSharp.Recording
         /// <summary>The last SafeMove held still only to let a steam jet go down (a wait of up to a whole cycle, ~5s: not "stuck").</summary>
         protected static bool SteamWait;
 
+        /// <summary>How long into a Slasher's 1.4s float (84 frames, then a 30-frame wind-up) the bot keeps striking before it gets clear of the coming cut: 70 lands the third hit (0.5s apart) in one float.</summary>
+        private static readonly int SlasherStrikeFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SLASHER_STRIKE"), out int ssf) ? ssf : 70;
+
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
             BlockedBy = null;
             SteamWait = false;
-            if (Environment.GetEnvironmentVariable("DBG_SAFEMOVE") != null) { System.Console.Error.WriteLine($"SAFEMOVE f{BotRunner.Frame} dodge={DodgeEnabled} dangers={string.Join(",", Dangers(except).Select(d => d.GetType().Name))} steam={string.Join(",", BotRunner.Entities().Where(IsSteamBeam).Select(e => $"{e.visible}/{e._flickering}/{e.CurAnimName}"))}"); }
             if (!DodgeEnabled)
             {
                 return K(wanted);
@@ -1160,9 +1177,9 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
-            if (GlobalState.inventory.CanJump && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
+            if (GlobalState.inventory.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
             {
-                // With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
+                // (Wading, sinking into water, there is no jumping; puddles are fine.) With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
                 // through the volley / the dash instead of waiting for a gap that may never come. Steer in the air towards where we were going.
                 if (Player.state == AnodyneSharp.Entities.PlayerState.AIR)
                 {
@@ -1950,7 +1967,7 @@ namespace AnodyneSharp.Recording
                 {
                     throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
                 }
-                int wi = path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
+                int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
                 if (wi < 0)
                 {
                     yield return GoTo(gx, gy);
@@ -2029,7 +2046,9 @@ namespace AnodyneSharp.Recording
                     }
                     // The 10px hitbox has ~3px of slack in a 16px tile: only correct sideways when well off, else go along the route (a raft
                     // that cannot slide the last pixel sideways would otherwise sit there for ever).
-                    yield return K(Math.Abs(ddx) > 3.5f || (Math.Abs(ddx) > 2f && Math.Abs(ddy) < 3f) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    var rideKey = Math.Abs(ddx) > 3.5f || (Math.Abs(ddx) > 2f && Math.Abs(ddy) < 3f) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
+                    yield return SafeMove(rideKey, null, 16f);
                     if (!wasWet && !wet && i > 120)
                     {
                         break;
@@ -3619,7 +3638,7 @@ namespace AnodyneSharp.Recording
                         slFloat = i; // the float lasts 1.4s: strike in the first second, then get clear before the wind-up ends
                     }
                     slPrev = anim;
-                    if (anim.StartsWith("warning") || cutting || (floating && i - slFloat >= 50))
+                    if (anim.StartsWith("warning") || cutting || (floating && i - slFloat >= SlasherStrikeFrames))
                     {
                         var sc = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                         var pcen = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);

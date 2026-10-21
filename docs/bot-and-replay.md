@@ -115,6 +115,9 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - `regress.sh`: planner unit tests (`planner_test/`: pure fight policies and the space-time planner against a fake screen with
   pseudo-random scenarios) plus the scene snapshots in `scenes/` (each must lose no health). `ANODYNE_BOT_SWING_AUDIT=1`: where the
   broom is swung with nothing near.
+- Red Cave tokens: `s` wait for the screen's steam jets to burn and stop (~3s of safety follows) - `a1/a0` let the planner wade
+  through water (short stretches only) - `G<x>,<y>,d` walk diagonally (both axes at full speed) - `B<x>,<y>,<px>,<py>` stand at an
+  exact spot on a button until a gate opens - `n<tab>` pause menu, map tab, back to the dungeon entrance.
 - Extra tokens: `` `name `` snapshot - `g<n>` heart budget - `y<percent>` scale the path cost of beam tiles - `p1` no fetching dust
   on the way - `l<col>,<r0>,<r1>` dust leapfrog up a beam column - `Pb<x>,<y>` walk only while still on the dungeon map.
 - Debug output: `ANODYNE_BOT_DEBUG=1` (paths, fights, hits), `ANODYNE_FIGHT_TRACE=1` (per-frame policy traces), `SEER_WAIT` /
@@ -136,6 +139,14 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   Slashers cost 1-3 hearts each (budget with `g<n>`). Stab a room's Red_Pillar chain ("tail") with the broom before fighting the
   reaper in that room. Jump boots make the player airborne and immune except to steam, which has no AIR check. Plants, frogs,
   solid shooters and pillars count as non-walkable in the nav grid.
+- Red Cave water: without a raft you sink and drown after 3s (1 heart, back to where you came in), so never wait in it. Some channels
+  have a current: up a north current you wade at ~52px/s, against it you hardly move. Dust rafts float with the current (10px/s)
+  and steam jets shove them; pick the dust up with the broom from the bank and drop it on the water to board it.
+- Steam jets (OnOffLaser) only hurt in their 2s "steam_is_harmful" phase; then ~3s harmless (recede, 2s hidden, emerge). Cross straight
+  after a burst (`s`). Four-shooter bullets are dodged while rafting too (jump or hold back).
+- Enemies without a permanence flag (Annoyers, Slashers, ...) respawn whenever their screen is entered again. A pair of Annoyers at a
+  doorway hits you during the frozen screen transition, every time: use another way out (the pause menu's dungeon-entrance warp).
+- Slasher: 3 hits, 0.5s apart; strike for the first 70 frames of its 1.4s float, then get out of line of the cut.
 
 ## Status
 
@@ -143,8 +154,13 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   whole Temple (Seer with no damage, Shieldy and Red Slime cards) -> Blue Forest 2 -> Fields -> Beach (Fisherman card, ends at the
   whirlpool screen). The goldens in `golden/` predate this work and are stale; playback/determinism checking is parked on purpose
   (`REPLAY=1 run_bot.sh` turns it back on) until the bot can finish the whole game.
-- Red Sea reaches the Red Cave door and `RedCave.cs` (Part 9) runs through the first rooms, the hub, the steam crossings and (5,1).
-  The (5,1) pillar stab at (832,208) and everything after it are unverified; the Beach 2 raft crossing still uses the dev `c8` token.
+- Red Sea reaches the Red Cave door. `RedCave.cs`: part `redcave` (Part 9) runs the first rooms, the hub, the steam crossings, cuts
+  the north-east tentacle in (5,1) and goes round the Red Sea to the right entrance; part `redcave2` (the right wing) takes the (6,3)
+  key through the steam channel, opens the (5,5) keyblocks, cuts the east tentacle in (5,4) and goes round to the left entrance
+  (verified from its start snapshot with no unrecovered damage, 1 budgeted Slasher hit). In one chain from the cave's start, `redcave`
+  can still run out of its chip allowance in the (3,2)-(5,2) rooms (RNG-dependent Annoyer/Slime hits). Next: the left wing (keys in
+  (0,3)/(1,3), keyblocks (1,4)/(1,5), the (1,4) tentacle), then the north entrance and the Red boss. The Beach 2 raft crossing still
+  uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.
 - GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the C# run

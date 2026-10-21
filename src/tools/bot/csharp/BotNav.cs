@@ -235,7 +235,7 @@ namespace AnodyneSharp.Recording
                 foreach (var d in dirs)
                 {
                     var n = new Point(c.X + d.X, c.Y + d.Y);
-                    bool nw = IsConveyor(n) && !(jump && NarrowWater(n));
+                    bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
                     {
@@ -290,6 +290,8 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Set while riding a dust raft: conveyor (river) tiles count as walkable then.</summary>
         public static bool AllowWater;
+        /// <summary>Water counts as floor (wading: half speed, and Red Cave water drowns you after 3s, so only for short stretches).</summary>
+        public static bool Wade;
 
         /// <summary>Set once the boots are on: spike tiles count as walkable (they are jumped over).</summary>
         public static bool AllowJump;
@@ -408,7 +410,7 @@ namespace AnodyneSharp.Recording
                 case CollisionEventType.SPIKE:
                     return AllowJump && allow == Touching.NONE;
                 case CollisionEventType.CONVEYOR:
-                    return allow == Touching.NONE && (AllowWater || (AllowJump && NarrowWater(t)));
+                    return allow == Touching.NONE && (AllowWater || Wade || (AllowJump && NarrowWater(t)));
             }
             return allow == Touching.NONE;
         }
