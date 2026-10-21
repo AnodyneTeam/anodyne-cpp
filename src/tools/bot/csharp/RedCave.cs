@@ -91,4 +91,26 @@ namespace AnodyneSharp.Recording
             yield return Section("redcave west tentacle", () => Exec("O1 X0 I192,672,r W200 `rc_pillar_14"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 9d: the top of the Red Cave. From the left wing's last tentacle round to the north entrance it raised, east along
+    /// the top to the boss, then the red key and the card in the room below it and out through its door to the Nexus.
+    /// </summary>
+    public class RedCaveTop : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Red Cave: the top and the boss");
+            yield return Section("redcave north entrance", () => Exec("n0 W60 O1 X1 oREDSEA@224,1105 W30 O1 X1 oREDCAVE@551,581 W60 `rc_north_in"));
+            yield return Section("redcave along the top", () => Exec("O1 X0 H5,0 W60 `rc_50_in"));
+            // (5,0): the way to the boss is up a channel whose current runs out of its room. Sweep up the dust by the north wall, drop it in
+            // the channel's inlet straight after a steam burst and ride it against the current under both jets, into the boss room.
+            yield return Section("redcave raft to the boss", () => Exec("O1 X0 J56,1,l s J52,2,d D12 G852,66,d R220"));
+            yield return Section("redcave boss", () => Exec("O0 X0 F W200 i W30"));
+            // Below the boss room: the Sage comes over to talk, the red key waits in the corner and the chest holds a card.
+            yield return Section("redcave red key", () => Exec("O1 X1 H6,1 W60 X0 I1088,288,u W120 I976,256,d W60 `rc_redkey"));
+            // South of it: three tiles' wade down the stream (with the current) to the Nexus pad.
+            yield return Section("redcave out to the Nexus", () => Exec("O1 X1 a1 G1028,330 a0 P1036,362 u5 W120 `rc_done"));
+        }
+    }
 }

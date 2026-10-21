@@ -237,6 +237,24 @@ namespace AnodyneSharp.Recording
                         yield return Wait(8);
                         break;
                     }
+                    case '=':
+                    {
+                        // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '.' floor, 'o' still water, U/D/L/R water flowing that way
+                        var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
+                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.CurrentMap);
+                        for (int ty = a[1]; ty <= a[3]; ty++)
+                        {
+                            var row = new System.Text.StringBuilder($"FLOW {ty,3} ");
+                            for (int tx = a[0]; tx <= a[2]; tx++)
+                            {
+                                var (al, ev) = BotNav.CurrentMap.GetTileClass(new Point(tx, ty));
+                                var t = tiles[BotNav.CurrentMap.GetTile(AnodyneSharp.MapData.Layer.BG, new Point(tx, ty))];
+                                row.Append(ev == AnodyneSharp.MapData.Tiles.CollisionEventType.CONVEYOR ? t.direction switch { Touching.UP => 'U', Touching.DOWN => 'D', Touching.LEFT => 'L', Touching.RIGHT => 'R', _ => 'o' } : al != Touching.NONE ? '#' : '.');
+                            }
+                            System.Console.Error.WriteLine(row.ToString());
+                        }
+                        break;
+                    }
                     case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos}"); break;
                     case '?':
                     {
@@ -2822,6 +2840,106 @@ namespace AnodyneSharp.Recording
             return threats;
         }
 
+        /// <summary>
+        /// The Red Cave boss: it sits still in the middle of its pool and every 3s fires splash bullets and raises tentacles. Both land in the
+        /// left half of the room, except that tentacles rise beside us instead when one of its proximity sensors touches us at that moment,
+        /// and the second such time it starts its wave and dash phases. So stay below it on the raft, strike between the 3s ticks
+        /// (it is invincible for 1.3s after each hit: two hits a tick) and drop back out of its lower sensor for each tick.
+        /// </summary>
+        protected static IEnumerable<object> RedBossFight(int timeoutFrames = 6000)
+        {
+            const int Tick = 180;
+            var healthField = typeof(AnodyneSharp.Entities.Enemy.Redcave.Red_Boss).GetField("health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            BotRunner.BossDamageBudget = 0;
+            int t0 = -1, lastSwing = -100, lastHit = -200;
+            bool wasFlickering = false;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var boss = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Red_Boss");
+                if (boss == null)
+                {
+                    yield break;
+                }
+                BotRunner.NotStuck(); // the fight has its own timeout
+                int hp = (int)healthField.GetValue(boss);
+                if (hp == 0)
+                {
+                    yield return K(); // its death throes and the dialogue after it
+                    continue;
+                }
+                var bb = boss.Hitbox;
+                var pb = Player.Hitbox;
+                if (boss._flickering && !wasFlickering)
+                {
+                    lastHit = i;
+                }
+                wasFlickering = boss._flickering;
+                if (t0 < 0)
+                {
+                    if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "SplashBullet"))
+                    {
+                        t0 = i; // the fight's first splash: its timers run from here
+                    }
+                    else
+                    {
+                        // ride in far enough to wake it, level with it but well clear of it
+                        yield return pb.X < bb.X - 30 ? K(KeyFunctions.Right) : K();
+                        continue;
+                    }
+                }
+                int phase = (i - t0) % Tick;
+                bool window = phase >= 3 && phase < Tick - 22;
+                BotRunner.Status = $"Red boss fight: boss hp {hp}, tick phase {phase}";
+                // under it, right of where its bullets and tentacles can land; out of its lower sensor's reach at each tick
+                var goal = new Point(bb.X + 8, window ? bb.Bottom + 8 : bb.Bottom + 22);
+                if (pb.Right > bb.X - 2 && pb.Y < bb.Bottom + 4)
+                {
+                    goal = new Point(bb.X + 8, bb.Bottom + 8); // still beside it (coming in from the doorway): get under it first
+                    if (pb.Bottom > bb.Bottom + 4 || pb.Right <= bb.X)
+                    {
+                        goal = new Point(pb.X, bb.Bottom + 8);
+                    }
+                }
+                else if (pb.Right <= bb.X - 2 && pb.Y < bb.Bottom + 4)
+                {
+                    goal = new Point(pb.X + 1, bb.Bottom + 8); // left of it: drop below its bottom before going right
+                    if (pb.X >= bb.X - 14)
+                    {
+                        goal = new Point(pb.X, bb.Bottom + 8);
+                    }
+                }
+                int dx = goal.X - pb.X, dy = goal.Y - pb.Y;
+                if (window && Math.Abs(dx) <= 2 && Math.Abs(dy) <= 2)
+                {
+                    if (Player.facing != Facing.UP)
+                    {
+                        yield return K(KeyFunctions.Up);
+                        continue;
+                    }
+                    if (!boss._flickering && i - lastHit > 80 && i - lastSwing > 26 && phase < Tick - 40)
+                    {
+                        lastSwing = i;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    yield return K();
+                    continue;
+                }
+                var keys = new List<KeyFunctions>();
+                if (dx > 1) { keys.Add(KeyFunctions.Right); }
+                else if (dx < -1) { keys.Add(KeyFunctions.Left); }
+                if (dy > 1) { keys.Add(KeyFunctions.Down); }
+                else if (dy < -1) { keys.Add(KeyFunctions.Up); }
+                yield return K(keys.ToArray());
+            }
+            throw new InvalidOperationException($"bot: Red boss fight timed out at {Pos}");
+        }
+
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -3285,6 +3403,11 @@ namespace AnodyneSharp.Recording
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
                 yield return SeerFight();
+                yield break;
+            }
+            if (Enemies().Any(e => e.GetType().Name == "Red_Boss"))
+            {
+                yield return RedBossFight();
                 yield break;
             }
             if (!Plugging && HaveLooseDust() && Player.broom != null)
