@@ -158,8 +158,11 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   the north-east tentacle in (5,1) and goes round the Red Sea to the right entrance; part `redcave2` (the right wing) takes the (6,3)
   key through the steam channel, opens the (5,5) keyblocks, cuts the east tentacle in (5,4) and goes round to the left entrance
   (verified from its start snapshot with no unrecovered damage, 1 budgeted Slasher hit). In one chain from the cave's start, `redcave`
-  can still run out of its chip allowance in the (3,2)-(5,2) rooms (RNG-dependent Annoyer/Slime hits). Next: the left wing (keys in
-  (0,3)/(1,3), keyblocks (1,4)/(1,5), the (1,4) tentacle), then the north entrance and the Red boss. The Beach 2 raft crossing still
+  can still run out of its chip allowance in the (3,2)-(5,2) rooms (RNG-dependent Annoyer/Slime hits). Part `redcave3` (the left
+  wing) kills the Movers in (2,5) and (0,5) by luring them into steam, takes the (1,3) and (0,3) keys, fights the (0,4) Annoyers
+  out of the Four_Shooter's lines, opens the (1,5)/(1,4) keyblocks and cuts the last tentacle, which raises the north entrance
+  (verified strict from `rc_left_in`, but it uses its whole 2-chip allowance: the (2,3) and (0,4) Annoyers land hits). Next: the
+  north entrance, the top of the cave and the Red boss. The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.

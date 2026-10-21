@@ -65,7 +65,7 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
-                    case 's': yield return SteamJustOff(); break; // s: wait for the screen's steam jets to finish burning (then ~3s before they burn again)
+                    case 's': yield return tok == "s1" ? SteamRising() : SteamJustOff(); break; // s: wait for the screen's steam jets to finish burning (then ~3s before they burn again); s1: until they start to rise (~35 harmless frames before the burn)
                     case 'a': BotNav.Wade = tok[1] == '1'; break; // a1: wade through water instead of rafting or going round (short stretches: Red Cave water drowns you after 3s)
                     case 'y': BotNav.LaneScale = n / 100f; break;
                     case 'p': BotRunner.NoAutoPlug = n == 1; break; // p1: no fetching dust to plug beams on the way
@@ -538,7 +538,12 @@ namespace AnodyneSharp.Recording
         /// <summary>Token s: waits until the screen's steam jets have burned and just stopped: the start of their ~3s harmless spell.</summary>
         protected static IEnumerable<object> SteamJustOff()
         {
-            bool Burning() => BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.CurAnimName == "steam_is_harmful");
+            // a whole cycle is longer than the stuck limit, and these waits have their own timeouts
+            bool Burning()
+            {
+                BotRunner.NotStuck();
+                return BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.CurAnimName == "steam_is_harmful");
+            }
             if (!BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e)))
             {
                 yield break;
@@ -546,6 +551,23 @@ namespace AnodyneSharp.Recording
             BotRunner.Status = "wait for the steam to burn and stop";
             yield return Until(Burning, 400, "steam jets burning");
             yield return Until(() => !Burning(), 200, "steam jets stopping");
+        }
+
+        /// <summary>Token s1: waits until the screen's steam jets start to rise: they burn ~35 frames later (time to step across one).</summary>
+        protected static IEnumerable<object> SteamRising()
+        {
+            bool Rising()
+            {
+                BotRunner.NotStuck();
+                return BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.CurAnimName == "emerge" && (e.visible || e._flickering));
+            }
+            if (!BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e)))
+            {
+                yield break;
+            }
+            BotRunner.Status = "wait for the steam to rise";
+            yield return Until(() => !Rising(), 400, "steam jets not rising");
+            yield return Until(Rising, 400, "steam jets rising");
         }
 
         protected static bool IsSteamBeam(Entity e) => e.GetType().DeclaringType?.Name == "OnOffLaser";
@@ -2555,6 +2577,10 @@ namespace AnodyneSharp.Recording
                 {
                     for (int ty = Grid.Y * 10; ty < Grid.Y * 10 + 10; ty++)
                     {
+                        if (!BotNav.Walkable(new Point(tx, ty)))
+                        {
+                            continue; // FindPath(a, b) forces its goal, so a wall would pass for a spot
+                        }
                         var c = new Vector2(tx * 16 + 8, ty * 16 + 8);
                         var box = new Rectangle(tx * 16 - 20, ty * 16 - 20, 56, 56);
                         if (rects.Any(r => r.Intersects(box)))

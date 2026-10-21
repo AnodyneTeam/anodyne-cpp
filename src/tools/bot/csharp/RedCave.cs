@@ -61,4 +61,34 @@ namespace AnodyneSharp.Recording
             yield return Section("redcave out to the left entrance", () => Exec("n0 W60 O1 X1 oREDSEA@872,1107 W30 O1 X1 oREDCAVE@392,738 W60 `rc_left_in"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 9c: the Red Cave's left wing. Starts inside the left entrance (screen 1,6), takes the keys in (1,3) and (0,3),
+    /// opens the keyblocks in (1,5) and (1,4) and cuts the last tentacle, which raises the north entrance.
+    /// </summary>
+    public class RedCaveLeftWing : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Red Cave: the left wing");
+            // (2,5): a ring of water round a room that a steam jet runs through. Raft over to the room, then let the Mover follow us across
+            // the jet's column while it is down, and step back across it as it rises: its next lunge after us is into the burn.
+            yield return Section("redcave east pool", () => Exec("O1 X1 >344,888 W10 `rc_25_in"));
+            yield return Section("redcave east pool mover", () => Exec("O0 X0 ~408,856 W10 s G420,872 W30 s G372,872 W60 s1 G420,872 W150"));
+            yield return Section("redcave to the two buttons", () => Exec("O1 X0 s >352,776 W10 `rc_24_in"));
+            yield return Section("redcave mover on a button", () => Exec("O1 X0 |40 W30"));
+            yield return Section("redcave north-west key", () => Exec("O1 X1 I272,512,d W60 `rc_key13"));
+            // Back to the entrance by the menu, then west: the (0,5) Mover waits in its corridor until we stand above the jet across its
+            // mouth, and follows us back down through it as it rises.
+            yield return Section("redcave to the west steam room", () => Exec("n0 W60 O1 X1 >136,872 W10 `rc_05_in"));
+            yield return Section("redcave west steam room mover", () => Exec("O0 X0 s G56,818 W90 s1 G56,858 W150"));
+            // (0,4): a four-shooter in the middle of a ring of floor. Fight each Annoyer where none of its bullet lines cross: the lower one
+            // from the doorway (8,49), the upper one from (7,41).
+            yield return Section("redcave four-shooter ring", () => Exec("O1 X0 >134,782 W5 G134,770 W30 G134,782 X1 F X0 >120,664 W10 X1 F O1 X0 >136,616 W10 `rc_03_in"));
+            // (0,3): the gate's button is on the key's side: raft round through the (1,3) pool to it.
+            yield return Section("redcave west key", () => Exec("O1 X0 ~21,533 W30 I32,496,d W60 `rc_key03"));
+            yield return Section("redcave left keyblocks", () => Exec("n0 W60 O1 X0 >248,824 G248,822 U40 W30 G248,776 L40 W30"));
+            yield return Section("redcave west tentacle", () => Exec("O1 X0 I192,672,r W200 `rc_pillar_14"));
+        }
+    }
 }
