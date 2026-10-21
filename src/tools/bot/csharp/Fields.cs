@@ -51,4 +51,24 @@ namespace AnodyneSharp.Recording
             yield return Section("fields to beach", () => Exec("O1 X1 >190,892 P175,890 L50 W300"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 10: from the Nexus to the Cliffs dungeon (CROWD). The Fields pad, the raft and button maze of the east Fields to
+    /// the Forest door, the Forest's Nexus Point and its raft crossing to the Cliffs, the Cliffs' Nexus Point and the dungeon door.
+    /// </summary>
+    public class ForestCliff : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Forest and Cliffs: to the Crowd");
+            yield return Section("nexus to the fields", () => Exec("O1 X1 P712,1060 U30 A W300 `fl_pad2"));
+            // East Fields: with the (8,2) button pressed (Fields part) the way is north round (8,3)-(10,4) and down to the door; the
+            // planner presses the (9,5) button on the way. f1: the rafts ride the one-tile rivers instead of jumping off across them.
+            yield return Section("fields east to the forest", () => Exec("O1 X1 f1 b1730,872 f0 oFOREST W60 `fo_in"));
+            yield return Section("forest nexus point", () => Exec("O1 X1 H1,6 W30 `fo_pad"));
+            // A dust raft over the lake along the bottom of the Forest to the Cliffs door.
+            yield return Section("forest to the cliffs", () => Exec("O1 X1 oCLIFF W60 `cl_in"));
+            yield return Section("cliffs to the crowd", () => Exec("O1 X1 H3,4 W30 oCROWD@738,812 W60 `cr_in"));
+        }
+    }
 }

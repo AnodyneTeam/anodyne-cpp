@@ -120,6 +120,8 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   exact spot on a button until a gate opens - `n<tab>` pause menu, map tab, back to the dungeon entrance - `s1` wait for the
   jets to start rising - `F` in the Red boss's room runs `RedBossFight` (strike from under it between its 3s ticks, drop out of its
   lower proximity sensor for each tick). Debug: `=x0,y0,x1,y1` prints a tile rectangle with water currents (U/D/L/R, `o` still).
+- Planner tokens: `b<x>,<y>` walk/raft/jump to a point, pressing reachable buttons until a route opens - `f1/f0` rafts ride along
+  narrow rivers instead of jumping off across them - `v<MAP>` (dev only, `ANODYNE_BOT_DEV=1`) mark a map's Nexus pad as visited.
 - Extra tokens: `` `name `` snapshot - `g<n>` heart budget - `y<percent>` scale the path cost of beam tiles - `p1` no fetching dust
   on the way - `l<col>,<r0>,<r1>` dust leapfrog up a beam column - `Pb<x>,<y>` walk only while still on the dungeon map.
 - Debug output: `ANODYNE_BOT_DEBUG=1` (paths, fights, hits), `ANODYNE_FIGHT_TRACE=1` (per-frame policy traces), `SEER_WAIT` /
@@ -166,7 +168,11 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   (verified strict from `rc_left_in`, but it uses its whole 2-chip allowance: the (2,3) and (0,4) Annoyers land hits). Part
   `redcave4` goes in by the north entrance, along the top to (5,0), rides a dust raft up the channel (against its current) into the
   boss room, beats the Red boss (`RedBossFight`, no hits taken), takes the red key and the card below it and leaves by the Nexus pad
-  (verified strict from `rc_pillar_14`). Next: the walkthrough after the Red Cave (the Cliff and the Crowd). The Beach 2 raft crossing still
+  (verified strict from `rc_pillar_14`). Part `cliff` (`ForestCliff` in `Fields.cs`) goes from the Nexus through the Fields pad, the
+  east Fields' raft/button maze (planner token `b`) to the Forest door, the Forest's Nexus Point, a raft over its lake to the Cliffs,
+  the Cliffs' Nexus Point and the Crowd's door (verified strict, 1 chip, from a Fields state rebuilt with the Fields part's Goldman and
+  (8,2) button sections: the Red Cave snapshots descend from a save that skipped the Fields part, so they lack its pads and events).
+  Next: the Crowd dungeon. The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.

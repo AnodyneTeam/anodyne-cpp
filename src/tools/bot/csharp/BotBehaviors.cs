@@ -66,7 +66,8 @@ namespace AnodyneSharp.Recording
                     }
                     case 'O': DodgeEnabled = tok[1] == '1'; break;
                     case 's': yield return tok == "s1" ? SteamRising() : SteamJustOff(); break; // s: wait for the screen's steam jets to finish burning (then ~3s before they burn again); s1: until they start to rise (~35 harmless frames before the burn)
-                    case 'a': BotNav.Wade = tok[1] == '1'; break; // a1: wade through water instead of rafting or going round (short stretches: Red Cave water drowns you after 3s)
+                    case 'a': BotNav.Wade = tok[1] == '1'; break;
+                    case 'f': BotNav.RaftNarrow = tok[1] == '1'; break; // f1: rafts ride on along narrow rivers instead of jumping off across them // a1: wade through water instead of rafting or going round (short stretches: Red Cave water drowns you after 3s)
                     case 'y': BotNav.LaneScale = n / 100f; break;
                     case 'p': BotRunner.NoAutoPlug = n == 1; break; // p1: no fetching dust to plug beams on the way
                     case '^':
@@ -127,6 +128,13 @@ namespace AnodyneSharp.Recording
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
                     case '+': yield return OpenChests(); break;
+                    case 'b':
+                    {
+                        // b<x>,<y>: to world point x,y on this map, first pressing the buttons we can reach until a raft/jump route opens up
+                        var xy = tok.Substring(1).Split(',');
+                        yield return PlanTo(float.Parse(xy[0]), float.Parse(xy[1]));
+                        break;
+                    }
                     case '|': yield return MoverOnButton(n); break; // &<s>: get a Mover onto one button while we stand on the other (until PUZZLES_SOLVED >= 2)
                     case 'm': yield return LureMovers(n); break; // m<s>: lure every Mover on the screen into a steam beam (or a button), at most s seconds
                     case 'i': yield return CollectCicada(); break;
@@ -255,7 +263,16 @@ namespace AnodyneSharp.Recording
                         }
                         break;
                     }
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos}"); break;
+                    case 'v':
+                        // DEV ONLY (ANODYNE_BOT_DEV=1): v<MAP> marks that map's Nexus pad as visited, for snapshots made before the pad was
+                        // reached in one run (the Red Cave snapshots descend from a save without the Overworld/Fields/Beach/Red Sea pads).
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEV") != "1")
+                        {
+                            throw new InvalidOperationException("bot: token v activates Nexus pads: development only (ANODYNE_BOT_DEV=1)");
+                        }
+                        GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
+                        break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -1434,10 +1451,11 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face)
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
-            if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
+            if (BotNav.Walkable(new Point(tx, ty - 1)) && BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
             {
                 // A shooter is about: its bullets are aimed at the middle of us. Stand at the top of the tile (still the same tile): the volley
-                // lands a few pixels short and mostly misses, which is enough while we do slow work (setting dust down) here.
+                // lands a few pixels short and mostly misses, which is enough while we do slow work (setting dust down) here. (Not under a
+                // wall: the top of the tile pokes into it.)
                 c.Y -= 5;
             }
             BotRunner.Status += $" [stand {tx},{ty}]";
@@ -1849,6 +1867,36 @@ namespace AnodyneSharp.Recording
                     yield break; // could not open it; do not loop forever
                 }
             }
+        }
+
+        /// <summary>Walks to world point x,y, pressing the nearest reachable unpressed button (whose gates may open the way) while there is no route.</summary>
+        protected static IEnumerable<object> PlanTo(float x, float y)
+        {
+            for (int n = 0; n < 20; n++)
+            {
+                BotNav.ResetDustCache();
+                bool jumpOk = GlobalState.inventory.CanJump;
+                var hereT = BotNav.TileOf(Pos);
+                if (BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(x, y)), jumpOk) != null)
+                {
+                    yield return GoGlobal(x, y);
+                    yield break;
+                }
+                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID))
+                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
+                    .Where(b => b.rp != null).OrderBy(b => b.rp.Count).Select(b => b.pr).FirstOrDefault();
+                if (btn == null)
+                {
+                    throw new InvalidOperationException($"bot: no route to ({x},{y}) on {Map} and no button left to press");
+                }
+                _pressedButtons.Add(btn.EntityID);
+                BotRunner.Status = $"to the button at {btn.Position.X:0},{btn.Position.Y:0} (on the way to {x:0},{y:0})";
+                System.Console.Error.WriteLine($"  plan to ({x},{y}): pressing the button at {btn.Position.X},{btn.Position.Y}");
+                yield return GoGlobal(btn.Position.X + 3, btn.Position.Y + 2);
+                yield return Wait(90);
+            }
+            throw new InvalidOperationException($"bot: no route to ({x},{y}) on {Map}");
         }
 
         /// <summary>Opens the pause menu, goes to the Map tab and takes the "return to this area's Nexus pad" warp.</summary>

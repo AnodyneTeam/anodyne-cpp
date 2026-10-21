@@ -235,7 +235,7 @@ namespace AnodyneSharp.Recording
                 foreach (var d in dirs)
                 {
                     var n = new Point(c.X + d.X, c.Y + d.Y);
-                    bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n));
+                    bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n) && !(RaftNarrow && w));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
                     {
@@ -292,6 +292,8 @@ namespace AnodyneSharp.Recording
         public static bool AllowWater;
         /// <summary>Water counts as floor (wading: half speed, and Red Cave water drowns you after 3s, so only for short stretches).</summary>
         public static bool Wade;
+        /// <summary>On a raft, keep rafting along 1-2 tile wide rivers (which are otherwise only jumped across, with the boots).</summary>
+        public static bool RaftNarrow;
 
         /// <summary>Set once the boots are on: spike tiles count as walkable (they are jumped over).</summary>
         public static bool AllowJump;
