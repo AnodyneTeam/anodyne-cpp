@@ -322,6 +322,10 @@ namespace AnodyneSharp.Recording
                 if (BossDamageBudget >= _hpSeen - hp)
                 {
                     BossDamageBudget -= _hpSeen - hp; // a boss fight with a heart budget: logged, not fatal
+                    if (DebtBaseline >= 0)
+                    {
+                        DebtBaseline -= _hpSeen - hp; // (and not owed to an earlier hit's debt either: that one only wants its own hearts back)
+                    }
                     System.Console.Error.WriteLine($"  boss hit f{_botFrame}: HP {_hpSeen}->{hp}, budget left {BossDamageBudget} P={Player.Hitbox} " + string.Join(" ", Entities().Where(e => e.exists && e.GetType().Name.StartsWith("Seer")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}")));
                 }
                 else if (hp > 0 && RecoverFrames > 0)

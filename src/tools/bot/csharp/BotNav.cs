@@ -381,6 +381,18 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static bool HoleStepOk(Point prev, Point c, Point n)
         {
+            if (AllowJump && prev != c && IsSpike(c))
+            {
+                // A jump goes straight and clears two spike tiles at most: no turning inside a spike bed, no third tile of one.
+                if (n.X - c.X != c.X - prev.X || n.Y - c.Y != c.Y - prev.Y)
+                {
+                    return false;
+                }
+                if (IsSpike(prev) && IsSpike(n))
+                {
+                    return false;
+                }
+            }
             if (!IsHole(c))
             {
                 return true;

@@ -28,10 +28,18 @@ namespace AnodyneSharp.Recording
                     case 'D': yield return Hold(n, KeyFunctions.Down); break;
                     case 'L': yield return Hold(n, KeyFunctions.Left); break;
                     case 'R': yield return Hold(n, KeyFunctions.Right); break;
-                    case 'W': yield return Wait(n); break;
+                    case 'W':
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DUMP") is string dump)
+                        {
+                            var dv = dump.Split(',').Select(int.Parse).ToArray(); // dev: tile map x0,y0,x1,y1
+                            DumpTiles(new Point(dv[0] + 3, dv[1] + 3), new Point(dv[2] - 3, dv[3] - 3));
+                        }
+                        yield return Wait(n);
+                        break;
                     case 'T': yield return ReadDialogue(); break;
                     case 'Q': yield return GoScreen(tok[1]); break;
                     case 'F': yield return n > 1 ? Fight(n, soft: true) : Fight(); break; // F<n>: soft fight, give up after n frames
+                    case 'd': yield return Fight(n > 1 ? n : 2400, soft: true, only: e => e.GetType().Name == "Annoyer"); break; // d<n>: fight only the (awake) Annoyers here first
                     case 'I':
                     {
                         // Ix,y,side e.g. I768,672,l
@@ -1412,6 +1420,12 @@ namespace AnodyneSharp.Recording
         /// <summary>How long into a Slasher's 1.4s float (84 frames, then a 30-frame wind-up) the bot keeps striking before it gets clear of the coming cut: 70 lands the third hit (0.5s apart) in one float.</summary>
         private static readonly int SlasherStrikeFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SLASHER_STRIKE"), out int ssf) ? ssf : 70;
 
+        private static readonly System.Reflection.FieldInfo SinkingField =
+            typeof(AnodyneSharp.Entities.Player).GetField("IS_SINKING", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>Wading in water (no raft): the game ignores the jump key then, whatever tile our position rounds to.</summary>
+        private static bool Sinking => SinkingField?.GetValue(Player) is bool b && b;
+
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
@@ -1434,7 +1448,7 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
-            if (GlobalState.inventory.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
+            if (GlobalState.inventory.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && !Sinking && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
             {
                 // (Wading, sinking into water, there is no jumping; puddles are fine.) With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
                 // through the volley / the dash instead of waiting for a gap that may never come. Steer in the air towards where we were going.
@@ -1891,6 +1905,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (route == null)
                 {
+                    DumpTiles(here, goal);
                     throw new InvalidOperationException($"bot: no route from {here} to {goal} on {Map}");
                 }
                 // Waypoint: the first tile on land that lies on another screen (or the end of the water run that leads there).
@@ -2059,6 +2074,10 @@ namespace AnodyneSharp.Recording
                 }
                 if (best == null)
                 {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  chests: no route from {hereT} to any of {string.Join(" ", chests.Select(c => $"{c.Position.X:0},{c.Position.Y:0}"))} (failed {_failedChests.Count})");
+                    }
                     yield break;
                 }
                 var chest = best.Value.pr;
@@ -2216,6 +2235,28 @@ namespace AnodyneSharp.Recording
         }
 
         protected static bool InRaft;
+
+        /// <summary>Debug: the tiles between two points (. walkable, ~ water, # not), for a route that could not be found.</summary>
+        private static void DumpTiles(Point a, Point b)
+        {
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") == null)
+            {
+                return;
+            }
+            BotNav.RefreshShooterTiles();
+            int x0 = Math.Min(a.X, b.X) - 3, x1 = Math.Max(a.X, b.X) + 3;
+            System.Console.Error.WriteLine($"  tiles from x {x0}");
+            for (int ty = Math.Min(a.Y, b.Y) - 3; ty <= Math.Max(a.Y, b.Y) + 3; ty++)
+            {
+                var row = new System.Text.StringBuilder();
+                for (int tx = x0; tx <= x1; tx++)
+                {
+                    var t = new Point(tx, ty);
+                    row.Append(t == a ? '@' : t == b ? 'G' : BotNav.Walkable(t) ? '.' : BotNav.IsConveyor(t) ? '~' : BotNav.IsGateTile(t) ? 'g' : '#');
+                }
+                System.Console.Error.WriteLine($"  tiles {ty,3}: {row}");
+            }
+        }
 
         /// <summary>True while a dash trap is being baited and passed (its own walking must not start another pass).</summary>
         protected static bool PassingTrap;
@@ -2407,19 +2448,7 @@ namespace AnodyneSharp.Recording
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
                 if (path == null)
                 {
-                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
-                    {
-                        BotNav.RefreshShooterTiles();
-                        for (int ty = here.Y - 2; ty <= goal.Y + 1; ty++)
-                        {
-                            var row = new System.Text.StringBuilder();
-                            for (int tx = Math.Min(here.X, goal.X) - 3; tx <= Math.Max(here.X, goal.X) + 3; tx++)
-                            {
-                                row.Append(BotNav.Walkable(new Point(tx, ty)) ? '.' : BotNav.IsConveyor(new Point(tx, ty)) ? '~' : '#');
-                            }
-                            System.Console.Error.WriteLine($"  raft map {ty,3}: {row}");
-                        }
-                    }
+                    DumpTiles(here, goal);
                     throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
                 }
                 int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
@@ -5574,13 +5603,16 @@ namespace AnodyneSharp.Recording
                 // Whatever the plan is, a patrolling Shieldy that is about to walk into where we stand comes first: clear of it, then carry on.
                 if (!(Player.broom != null && Player.broom.exists))
                 {
-                    var walkers = PredictThreats(null).Where(t => t.Source != null && t.Source.GetType().Name == "Shieldy" && !t.Stationary).ToList();
-                    if (walkers.Count > 0 && PlanHitFrameStanding(14, KeyFunctions.Right, 0, walkers) != int.MaxValue)
+                    // (a bouncing dash trap too: it sweeps its lane at 80px/s, so look a little further ahead for it)
+                    var walkers = PredictThreats(null).Where(t => t.Source != null && t.Source.GetType().Name is "Shieldy" or "BounceDashTrap" && !t.Stationary).ToList();
+                    if (walkers.Count > 0 && PlanHitFrameStanding(walkers.Any(t => t.Name == "BounceDashTrap") ? 24 : 14, KeyFunctions.Right, 0, walkers) != int.MaxValue)
                     {
-                        var clear = SpaceTimeMove(new Vector2(Player.Hitbox.X, Player.Hitbox.Y), walkers, useCache: false, survive: true);
+                        // (clear of everything else too where there is a way: stepping out of a trap's lane into a slime is no better)
+                        var clear = SpaceTimeMove(new Vector2(Player.Hitbox.X, Player.Hitbox.Y), PredictThreats(null), useCache: false, survive: true)
+                            ?? SpaceTimeMove(new Vector2(Player.Hitbox.X, Player.Hitbox.Y), walkers, useCache: false, survive: true);
                         if (clear != null && clear.Length > 0)
                         {
-                            BotRunner.Status = "fight/step clear of a patrolling Shieldy";
+                            BotRunner.Status = "fight/step clear of a patroller";
                             yield return K(clear);
                             continue;
                         }
@@ -5806,6 +5838,23 @@ namespace AnodyneSharp.Recording
                         noKill = 1;
                         yield return FrogStrikeKeys(target, ref plantSwingWait);
                         continue;
+                    }
+                    if (!isFrog)
+                    {
+                        // The standoff and the waiting stand still, and a slime or an Annoyer about the plant does not wait: clear of them first.
+                        var all = PredictThreats(target);
+                        var others = all.Where(t => t.Source != null && !t.Stationary && !t.Name.Contains("Bullet") && !t.Name.Contains("Burst")).ToList();
+                        if (others.Count > 0 && PlanHitFrameStanding(16, KeyFunctions.Right, 0, others) != int.MaxValue)
+                        {
+                            var clear = SpaceTimeMove(new Vector2(pbp.X, pbp.Y), all, useCache: false, survive: true)
+                                ?? SpaceTimeMove(new Vector2(pbp.X, pbp.Y), others, useCache: false, survive: true);
+                            if (clear != null && clear.Length > 0)
+                            {
+                                BotRunner.Status = "fight/plant: clear of the others about it";
+                                yield return K(clear);
+                                continue;
+                            }
+                        }
                     }
                     if (bulletsUp)
                     {

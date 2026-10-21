@@ -43,6 +43,13 @@ namespace AnodyneSharp.Recording
             // gate in the channel). `+` plans the whole map (rafts, jumps, buttons, shut gates) and opens every reachable card chest.
             yield return Section("fields southern cards", () => Exec("O1 X1 + W60"));
 
+            // The other southern card (by the slimes, behind kill gates): the walkthrough's way round. West and south over the lake to
+            // the west shore, north to (1,6), then (2,6), round by (3,6)/(3,7) into (2,7); its gate down to (2,8) wants all three of
+            // its enemies dead in one visit (the dog comes back on re-entry), so (2,7) is fought again from its north side. The frog on
+            // (2,9) opens the gates there; the chest is just east of (2,8). On (2,6) (a Slasher, three Annoyers that stay dead, spike
+            // beds; all four dead for its gate) the Annoyers are fought first, from the safe west edge, before they can join a Slasher fight.
+            yield return Section("fields slime card", () => Exec("O1 X0 H3,9 H3,10 H2,10 H1,10 H1,9 H1,8 H1,7 H1,6 H2,6 d1500 X1 F2000 X0 H3,6 H3,7 X1 H2,7 F2000 X0 >390,1180 X1 F W30 H2,8 F2000 H2,9 F H2,8 H3,8 I528,1344,d W60"));
+
             // The pause menu's map tab warps back to the Nexus; its middle door returns to the Fields pad (no trip back over the lake).
             yield return Section("fields menu to nexus", () => Exec("n0 W60"));
             yield return Section("fields nexus to pad", () => Exec("P712,1060 U30 A W300"));
