@@ -294,6 +294,15 @@ namespace AnodyneSharp.Recording
                         }
                         break;
                     }
+                    case '<':
+                    {
+                        // <x,y[,r|u|l|d[j]]: rush the frog beyond x,y that way (default r, jumping a pit: rj), see FrogRush
+                        var a = tok.Substring(1).Split(',');
+                        string how = a.Length > 2 ? a[2] : "rj";
+                        var rdir = how[0] == 'u' ? KeyFunctions.Up : how[0] == 'd' ? KeyFunctions.Down : how[0] == 'l' ? KeyFunctions.Left : KeyFunctions.Right;
+                        yield return FrogRush(float.Parse(a[0]), float.Parse(a[1]), rdir, how.EndsWith("j"));
+                        break;
+                    }
                     case 'z':
                     {
                         var d = BotNav.DistMap(BotNav.TileOf(Pos), true);
@@ -1998,6 +2007,81 @@ namespace AnodyneSharp.Recording
         /// Token i: the Health Cicada of this map (a HealthCicadaSentinel preset that has not been used): walk to it at once (it flies off
         /// if we stray 80px once it has come down), then sit through its cutscene (it heals, gnaws a new heart into the bar).
         /// </summary>
+        /// <summary>
+        /// A frog in a corridor fires a volley the moment we come within 64px and again each time its bullets land while we stay in, so a
+        /// plan clear of them all (the fight's) seldom comes where two stand together (the Crowd's (4,6), behind a one-tile pit) or one fills a
+        /// strip (5,5). Killing it is what opens the way: wait out of its reach, run in along dir to (x,y) without stopping (the volley comes
+        /// down where we were when it fired, behind us), jump the pit if there is one, swing twice a second apart (it flickers in between)
+        /// and back off if it still lives. Costs a heart or so: the sections that use it have a budget.
+        /// </summary>
+        protected static IEnumerable<object> FrogRush(float x, float y, KeyFunctions dir, bool jump)
+        {
+            var d = DirVector(dir);
+            var back = dir switch { KeyFunctions.Right => KeyFunctions.Left, KeyFunctions.Left => KeyFunctions.Right, KeyFunctions.Up => KeyFunctions.Down, _ => KeyFunctions.Up };
+            var at = new Vector2(x, y);
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                var frog = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && Vector2.Dot(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - at, d) > 0
+                        && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - at).Length() < 64)
+                    .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (at + d * 30)).LengthSquared()).FirstOrDefault();
+                if (frog == null)
+                {
+                    yield break;
+                }
+                BotRunner.Status = "frog rush: wait out of reach";
+                // (72px out from its middle along the run: its reach is 64px)
+                float along = Vector2.Dot(new Vector2(frog.Hitbox.Center.X, frog.Hitbox.Center.Y) - (at + new Vector2(5, 6)), d);
+                var wait = at - d * Math.Max(30f, 72f - along);
+                yield return GoGlobal(wait.X, wait.Y);
+                for (int i = 0; i < 40 && (Pos - wait).Length() > 1.5f; i++)
+                {
+                    var off = wait - Pos;
+                    yield return K(Math.Abs(off.X) > Math.Abs(off.Y) ? (off.X > 0 ? KeyFunctions.Right : KeyFunctions.Left) : (off.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up));
+                }
+                for (int i = 0; i < 240 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet); i++)
+                {
+                    BotRunner.Status = "frog rush: wait for the air to clear";
+                    yield return K();
+                }
+                BotRunner.Status = "frog rush: run in";
+                for (int i = 0; i < 120 && Vector2.Dot(at - Pos, d) > 0.5f; i++)
+                {
+                    yield return K(dir);
+                }
+                if (jump)
+                {
+                    BotRunner.Status = "frog rush: jump";
+                    yield return K(KeyFunctions.Cancel, dir);
+                    for (int i = 0; i < 40 && (i < 3 || Player.state == AnodyneSharp.Entities.PlayerState.AIR); i++)
+                    {
+                        yield return K(dir);
+                    }
+                }
+                for (int swing = 0; swing < 3 && frog.exists; swing++)
+                {
+                    BotRunner.Status = $"frog rush: swing {swing + 1}";
+                    yield return K(dir);
+                    yield return K(KeyFunctions.Accept);
+                    yield return Wait(swing < 2 ? 62 : 20);
+                }
+                if (!frog.exists || frog.CurAnimName == "die")
+                {
+                    yield return Wait(30);
+                    yield break;
+                }
+                BotRunner.Status = "frog rush: back off";
+                if (jump)
+                {
+                    yield return K(KeyFunctions.Cancel, back);
+                }
+                for (int i = 0; i < 40 && (i < 3 || Player.state == AnodyneSharp.Entities.PlayerState.AIR || (!jump && i < 30)); i++)
+                {
+                    yield return K(back);
+                }
+                yield return Wait(120);
+            }
+        }
+
         protected static IEnumerable<object> CollectCicada()
         {
             var pr = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
@@ -4837,6 +4921,12 @@ namespace AnodyneSharp.Recording
             return 0;
         }
 
+        /// <summary>Frames on the spot across a frog's pit before jumping back (the broom connects early in its 20-frame swing).</summary>
+        private static long _frogStillSince;
+        private static Vector2 _frogStillPos;
+
+        private static readonly int FrogStay = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_FROG_STAY"), out int fst) ? fst : 22;
+
         private static KeyFunctions[] FrogJumpKeys(Vector2 spot, List<Threat> threats, Func<Vector2, int, int, bool> safeAt, bool takeoffOnly = false, KeyFunctions? along = null, Func<Vector2, int, int, bool> safeAtExact = null)
         {
             var pb = Player.Hitbox;
@@ -4870,7 +4960,7 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            int stay = takeoffOnly ? 8 : 22; // after landing: out of reach (back home), or the swing (20 frames)
+            int stay = takeoffOnly ? 8 : FrogStay; // after landing: out of reach (back home), or the swing (20 frames)
             // Is the run from here to the take-off point, the flight and the stay on the spot clear of every predicted bullet?
             int walk = (int)Math.Ceiling((origin - here).Length() / WalkPxPerFrame);
             bool Clear(out string why)
@@ -5873,6 +5963,33 @@ namespace AnodyneSharp.Recording
                         noKill = 1; // waiting out its bullets / working at it from the standoff is progress; walking at it for ever is not
                     }
                     bool isFrog = target.GetType().Name == "Frog";
+                    if (isFrog && (Pos - _frogStillPos).Length() > 3f)
+                    {
+                        _frogStillPos = Pos;
+                        _frogStillSince = BotRunner.Frame;
+                    }
+                    else if (isFrog && BotRunner.Frame - _frogStillSince > 240)
+                    {
+                        // Four seconds rooted to one spot waiting for a volley that does not come (out of its reach, or a step in that is never
+                        // safe): step back from it a little and let the plan start over from there.
+                        var awayF = Math.Abs(pbp.Center.X - pl.Center.X) >= Math.Abs(pbp.Center.Y - pl.Center.Y)
+                            ? (pbp.Center.X >= pl.Center.X ? KeyFunctions.Right : KeyFunctions.Left)
+                            : (pbp.Center.Y >= pl.Center.Y ? KeyFunctions.Down : KeyFunctions.Up);
+                        _frogStillSince = BotRunner.Frame;
+                        if (soft && pdist >= 110)
+                        {
+                            // far from it and going nowhere (back at the room's door after a fall into its pit): give the fight back to the
+                            // route, which walks round to the pit again
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  soft fight: stuck {pdist:0}px from the Frog at {pl.X},{pl.Y}: back to the route");
+                            }
+                            yield break;
+                        }
+                        BotRunner.Status = "fight/frog: unstick";
+                        yield return Hold(8, WalkableAhead(awayF, 8) ? awayF : (awayF is KeyFunctions.Left or KeyFunctions.Right ? KeyFunctions.Up : KeyFunctions.Left));
+                        continue;
+                    }
                     if (isFrog && pdist < 110)
                     {
                         // A frog fires again the moment its bullets land for as long as we are inside 64px: there is no gap to wait for. Go in at

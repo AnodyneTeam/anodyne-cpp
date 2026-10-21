@@ -92,9 +92,15 @@ namespace AnodyneSharp.Recording
             yield return Say("The Crowd: keys, rollers and the fall doors");
             yield return Section("crowd in", () => Exec("O1 X1 H3,6 W30 `cr_36"));
             // (the Annoyer on (2,3) sleeps until we come within 64px, and the gate to the key needs it dead)
-            yield return Section("crowd key 1", () => Exec("O1 X1 H3,5 F H2,5 H2,4 F H2,3 F >404,540 W20 F W90 I336,592,d W60 `cr_key1"));
-            yield return Section("crowd frogs", () => Exec("O1 X0 >680,1060 X1 F12000 `cr_frogs46"));
-            yield return Section("crowd key 2", () => Exec("O1 X1 >835,1085 >890,724 W30 I896,704,d W60 `cr_key2b"));
+            // (2,3) is a Dog, two Annoyers and slimes in one small room: no line of play here takes no hits yet, so it has a budget of three
+            yield return Section("crowd key 1", () => Exec("O1 X1 H3,5 F H2,5 H2,4 F g3 H2,3 F >404,540 W20 F W90 g0 I336,592,d W60 `cr_key1"));
+            // (4,6): two frogs side by side behind a one-tile pit keep each other's volleys going, and the fight's patient wait for a way
+            // in and out clear of them all can last for ever. Killing the upper one opens the corridor: the frog rush (wait out of reach,
+            // run in, jump, two swings), with a budget for the hit or two it takes.
+            yield return Section("crowd frogs", () => Exec("g3 O1 X0 >680,1060 <692,1074 W30 g0 `cr_frogs46"));
+            // (5,6) is islands between pits: the frog sits on the middle one, the way to the strip up to (5,5), and another fills that
+            // strip. Rush both from below (no auto-fight: chasing the first round the pits ends on a ledge with no way off).
+            yield return Section("crowd key 2", () => Exec("g3 O1 X0 >835,1085 <851,1058,uj W30 >899,930 <899,884,u W30 g0 O1 X1 >890,724 W30 I896,704,d W60 `cr_key2b"));
             yield return Section("crowd west", () => Exec("O1 X1 >818,738 W20 >720,870 O1 X1 >408,980 `cr_26n"));
             // (2,6): the platforms to the chest side and back (t1, t2), then from the west floor to the island (t3).
             yield return Section("crowd key 3", () => Exec("O1 X1 t1 I496,976,d W30 `cr_key3"));
@@ -115,7 +121,8 @@ namespace AnodyneSharp.Recording
             yield return Section("crowd health", () => Exec("O1 X1 I352,336,d W60 `cr_hp"));
             yield return Section("crowd (3,3) door", () => Exec("O1 X1 >565,592 W10 O1 X0 U40 W20 U40 W90 `cr_52"));
             yield return Section("crowd (7,2) frogs", () => Exec("O1 X0 >838,352 U30 W90 O1 X1 F3000 W60 `cr_72f"));
-            yield return Section("crowd (7,1) keyblock", () => Exec("O1 X0 >1190,330 >1189,262 U40 W20 U60 >1190,140 W10 `cr_71"));
+            // (the crowd's people wander about the keyblock and can stand between us and it: push at it again a little later)
+            yield return Section("crowd (7,1) keyblock", () => Exec("O1 X0 >1190,330 >1189,262 G1191,262 U40 W20 U60 W90 G1191,262 U60 W90 G1191,262 U60 >1190,140 W10 `cr_71"));
             yield return Section("crowd (8,0) (9,0) platforms", () => Exec("O1 X0 >1270,72 R30 W60 t10 >1432,72 R30 W60 t11 `cr_90b"));
             yield return Section("crowd (9,1) rollers", () => Exec("O1 X0 >1508,155 D8 t12 >1560,330 W30 `cr_92"));
             // The (9,2) button (opens the gate south), then the fall doors: (9,2) to (3,4) to the boss's door on (9,7).
@@ -126,7 +133,29 @@ namespace AnodyneSharp.Recording
             yield return Section("crowd wall boss", () => Exec("O1 X0 x W60 `cr_boss"));
             yield return Section("crowd cicada", () => Exec("O1 X0 i W60 `cr_cic"));
             yield return Section("crowd sage and blue key", () => Exec("O1 X0 >1512,935 W60 U20 W400 T W60 >1538,900 I1536,864,d W60 T W60 T W30 I1488,832,d W60 T W30 `cr_key"));
-            yield return Section("crowd out", () => Exec("O1 n0 W120 O1 X0 D60 W200 `cr_out"));
+            // North of the boss room is the dungeon's own Nexus pad (it lights up when its screen loads): take it to the Nexus.
+            yield return Section("crowd north nexus point", () => Exec("O1 X0 >1514,770 W30 P1514,750 W20 A W60 T W200 `cr_out"));
+        }
+    }
+
+    /// <summary>
+    /// Walkthrough Part 12: the Windmill. From the Nexus to the Fields and east to the windmill's door (a trapdoor by the river on
+    /// (10,8), walked into from the left), up through the three big-key gates (green, red, blue), the card chest, the climb to the top
+    /// and the console that starts the windmill (a cutscene moves the three dungeon statues).
+    /// </summary>
+    public class Windmill : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Windmill: three big keys and the console");
+            yield return Section("windmill nexus to the fields", () => Exec("O1 X1 P712,1060 U30 A W300 `wm_fields"));
+            // (the door's 8px hitbox sits right of the floor in front of it, which is water: stand left of it and walk in)
+            yield return Section("windmill fields to the door", () => Exec("O1 X1 >1729,1363 R20 W120 `wm_in"));
+            yield return Section("windmill big key gates", () => Exec("O1 X0 U90 W60 U60 >232,1010 U90 W60 U60 >232,900 U90 W60 U60 >232,860 W10 `wm_gates"));
+            yield return Section("windmill climb", () => Exec("O1 X1 >208,402 W10 `wm_top"));
+            yield return Section("windmill console", () => Exec("O1 X0 U4 A W900 T W60 `wm_on"));
+            // The card chest by the gates says "Some strange force stops this" until the console has run
+            yield return Section("windmill card", () => Exec("O1 X1 I176,832,d W60 T W30 `wm_card"));
         }
     }
 }

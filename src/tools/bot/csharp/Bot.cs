@@ -326,7 +326,7 @@ namespace AnodyneSharp.Recording
                     {
                         DebtBaseline -= _hpSeen - hp; // (and not owed to an earlier hit's debt either: that one only wants its own hearts back)
                     }
-                    System.Console.Error.WriteLine($"  boss hit f{_botFrame}: HP {_hpSeen}->{hp}, budget left {BossDamageBudget} P={Player.Hitbox} " + string.Join(" ", Entities().Where(e => e.exists && e.GetType().Name.StartsWith("Seer")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}")));
+                    System.Console.Error.WriteLine($"  boss hit f{_botFrame}: HP {_hpSeen}->{hp}, budget left {BossDamageBudget} by {GlobalState.DamageDealer} P={Player.Hitbox} ({Status}) " + string.Join(" ", Entities().Where(e => e.exists && e.GetType().Name.StartsWith("Seer")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}")));
                 }
                 else if (hp > 0 && RecoverFrames > 0)
                 {
@@ -1375,7 +1375,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1396,6 +1396,7 @@ namespace AnodyneSharp.Recording
             "redcave4" => new RedCaveTop(),
             "cliff" => new ForestCliff(),
             "crowd" => new Crowd(),
+            "windmill" => new Windmill(),
             _ => throw new ArgumentException(name)
         };
 
