@@ -185,7 +185,17 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   and waits between rows 3 and 5 otherwise. It dodges the bullets, the stomps' shadows and the pushes with the space-time planner,
   and it jumps the laser, timed so it lands after the laser is past. From the boss door, 6 of 7 timing variants win hitless and the
   7th takes one hit. After the boss it gets the Health Cicada, the Sage's talk, the blue key and the chest, then warps to the entrance
-  and goes out to the Cliffs (verified in one run from `cr_96a`). Next: making the whole part reliable from the door, then the Nexus.
+  and goes out to the Cliffs (verified in one run from `cr_96a`). The pit frogs are rushed (token `<x,y[,dir[j]]>`, `FrogRush`); the
+  whole part passes from the chain about one run in six.
+- Part `windmill` (`Windmill` in `Fields.cs`): the Fields door, the three big-key gates, the climb and the console; the card chest by
+  the gates only opens once the console has run, so it is opened last. Part `temple2` (`Temple2` in `Temple.cs`): the Nexus pad to
+  the Temple, a running jump (token `e<dir>[at]`) over the (5,0) holes for the key and the Pew Pew card, out through (4,4) and round
+  the east woods (a lane between the laser columns, one budgeted slow-laser hit, past the Dogs) to the Annoyer card. Part `suburb`
+  (`Suburb` in `Temple.cs`): Black and White Town. Its killers cost 6 hearts and never die, so they are dangers with a 30px path
+  berth; a detour to the Forest's Mushroom card (raft up its drowning channel, swinging at the Slime and Annoyer from the raft) makes
+  16 cards for the town's gate; then the maze's health upgrade, ten townsfolk (token `:<n>`) and the Suburbanite's Corpse card
+  (17 cards). Each passes from the previous part's end. Still skipped on the route: Red Cave's (0,0) and (3,1) cards and the Crowd's
+  (8,2) card. Next: the Apartments (the town's north door).
   The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
