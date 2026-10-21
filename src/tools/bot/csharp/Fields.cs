@@ -75,7 +75,7 @@ namespace AnodyneSharp.Recording
     /// <summary>
     /// Walkthrough Part 11: the Cliffs dungeon (CROWD), from its door to the boss. Four keys (frogs, platforms ridden by sweeping dust
     /// onto them, buttons), the health chest, the keyblocks, the spike roller rooms (CrowdPlatforms routes t8/t9/t12 time the rollers),
-    /// the frog room and the platform rides of the north-east, then the two fall doors down to the boss's door.
+    /// the frog room and the platform rides of the north-east, then the two fall doors down to the Wall boss, the Sage and the blue key.
     /// </summary>
     public class Crowd : BotScript
     {
@@ -113,6 +113,12 @@ namespace AnodyneSharp.Recording
             // The (9,2) button (opens the gate south), then the fall doors: (9,2) to (3,4) to the boss's door on (9,7).
             yield return Section("crowd fall doors", () => Exec("O1 X1 >1576,438 W30 O1 X0 >1516,340 D60 W400 `cr_97"));
             yield return Section("crowd to the boss", () => Exec("O1 X0 >1512,1110 W30 `cr_96a"));
+            // The Wall boss (WallBossFight), its Health Cicada, the Sage (who walks up to talk), the blue key and the chest by it; then the
+            // menu's warp to the dungeon's entrance and out to the Cliffs.
+            yield return Section("crowd wall boss", () => Exec("O1 X0 x W60 `cr_boss"));
+            yield return Section("crowd cicada", () => Exec("O1 X0 i W60 `cr_cic"));
+            yield return Section("crowd sage and blue key", () => Exec("O1 X0 >1512,935 W60 U20 W400 T W60 >1538,900 I1536,864,d W60 T W60 T W30 I1488,832,d W60 T W30 `cr_key"));
+            yield return Section("crowd out", () => Exec("O1 n0 W120 O1 X0 D60 W200 `cr_out"));
         }
     }
 }

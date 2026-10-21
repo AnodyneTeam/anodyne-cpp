@@ -181,7 +181,12 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   - the falling spike rollers. They are harmless while they fall and to a player in the air, so the bot gets past them as they fall
     and jumps through them as they roll. On (9,1) both rollers sweep the whole room: one from the top, and one from the bottom that
     starts when row 18 is crossed.
-  Next: the Wall boss (`WallBoss`: a 12 HP face, stomping and pushing hands, a laser, bullet volleys). The Beach 2 raft crossing still
+  The part goes on through the Wall boss (`WallBossFight`, token `x`). The bot hits the face from right under it when it is open,
+  and waits between rows 3 and 5 otherwise. It dodges the bullets, the stomps' shadows and the pushes with the space-time planner,
+  and it jumps the laser, timed so it lands after the laser is past. From the boss door, 6 of 7 timing variants win hitless and the
+  7th takes one hit. After the boss it gets the Health Cicada, the Sage's talk, the blue key and the chest, then warps to the entrance
+  and goes out to the Cliffs (verified in one run from `cr_96a`). Next: making the whole part reliable from the door, then the Nexus.
+  The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.

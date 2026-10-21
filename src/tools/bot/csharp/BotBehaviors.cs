@@ -106,6 +106,7 @@ namespace AnodyneSharp.Recording
                     case 'K': yield return TempleLaserDust(); break;
                     case 'k': yield return FillHoles(); break;
                     case 't': yield return CrowdPlatforms.Platforms(n); break; // t<n>: a Crowd moving-platform route (see CrowdPlatforms)
+                    case 'x': yield return WallBossFight(); break; // x: the Crowd's Wall boss
                     case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); break;
                     case 'g': BotRunner.BossDamageBudget = int.Parse(tok.Substring(1)); break; // g<n>: this section may cost n hearts (documented, shrinking: every one is a TODO)
                     case 'l':
@@ -3143,6 +3144,370 @@ namespace AnodyneSharp.Recording
                 yield return K(keys.ToArray());
             }
             throw new InvalidOperationException($"bot: Red boss fight timed out at {Pos}");
+        }
+
+        private static readonly System.Reflection.FieldInfo WallFaceInvincibleField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.Face).GetField("invincible", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo WallFaceTimeoutField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.Face).GetField("hit_timeout", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// The Crowd's Wall boss (9,6): a face in the wall (12 hits) between two hands. The face can be hit for 3s of every 4s cycle; it then
+        /// charges for 1s and sprays 8 bullets down over the top half of the room, and stays invincible until they are gone (1s between
+        /// hits). The hands take turns at: stomps (the left one hunts us, waits 0.7s and drops; the right one bounces along the top), pushes
+        /// (both drop fast to the middle: they only shove) and a laser (64px wide under the face, sweeping down, up, down and back, harmless
+        /// to a player in the air). The left hand's stomps from phase 1 on crack, then hole, row 6. So: hit the face from right under it
+        /// when it is open and nothing is coming, wait between rows 3 and 5 otherwise, dodge with the space-time planner and jump the laser.
+        /// </summary>
+        protected static IEnumerable<object> WallBossFight(int timeoutFrames = 12000)
+        {
+            BotRunner.BossDamageBudget = 0;
+            var tl = new Vector2(Grid.X * 160, Grid.Y * 160);
+            var attack = tl + new Vector2(75, 33);
+            var waitAt = tl + new Vector2(75, 78);
+            int lastSwing = -100;
+            var lastShadow = new Dictionary<Entity, Vector2>();
+            int chargeSeen = -1, laserSeen = -1, laserJump = -100;
+            // It wakes when we are in the top half of the room; the fight starts once it has faded in.
+            yield return GoTo(waitAt.X + BotNav.HalfW, tl.Y + 70 + BotNav.HalfH); // (it wakes once our top is 80px or less down the room)
+            yield return WalkTo(waitAt.X, tl.Y + 70, tol: 1.5f);
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var boss = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.WallBoss);
+                if (boss == null)
+                {
+                    yield break;
+                }
+                BotRunner.NotStuck(); // the fight has its own timeout
+                var face = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Face>().FirstOrDefault();
+                var pb = Player.Hitbox;
+                var here = new Vector2(pb.X, pb.Y);
+                if (face == null || face.opacity < 1f)
+                {
+                    BotRunner.Status = "Wall boss: wait for it to wake";
+                    yield return K();
+                    continue;
+                }
+                if (face.Health == 0)
+                {
+                    BotRunner.Status = "Wall boss: dying";
+                    yield return K();
+                    continue;
+                }
+                bool invincible = WallFaceInvincibleField?.GetValue(face) is bool b && b;
+                float timeout = WallFaceTimeoutField?.GetValue(face) is float f ? f : 0f;
+                var bullets = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Face.Bullet>().Where(e => e.exists && e.CurAnimName == "move").ToList();
+                var laser = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Laser>().FirstOrDefault(e => e.exists);
+                var hands = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Hand>().Where(e => e.exists).ToList();
+                if (face.CurAnimName == "charge")
+                {
+                    if (chargeSeen < 0)
+                    {
+                        chargeSeen = i;
+                    }
+                }
+                else
+                {
+                    chargeSeen = -1;
+                }
+
+                var threats = new List<Threat>();
+                foreach (var bu in bullets)
+                {
+                    var th = new Threat { Name = "WallBoss bullet", Source = bu, Margin = 2 };
+                    for (int k = 0; k <= Horizon; k++)
+                    {
+                        var d = bu.velocity * k / 60f;
+                        th.At[k] = new Rectangle(bu.Hitbox.X + (int)d.X, bu.Hitbox.Y + (int)d.Y, bu.Hitbox.Width, bu.Hitbox.Height);
+                    }
+                    threats.Add(th);
+                }
+                if (chargeSeen >= 0)
+                {
+                    // The volley to come: 8 bullets from the face's centre, 30px/s down and up to 30px/s sideways, for up to 1.5s.
+                    int spawnIn = Math.Max(0, 60 - (i - chargeSeen));
+                    var c = face.Center;
+                    var th = new Threat { Name = "WallBoss volley", Source = face, Margin = 2 };
+                    for (int k = spawnIn; k <= Math.Min(Horizon, spawnIn + 90); k++)
+                    {
+                        float t = (k - spawnIn) / 60f;
+                        th.At[k] = new Rectangle((int)(c.X - 30 * t), (int)(c.Y + 30 * t), (int)(60 * t) + 8, 8);
+                    }
+                    threats.Add(th);
+                }
+                bool rightStomping = false;
+                foreach (var h in hands)
+                {
+                    var sh = h.shadow;
+                    bool shadowOn = sh != null && sh.visible;
+                    var shadowRect = sh?.Hitbox ?? h.Hitbox;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0)
+                    {
+                        System.Console.Error.WriteLine($"  wallboss f{i} {h.GetType().Name} pos={h.Position} off={h.offset} v={h.velocity} anim={h.CurAnimName} shadow={(sh == null ? "-" : sh.Hitbox + ":" + sh.visible)} me={pb}");
+                    }
+                    bool moved = lastShadow.TryGetValue(h, out var lp) && (lp - h.Position).Length() > 0.1f;
+                    lastShadow[h] = h.Position;
+                    if (shadowOn)
+                    {
+                        if (h is AnodyneSharp.Entities.Enemy.Crowd.RHand)
+                        {
+                            rightStomping = true;
+                            var th = new Threat { Name = "WallBoss right stomp", Source = h, Margin = 3 };
+                            for (int k = h.offset.Y > 12 ? 6 : 0; k <= Horizon; k++)
+                            {
+                                var r = shadowRect;
+                                r.Offset((int)(h.velocity.X * k / 60f), 0);
+                                th.At[k] = r;
+                            }
+                            threats.Add(th);
+                        }
+                        else if (!moved || h.offset.Y < 20)
+                        {
+                            // (while it still hunts us it moves with us: dodge only where it has settled)
+                            // (it only hurts as it lands, and it is still high: from a few frames on, so a way out is always planned)
+                            var th = new Threat { Name = "WallBoss left stomp", Source = h, Margin = 4, Stationary = true };
+                            for (int k = h.offset.Y > 20 ? 12 : 0; k <= Horizon; k++)
+                            {
+                                th.At[k] = shadowRect;
+                            }
+                            threats.Add(th);
+                        }
+                    }
+                    else if (h.velocity.Y > 0)
+                    {
+                        // A push: it drops until its top is 96px down the room (it only shoves, but into the holes on row 6/8).
+                        var th = new Threat { Name = "WallBoss push", Source = h, Margin = 2 };
+                        for (int k = 0; k <= Horizon; k++)
+                        {
+                            var d = h.velocity * k / 60f;
+                            float y = Math.Min(h.Position.Y + d.Y, tl.Y + 96);
+                            th.At[k] = new Rectangle((int)(h.Position.X + d.X), (int)y, h.Hitbox.Width, h.Hitbox.Height);
+                        }
+                        threats.Add(th);
+                    }
+                }
+
+                // The laser: dodge it where we can; where it sweeps over us, jump it (in the air it can't hurt us).
+                if (laser != null && laserSeen < 0)
+                {
+                    laserSeen = i;
+                }
+                else if (laser == null)
+                {
+                    laserSeen = -1;
+                }
+                var laserAt = laser == null ? null : WallLaserPath(laser, tl, Math.Max(0, laserSeen + 78 - i));
+                if (laserAt != null)
+                {
+                    threats.Add(new Threat { Name = "WallBoss laser", Source = laser, Margin = 1, At = laserAt });
+                    if (Player.state == PlayerState.GROUND && WallJumpLaserNow(laserAt, pb))
+                    {
+                        BotRunner.Status = "Wall boss: jump the laser";
+                        laserJump = i;
+                        yield return K(KeyFunctions.Cancel);
+                        continue;
+                    }
+                    if (Player.state == PlayerState.AIR && i - laserJump < 40)
+                    {
+                        // Over it: against a laser coming down (it is past sooner), still against one going up (behind us are the holes).
+                        // (and clear of the bullets, which hurt in the air too)
+                        BotRunner.Status = "Wall boss: over the laser";
+                        var prefer = laser.velocity.Y > 0 ? new[] { KeyFunctions.Up, (KeyFunctions)0, KeyFunctions.Left, KeyFunctions.Right }
+                            : new[] { (KeyFunctions)0, KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up };
+                        var shots = threats.Where(t => t.Name.StartsWith("WallBoss bullet") || t.Name == "WallBoss volley").ToList();
+                        KeyFunctions pick = prefer[0];
+                        foreach (var kf in prefer)
+                        {
+                            var d = kf == (KeyFunctions)0 ? Vector2.Zero : DirVector(kf);
+                            bool clear = true;
+                            for (int k = 0; k <= 30 && clear; k++)
+                            {
+                                if (!SafeAtExactThreats(here + d * k, shots.Select(t => new Threat { At = new[] { k <= Horizon ? t.At[k] : null }, Margin = t.Margin }).ToList(), 0))
+                                {
+                                    clear = false;
+                                }
+                            }
+                            if (clear)
+                            {
+                                pick = kf;
+                                break;
+                            }
+                        }
+                        yield return pick == (KeyFunctions)0 ? K() : K(pick);
+                        continue;
+                    }
+                }
+
+                bool open = !invincible && face.CurAnimName != "charge" && bullets.Count == 0 && laser == null && !rightStomping;
+                var goal = open ? attack : waitAt;
+                if (!SafeAtExactThreats(goal, threats, 45))
+                {
+                    // Somewhere else to stand for now: the nearest clear floor between the hands, above row 6.
+                    var best = (Vector2?)null;
+                    float bestCost = float.MaxValue;
+                    for (int gx = 34; gx <= 116; gx += 6)
+                    {
+                        for (int gy = 34; gy <= 82; gy += 6)
+                        {
+                            var c = tl + new Vector2(gx, gy);
+                            var r = new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height);
+                            if (!StandsSafe(r) || !SafeAtExactThreats(c, threats, 45))
+                            {
+                                continue;
+                            }
+                            float cost = (c - here).Length() + 0.5f * (c - goal).Length();
+                            if (cost < bestCost)
+                            {
+                                bestCost = cost;
+                                best = c;
+                            }
+                        }
+                    }
+                    if (best.HasValue)
+                    {
+                        goal = best.Value;
+                    }
+                }
+                BotRunner.Status = $"Wall boss: face hp {face.Health}{(open ? " open" : "")}{(invincible ? " invincible" : "")} bullets {bullets.Count} {(laser != null ? "laser " : "")}{(rightStomping ? "stomp" : "")}";
+                if (open && Math.Abs(pb.X - attack.X) <= 2 && Math.Abs(pb.Y - attack.Y) <= 2 && SafeAtExactThreats(here, threats, 20))
+                {
+                    if (Player.facing != Facing.UP)
+                    {
+                        yield return K(KeyFunctions.Up);
+                        continue;
+                    }
+                    if (timeout <= 0f && i - lastSwing > 20 && !(Player.broom != null && Player.broom.exists))
+                    {
+                        lastSwing = i;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    yield return K(KeyFunctions.Up);
+                    continue;
+                }
+                var keys = SpaceTimeMove(goal, threats, useCache: false);
+                bool survived = keys == null;
+                if (keys == null)
+                {
+                    keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0)
+                {
+                    System.Console.Error.WriteLine($"  wallboss f{i} goal={goal - tl} here={here - tl} safeHere={SafeAtExactThreats(here, threats, 45)} survive={survived} keys={(keys == null ? "null" : string.Join("+", keys))} threats={string.Join(",", threats.Select(t => t.Name))}");
+                }
+                yield return keys ?? K();
+            }
+            throw new InvalidOperationException($"bot: Wall boss fight timed out at {Pos}");
+        }
+
+        /// <summary>
+        /// The Wall boss's laser, frame by frame: it charges (harmless) for flickerLeft frames, then sweeps down at 50px/s to 107px into
+        /// the room, up at 65px/s to 45px, down at 80px/s to 107px and back up to its start at 110px/s.
+        /// </summary>
+        private static Rectangle?[] WallLaserPath(Entity laser, Vector2 tl, int flickerLeft)
+        {
+            var at = new Rectangle?[Horizon + 1];
+            float y = laser.Position.Y - tl.Y;
+            float v = laser.velocity.Y;
+            int phase = laser._flickering ? 0 : v > 0 && v < 60 ? 1 : v < 0 ? 2 : v > 60 ? 3 : 4;
+            int wait = laser._flickering ? flickerLeft : 0;
+            var hb = laser.Hitbox;
+            for (int k = 0; k <= Horizon; k++)
+            {
+                if (phase == 0)
+                {
+                    if (wait-- <= 0)
+                    {
+                        phase = 1;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                at[k] = new Rectangle(hb.X, (int)(tl.Y + y), hb.Width, hb.Height);
+                switch (phase)
+                {
+                    case 1: y += 50 / 60f; if (y >= 107) { phase = 2; } break;
+                    case 2: y -= 65 / 60f; if (y <= 45) { phase = 3; } break;
+                    case 3: y += 80 / 60f; if (y >= 107) { phase = 4; } break;
+                    default:
+                        y = Math.Max(43, y - 110 / 60f);
+                        if (y <= 43)
+                        {
+                            return at;
+                        }
+                        break;
+                }
+            }
+            return at;
+        }
+
+        /// <summary>
+        /// Jump now if the laser will be on us before a later jump could clear it: a jump keeps us in the air for about 29 frames, so it has
+        /// to start just before the laser reaches us and land after it has gone past.
+        /// </summary>
+        private static bool WallJumpLaserNow(Rectangle?[] laserAt, Rectangle me)
+        {
+            const int Air = 28;
+            bool Hits(int k) => k <= Horizon && laserAt[k] is Rectangle r && r.Intersects(me);
+            int first = -1;
+            for (int k = 0; k <= Horizon; k++)
+            {
+                if (Hits(k))
+                {
+                    first = k;
+                    break;
+                }
+            }
+            if (first < 0 || first > 6)
+            {
+                return false;
+            }
+            // The latest start j (taking off on frame j+1) with nothing on us at or before j and nothing on us once we land.
+            for (int j = first - 1; j >= 0; j--)
+            {
+                bool landClear = true;
+                for (int k = j + Air + 1; k <= j + Air + 8; k++)
+                {
+                    if (Hits(k))
+                    {
+                        landClear = false;
+                        break;
+                    }
+                }
+                if (landClear)
+                {
+                    return j == 0;
+                }
+            }
+            return first <= 1; // no clean jump: in the air for as much of it as we can
+        }
+
+        /// <summary>True if standing still at p (top-left) stays clear of the threats for the next frames.</summary>
+        private static bool SafeAtExactThreats(Vector2 p, List<Threat> threats, int frames)
+        {
+            var me = new Rectangle((int)p.X, (int)p.Y, Player.Hitbox.Width, Player.Hitbox.Height);
+            foreach (var t in threats)
+            {
+                for (int k = 0; k <= Math.Min(frames, Horizon); k++)
+                {
+                    if (t.At[k] is Rectangle r)
+                    {
+                        r.Inflate(t.Margin, t.Margin);
+                        if (r.Intersects(me))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
         }
 
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
