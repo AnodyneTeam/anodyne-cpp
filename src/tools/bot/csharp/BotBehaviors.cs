@@ -105,6 +105,7 @@ namespace AnodyneSharp.Recording
                     }
                     case 'K': yield return TempleLaserDust(); break;
                     case 'k': yield return FillHoles(); break;
+                    case 't': yield return CrowdPlatforms.Platforms(n); break; // t<n>: a Crowd moving-platform route (see CrowdPlatforms)
                     case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); break;
                     case 'g': BotRunner.BossDamageBudget = int.Parse(tok.Substring(1)); break; // g<n>: this section may cost n hearts (documented, shrinking: every one is a TODO)
                     case 'l':
@@ -247,7 +248,7 @@ namespace AnodyneSharp.Recording
                     }
                     case '=':
                     {
-                        // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '.' floor, 'o' still water, U/D/L/R water flowing that way
+                        // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '+' partly solid, '.' floor, 'o' still water, U/D/L/R water flowing that way, else the event's initial (h hole, s spike...)
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
                         var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.CurrentMap);
                         for (int ty = a[1]; ty <= a[3]; ty++)
@@ -257,7 +258,7 @@ namespace AnodyneSharp.Recording
                             {
                                 var (al, ev) = BotNav.CurrentMap.GetTileClass(new Point(tx, ty));
                                 var t = tiles[BotNav.CurrentMap.GetTile(AnodyneSharp.MapData.Layer.BG, new Point(tx, ty))];
-                                row.Append(ev == AnodyneSharp.MapData.Tiles.CollisionEventType.CONVEYOR ? t.direction switch { Touching.UP => 'U', Touching.DOWN => 'D', Touching.LEFT => 'L', Touching.RIGHT => 'R', _ => 'o' } : al != Touching.NONE ? '#' : '.');
+                                row.Append(ev == AnodyneSharp.MapData.Tiles.CollisionEventType.CONVEYOR ? t.direction switch { Touching.UP => 'U', Touching.DOWN => 'D', Touching.LEFT => 'L', Touching.RIGHT => 'R', _ => 'o' } : al == Touching.ANY ? '#' : ev != AnodyneSharp.MapData.Tiles.CollisionEventType.NONE ? char.ToLowerInvariant(ev.ToString()[0]) : al != Touching.NONE ? '+' : '.');
                             }
                             System.Console.Error.WriteLine(row.ToString());
                         }
@@ -661,7 +662,7 @@ namespace AnodyneSharp.Recording
         {
             // the steam jet's nozzle (OnOffLaser) is a harmless solid block that only matches the projectile names: its beam is the danger
             return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) && e.GetType().Name != "OnOffLaser" &&
-                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap")).ToList();
+                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
         }
 
         private static Vector2 DirVector(KeyFunctions k) => k switch
@@ -768,6 +769,27 @@ namespace AnodyneSharp.Recording
             static Point Px(float x, float y) => new((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
             return BotNav.Walkable(Px(r.Left, r.Top)) && BotNav.Walkable(Px(r.Right - 1, r.Top)) &&
                    BotNav.Walkable(Px(r.Left, r.Bottom - 1)) && BotNav.Walkable(Px(r.Right - 1, r.Bottom - 1));
+        }
+
+        /// <summary>Can the player stand on r? Like CornersWalkable, but a hole only counts where its 6x4 core (what makes you fall) touches r.</summary>
+        private static bool StandsSafe(Rectangle r)
+        {
+            foreach (var (x, y) in new[] { (r.Left, r.Top), (r.Right - 1, r.Top), (r.Left, r.Bottom - 1), (r.Right - 1, r.Bottom - 1) })
+            {
+                var t = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+                if (BotNav.IsHole(t))
+                {
+                    if (new Rectangle(t.X * 16 + 5, t.Y * 16 + 5, 6, 4).Intersects(r))
+                    {
+                        return false;
+                    }
+                }
+                else if (!BotNav.Walkable(t))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
@@ -938,6 +960,24 @@ namespace AnodyneSharp.Recording
                     result.AddRange(PredictFourShooter(d));
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller)
+                {
+                    result.Add(PredictRoller(d));
+                    continue;
+                }
+                if (d is AnodyneSharp.Entities.Enemy.Crowd.RotatorBullet)
+                {
+                    result.Add(PredictRotatorBullet(d));
+                    continue;
+                }
+                if (d is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)
+                {
+                    if (PredictFrogBullet(d) is Threat fb)
+                    {
+                        result.Add(fb);
+                    }
+                    continue;
+                }
                 if (name is "Shieldy" or "BounceDashTrap")
                 {
                     result.Add(PredictPatroller(d)); // both walk a line and turn round at the first wall (the trap at 80px/s)
@@ -964,6 +1004,123 @@ namespace AnodyneSharp.Recording
                 result.Add(t);
             }
             return result;
+        }
+
+        private static readonly System.Reflection.FieldInfo RotRadiusField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.RotatorBullet).GetField("radius", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo RotAngleField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.RotatorBullet).GetField("angle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo RotParentField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.RotatorBullet).GetField("parent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>A Crowd Rotator's fireball circles its post (out to 59px at 30px/s, 1.2 rad/s): exactly where it will be. Harmless to a jumper.</summary>
+        private static Threat PredictRotatorBullet(Entity d)
+        {
+            float r = (float)RotRadiusField.GetValue(d), a = (float)RotAngleField.GetValue(d);
+            var parent = (Entity)RotParentField.GetValue(d);
+            var c = parent.Center;
+            var th = new Threat { Name = "RotatorBullet", Margin = 2, Source = d };
+            var hb = d.Hitbox;
+            var off = new Vector2(hb.X, hb.Y) - d.Position; // hitbox top-left relative to the position the orbit sets
+            for (int f = 0; f <= Horizon; f++)
+            {
+                float rf = Math.Min(59f, r + 30f * f / 60f), af = a + 1.2f * f / 60f;
+                var p = c + new Vector2(MathF.Cos(af), MathF.Sin(af)) * rf + off;
+                th.At[f] = new Rectangle((int)p.X, (int)p.Y, hb.Width, hb.Height);
+            }
+            return th;
+        }
+
+        private static readonly System.Reflection.FieldInfo RollerInitField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.FallingSpikeRoller).GetField("_initPos", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo RollerVelField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller).GetField("vel", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// A Crowd spike roller. The falling kind waits unseen until we touch it, drops for offset.Y/60 s (harmless), then rolls at 20px/s for
+        /// 112px and stays put there (still spiked). The bouncy kind rolls at 40px/s and turns round at walls. Neither hurts us in the air.
+        /// </summary>
+        private static Threat PredictRoller(Entity e)
+        {
+            if (e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller)
+            {
+                var pt = PredictPatroller(e);
+                pt.Name = "SpikeRoller";
+                return pt;
+            }
+            var th = new Threat { Name = "SpikeRoller", Source = e, Margin = 1 };
+            var r = e.Hitbox;
+            var roller = (AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller)e;
+            var v = e.velocity;
+            float fallLeft = roller.CollisionOn ? 0 : e.offset.Y / 60f;
+            float left = 112f;
+            if (RollerInitField?.GetValue(e) is Vector2 init)
+            {
+                left = Math.Max(0, 112f - (init - e.Position).Length());
+            }
+            if (v == Vector2.Zero && !roller.CollisionOn && RollerVelField?.GetValue(e) is Vector2 vel)
+            {
+                v = vel; // still falling: it rolls when it lands
+            }
+            th.Stationary = v == Vector2.Zero || left <= 0;
+            for (int f = 0; f <= Horizon; f++)
+            {
+                float t = f / 60f - fallLeft;
+                if (t < 0)
+                {
+                    continue; // still coming down: no harm yet
+                }
+                float moved = Math.Min(left, v.Length() * t);
+                var d = v == Vector2.Zero ? Vector2.Zero : Vector2.Normalize(v) * moved;
+                var at = r;
+                at.Offset((int)d.X, (int)d.Y);
+                th.At[f] = at;
+            }
+            return th;
+        }
+
+        private static readonly System.Reflection.FieldInfo FrogParabolaField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).GetField("parabola", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo ParabolaTField =
+            typeof(AnodyneSharp.Entities.Parabola_Thing).GetField("t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo ParabolaPeriodField =
+            typeof(AnodyneSharp.Entities.Parabola_Thing).GetField("period", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// A Crowd frog's bullet is lobbed (height 16) and only hurts while it is low (offset.Y &lt;= 8: the first and last ~15% of its
+        /// flight); once it lands it splashes standing still and is harmless. Null once it has landed.
+        /// </summary>
+        private static Threat PredictFrogBullet(Entity d)
+        {
+            if (d.velocity == Vector2.Zero)
+            {
+                return null;
+            }
+            var para = FrogParabolaField?.GetValue(d);
+            if (para == null)
+            {
+                return null;
+            }
+            float t0 = (float)ParabolaTField.GetValue(para);
+            float period = (float)ParabolaPeriodField.GetValue(para);
+            var th = new Threat { Name = "FrogBullet", Margin = 2, Source = d };
+            for (int f = 0; f <= Horizon; f++)
+            {
+                float t = t0 + f / 60f;
+                if (t > period + 1 / 60f)
+                {
+                    break;
+                }
+                float k = Math.Clamp(t / period, 0f, 1f);
+                if (4 * k * (1 - k) * 16 > 8)
+                {
+                    continue; // high in the air: passes over us
+                }
+                var r = d.Hitbox;
+                r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                th.At[f] = r;
+            }
+            return th;
         }
 
         /// <summary>
@@ -3322,6 +3479,898 @@ namespace AnodyneSharp.Recording
         /// Keys to stand off a still target ~5px short of its box, line up with it, face it and swing (gap up to 11px: the broom reaches ~12
         /// beyond us). `swingWait` counts frames since the last swing; `cooldown` is the frames between swings.
         /// </summary>
+        /// <summary>
+        /// One frame of a fight with a Crowd frog. Its three bullets are lobbed at our centre (15/30/45 px/s, 0.8-1.8s flights) and only
+        /// hurt while low: just after leaving its top-left corner (up to 12px out) and where they come down (see PredictFrogBullet). It fires
+        /// whenever we are within 64px and its last volley is gone (gone = landed and splashed, 18 frames). So: strike from a spot 4-9px
+        /// off one of its sides (outside the reach of a fresh volley where the floor allows, inside the broom's), picking a side no landing
+        /// bullet is about to cover, and walk between spots round the predicted landings (the space-time planner, with the next volley as
+        /// a danger round the frog from the frame it will fire). A spot across a pit is jumped to and back (FrogJumpKeys).
+        /// </summary>
+        private static string _frogLastStatus;
+
+        private static KeyFunctions[] FrogStrikeKeys(Entity frog, ref int swingWait)
+        {
+            var keys = FrogStrikeKeysCore(frog, ref swingWait);
+            if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  frogkeys f{BotRunner.Frame} [{string.Join("+", keys)}] {BotRunner.Status}");
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Status != _frogLastStatus)
+            {
+                _frogLastStatus = BotRunner.Status;
+                var hf = frog.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                System.Console.Error.WriteLine($"  frogstat f{BotRunner.Frame} {BotRunner.Status} at {Player.Hitbox.X},{Player.Hitbox.Y} frog@{frog.Position} hp={hf?.GetValue(frog)}");
+            }
+            return keys;
+        }
+
+        private static KeyFunctions[] FrogStrikeKeysCore(Entity frog, ref int swingWait)
+        {
+            swingWait++;
+            var pb = Player.Hitbox;
+            // Every other danger counts too (a Rotator's fireball circling past), but frogs themselves are modelled below.
+            var threats = PredictThreats(frog).Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Crowd.Frog)).ToList();
+            var me = new Vector2(pb.Center.X, pb.Center.Y);
+            foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog))
+            {
+                var fc = new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y);
+                if ((fc - me).Length() > 110)
+                {
+                    continue;
+                }
+                // Touching a frog hurts.
+                var body = new Threat { Name = "Frog", Margin = 1, Source = f, Stationary = true };
+                for (int k = 0; k <= Horizon; k++)
+                {
+                    body.At[k] = f.Hitbox;
+                }
+                threats.Add(body);
+                // The next volley: now if it is ready, else once the last bullet has landed and splashed. Aimed at wherever we are then,
+                // so it is a danger all round its corner (12px out) for the 16 frames it is low.
+                int fireAt = 0;
+                foreach (var b in f.SubEntities().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                {
+                    int left = 18;
+                    if (b.velocity != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    {
+                        left += (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f);
+                    }
+                    fireAt = Math.Max(fireAt, left);
+                }
+                var volley = new Threat { Name = "FrogVolley", Margin = 1, Source = f };
+                var corner = new Rectangle((int)f.Position.X, (int)f.Position.Y, 8, 8);
+                if (fireAt == 0)
+                {
+                    var dir = me - f.Position;
+                    dir = dir.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(dir);
+                    for (int k = 0; k <= 18; k++)
+                    {
+                        var o = f.Position + dir * Math.Min(12f, k * 45f / 60f);
+                        volley.At[k] = new Rectangle((int)o.X, (int)o.Y, 8, 8);
+                    }
+                }
+                else
+                {
+                    for (int k = fireAt; k <= fireAt + 18 && k <= Horizon; k++)
+                    {
+                        var r = corner;
+                        int grow = (int)Math.Min(12f, (k - fireAt) * 45f / 60f);
+                        r.Inflate(grow, grow);
+                        volley.At[k] = r;
+                    }
+                    // ...and where that volley comes down (flight times unknown yet: anywhere its three speeds can carry it in 0.8-1.8s),
+                    // aimed at about where we are now.
+                    var adir = me - f.Position;
+                    adir = adir.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(adir);
+                    foreach (float v in new[] { 15f, 30f, 45f })
+                    {
+                        var a = f.Position + adir * (v * 0.8f * 0.85f);
+                        var b2 = f.Position + adir * (v * 1.8f);
+                        var zone = new Rectangle((int)Math.Min(a.X, b2.X), (int)Math.Min(a.Y, b2.Y), (int)Math.Abs(a.X - b2.X) + 8, (int)Math.Abs(a.Y - b2.Y) + 8);
+                        var land = new Threat { Name = "FrogVolley", Margin = 1, Source = f };
+                        for (int k = fireAt + 40; k <= fireAt + 108 && k <= Horizon; k++)
+                        {
+                            land.At[k] = zone;
+                        }
+                        threats.Add(land);
+                    }
+                }
+                threats.Add(volley);
+            }
+            var fh = frog.Hitbox;
+            var fcen = new Vector2(fh.Center.X, fh.Center.Y);
+            (Vector2, KeyFunctions, Facing) Spot(int side)
+            {
+                // A spot a jump's length from floor beats a closer one with only pit to take off from.
+                var first = SpotAt(side, false);
+                return float.IsNaN(first.Item1.X) ? first : (SpotAt(side, true) is var withTko && !float.IsNaN(withTko.Item1.X) ? withTko : first);
+            }
+            (Vector2, KeyFunctions, Facing) SpotAt(int side, bool needTakeoff)
+            {
+                foreach (int gap in new[] { 7, 6, 8, 5, 9, 4 })
+                {
+                    var at = side switch
+                    {
+                        0 => new Vector2(fcen.X - pb.Width / 2f, fh.Bottom + gap),
+                        1 => new Vector2(fcen.X - pb.Width / 2f, fh.Top - gap - pb.Height),
+                        2 => new Vector2(fh.Left - gap - pb.Width, fcen.Y - pb.Height / 2f),
+                        _ => new Vector2(fh.Right + gap, fcen.Y - pb.Height / 2f),
+                    };
+                    var ctr = at + new Vector2(pb.Width / 2f, pb.Height / 2f);
+                    if (StandsSafe(new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height)) && !BotNav.IsHole(new Point((int)Math.Floor(ctr.X / 16f), (int)Math.Floor(ctr.Y / 16f))))
+                    {
+                        if (needTakeoff)
+                        {
+                            var away = side switch { 0 => new Vector2(0, 1), 1 => new Vector2(0, -1), 2 => new Vector2(-1, 0), _ => new Vector2(1, 0) };
+                            var tko = at + away * 27f;
+                            if (!StandsSafe(new Rectangle((int)tko.X, (int)tko.Y, pb.Width, pb.Height)))
+                            {
+                                continue;
+                            }
+                        }
+                        return side switch
+                        {
+                            0 => (at, KeyFunctions.Up, Facing.UP),
+                            1 => (at, KeyFunctions.Down, Facing.DOWN),
+                            2 => (at, KeyFunctions.Right, Facing.RIGHT),
+                            _ => (at, KeyFunctions.Left, Facing.LEFT),
+                        };
+                    }
+                }
+                return (new Vector2(float.NaN, float.NaN), KeyFunctions.Up, Facing.UP);
+            }
+            var spots = new (Vector2 pos, KeyFunctions face, Facing facing)[] { Spot(0), Spot(1), Spot(2), Spot(3) };
+            bool SafeAt(Vector2 at, int from, int to)
+            {
+                var r = new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height);
+                foreach (var th in threats)
+                {
+                    for (int k = Math.Max(0, from); k <= to && k <= Horizon; k++)
+                    {
+                        if (th.At[k] is Rectangle tr)
+                        {
+                            tr.Inflate(th.Margin, th.Margin);
+                            if (r.Intersects(tr))
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            // The same without the volleys not fired yet (a jump plan models those exactly, see FrogVolleyHitFrame).
+            bool SafeAtExact(Vector2 at, int from, int to)
+            {
+                var r = new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height);
+                foreach (var th in threats.Where(t => t.Name != "FrogVolley"))
+                {
+                    for (int k = Math.Max(0, from); k <= to && k <= Horizon; k++)
+                    {
+                        if (th.At[k] is Rectangle tr)
+                        {
+                            tr.Inflate(th.Margin, th.Margin);
+                            if (r.Intersects(tr))
+                            {
+                                _lastHitThreat = th;
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            var here = new Vector2(pb.X, pb.Y);
+            if (Player.state == PlayerState.AIR)
+            {
+                // Mid-jump (over a pit): steer onto the landing point and let go there (the air speed is 0.83 of walking).
+                // Only along the jump's axis: a key across it would turn us (and the swing on landing needs us facing the frog).
+                var aim = _frogAirTarget;
+                var dk = new List<KeyFunctions>();
+                bool horiz = Math.Abs(aim.X - _frogAirFrom.X) >= Math.Abs(aim.Y - _frogAirFrom.Y);
+                if (horiz && aim.X - here.X > 1f) { dk.Add(KeyFunctions.Right); } else if (horiz && here.X - aim.X > 1f) { dk.Add(KeyFunctions.Left); }
+                if (!horiz && aim.Y - here.Y > 1f) { dk.Add(KeyFunctions.Down); } else if (!horiz && here.Y - aim.Y > 1f) { dk.Add(KeyFunctions.Up); }
+                BotRunner.Status = "fight/frog: jump";
+                return dk.ToArray();
+            }
+            // Standing on a spot we jumped to: strike while it stays clear long enough for the swing (the broom holds us ~20 frames), and
+            // jump back the way we came before a landing bullet or the next volley gets there.
+            for (int i = 0; i < spots.Length; i++)
+            {
+                if (float.IsNaN(spots[i].pos.X) || Math.Abs(spots[i].pos.X - here.X) > 2f || Math.Abs(spots[i].pos.Y - here.Y) > 2f)
+                {
+                    continue;
+                }
+                var sp = spots[i];
+                bool overPit = _frogTakeoff is Vector2 tk && (tk - here).Length() < 40 && FrogPitBetween(here, tk);
+                // (on a spot over the pit we came by an exact plan: volleys not fired yet are judged by that, not the rough all-round guess.
+                // On floor: clear for the swing (~20 frames, it holds us) and the steps out from under a bullet coming down after it.)
+                Func<Vector2, int, int, bool> safeHere = overPit || BotRunner.Frame <= _frogGroundCommit + 40 ? SafeAtExact : SafeAt;
+                if (!frog._flickering && swingWait >= 20 && !(Player.broom != null && Player.broom.exists) && Player.facing == sp.facing && safeHere(here, 1, overPit || BotRunner.Frame <= _frogGroundCommit + 40 ? 26 : 36))
+                {
+                    swingWait = 0;
+                    BotRunner.Status = "fight/frog: swing";
+                    return K(KeyFunctions.Accept);
+                }
+                if (Player.broom != null && Player.broom.exists)
+                {
+                    BotRunner.Status = "fight/frog: swinging";
+                    return K();
+                }
+                if (Player.facing != sp.facing && (SafeAt(here, 1, 30) || overPit))
+                {
+                    BotRunner.Status = "fight/frog: face it";
+                    return K(sp.face);
+                }
+                if (overPit && BotRunner.Frame >= _frogBackAt)
+                {
+                    // The planned moment to jump home (the plan checked that flight against every bullet).
+                    var home = _frogTakeoff.Value;
+                    var hk = Math.Abs(home.X - here.X) >= Math.Abs(home.Y - here.Y) ? (home.X > here.X ? KeyFunctions.Right : KeyFunctions.Left) : (home.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up);
+                    _frogAirTarget = home;
+                    _frogAirFrom = here;
+                    _frogTakeoff = null;
+                    BotRunner.Status = "fight/frog: jump home (planned)";
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  frogjump HOME f{BotRunner.Frame} from {here} to {home}");
+                    }
+                    return K(hk, KeyFunctions.Cancel);
+                }
+                if (overPit)
+                {
+                    if (!safeHere(here, 1, 34) || frog._flickering || swingWait < 20)
+                    {
+                        var back = FrogJumpKeys(_frogTakeoff.Value, threats, SafeAt, takeoffOnly: true);
+                        if (back != null)
+                        {
+                            return back;
+                        }
+                        if (!SafeAt(here, 1, 12))
+                        {
+                            // Staying is worse than a bad jump home.
+                            var hk = _frogTakeoff.Value.X > here.X + 4 ? KeyFunctions.Right : _frogTakeoff.Value.X < here.X - 4 ? KeyFunctions.Left : _frogTakeoff.Value.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                            _frogAirTarget = _frogTakeoff.Value;
+                            _frogAirFrom = here;
+                            _frogTakeoff = null;
+                            BotRunner.Status = "fight/frog: jump home now";
+                            return K(hk, KeyFunctions.Cancel);
+                        }
+                    }
+                    BotRunner.Status = "fight/frog: hold the spot over the pit";
+                    return K();
+                }
+                if (SafeAt(here, 1, 30))
+                {
+                    BotRunner.Status = "fight/frog: hold the spot";
+                    return K();
+                }
+                break;
+            }
+            int best = -1;
+            float bestCost = float.MaxValue;
+            for (int i = 0; i < spots.Length; i++)
+            {
+                if (float.IsNaN(spots[i].pos.X))
+                {
+                    continue;
+                }
+                float dist = (spots[i].pos - here).Length();
+                int eta = (int)(dist / WalkPxPerFrame);
+                float cost = dist + (SafeAt(spots[i].pos, eta, eta + 40) ? 0 : 150);
+                // A spot across a pit is only any good with floor to take off from a jump's length back along its line, on our side of the pit.
+                var tko = spots[i].pos - DirVector(spots[i].face) * 27f;
+                if (FrogPitBetween(here, spots[i].pos) && (!StandsSafe(new Rectangle((int)tko.X, (int)tko.Y, pb.Width, pb.Height)) || FrogPitBetween(here, tko)))
+                {
+                    cost += 2000;
+                }
+                // The far side of a frog (or of the one stacked beside it) is no spot: the way there runs past it.
+                var spC = spots[i].pos + new Vector2(pb.Width / 2f, pb.Height / 2f);
+                foreach (var th in threats.Where(t => t.Name == "Frog"))
+                {
+                    var box = th.At[0].Value;
+                    box.Inflate(6, 6);
+                    for (float u = 0.1f; u < 0.95f; u += 0.05f)
+                    {
+                        var q = Vector2.Lerp(me, spC, u);
+                        if (box.Contains((int)q.X, (int)q.Y))
+                        {
+                            cost += 1000;
+                            break;
+                        }
+                    }
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Frame % 20 == 0)
+                {
+                    System.Console.Error.WriteLine($"  frogspot f{BotRunner.Frame} side={i} at={spots[i].pos} cost={cost:0}");
+                }
+                if (cost < bestCost)
+                {
+                    bestCost = cost;
+                    best = i;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Frame % 20 == 0)
+            {
+                System.Console.Error.WriteLine($"  frog f{BotRunner.Frame} me={here} spot={(best < 0 ? "-" : spots[best].pos.ToString())} cost={bestCost:0} threats={threats.Count} last='{BotRunner.Status}'");
+            }
+            if (best < 0)
+            {
+                BotRunner.Status = "fight/frog: no spot beside it, standoff";
+                return StandoffKeys(fh, pb, ref swingWait, 40);
+            }
+            var spot = spots[best];
+            // (a pit just short of the spot: it is jumped from a take-off point a jump's length back along the line we face the frog on)
+            bool pitOnWay = GlobalState.inventory.CanJump && (FrogPitBetween(here, spot.pos) || FrogPitBetween(spot.pos - DirVector(spot.face) * 27f, spot.pos));
+            if (!pitOnWay && FrogGroundKeys(spot.pos, spot.face, threats, SafeAtExact) is KeyFunctions[] gk)
+            {
+                return gk;
+            }
+            // A bullet aimed at us while we struck comes down on the spot (the slow one, a second or so later): keep off it till it has.
+            int etaSpot = (int)((spot.pos - here).Length() / WalkPxPerFrame);
+            if (!pitOnWay && !SafeAtExact(spot.pos, etaSpot, etaSpot + 24))
+            {
+                if (!SafeAtExact(here, 1, 30))
+                {
+                    var real = threats.Where(t => t.Name != "FrogVolley").ToList();
+                    if (SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] away)
+                    {
+                        BotRunner.Status = "fight/frog: off the spot till its bullet is down";
+                        return K(away);
+                    }
+                }
+                else
+                {
+                    BotRunner.Status = "fight/frog: wait for the bullet on the spot to come down";
+                    return K();
+                }
+            }
+            var mv = pitOnWay ? null : SpaceTimeMove(spot.pos, threats, useCache: false);
+            if (mv != null)
+            {
+                BotRunner.Status = $"fight/frog: to the {spot.face} spot round its bullets";
+                return K(mv);
+            }
+            if (pitOnWay && FrogJumpKeys(spot.pos, threats, SafeAt, along: spot.face, safeAtExact: SafeAtExact) is KeyFunctions[] jk)
+            {
+                return jk;
+            }
+            if (!SafeAt(here, 1, 40))
+            {
+                var dodge = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                if (dodge != null)
+                {
+                    BotRunner.Status = "fight/frog: dodge its bullets";
+                    return K(dodge);
+                }
+                // Nowhere is clear of the rough guess at the next volley too: dodge the bullets that are really flying.
+                var real = threats.Where(t => t.Name != "FrogVolley").ToList();
+                if (!SafeAtExact(here, 1, 40) && SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] dodge2)
+                {
+                    BotRunner.Status = "fight/frog: dodge its flying bullets";
+                    return K(dodge2);
+                }
+            }
+            BotRunner.Status = "fight/frog: wait";
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+            {
+                foreach (var th in threats.Where(t => t.Name == "FrogBullet"))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    for (int k = 0; k <= 12; k++)
+                    {
+                        sb.Append(th.At[k] is Rectangle tr ? $" {k}:{tr.X},{tr.Y}" : "");
+                    }
+                    System.Console.Error.WriteLine($"    wait f{BotRunner.Frame} me={pb} bullet {th.Source?.Position} v={th.Source?.velocity}{sb}");
+                }
+            }
+            return K();
+        }
+
+        private static long _frogGroundCommit = -1;
+        private static long _frogVolleyWaitFrom = -1000, _frogVolleyWaitLast = -1000;
+        private static int _frogGroundStall;
+
+        /// <summary>
+        /// A spot on our side of the floor: walk in, strike and back off by a plan checked frame by frame against the bullets flying and the
+        /// volleys the frogs will fire at us on the way (see FrogVolleyHitFrame), as the jumps over pits are. Null: no straight way in, or
+        /// no clear plan for a long while (the rough rules take over then).
+        /// </summary>
+        private static KeyFunctions[] FrogGroundKeys(Vector2 spot, KeyFunctions face, List<Threat> threats, Func<Vector2, int, int, bool> safeExact)
+        {
+            var pb = Player.Hitbox;
+            var here = new Vector2(pb.X, pb.Y);
+            if ((spot - here).Length() <= 2f)
+            {
+                return null; // on it: the strike itself is decided above
+            }
+            KeyFunctions[] Towards(Vector2 to)
+            {
+                var rk = new List<KeyFunctions>();
+                if (to.X - here.X > 1f) { rk.Add(KeyFunctions.Right); } else if (here.X - to.X > 1f) { rk.Add(KeyFunctions.Left); }
+                if (to.Y - here.Y > 1f) { rk.Add(KeyFunctions.Down); } else if (here.Y - to.Y > 1f) { rk.Add(KeyFunctions.Up); }
+                return rk.ToArray();
+            }
+            if (BotRunner.Frame <= _frogGroundCommit && safeExact(here, 1, 2))
+            {
+                BotRunner.Status = "fight/frog: in to strike (planned)";
+                return K(Towards(spot));
+            }
+            int walk = (int)Math.Ceiling((spot - here).Length() / WalkPxPerFrame);
+            var plan = new List<Vector2>();
+            bool straight = true;
+            for (int k = 1; k <= walk; k++)
+            {
+                var at = Vector2.Lerp(here, spot, k / (float)walk);
+                straight &= StandsSafe(new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height));
+                plan.Add(at);
+            }
+            if (!straight || walk > 90)
+            {
+                return null;
+            }
+            for (int k = 0; k < 26; k++)
+            {
+                plan.Add(spot); // turn and swing (the broom holds us ~20 frames)
+            }
+            // ...then back the way we came.
+            var back = here - spot;
+            back = back.LengthSquared() < 1 ? -DirVector(face) : Vector2.Normalize(back);
+            var last = spot;
+            for (int k = 0; k < 24; k++)
+            {
+                var next = last + back * WalkPxPerFrame;
+                if (StandsSafe(new Rectangle((int)next.X, (int)next.Y, pb.Width, pb.Height)))
+                {
+                    last = next;
+                }
+                plan.Add(last);
+            }
+            string why = "";
+            bool clear = true;
+            for (int k = 0; k < plan.Count && clear; k++)
+            {
+                if (!safeExact(plan[k], k + 1, k + 1))
+                {
+                    clear = false;
+                    why = $"plan {k + 1}/{plan.Count} {_lastHitThreat?.Name}";
+                }
+            }
+            if (clear && FrogVolleyHitFrame(plan, out string who) is int hit && hit > 0)
+            {
+                clear = false;
+                why = $"volley {hit}/{plan.Count} {who}";
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (clear || BotRunner.Frame % 10 == 0))
+            {
+                System.Console.Error.WriteLine($"  frogground f{BotRunner.Frame} at={here} spot={spot} walk={walk} clear={clear} {why}");
+            }
+            if (clear)
+            {
+                _frogGroundCommit = BotRunner.Frame + walk;
+                _frogGroundStall = 0;
+                BotRunner.Status = "fight/frog: in to strike (planned)";
+                return K(Towards(spot));
+            }
+            if (++_frogGroundStall > 400)
+            {
+                return null;
+            }
+            var real = threats.Where(t => t.Name != "FrogVolley").ToList();
+            if (!safeExact(here, 1, 30) && SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] dodge)
+            {
+                BotRunner.Status = "fight/frog: out of the way, waiting for a clear way in";
+                return K(dodge);
+            }
+            BotRunner.Status = "fight/frog: wait for a clear way in";
+            BotRunner.NotStuck(); // waiting for the volleys to line up is progress (the stall count above gives up on it)
+            return K();
+        }
+
+        private static Vector2? _frogTakeoff;
+        private static long _frogCommit = -1, _frogBackAt = long.MaxValue, _frogDrawFrame = -1;
+        private static int _frogDrawIdx;
+        private static Vector2 _frogAirTarget, _frogAirFrom;
+
+        private static bool FrogPitBetween(Vector2 a, Vector2 b)
+        {
+            var half = new Vector2(5, 6);
+            var d = b - a;
+            for (float t = 0; t <= d.Length(); t += 3)
+            {
+                if (BotNav.IsHole(BotNav.TileOf(a + (d.LengthSquared() < 0.01f ? Vector2.Zero : Vector2.Normalize(d)) * t)))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The spot lies across a pit in a straight line (the planner only walks): go to the take-off point a jump's length (~26px) short of
+        /// it and jump when the flight, the landing and the swing there are clear of the bullets. `takeoffOnly`: we are at the take-off
+        /// point already (jumping back off a spot). Null if the line is not straight.
+        /// </summary>
+        private static readonly System.Reflection.FieldInfo FrogMultiplierField =
+            typeof(AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).GetField("_multiplier", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly Dictionary<Entity, long> _frogSplashSeen = new();
+
+        /// <summary>
+        /// The first frame (1..) of a plan (our hitbox top-left per frame, staying at the last point after it) that a frog volley not fired
+        /// yet hits, or 0. A frog fires its 3 bullets the frame we are within 64px (centre to centre) once its last volley has splashed
+        /// (18 frames after landing), aimed from its top-left at our centre then, at 15/30/45px/s; each bullet's flight time is rolled once
+        /// for the frog's life, so it is read off the bullet even while it is not flying. A bullet hurts while low: the first and last ~14.6%.
+        /// </summary>
+        private static int FrogVolleyHitFrame(IList<Vector2> plan, out string who)
+        {
+            who = "";
+            var pb = Player.Hitbox;
+            var cOff = Player.Center - new Vector2(pb.X, pb.Y);
+            foreach (var k in _frogSplashSeen.Keys.Where(e => !e.exists || e.velocity != Vector2.Zero).ToList())
+            {
+                _frogSplashSeen.Remove(k);
+            }
+            var me = plan.Count > 0 ? plan[0] + cOff : Player.Center;
+            int len = plan.Count;
+            Vector2 At(int k) => plan[Math.Clamp(k, 1, len) - 1];
+            foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).ToList())
+            {
+                if ((f.Center - me).Length() > 140)
+                {
+                    continue;
+                }
+                var bullets = f.SubEntities().Where(b => b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).ToList();
+                int fireAt = 1;
+                foreach (var b in bullets.Where(b => b.exists))
+                {
+                    int left;
+                    if (b.velocity != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    {
+                        left = (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f) + 18;
+                    }
+                    else
+                    {
+                        if (!_frogSplashSeen.TryGetValue(b, out long seen))
+                        {
+                            seen = BotRunner.Frame;
+                            _frogSplashSeen[b] = seen;
+                        }
+                        left = Math.Max(0, 18 - (int)(BotRunner.Frame - seen));
+                    }
+                    fireAt = Math.Max(fireAt, left + 1);
+                }
+                for (int volley = 0; volley < 3 && fireAt <= len; volley++)
+                {
+                    int fire = -1;
+                    for (int k = fireAt; k <= len; k++)
+                    {
+                        if ((At(k) + cOff - f.Center).Length() < 64)
+                        {
+                            fire = k;
+                            break;
+                        }
+                    }
+                    if (fire < 0)
+                    {
+                        break;
+                    }
+                    var aim = At(fire) + cOff - f.Position;
+                    aim = aim.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(aim);
+                    float maxPeriod = 0;
+                    foreach (var b in bullets)
+                    {
+                        if (FrogParabolaField?.GetValue(b) is not object para)
+                        {
+                            continue;
+                        }
+                        float period = (float)ParabolaPeriodField.GetValue(para);
+                        maxPeriod = Math.Max(maxPeriod, period);
+                        float v = 15f * (FrogMultiplierField?.GetValue(b) is int m ? m : 3);
+                        var hb = b.Hitbox;
+                        for (int j = 0; j <= (int)Math.Ceiling(period * 60f) && fire + j <= len; j++)
+                        {
+                            float u = j / 60f / period;
+                            if (u > 0.146f && u < 0.854f)
+                            {
+                                continue; // high: passes over us
+                            }
+                            var bp = f.Position + aim * (v * j / 60f);
+                            var br = new Rectangle((int)bp.X, (int)bp.Y, hb.Width, hb.Height);
+                            br.Inflate(2, 2);
+                            var p = At(fire + j);
+                            if (br.Intersects(new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height)))
+                            {
+                                who = $"{f.Position} v{v} j{j} fire@{fire}";
+                                return fire + j;
+                            }
+                        }
+                    }
+                    fireAt = fire + (int)Math.Ceiling(maxPeriod * 60f) + 18 + 1;
+                }
+            }
+            return 0;
+        }
+
+        private static KeyFunctions[] FrogJumpKeys(Vector2 spot, List<Threat> threats, Func<Vector2, int, int, bool> safeAt, bool takeoffOnly = false, KeyFunctions? along = null, Func<Vector2, int, int, bool> safeAtExact = null)
+        {
+            var pb = Player.Hitbox;
+            var here = new Vector2(pb.X, pb.Y);
+            var d = spot - here;
+            Vector2 dir;
+            KeyFunctions key;
+            if (along.HasValue)
+            {
+                dir = DirVector(along.Value);
+                key = along.Value;
+            }
+            else if (Math.Abs(d.Y) <= 8 && Math.Abs(d.X) > 8)
+            {
+                dir = new Vector2(Math.Sign(d.X), 0);
+                key = d.X > 0 ? KeyFunctions.Right : KeyFunctions.Left;
+            }
+            else if (Math.Abs(d.X) <= 8 && Math.Abs(d.Y) > 8)
+            {
+                dir = new Vector2(0, Math.Sign(d.Y));
+                key = d.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up;
+            }
+            else
+            {
+                return null;
+            }
+            const float Air = 0.83f * 70f / 60f;
+            const int AirFrames = 27;
+            var origin = takeoffOnly ? here : spot - dir * (Air * AirFrames);
+            if (!StandsSafe(new Rectangle((int)origin.X, (int)origin.Y, pb.Width, pb.Height)))
+            {
+                return null;
+            }
+            int stay = takeoffOnly ? 8 : 22; // after landing: out of reach (back home), or the swing (20 frames)
+            // Is the run from here to the take-off point, the flight and the stay on the spot clear of every predicted bullet?
+            int walk = (int)Math.Ceiling((origin - here).Length() / WalkPxPerFrame);
+            bool Clear(out string why)
+            {
+                why = "";
+                // The whole plan, frame by frame (top-left of our hitbox at frame k+1): the run, the flight, the swing on the spot,
+                // the flight back and a while at home.
+                var plan = new List<Vector2>();
+                for (int k = 1; k <= walk; k++)
+                {
+                    plan.Add(Vector2.Lerp(here, origin, k / (float)walk));
+                }
+                for (int k = 1; k <= AirFrames; k++)
+                {
+                    plan.Add(origin + dir * (Air * k));
+                }
+                for (int k = 0; k < stay; k++)
+                {
+                    plan.Add(spot);
+                }
+                if (!takeoffOnly)
+                {
+                    for (int k = 1; k <= AirFrames; k++)
+                    {
+                        plan.Add(spot - dir * (Air * k));
+                    }
+                    // (back home: on along the way back, out from under where the volley it fired at the spot comes down)
+                    var last = origin;
+                    for (int k = 1; k <= 24; k++)
+                    {
+                        var next = last - dir * WalkPxPerFrame;
+                        if (StandsSafe(new Rectangle((int)next.X, (int)next.Y, pb.Width, pb.Height)))
+                        {
+                            last = next;
+                        }
+                        plan.Add(last);
+                    }
+                }
+                if (safeAtExact != null)
+                {
+                    // Exact: every frog's next volleys are known once we know where we are when it fires (its bullets' flight times never change).
+                    for (int k = 0; k < walk; k++)
+                    {
+                        if (!StandsSafe(new Rectangle((int)plan[k].X, (int)plan[k].Y, pb.Width, pb.Height)))
+                        {
+                            why = "no straight run";
+                            return false;
+                        }
+                    }
+                    for (int k = 0; k < plan.Count; k++)
+                    {
+                        if (!safeAtExact(plan[k], k + 1, k + 1))
+                        {
+                            why = $"plan {k + 1}/{plan.Count} {_lastHitThreat?.Name} {_lastHitThreat?.Source?.Position}";
+                            return false;
+                        }
+                    }
+                    int hit = FrogVolleyHitFrame(plan, out string who);
+                    if (hit > 0)
+                    {
+                        why = $"volley {hit}/{plan.Count} {who}";
+                        return false;
+                    }
+                    return true;
+                }
+                // A frog that is ready to fire looses a volley the moment we come within 64px: its bullets are unknown until then.
+                var meNow = new Vector2(pb.Center.X, pb.Center.Y);
+                if (!takeoffOnly && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - meNow).Length() < 110 &&
+                    !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)))
+                {
+                    why = "a frog is ready to fire";
+                    return false;
+                }
+                for (int k = 1; k <= walk; k++)
+                {
+                    var at = Vector2.Lerp(here, origin, k / (float)walk);
+                    if (!StandsSafe(new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height)))
+                    {
+                        why = "no straight run";
+                        return false;
+                    }
+                    if (!safeAt(at, k, k))
+                    {
+                        why = $"run {k}/{walk}";
+                        return false;
+                    }
+                }
+                for (int k = 1; k <= AirFrames; k++)
+                {
+                    if (!safeAt(origin + dir * (Air * k), walk + k, walk + k))
+                    {
+                        why = $"flight {k}";
+                        return false;
+                    }
+                }
+                if (!safeAt(spot, walk + AirFrames, walk + AirFrames + stay))
+                {
+                    why = "spot";
+                    return false;
+                }
+                if (!takeoffOnly)
+                {
+                    // ...and the jump back home after the swing.
+                    int t0 = walk + AirFrames + stay;
+                    for (int k = 1; k <= AirFrames; k++)
+                    {
+                        if (!safeAt(spot - dir * (Air * k), t0 + k, t0 + k))
+                        {
+                            why = $"back {k}";
+                            return false;
+                        }
+                    }
+                    if (!safeAt(origin, t0 + AirFrames, t0 + AirFrames + 6))
+                    {
+                        why = "home";
+                        return false;
+                    }
+                }
+                return true;
+            }
+            bool committed = !takeoffOnly && BotRunner.Frame <= _frogCommit && safeAt(here, 1, 2);
+            string whyNot = "committed";
+            bool clear = committed || Clear(out whyNot);
+            if (clear && !takeoffOnly && !committed && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  frogjump COMMIT f{BotRunner.Frame} here={here} walk={walk} land@+{walk + AirFrames} spot={spot}");
+                foreach (var th in threats.Where(t => t.Name == "FrogBullet" || t.Name == "FrogVolley"))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    for (int k = 0; k <= Horizon; k++)
+                    {
+                        if (th.At[k] is Rectangle tr)
+                        {
+                            sb.Append($" {k}:{tr.X},{tr.Y}");
+                        }
+                    }
+                    System.Console.Error.WriteLine($"    {th.Source?.GetType().Name} {th.Source?.Position}{sb}");
+                }
+            }
+            if (clear && !takeoffOnly && !committed)
+            {
+                _frogCommit = BotRunner.Frame + walk + 2; // the run is planned: no second thoughts on the way (the plan is exact)
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Frame % 5 == 0)
+            {
+                System.Console.Error.WriteLine($"  frogjump f{BotRunner.Frame} at={here} origin={origin} spot={spot} walk={walk} clear={clear} {whyNot}");
+            }
+            if (takeoffOnly)
+            {
+                if (!clear)
+                {
+                    return null;
+                }
+            }
+            else if (!clear)
+            {
+                // Wait out of its range (64px: it does not fire) a little short of the take-off point, and try again from there.
+                if (!safeAt(here, 1, 20) && SpaceTimeMove(here, threats, useCache: false, survive: true) is KeyFunctions[] dodge && dodge.Length > 0)
+                {
+                    BotRunner.Status = "fight/frog: dodge short of the pit";
+                    return K(dodge);
+                }
+                var near = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - new Vector2(spot.X + 5, spot.Y + 6)).Length() < 40).ToList();
+                var readyOnes = near.Where(f => !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)).ToList();
+                var stepKey = StepKey(origin.X - here.X, origin.Y - here.Y, null);
+                var stepTo = here + DirVector(stepKey) * 6f;
+                bool stepOk = StandsSafe(new Rectangle((int)stepTo.X, (int)stepTo.Y, pb.Width, pb.Height));
+                if (readyOnes.Count > 0 && (origin - here).Length() > 3f && stepOk && safeAt(stepTo, 1, 12))
+                {
+                    if (BotRunner.Frame - _frogDrawFrame > 30)
+                    {
+                        _frogDrawIdx++; // a new volley drawn: next time from the next waiting point
+                    }
+                    _frogDrawFrame = BotRunner.Frame;
+                    // A frog is quiet: step in until it fires (every frog's volley has to be in the air, known, before we commit).
+                    BotRunner.Status = "fight/frog: step in to draw a volley";
+                    return K(stepKey);
+                }
+                if (BotRunner.Frame - _frogVolleyWaitLast > 2)
+                {
+                    _frogVolleyWaitFrom = BotRunner.Frame;
+                }
+                if (readyOnes.Count > 0 && BotRunner.Frame - _frogVolleyWaitFrom < 90)
+                {
+                    // (not for ever: a frog that is out of its 64px range never fires, so after a while draw it from elsewhere)
+                    _frogVolleyWaitLast = BotRunner.Frame;
+                    BotRunner.Status = "fight/frog: wait for its volley";
+                    return K();
+                }
+                // Where we draw the volley from decides where its bullets come down: vary it (off the run line, one side then the other)
+                // until a volley leaves the run, the jump and the spot clear.
+                var perp = new Vector2(dir.Y, dir.X);
+                var waits = new List<Vector2>();
+                foreach (float side in new[] { -16f, 16f, 0f })
+                {
+                    foreach (float back in new[] { 24f, 14f })
+                    {
+                        var w = origin - dir * back + perp * side;
+                        bool straight = true;
+                        for (float u = 0; u <= 1.001f && straight; u += 0.1f)
+                        {
+                            var at = Vector2.Lerp(w, origin, u);
+                            straight = StandsSafe(new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height));
+                        }
+                        if (straight)
+                        {
+                            waits.Add(w);
+                            break;
+                        }
+                    }
+                }
+                var wait = waits.Count > 0 ? waits[_frogDrawIdx % waits.Count] : origin - dir * 14f;
+                if ((wait - here).Length() > 4f)
+                {
+                    var back = SpaceTimeMove(wait, threats, useCache: false);
+                    if (back != null && back.Length > 0)
+                    {
+                        BotRunner.Status = "fight/frog: back to wait short of the pit";
+                        return K(back);
+                    }
+                }
+                BotRunner.Status = "fight/frog: wait short of the pit for its volley to end";
+                return K();
+            }
+            if ((origin - here).Length() > 3f) // (the air steering makes up the last pixels)
+            {
+                BotRunner.Status = "fight/frog: run to the take-off point";
+                var rk = new List<KeyFunctions>();
+                if (origin.X - here.X > 1f) { rk.Add(KeyFunctions.Right); } else if (here.X - origin.X > 1f) { rk.Add(KeyFunctions.Left); }
+                if (origin.Y - here.Y > 1f) { rk.Add(KeyFunctions.Down); } else if (here.Y - origin.Y > 1f) { rk.Add(KeyFunctions.Up); }
+                return rk.ToArray();
+            }
+            BotRunner.Status = takeoffOnly ? "fight/frog: jump back over the pit" : "fight/frog: jump the pit";
+            _frogTakeoff = takeoffOnly ? null : origin;
+            _frogCommit = -1;
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  frogjump JUMP f{BotRunner.Frame} from {here} to {spot}");
+            }
+            _frogAirTarget = spot;
+            _frogAirFrom = here;
+            _frogBackAt = takeoffOnly ? long.MaxValue : BotRunner.Frame + AirFrames + stay;
+            return K(key, KeyFunctions.Cancel);
+        }
+
         private static KeyFunctions[] StandoffKeys(Rectangle tg, Rectangle pb, ref int swingWait, int cooldown)
         {
             float dx = tg.Center.X - pb.Center.X, dy = tg.Center.Y - pb.Center.Y;
@@ -3439,6 +4488,41 @@ namespace AnodyneSharp.Recording
         }
 
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
+        {
+            yield return FightCore(timeoutFrames, soft, only);
+            yield return DodgeLeftoverBullets();
+        }
+
+        /// <summary>A dead frog's last volley is still in the air: get out from under it before walking on (or standing about).</summary>
+        private static IEnumerable<object> DodgeLeftoverBullets()
+        {
+            for (int i = 0; i < 150; i++)
+            {
+                var threats = PredictThreats(null).Where(t => t.Name == "FrogBullet").ToList();
+                if (threats.Count == 0)
+                {
+                    yield break;
+                }
+                var pb = Player.Hitbox;
+                bool safe = !threats.Any(t => Enumerable.Range(1, 20).Any(k => t.At[k] is Rectangle r && RectInflated(r, t.Margin).Intersects(pb)));
+                if (safe)
+                {
+                    BotRunner.Status = "fight over: wait for its last bullets to come down";
+                    yield return K();
+                    continue;
+                }
+                BotRunner.Status = "fight over: out from under its last bullets";
+                yield return SpaceTimeMove(new Vector2(pb.X, pb.Y), threats, useCache: false, survive: true) is KeyFunctions[] k ? k : K();
+            }
+        }
+
+        private static Rectangle RectInflated(Rectangle r, int m)
+        {
+            r.Inflate(m, m);
+            return r;
+        }
+
+        private static IEnumerable<object> FightCore(int timeoutFrames, bool soft, Func<Entity, bool> only)
         {
             int beamPushes = 0, ambushWaited = 0;
             bool dogDashing = false;
@@ -3705,6 +4789,10 @@ namespace AnodyneSharp.Recording
                     stillFrames = 0;
                     continue;
                 }
+                if (stillFrames > 150 && lastTarget is AnodyneSharp.Entities.Enemy.Crowd.Frog)
+                {
+                    stillFrames = 0; // waiting for a frog's volley to pass is the plan, not being wedged
+                }
                 if (stillFrames > 150)
                 {
                     // Wedged for no reason we know: shake loose by walking a few frames in a changing direction.
@@ -3715,7 +4803,7 @@ namespace AnodyneSharp.Recording
                 if (unstick > 0)
                 {
                     unstick--;
-                    yield return K(unstickKey);
+                    yield return WalkableAhead(unstickKey, 4) ? K(unstickKey) : K(); // never shake loose into a pit
                     continue;
                 }
                 if (stillFrames > 50 && lastStep.HasValue)
@@ -3959,7 +5047,10 @@ namespace AnodyneSharp.Recording
                         }
                         BotRunner.Status = "fight/dog: out of the way of its dashes";
                         var pbd = Player.Hitbox;
-                        var away = SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
+                        // (and of anything else about: a frog's bullets coming down)
+                        var dogAll = PredictThreats(target).Where(t => t.Source != target && t.Name != "Dog").Append(dogThreat).ToList();
+                        var away = SpaceTimeMove(new Vector2(pbd.X, pbd.Y), dogAll, useCache: false, survive: true)
+                            ?? SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                         {
                             System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))}");
@@ -4030,14 +5121,12 @@ namespace AnodyneSharp.Recording
                         noKill = 1; // waiting out its bullets / working at it from the standoff is progress; walking at it for ever is not
                     }
                     bool isFrog = target.GetType().Name == "Frog";
-                    if (isFrog && pdist < 64)
+                    if (isFrog && pdist < 110)
                     {
                         // A frog fires again the moment its bullets land for as long as we are inside 64px: there is no gap to wait for. Go in at
                         // once, stepping round the bullets already flying, and swing from the standoff (touching it hurts too).
                         noKill = 1;
-                        BotRunner.Status = "fight/frog: in to the standoff";
-                        var fk = StandoffKeys(pl, pbp, ref plantSwingWait, 40);
-                        yield return fk.Length == 1 && fk[0] != KeyFunctions.Accept ? SafeMove(fk[0], target, 12f) : fk;
+                        yield return FrogStrikeKeys(target, ref plantSwingWait);
                         continue;
                     }
                     if (bulletsUp)

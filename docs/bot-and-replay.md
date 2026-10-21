@@ -172,7 +172,16 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   east Fields' raft/button maze (planner token `b`) to the Forest door, the Forest's Nexus Point, a raft over its lake to the Cliffs,
   the Cliffs' Nexus Point and the Crowd's door (verified strict, 1 chip, from a Fields state rebuilt with the Fields part's Goldman and
   (8,2) button sections: the Red Cave snapshots descend from a save that skipped the Fields part, so they lack its pads and events).
-  Next: the Crowd dungeon. The Beach 2 raft crossing still
+  Part `crowd` (`Crowd` in `Fields.cs`) is the Crowd dungeon from its door to the Wall boss's door on (9,6): the four keys, the
+  health chest, the keyblocks, the north-east platform rides and both fall doors. Each section is verified from the snapshot the one
+  before it saved, mostly hitless. The whole part run from the door is not reliable yet: the (2,3) Dog/Annoyer/Slime fight and the
+  frog rooms are RNG-dependent and can use up the chip allowance. `CrowdPlatforms` (also in `Fields.cs`, tokens `t1`..`t13`) scripts
+  the rooms the planner can't do alone:
+  - the propelled platforms, with dust swept onto them to start them;
+  - the falling spike rollers. They are harmless while they fall and to a player in the air, so the bot gets past them as they fall
+    and jumps through them as they roll. On (9,1) both rollers sweep the whole room: one from the top, and one from the bottom that
+    starts when row 18 is crossed.
+  Next: the Wall boss (`WallBoss`: a 12 HP face, stomping and pushing hands, a laser, bullet volleys). The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
   The walkthrough is a room-level route, so every room needs its own puzzle/combat logic - a long, incremental job.

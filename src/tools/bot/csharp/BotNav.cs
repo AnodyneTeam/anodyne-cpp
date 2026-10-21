@@ -232,9 +232,9 @@ namespace AnodyneSharp.Recording
             while (q.Count > 0 && found == null)
             {
                 var (c, w, carry) = q.Dequeue();
-                foreach (var d in dirs)
+                var cameFrom = prev[(c, w, carry)].Item1;
+                foreach (var n in Steps(cameFrom, c))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
                     bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n) && !(RaftNarrow && w));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
@@ -322,7 +322,85 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
-        public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t));
+        public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t)) || (IsHole(t) && NarrowHole(t));
+
+        public static bool IsHole(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.HOLE;
+
+        /// <summary>A pit one tile across (in some straight line, with floor on both sides): a jump with the boots clears it (32px).</summary>
+        public static bool NarrowHole(Point t)
+        {
+            bool Floor(Point q)
+            {
+                var (al, ev) = CurrentMap.GetTileClass(q);
+                return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.SPIKE;
+            }
+            return (Floor(new Point(t.X - 1, t.Y)) && Floor(new Point(t.X + 1, t.Y))) || (Floor(new Point(t.X, t.Y - 1)) && Floor(new Point(t.X, t.Y + 1)));
+        }
+
+        /// <summary>
+        /// A path may only cross a pit in a straight line (the jump goes on the way it started): from a hole tile the next tile is the one
+        /// straight on, and it must be floor on the far side.
+        /// </summary>
+        private static bool HoleStepOk(Point prev, Point c, Point n)
+        {
+            if (!IsHole(c))
+            {
+                return true;
+            }
+            return n.X - c.X == c.X - prev.X && n.Y - c.Y == c.Y - prev.Y;
+        }
+
+        private static string _ledgeMap;
+        private static Dictionary<Point, Point> _ledges = new();
+
+        /// <summary>
+        /// Ledge drops (JumpTrigger, Jump_Trigger with no type value): walking down onto one jumps the player 32/48/64px down, over the ledge
+        /// face. From the map's presets, so the drops of screens not loaded yet are known too. Trigger tile -> landing tile.
+        /// </summary>
+        public static Dictionary<Point, Point> Ledges()
+        {
+            if (_ledgeMap == GlobalState.CURRENT_MAP_NAME)
+            {
+                return _ledges;
+            }
+            _ledgeMap = GlobalState.CURRENT_MAP_NAME;
+            _ledges = new Dictionary<Point, Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.JumpTrigger))
+                {
+                    continue;
+                }
+                int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
+                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                _ledges[t] = new Point(t.X, t.Y + dist / 16);
+            }
+            return _ledges;
+        }
+
+        /// <summary>The tiles a search may step to from c (reached from prev): the four neighbours, or a ledge's landing (entered going down, that is the only way on).</summary>
+        private static IEnumerable<Point> Steps(Point prev, Point c)
+        {
+            var ledges = Ledges();
+            if (ledges.TryGetValue(c, out var land))
+            {
+                yield return land;
+                if (c.Y - prev.Y == 1)
+                {
+                    yield break; // walked down onto the trigger: the jump goes off
+                }
+            }
+            foreach (var d in StepDirs)
+            {
+                var n = new Point(c.X + d.X, c.Y + d.Y);
+                if (HoleStepOk(prev, c, n))
+                {
+                    yield return n;
+                }
+            }
+        }
+
+        private static readonly Point[] StepDirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
 
         /// <summary>A solid wall tile: it stops bullets (holes, water and spikes do not, they fly over them).</summary>
         public static bool IsBeamWall(Point t) => CurrentMap == null || CurrentMap.GetTileClass(t).Item1 == Touching.ANY;
@@ -406,7 +484,7 @@ namespace AnodyneSharp.Recording
             switch (ev)
             {
                 case CollisionEventType.HOLE:
-                    return false;
+                    return AllowJump && allow == Touching.NONE && NarrowHole(t);
                 case CollisionEventType.PUDDLE:
                     return allow == Touching.NONE; // shallow water: slows you down but can be walked
                 case CollisionEventType.SPIKE:
@@ -720,9 +798,9 @@ namespace AnodyneSharp.Recording
                     path.Reverse();
                     return path;
                 }
-                foreach (var d in dirs)
+                foreach (var n in Steps(prev[c], c))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
+                    var d = new Point(Math.Sign(n.X - c.X), Math.Sign(n.Y - c.Y));
                     if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
                     {
                         continue;
@@ -778,9 +856,8 @@ namespace AnodyneSharp.Recording
             while (q.Count > 0)
             {
                 var c = q.Dequeue();
-                foreach (var d in dirs)
+                foreach (var n in Steps(prev[c], c))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
                     if (prev.ContainsKey(n) || (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n))))
                     {
                         continue;

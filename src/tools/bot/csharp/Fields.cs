@@ -71,4 +71,456 @@ namespace AnodyneSharp.Recording
             yield return Section("cliffs to the crowd", () => Exec("O1 X1 H3,4 W30 oCROWD@738,812 W60 `cr_in"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 11: the Cliffs dungeon (CROWD), from its door to the boss. Four keys (frogs, platforms ridden by sweeping dust
+    /// onto them, buttons), the health chest, the keyblocks, the spike roller rooms (CrowdPlatforms routes t8/t9/t12 time the rollers),
+    /// the frog room and the platform rides of the north-east, then the two fall doors down to the boss's door.
+    /// </summary>
+    public class Crowd : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Crowd: keys, rollers and the fall doors");
+            yield return Section("crowd in", () => Exec("O1 X1 H3,6 W30 `cr_36"));
+            // (the Annoyer on (2,3) sleeps until we come within 64px, and the gate to the key needs it dead)
+            yield return Section("crowd key 1", () => Exec("O1 X1 H3,5 F H2,5 H2,4 F H2,3 F >404,540 W20 F W90 I336,592,d W60 `cr_key1"));
+            yield return Section("crowd frogs", () => Exec("O1 X0 >680,1060 X1 F12000 `cr_frogs46"));
+            yield return Section("crowd key 2", () => Exec("O1 X1 >835,1085 >890,724 W30 I896,704,d W60 `cr_key2b"));
+            yield return Section("crowd west", () => Exec("O1 X1 >818,738 W20 >720,870 O1 X1 >408,980 `cr_26n"));
+            // (2,6): the platforms to the chest side and back (t1, t2), then from the west floor to the island (t3).
+            yield return Section("crowd key 3", () => Exec("O1 X1 t1 I496,976,d W30 `cr_key3"));
+            yield return Section("crowd island", () => Exec("O1 X1 t2 O1 X1 >296,1030 >344,1030 t3 `cr_island"));
+            yield return Section("crowd (2,7) platforms", () => Exec("O1 X1 t4 `cr_17"));
+            yield return Section("crowd (0,6) buttons", () => Exec("O1 X1 >100,1028 W10 >68,1028 W30 >130,930 `cr_05"));
+            yield return Section("crowd (1,5) frogs", () => Exec("O1 X0 H1,5 >248,856 X1 F3000 W60 `cr_15"));
+            yield return Section("crowd (1,4) platform up", () => Exec("O1 X0 >258,790 t5 `cr_14"));
+            yield return Section("crowd to (2,2)", () => Exec("O1 X1 H1,3 F2000 X0 H2,3 H2,2 X1 F2000 `cr_22"));
+            yield return Section("crowd key 4", () => Exec("O1 X1 H3,2 F3000 I608,336,d W60 `cr_key4"));
+            yield return Section("crowd (3,3) button", () => Exec("O1 X1 >498,498 W20 >404,430 `cr_btn33"));
+            yield return Section("crowd back to (1,4)", () => Exec("O1 X0 H1,3 X1 >232,660 F2000 `cr_14t"));
+            yield return Section("crowd (1,4) platforms west", () => Exec("O1 X1 t6 `cr_04e"));
+            yield return Section("crowd (0,4)", () => Exec("O1 X1 H0,4 F3000 O1 X1 >128,768 W10 >16,768 W10 F3000 t7 >50,630 `cr_03"));
+            yield return Section("crowd (0,3) keyblock", () => Exec("O1 X1 >131,610 R40 W20 `cr_13k"));
+            // The two rollers on the way up to the health chest: hop the first, follow the second.
+            yield return Section("crowd rollers", () => Exec("O1 X0 t8 X1 >296,470 W10 O1 X0 t9 `cr_12r"));
+            yield return Section("crowd health", () => Exec("O1 X1 I352,336,d W60 `cr_hp"));
+            yield return Section("crowd (3,3) door", () => Exec("O1 X1 >565,592 W10 O1 X0 U40 W20 U40 W90 `cr_52"));
+            yield return Section("crowd (7,2) frogs", () => Exec("O1 X0 >838,352 U30 W90 O1 X1 F3000 W60 `cr_72f"));
+            yield return Section("crowd (7,1) keyblock", () => Exec("O1 X0 >1190,330 >1189,262 U40 W20 U60 >1190,140 W10 `cr_71"));
+            yield return Section("crowd (8,0) (9,0) platforms", () => Exec("O1 X0 >1270,72 R30 W60 t10 >1432,72 R30 W60 t11 `cr_90b"));
+            yield return Section("crowd (9,1) rollers", () => Exec("O1 X0 >1508,155 D8 t12 >1560,330 W30 `cr_92"));
+            // The (9,2) button (opens the gate south), then the fall doors: (9,2) to (3,4) to the boss's door on (9,7).
+            yield return Section("crowd fall doors", () => Exec("O1 X1 >1576,438 W30 O1 X0 >1516,340 D60 W400 `cr_97"));
+            yield return Section("crowd to the boss", () => Exec("O1 X0 >1512,1110 W30 `cr_96a"));
+        }
+    }
+}
+
+namespace AnodyneSharp.Recording
+{
+    using System;
+    using System.Linq;
+    using AnodyneSharp.Entities;
+    using AnodyneSharp.Entities.Gadget;
+    using AnodyneSharp.Entities.Enemy.Crowd;
+    using AnodyneSharp.Input;
+    using Microsoft.Xna.Framework;
+
+    /// <summary>
+    /// The Crowd's moving platforms (Propelled): one starts when we land on it (a jump) while it is active, rides 33px/s to its Stop_Marker
+    /// and goes inactive; dust swept onto it makes it active again. Standing on one, holes do not swallow us.
+    /// </summary>
+    public class CrowdPlatforms : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield break;
+        }
+
+        private static Vector2 Me => new(Player.Hitbox.X + Player.Hitbox.Width / 2f, Player.Hitbox.Y + Player.Hitbox.Height / 2f);
+
+        private static Vector2 Mid(Entity e) => new(e.Hitbox.X + e.Hitbox.Width / 2f, e.Hitbox.Y + e.Hitbox.Height / 2f);
+
+        private static readonly System.Reflection.FieldInfo ActiveField =
+            typeof(Propelled).GetField("active", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>The platform nearest the middle of tile (tx,ty).</summary>
+        private static Entity PlatformAt(int tx, int ty) => BotRunner.Entities().Where(e => e.exists && e is Propelled)
+            .OrderBy(e => (Mid(e) - new Vector2(tx * 16 + 8, ty * 16 + 8)).LengthSquared()).FirstOrDefault();
+
+        private static bool Active(Entity p) => ActiveField?.GetValue(p) is bool b && b;
+
+        private static void Trace(string what)
+        {
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  platforms f{BotRunner.Frame}: {what} at {Me}");
+            }
+        }
+
+        /// <summary>
+        /// Jump (towards dir) onto the platform at tile (tx,ty), steering onto its middle in the air: it is the next tile, and a whole
+        /// jump would carry us past it.
+        /// </summary>
+        private static IEnumerable<object> JumpOnto(int tx, int ty, KeyFunctions dir)
+        {
+            var plat = PlatformAt(tx, ty);
+            Trace($"jump onto the platform at {tx},{ty} ({Mid(plat)}, active={Active(plat)})");
+            yield return Hold(1, dir);
+            yield return Wait(2);
+            for (int i = 0; i < 60; i++)
+            {
+                if (i > 3 && Player.state == PlayerState.GROUND)
+                {
+                    break;
+                }
+                var d = Mid(plat) - Me;
+                var keys = new List<KeyFunctions>();
+                if (i == 0)
+                {
+                    keys.Add(KeyFunctions.Cancel);
+                    keys.Add(dir);
+                }
+                else
+                {
+                    if (d.X > 1f) { keys.Add(KeyFunctions.Right); } else if (d.X < -1f) { keys.Add(KeyFunctions.Left); }
+                    if (d.Y > 1f) { keys.Add(KeyFunctions.Down); } else if (d.Y < -1f) { keys.Add(KeyFunctions.Up); }
+                }
+                BotRunner.Status = $"platforms: jump onto {tx},{ty}";
+                yield return K(keys.ToArray());
+            }
+            Trace($"landed, platform moving {plat.velocity}");
+        }
+
+        /// <summary>Ride the platform under us until it stops (or until done() says to get off).</summary>
+        private static IEnumerable<object> Ride(int tx, int ty, Func<bool> done = null)
+        {
+            var plat = PlatformAt(tx, ty);
+            bool moved = false;
+            for (int i = 0; i < 900; i++)
+            {
+                moved |= plat.velocity != Vector2.Zero;
+                if ((moved && plat.velocity == Vector2.Zero) || (done != null && done()))
+                {
+                    break;
+                }
+                // Stay on its middle (it carries us, but a pixel off each frame adds up).
+                var d = Mid(plat) - Me;
+                var keys = new List<KeyFunctions>();
+                if (d.X > 2f) { keys.Add(KeyFunctions.Right); } else if (d.X < -2f) { keys.Add(KeyFunctions.Left); }
+                if (d.Y > 2f) { keys.Add(KeyFunctions.Down); } else if (d.Y < -2f) { keys.Add(KeyFunctions.Up); }
+                BotRunner.Status = $"platforms: ride {tx},{ty}";
+                yield return K(keys.ToArray());
+            }
+            Trace($"ride over, platform at {Mid(plat)}");
+        }
+
+        /// <summary>Stand on tile (tx,ty), turn to face and swing (sweeps dust up, or sets the dust we carry down on the tile in front).</summary>
+        private static IEnumerable<object> Sweep(int tx, int ty, KeyFunctions face, Facing facing, int nudge = 0)
+        {
+            yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the last swing to end");
+            var c = BotNav.CentreOf(new Point(tx, ty));
+            yield return GoTo(c.X, c.Y);
+            // The dust goes down on the tile in front of the tile of Player.Center, which sits a few pixels off our hitbox's middle: stand
+            // where that point is on this tile (as near its middle as that allows).
+            var off = Player.Center - Me;
+            float Fit(float mid, float o, int t) => Math.Clamp(mid, t * 16 + 2 - o, t * 16 + 13 - o);
+            var at = new Vector2(Fit(tx * 16 + 8, off.X, tx), Fit(ty * 16 + 8, off.Y, ty));
+            Trace($"sweep stand: off={off} aim={at} pos={Player.Position} hb={Player.Hitbox}");
+            yield return WalkTo(at.X - BotNav.HalfW, at.Y - BotNav.HalfH, tol: 0.8f);
+            Trace($"sweep stood: centre={Player.Center} facing={Player.facing}");
+            for (int i = 0; i < 10 && Player.facing != facing; i++)
+            {
+                yield return Hold(1, face);
+            }
+            // (a short broom only just reaches the next tile: lean in, staying on this tile)
+            yield return Hold(nudge, face);
+            yield return Wait(2);
+            Trace($"  before swing: facing={Player.facing} front={(Player.Center / 16 + Entity.FacingDirection(Player.facing)).ToPoint()} coll={AnodyneSharp.Registry.GlobalState.Map.GetCollisionData((Player.Center / 16 + Entity.FacingDirection(Player.facing)).ToPoint().ToVector2() * 16)} carried={Player.broom.dust?.Position}");
+            yield return Tap(KeyFunctions.Accept);
+            for (int i = 0; i < 24 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null; i++)
+            {
+                Trace($"  swing +{i}: carried={(Player.broom.dust == null ? "-" : Player.broom.dust.Position + ":" + Player.broom.dust.exists + ":" + Player.broom.dust.CurAnimName)} centre={Player.Center} broomdust={Player.broom.dust != null} plats={string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))} dusts={string.Join(" ", BotRunner.Entities().Where(e => e is Dust).Select(e => e.Position + ":" + e.exists + ":" + e.CurAnimName))}");
+                yield return K();
+            }
+            yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the swing to end");
+            yield return Wait(4);
+            Trace($"swept from {tx},{ty} facing {facing}: carrying={Player.broom.dust != null}");
+        }
+
+        /// <summary>Stand still until ready() (not stuck: we wait on purpose).</summary>
+        private static IEnumerable<object> WaitFor(Func<bool> ready, string what, int frames = 900)
+        {
+            for (int i = 0; i < frames && !ready(); i++)
+            {
+                BotRunner.Status = $"platforms: wait for {what}";
+                BotRunner.NotStuck();
+                yield return K();
+            }
+            Trace($"waited for {what}");
+        }
+
+        /// <summary>A whole jump (towards dir, held all the way) off the platform we ride.</summary>
+        private static IEnumerable<object> LeapOff(KeyFunctions dir)
+        {
+            Trace($"leap off {dir}");
+            yield return Hold(1, dir, KeyFunctions.Cancel);
+            for (int i = 0; i < 60 && Player.state != PlayerState.GROUND; i++)
+            {
+                yield return K(dir);
+            }
+            Trace("leapt");
+        }
+
+        /// <summary>Sweep from (tx,ty) until we carry dust (carry) or have set it down (!carry): a swing does not always catch it.</summary>
+        private static IEnumerable<object> SweepTill(int tx, int ty, KeyFunctions face, Facing facing, bool carry)
+        {
+            for (int i = 0; i < 4 && (Player.broom.dust != null) != carry; i++)
+            {
+                yield return Sweep(tx, ty, face, facing, carry ? 2 * i : 0);
+            }
+            if ((Player.broom.dust != null) != carry)
+            {
+                throw new InvalidOperationException($"bot: could not {(carry ? "sweep up" : "set down")} the dust from {tx},{ty}");
+            }
+        }
+
+        /// <summary>Sweep up the loose dust nearest tile (tx,ty) (a fight may have moved it), from a floor tile beside it.</summary>
+        private static IEnumerable<object> SweepUpNear(int tx, int ty)
+        {
+            yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the last swing to end"); // (a swing setting dust down still holds it)
+            if (Player.broom.dust != null)
+            {
+                yield break;
+            }
+            var dust = BotRunner.Entities().Where(e => e.exists && e is Dust && e.CurAnimName != "poof" && e.CurAnimName != "fallpoof")
+                .OrderBy(e => (e.Position - new Vector2(tx * 16, ty * 16)).LengthSquared()).FirstOrDefault();
+            if (dust == null)
+            {
+                throw new InvalidOperationException($"bot: no dust near {tx},{ty}");
+            }
+            var dt = new Point((int)Math.Round(dust.Position.X / 16f), (int)Math.Round(dust.Position.Y / 16f));
+            Trace($"dust to sweep up at {dt}");
+            foreach (var (o, key, facing) in new[] { (new Point(0, 1), KeyFunctions.Up, Facing.UP), (new Point(0, -1), KeyFunctions.Down, Facing.DOWN), (new Point(1, 0), KeyFunctions.Left, Facing.LEFT), (new Point(-1, 0), KeyFunctions.Right, Facing.RIGHT) })
+            {
+                var st = new Point(dt.X + o.X, dt.Y + o.Y);
+                if (BotNav.Walkable(st) && !BotNav.IsHole(st))
+                {
+                    yield return SweepTill(st.X, st.Y, key, facing, true);
+                    yield break;
+                }
+            }
+            throw new InvalidOperationException($"bot: nowhere to stand beside the dust at {dt}");
+        }
+
+        /// <summary>Step off onto the floor tile (tx,ty) next to us.</summary>
+        private static IEnumerable<object> StepTo(int tx, int ty)
+        {
+            var c = BotNav.CentreOf(new Point(tx, ty));
+            yield return WalkTo(c.X, c.Y, tol: 1.5f, timeout: 120, diagonal: true);
+        }
+
+        public static IEnumerable<object> Platforms(int which)
+        {
+            switch (which)
+            {
+                case 1:
+                    // (2,6) from the north: the active platform down onto the island, its dust onto the platform going up, off that one to the
+                    // west floor, the dust there onto the platform going east, and that one to the far side (the (3,6) key chest).
+                    yield return GoTo(BotNav.CentreOf(new Point(26, 62)).X, BotNav.CentreOf(new Point(26, 62)).Y);
+                    yield return JumpOnto(26, 63, KeyFunctions.Down);
+                    yield return Ride(26, 63);
+                    yield return StepTo(26, 68);
+                    yield return SweepTill(24, 68, KeyFunctions.Left, Facing.LEFT, true); // the island's dust
+                    Trace($"carrying dust: {Player.broom.dust != null}; dust left: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position.ToString()))}");
+                    yield return SweepTill(24, 68, KeyFunctions.Up, Facing.UP, false); // ...onto the platform above
+                    Trace($"island dust on the up platform: active={Active(PlatformAt(24, 67))} carrying={Player.broom.dust != null} facing={Player.facing}");
+                    yield return Wait(20);
+                    Trace($"  later: active={Active(PlatformAt(24, 67))} carrying={Player.broom.dust != null}");
+                    yield return JumpOnto(24, 67, KeyFunctions.Up);
+                    yield return Ride(24, 67, () => Me.Y <= 64 * 16 + 9);
+                    yield return LeapOff(KeyFunctions.Left);
+                    yield return StepTo(22, 64);
+                    yield return SweepTill(22, 64, KeyFunctions.Down, Facing.DOWN, true); // the west floor's dust
+                    yield return SweepTill(22, 65, KeyFunctions.Right, Facing.RIGHT, false); // ...onto the platform going east
+                    Trace($"west dust on the east platform: active={Active(PlatformAt(23, 65))}");
+                    yield return JumpOnto(23, 65, KeyFunctions.Right);
+                    yield return Ride(23, 65);
+                    yield return StepTo(29, 65);
+                    break;
+                case 2:
+                    // (2,6) back from the (3,6) chest side to the west floor: its dust onto the platform going west.
+                    yield return SweepTill(30, 64, KeyFunctions.Left, Facing.LEFT, true);
+                    yield return SweepTill(29, 64, KeyFunctions.Left, Facing.LEFT, false);
+                    Trace($"dust on the west platform: active={Active(PlatformAt(28, 64))}");
+                    yield return JumpOnto(28, 64, KeyFunctions.Left);
+                    yield return Ride(28, 64);
+                    yield return StepTo(22, 64);
+                    break;
+                case 3:
+                    // (2,6) from the west floor (the screen just re-entered, so its platforms and dust are back) to the island: the dust onto
+                    // the platform going east, and off it straight up onto the active one going down past it.
+                    yield return SweepTill(22, 64, KeyFunctions.Down, Facing.DOWN, true);
+                    yield return SweepTill(22, 65, KeyFunctions.Right, Facing.RIGHT, false);
+                    yield return JumpOnto(23, 65, KeyFunctions.Right);
+                    yield return Ride(23, 65, () => Me.X >= PlatformAt(26, 63).Hitbox.Center.X - 3f);
+                    yield return JumpOnto(26, 63, KeyFunctions.Up);
+                    yield return Ride(26, 63);
+                    yield return StepTo(26, 68);
+                    break;
+                case 4:
+                    // (2,7) from the island down to the west way out (to (1,7)): the island's dust onto the platform below it, that one down to
+                    // the far corner, the dust there onto the platform going west.
+                    yield return SweepTill(25, 72, KeyFunctions.Up, Facing.UP, true);
+                    yield return SweepTill(25, 72, KeyFunctions.Down, Facing.DOWN, false);
+                    yield return JumpOnto(25, 73, KeyFunctions.Down);
+                    yield return Ride(25, 73);
+                    yield return StepTo(25, 78);
+                    yield return SweepTill(28, 77, KeyFunctions.Up, Facing.UP, true);
+                    // Set down, dust is swept along from where it was picked up (its last position) and stops at the walls on the way: from
+                    // the column right of the platform the wall beside it shoves it back a tile. So first move it into the platform's column.
+                    yield return SweepTill(27, 77, KeyFunctions.Up, Facing.UP, false);
+                    yield return SweepTill(27, 77, KeyFunctions.Up, Facing.UP, true);
+                    yield return SweepTill(27, 75, KeyFunctions.Up, Facing.UP, false);
+                    Trace($"dust now: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position + ":" + e.CurAnimName))} plats: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))}");
+                    yield return JumpOnto(27, 74, KeyFunctions.Up);
+                    yield return Ride(27, 74);
+                    yield return StepTo(21, 74);
+                    break;
+                case 5:
+                    // (1,4) from the south door: the active platform in the bottom right corner up to the top row (the way north).
+                    yield return GoTo(BotNav.CentreOf(new Point(18, 48)).X, BotNav.CentreOf(new Point(18, 48)).Y);
+                    yield return JumpOnto(18, 47, KeyFunctions.Up);
+                    yield return Ride(18, 47);
+                    yield return StepTo(17, 41);
+                    break;
+                case 6:
+                    // (1,4) from the top row to the west way out (to (0,4)): one dust onto the platform going down, the other carried along on
+                    // it; off it to the right onto the lone floor tile above the platform going west, that dust onto it, and that one west.
+                    yield return SweepTill(14, 41, KeyFunctions.Left, Facing.LEFT, true);
+                    yield return SweepTill(15, 41, KeyFunctions.Down, Facing.DOWN, false);
+                    Trace($"dust on the down platform: active={Active(PlatformAt(15, 42))}");
+                    yield return SweepTill(11, 41, KeyFunctions.Down, Facing.DOWN, true);
+                    yield return GoTo(BotNav.CentreOf(new Point(15, 41)).X, BotNav.CentreOf(new Point(15, 41)).Y);
+                    yield return JumpOnto(15, 42, KeyFunctions.Down);
+                    yield return Ride(15, 42, () => Me.Y >= 44 * 16 + 7);
+                    yield return LeapOff(KeyFunctions.Right);
+                    yield return StepTo(17, 44);
+                    yield return SweepTill(17, 44, KeyFunctions.Down, Facing.DOWN, false);
+                    Trace($"dust on the west platform: active={Active(PlatformAt(17, 45))}");
+                    yield return JumpOnto(17, 45, KeyFunctions.Down);
+                    yield return Ride(17, 45);
+                    yield return StepTo(10, 45);
+                    break;
+                case 7:
+                    // (0,4) from the bottom row up to the gate: the dust at the top of the left column onto the left of the two platforms.
+                    yield return SweepUpNear(1, 42);
+                    yield return SweepTill(3, 46, KeyFunctions.Right, Facing.RIGHT, false);
+                    Trace($"dust on the up platform: active={Active(PlatformAt(4, 46))}");
+                    yield return JumpOnto(4, 46, KeyFunctions.Right);
+                    yield return Ride(4, 46);
+                    yield return StepTo(4, 41);
+                    break;
+                case 8:
+                {
+                    // (1,3) in from the keyblock: the spike roller drops when we touch it (harmless as it falls), then rolls east across
+                    // the whole room. Get ahead of it, jump back over it (it can't hurt us in the air) and let it roll on to its stop.
+                    yield return GoTo(203, 610);
+                    var roller = BotRunner.Entities().OfType<BaseSpikeRoller>().OrderBy(e => (Mid(e) - Me).LengthSquared()).First();
+                    yield return Until(() => roller.CollisionOn && roller.Hitbox.Right >= Player.Hitbox.Left - 3, 300, "the spike roller to come");
+                    Trace($"hop the roller at {roller.Hitbox}");
+                    yield return LeapOff(KeyFunctions.Left);
+                    yield return Until(() => roller.velocity == Vector2.Zero, 600, "the spike roller to stop");
+                    Trace($"roller stopped at {roller.Hitbox}");
+                    break;
+                }
+                case 9:
+                {
+                    // (1,2) up the east corridor: another roller drops across it and rolls north to the corridor's top. Touch it while
+                    // it falls, step back south and follow it up once it stops.
+                    yield return GoTo(296, 466);
+                    var roller = BotRunner.Entities().OfType<BaseSpikeRoller>().Where(e => e.Hitbox.Width > e.Hitbox.Height).OrderBy(e => (Mid(e) - Me).LengthSquared()).First();
+                    for (int i = 0; i < 40 && !roller.visible; i++)
+                    {
+                        yield return Hold(1, KeyFunctions.Up);
+                    }
+                    Trace($"roller dropping at {roller.Hitbox}");
+                    // (just south of it, but not so far south that the screen changes and it resets)
+                    for (int i = 0; i < 600 && !(roller.CollisionOn && roller.velocity == Vector2.Zero); i++)
+                    {
+                        BotRunner.Status = "platforms: wait for the spike roller to stop";
+                        BotRunner.NotStuck();
+                        yield return Player.Position.Y < 465.5f ? K(KeyFunctions.Down) : Player.Position.Y > 467f ? K(KeyFunctions.Up) : K();
+                    }
+                    Trace($"roller stopped at {roller.Hitbox}");
+                    break;
+                }
+                case 10:
+                    // (8,0) from the west: the dust by the entrance onto the platform at the pit's west edge, which rides east across it.
+                    yield return SweepUpNear(81, 6);
+                    yield return SweepTill(82, 5, KeyFunctions.Right, Facing.RIGHT, false);
+                    Trace($"dust on the east platform: active={Active(PlatformAt(83, 5))}");
+                    yield return JumpOnto(83, 5, KeyFunctions.Right);
+                    yield return Ride(83, 5);
+                    yield return StepTo(87, 5);
+                    break;
+                case 11:
+                    // (9,0): the dust in the north-east corner onto the platform at the top of the pit, which rides south across it.
+                    yield return SweepUpNear(96, 4);
+                    yield return SweepTill(94, 4, KeyFunctions.Down, Facing.DOWN, false);
+                    Trace($"dust on the south platform: active={Active(PlatformAt(94, 5))}");
+                    yield return JumpOnto(94, 5, KeyFunctions.Down);
+                    yield return Ride(94, 5);
+                    yield return StepTo(94, 9);
+                    break;
+                case 12:
+                {
+                    // (9,1) in from the north: two rollers across the whole room. The top one drops when we touch it and rolls south
+                    // to stop on row 18; the bottom one drops when we cross row 18 (the only way east, and it can't be crossed without
+                    // touching it) and rolls north to stop on row 11. In the air they can't hurt us, so: get past the top one while it
+                    // falls, cross row 18 just ahead of it, jump north through it at the col 95 gap, go round to the east corridor,
+                    // jump south through the bottom one there, then jump the gap and the stopped top roller to the exit.
+                    var rollers = BotRunner.Entities().OfType<BaseSpikeRoller>().Where(e => e.Hitbox.Width > e.Hitbox.Height)
+                        .OrderBy(e => e.Hitbox.Y).ToList();
+                    var top = rollers.First();
+                    var low = rollers.Last();
+                    for (int i = 0; i < 40 && !top.visible; i++)
+                    {
+                        yield return Hold(1, KeyFunctions.Down);
+                    }
+                    Trace($"top roller dropping at {top.Hitbox}");
+                    yield return GoTo(1496, 244);
+                    yield return WaitFor(() => top.Hitbox.Bottom >= 236, "the top roller to come down");
+                    yield return GoTo(1496, 280);
+                    yield return WalkTo(1491, 283, tol: 1f);
+                    yield return WalkTo(1523, 283, tol: 1f);
+                    yield return WalkTo(1523, 276, tol: 1f);
+                    Trace($"under the gap: top {top.Hitbox}, low {low.Hitbox} visible={low.visible}");
+                    yield return WaitFor(() => top.Hitbox.Bottom >= Player.Hitbox.Top - 4
+                        || (low.CollisionOn && low.Hitbox.Top <= Player.Hitbox.Bottom + 4), "the rollers to come");
+                    Trace($"jump up through the top roller at {top.Hitbox}");
+                    yield return LeapOff(KeyFunctions.Up);
+                    yield return GoTo(1576, 202);
+                    Trace($"in the east corridor: top {top.Hitbox}, low {low.Hitbox}");
+                    yield return WaitFor(() => low.CollisionOn && low.Hitbox.Top <= Player.Hitbox.Bottom + 3, "the bottom roller to come up");
+                    Trace($"jump down through the bottom roller at {low.Hitbox}");
+                    yield return LeapOff(KeyFunctions.Down);
+                    yield return GoTo(1576, 246);
+                    yield return WaitFor(() => top.CollisionOn && top.velocity == Vector2.Zero, "the top roller to stop");
+                    Trace($"top roller stopped at {top.Hitbox}: jump the gap");
+                    yield return LeapOff(KeyFunctions.Down);
+                    // (a jump carries us 30px: take off right above the roller, clear of the wall on the exit corridor's east side)
+                    yield return WalkTo(1555, top.Hitbox.Top - 13, tol: 0.5f);
+                    Trace($"take off from {Player.Hitbox}");
+                    Trace($"jump the top roller at {top.Hitbox}");
+                    yield return LeapOff(KeyFunctions.Down);
+                    yield return Hold(10, KeyFunctions.Down);
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException($"bot: no platform route {which}");
+            }
+        }
+    }
 }

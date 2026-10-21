@@ -54,6 +54,8 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Shown by the realtime overlay: the bot's current goal.</summary>
         public static string Status = "";
+        private static string _traceStatus;
+        private static Microsoft.Xna.Framework.Point _traceTile;
 
         private static readonly Stack<IEnumerator<object>> _stack = new();
         private static Dictionary<Keys, KeyInput.InputState> _prev;
@@ -299,6 +301,17 @@ namespace AnodyneSharp.Recording
                 return;
             }
             int hp = GlobalState.CUR_HEALTH;
+            if (Player != null && Environment.GetEnvironmentVariable("ANODYNE_STATUS_TRACE") != null)
+            {
+                // Debug: every change of the bot's status or of the player's tile, with the frame.
+                var tileNow = new Microsoft.Xna.Framework.Point((int)((Player.Position.X + 5) / 16), (int)((Player.Position.Y + 6) / 16));
+                if (Status != _traceStatus || tileNow != _traceTile)
+                {
+                    _traceStatus = Status;
+                    _traceTile = tileNow;
+                    System.Console.Error.WriteLine($"  st f{_botFrame} {Player.Position.X:0},{Player.Position.Y:0} {Player.state} [{Status}]");
+                }
+            }
             string why = null;
             if (Deaths != _lastDeaths)
             {
@@ -319,7 +332,8 @@ namespace AnodyneSharp.Recording
                         DebtBaseline = _hpSeen;
                         _debtSince = _botFrame;
                     }
-                    System.Console.Error.WriteLine($"  hit f{_botFrame}: HP {_hpSeen}->{hp}, back to {DebtBaseline} by f{_debtSince + RecoverFrames} or it is fatal ({Status})");
+                    System.Console.Error.WriteLine($"  hit f{_botFrame}: HP {_hpSeen}->{hp}, back to {DebtBaseline} by f{_debtSince + RecoverFrames} or it is fatal ({Status}) by {GlobalState.DamageDealer} at {Player.Hitbox}" +
+                        (GlobalState.DamageDealer == "Frog bullet" ? " bullets: " + string.Join(" ", Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).Select(e => $"{e.Hitbox} o{e.offset.Y:0} v{e.velocity.Length():0}")) : ""));
                 }
                 else
                 {
@@ -1062,13 +1076,80 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  jump {string.Join(">", jumpTiles.Select(q => $"{q.X},{q.Y}"))} land {land.X},{land.Y} enemies near landing: {BotNav.NearEnemies(10).Contains(land)}");
                         }
+                        for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                        {
+                            yield return K(); // keys do nothing while the screen scrolls: a jump pressed now never happens
+                        }
+                        if (BotNav.IsHole(tile))
+                        {
+                            // A pit: the jump only carries ~27px, so take off from the edge of the tile before it (centre 3px short of the pit),
+                            // and not into a fireball or a bullet coming down where we land.
+                            var dv = jk == KeyFunctions.Right ? new Vector2(1, 0) : jk == KeyFunctions.Left ? new Vector2(-1, 0) : jk == KeyFunctions.Down ? new Vector2(0, 1) : new Vector2(0, -1);
+                            var edge = BotNav.CentreOf(from) + dv * 5f;
+                            for (int w = 0; w < 30 && ((edge - Pos) * dv).Length() > 0.8f && Vector2.Dot(edge - Pos, dv) > 0; w++)
+                            {
+                                BotRunner.Status = "jump the pit: run-up";
+                                yield return K(jk);
+                            }
+                            var landC = BotNav.CentreOf(land);
+                            for (int w = 0; w < 300; w++)
+                            {
+                                var th = PredictThreats(null);
+                                var pbx = Player.Hitbox;
+                                bool landSafe = true;
+                                foreach (var t in th)
+                                {
+                                    for (int k = 20; k <= 50 && landSafe; k++)
+                                    {
+                                        if (t.At[k] is Rectangle r)
+                                        {
+                                            var me2 = new Rectangle((int)(landC.X - pbx.Width / 2f), (int)(landC.Y - pbx.Height / 2f), pbx.Width, pbx.Height);
+                                            r.Inflate(2, 2);
+                                            landSafe = !me2.Intersects(r);
+                                        }
+                                    }
+                                }
+                                if (landSafe)
+                                {
+                                    break;
+                                }
+                                // Staying is no good either (a spike roller coming along the edge): go now, the air is safe from most of it.
+                                bool hereSafe = true;
+                                foreach (var t in th)
+                                {
+                                    for (int k = 1; k <= 15 && hereSafe; k++)
+                                    {
+                                        if (t.At[k] is Rectangle r)
+                                        {
+                                            r.Inflate(2, 2);
+                                            hereSafe = !pbx.Intersects(r);
+                                        }
+                                    }
+                                }
+                                if (!hereSafe)
+                                {
+                                    break;
+                                }
+                                BotRunner.Status = "jump the pit: wait for the landing to clear";
+                                BotRunner.NotStuck();
+                                yield return K();
+                            }
+                        }
                         BotRunner.Status = "jump over the spikes";
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  jump take-off at {Pos} state={Player.state} key={jk}");
+                        }
                         yield return K(jk, KeyFunctions.Cancel);
                         for (int j = 0; j < 90 && !(BotNav.TileOf(Pos) == land && Player.state != PlayerState.AIR); j++)
                         {
                             if (j > 4 && Player.state != PlayerState.AIR && BotNav.IsJumpable(BotNav.TileOf(Pos)) == false && (land.X - BotNav.TileOf(Pos).X) * (jk == KeyFunctions.Left ? -1 : jk == KeyFunctions.Right ? 1 : 0) + (land.Y - BotNav.TileOf(Pos).Y) * (jk == KeyFunctions.Up ? -1 : jk == KeyFunctions.Down ? 1 : 0) < 0)
                             {
                                 break; // landed past the landing tile: stop pushing on (the walker steps back with its dodging), into whatever is beyond
+                            }
+                            if (j > 24 && j < 60 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"    jump f+{j} at {Pos} hb={Player.Hitbox} state={Player.state} trans={GlobalState.ScreenTransition}");
                             }
                             yield return K(jk);
                         }
@@ -1276,7 +1357,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1296,6 +1377,7 @@ namespace AnodyneSharp.Recording
             "redcave3" => new RedCaveLeftWing(),
             "redcave4" => new RedCaveTop(),
             "cliff" => new ForestCliff(),
+            "crowd" => new Crowd(),
             _ => throw new ArgumentException(name)
         };
 
