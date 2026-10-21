@@ -979,6 +979,11 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
+                if (name == "OnSightDashTrap" && d.velocity == Vector2.Zero)
+                {
+                    result.AddRange(PredictSightTrap(d));
+                    continue;
+                }
                 if (name is "Shieldy" or "BounceDashTrap")
                 {
                     result.Add(PredictPatroller(d)); // both walk a line and turn round at the first wall (the trap at 80px/s)
@@ -1005,6 +1010,43 @@ namespace AnodyneSharp.Recording
                 result.Add(t);
             }
             return result;
+        }
+
+        /// <summary>
+        /// An idle dash trap charges the moment the player lines up with it across or along (and only a player in the air is safe):
+        /// its row and its column, out to the walls, are where it can be in a moment. Two threats, standing for the whole horizon.
+        /// </summary>
+        private static IEnumerable<Threat> PredictSightTrap(Entity d)
+        {
+            var r = d.Hitbox;
+            var t0 = BotNav.TileOf(new Vector2(r.Center.X, r.Center.Y) - new Vector2(BotNav.HalfW, BotNav.HalfH));
+            int Reach(Point step)
+            {
+                int n = 0;
+                var t = t0;
+                while (n < 10)
+                {
+                    t = new Point(t.X + step.X, t.Y + step.Y);
+                    if (!BotNav.Walkable(t) && !BotNav.IsConveyor(t))
+                    {
+                        break;
+                    }
+                    n++;
+                }
+                return n * 16;
+            }
+            int l = Reach(new Point(-1, 0)), rr = Reach(new Point(1, 0)), u = Reach(new Point(0, -1)), dn = Reach(new Point(0, 1));
+            var row = new Rectangle(r.Left - l, r.Top, r.Width + l + rr, r.Height);
+            var col = new Rectangle(r.Left, r.Top - u, r.Width, r.Height + u + dn);
+            foreach (var band in new[] { row, col })
+            {
+                var t = new Threat { Name = "OnSightDashTrap", Margin = 1, Source = d, Stationary = false };
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    t.At[f] = band;
+                }
+                yield return t;
+            }
         }
 
         private static readonly System.Reflection.FieldInfo RotRadiusField =
@@ -1686,6 +1728,11 @@ namespace AnodyneSharp.Recording
                     var stand1 = SafeStand(t1, lanes0, target);
                     if (!stand1.HasValue)
                     {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            var near = BotNav.NearEnemies(14, null, stationaryOnly: true);
+                            System.Console.Error.WriteLine($"  laser {et.X},{et.Y}: no safe tile to plug {target.X},{target.Y} from; me {BotNav.TileOf(Pos)} lanes {string.Join(" ", lanes0.Select(l => $"{l.X},{l.Y}"))} walk {string.Join(" ", new[] { new Point(0, 1), new Point(0, -1), new Point(-1, 0) }.Select(o => $"{o.X},{o.Y}:{BotNav.Walkable(new Point(target.X + o.X, target.Y + o.Y))}/{near.Contains(new Point(target.X + o.X, target.Y + o.Y))}"))}");
+                        }
                         continue;
                     }
                     BotRunner.Status = $"plugging laser at {et.X},{et.Y}: two-step, fetch dust, stand {stand1.Value.X},{stand1.Value.Y}";
@@ -2170,6 +2217,154 @@ namespace AnodyneSharp.Recording
 
         protected static bool InRaft;
 
+        /// <summary>True while a dash trap is being baited and passed (its own walking must not start another pass).</summary>
+        protected static bool PassingTrap;
+
+        /// <summary>
+        /// An idle OnSightDashTrap whose tile the route walks over, coming at it along its line for at least three tiles: the trap,
+        /// a side tile beside the route two tiles short of it (out of its line, to bait it from), and the trap tile's index in the path.
+        /// </summary>
+        protected static (Entity, Point, int)? SightTrapOnPath(List<Point> path)
+        {
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity != Vector2.Zero || !GlobalState.inventory.CanJump)
+                {
+                    continue;
+                }
+                var t = BotNav.TileOf(e.Position + new Vector2(8, 8));
+                int k = path.IndexOf(t);
+                if (k < 0)
+                {
+                    continue;
+                }
+                var prev = new List<Point> { BotNav.TileOf(Pos) };
+                prev.AddRange(path.Take(k));
+                int n = prev.Count;
+                if (n < 3)
+                {
+                    continue;
+                }
+                var a = prev[n - 1];
+                var b = prev[n - 2];
+                var step = new Point(t.X - a.X, t.Y - a.Y);
+                if (b != new Point(a.X - step.X, a.Y - step.Y))
+                {
+                    continue; // not coming at it along its line
+                }
+                foreach (var side in new[] { new Point(step.Y, step.X), new Point(-step.Y, -step.X) })
+                {
+                    var st = new Point(b.X + side.X, b.Y + side.Y);
+                    if (BotNav.Walkable(st))
+                    {
+                        return (e, st, k);
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Walks the route at the dash trap on path[ti] head on: it charges as soon as we line up, and is jumped (the air is safe)
+        /// when it is a few pixels off; we land behind it and run on along the route while it goes to the wall and comes back at half speed.
+        /// </summary>
+        protected static IEnumerable<object> PassSightTrap(Entity trap, List<Point> path, int ti)
+        {
+            var tt = path[ti];
+            var grid0 = Grid;
+            bool jumped = false;
+            for (int pi = 0; pi < path.Count && pi <= ti + 3 && Grid == grid0; pi++)
+            {
+                if (pi + 1 < path.Count && InBounceLane(BotNav.CentreOf(path[pi])))
+                {
+                    continue; // no stopping in a bouncing trap's lane: aim past it (we jump across)
+                }
+                var c = BotNav.CentreOf(path[pi]);
+                for (int f = 0; f < 90 && Grid == grid0 && !GlobalState.ScreenTransition; f++)
+                {
+                    float dx = c.X - Pos.X, dy = c.Y - Pos.Y;
+                    if (Math.Abs(dx) < 2f && Math.Abs(dy) < 2f)
+                    {
+                        break;
+                    }
+                    var keys = new List<KeyFunctions>();
+                    if (Math.Abs(dx) >= 1f)
+                    {
+                        keys.Add(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                    }
+                    if (Math.Abs(dy) >= 1f)
+                    {
+                        keys.Add(dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    }
+                    if (!jumped && trap.exists && trap.velocity != Vector2.Zero && Player.state != AnodyneSharp.Entities.PlayerState.AIR)
+                    {
+                        // Coming at us: the gap between its front and ours along its line of travel.
+                        var r = trap.Hitbox;
+                        var me = Player.Hitbox;
+                        bool overlapX = me.Left < r.Right && me.Right > r.Left, overlapY = me.Top < r.Bottom && me.Bottom > r.Top;
+                        float gap = trap.velocity.Y < 0 && overlapX ? r.Top - me.Bottom
+                            : trap.velocity.Y > 0 && overlapX ? me.Top - r.Bottom
+                            : trap.velocity.X < 0 && overlapY ? r.Left - me.Right
+                            : trap.velocity.X > 0 && overlapY ? me.Left - r.Right : float.MaxValue;
+                        if (gap >= -2 && gap <= 7)
+                        {
+                            jumped = true;
+                            keys.Add(KeyFunctions.Cancel);
+                            BotRunner.Status = $"dash trap at {tt.X},{tt.Y}: jump it";
+                        }
+                    }
+                    if (!keys.Contains(KeyFunctions.Cancel) && Player.state != AnodyneSharp.Entities.PlayerState.AIR && BounceBandAhead(keys))
+                    {
+                        keys.Add(KeyFunctions.Cancel); // a bouncing trap's lane is too wide to walk across between its passes: jump it
+                        BotRunner.Status = $"dash trap at {tt.X},{tt.Y}: jump a bouncing one's lane";
+                    }
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && f % 4 == 0)
+                    {
+                        System.Console.Error.WriteLine($"  trap pass f{BotRunner.Frame} me={Player.Hitbox} air={Player.state == AnodyneSharp.Entities.PlayerState.AIR} trap={trap.Hitbox} v={trap.velocity} to {path[pi]}");
+                    }
+                    BotRunner.NotStuck();
+                    yield return K(keys.ToArray());
+                }
+            }
+            while (GlobalState.ScreenTransition)
+            {
+                yield return K();
+            }
+        }
+
+        /// <summary>The lanes of the bouncing dash traps near us: the strip they sweep (to the walls) along their line of travel.</summary>
+        private static List<Rectangle> BounceLanes()
+        {
+            var lanes = new List<Rectangle>();
+            foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap" && (e.Position - Pos).Length() < 80))
+            {
+                var r = e.Hitbox;
+                lanes.Add(e.velocity.X != 0 ? new Rectangle(r.Left - 160, r.Top - 1, r.Width + 320, r.Height + 2) : new Rectangle(r.Left - 1, r.Top - 160, r.Width + 2, r.Height + 320));
+            }
+            return lanes;
+        }
+
+        private static bool InBounceLane(Vector2 c) => BounceLanes().Any(l => l.Contains((int)c.X, (int)c.Y));
+
+        /// <summary>True when the keys would take our box into a bouncing trap's lane within the next 3 frames (from outside it).</summary>
+        private static bool BounceBandAhead(List<KeyFunctions> keys)
+        {
+            var box = Player.Hitbox;
+            var lanes = BounceLanes();
+            if (lanes.Count == 0 || lanes.Any(l => l.Intersects(box)))
+            {
+                return false;
+            }
+            var v = Vector2.Zero;
+            foreach (var k in keys)
+            {
+                v += DirVector(k);
+            }
+            var off = v * 3f * WalkPxPerFrame;
+            var next = new Rectangle(box.X + (int)Math.Round(off.X), box.Y + (int)Math.Round(off.Y), box.Width, box.Height);
+            return lanes.Any(l => l.Intersects(next));
+        }
+
         /// <summary>True while the automatic emitter plugging runs (its own walking must not trigger more plugging).</summary>
         protected static bool Plugging;
 
@@ -2180,6 +2375,7 @@ namespace AnodyneSharp.Recording
                 throw new InvalidOperationException("bot: nested raft request");
             }
             InRaft = true;
+            BotNav.RaftBlocked.Clear();
             try
             {
                 yield return RaftToInner(gx, gy);
@@ -2211,6 +2407,19 @@ namespace AnodyneSharp.Recording
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
                 if (path == null)
                 {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        BotNav.RefreshShooterTiles();
+                        for (int ty = here.Y - 2; ty <= goal.Y + 1; ty++)
+                        {
+                            var row = new System.Text.StringBuilder();
+                            for (int tx = Math.Min(here.X, goal.X) - 3; tx <= Math.Max(here.X, goal.X) + 3; tx++)
+                            {
+                                row.Append(BotNav.Walkable(new Point(tx, ty)) ? '.' : BotNav.IsConveyor(new Point(tx, ty)) ? '~' : '#');
+                            }
+                            System.Console.Error.WriteLine($"  raft map {ty,3}: {row}");
+                        }
+                    }
                     throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
                 }
                 int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
@@ -2249,6 +2458,11 @@ namespace AnodyneSharp.Recording
                 }
                 // Ride / walk the water route one step at a time until back on land.
                 bool wasWet = false;
+                var lastTile = BotNav.TileOf(Pos);
+                var rideLast = Pos;
+                int rideStall = 0;
+                KeyFunctions? lastRideKey = null;
+                var edgeCrossings = new Dictionary<(Point, Point), int>();
                 for (int i = 0; i < 1500; i++)
                 {
                     budget--;
@@ -2259,22 +2473,54 @@ namespace AnodyneSharp.Recording
                     }
                     if (GlobalState.ScreenTransition)
                     {
-                        yield return K();
+                        // Keep pushing the way the raft crossed: the player lands just inside the new screen, and a current running
+                        // back towards the edge would carry it straight back over on the first frame after the scroll.
+                        yield return lastRideKey.HasValue ? K(lastRideKey.Value) : K();
                         continue;
                     }
                     var cur = BotNav.TileOf(Pos);
-                    if (cur == goal)
+                    if (cur.X / 10 != lastTile.X / 10 || cur.Y / 10 != lastTile.Y / 10)
+                    {
+                        // A current that pushes the raft back over a screen edge it was ridden across: after a few goes, route round it.
+                        var edge = (lastTile, cur);
+                        edgeCrossings[edge] = edgeCrossings.GetValueOrDefault(edge) + 1;
+                        if (edgeCrossings[edge] >= 3 && edgeCrossings.GetValueOrDefault((cur, lastTile)) >= 3)
+                        {
+                            // The whole screen edge (its water is one current), not just this column (row).
+                            RaftLog($"edge {lastTile}<->{cur} keeps pushing back: routing round that screen edge");
+                            var along = lastTile.X == cur.X ? new Point(1, 0) : new Point(0, 1);
+                            int origin = lastTile.X == cur.X ? lastTile.X / 10 * 10 : lastTile.Y / 10 * 10;
+                            for (int k = 0; k < 10; k++)
+                            {
+                                var a = along.X != 0 ? new Point(origin + k, lastTile.Y) : new Point(lastTile.X, origin + k);
+                                var b = along.X != 0 ? new Point(origin + k, cur.Y) : new Point(cur.X, origin + k);
+                                if (BotNav.IsConveyor(a) && BotNav.IsConveyor(b))
+                                {
+                                    BotNav.RaftBlocked.Add((a, b));
+                                    BotNav.RaftBlocked.Add((b, a));
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    lastTile = cur;
+                    bool wet = OnConveyor(cur);
+                    wasWet |= wet;
+                    if (cur == goal && !(wasWet && !wet))
                     {
                         yield break;
                     }
-                    bool wet = OnConveyor(cur);
-                    wasWet |= wet;
                     if (!wet && wasWet)
                     {
                         RaftLog($"ride ends on land at {cur}");
                         if (Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && (e.Position - Pos).Length() < 40))
                         {
                             yield return PickUpDust(true);
+                        }
+                        BotNav.ResetDustCache(); // the raft's dust has moved (or is in the broom now)
+                        if (cur == goal)
+                        {
+                            yield break; // (the next hop may need that dust for its own raft)
                         }
                         break;
                     }
@@ -2293,6 +2539,26 @@ namespace AnodyneSharp.Recording
                     // The 10px hitbox has ~3px of slack in a 16px tile: only correct sideways when well off, else go along the route (a raft
                     // that cannot slide the last pixel sideways would otherwise sit there for ever).
                     var rideKey = Math.Abs(ddx) > 3.5f || (Math.Abs(ddx) > 2f && Math.Abs(ddy) < 3f) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    // Snagged on a corner (a lily pad, the bank) going along the route, with the current dragging back off the
+                    // centre line: hold the way along and the sideways correction together.
+                    bool alongY = rideKey == KeyFunctions.Up || rideKey == KeyFunctions.Down;
+                    // (a mark, not the last frame: a snagged raft jitters a pixel back and forth)
+                    if (Math.Abs(alongY ? Pos.Y - rideLast.Y : Pos.X - rideLast.X) > 2f)
+                    {
+                        rideStall = 0;
+                        rideLast = Pos;
+                    }
+                    else
+                    {
+                        rideStall++;
+                    }
+                    float side = alongY ? ddx : ddy;
+                    if (rideStall > 10 && Math.Abs(side) > 0.5f)
+                    {
+                        yield return K(rideKey, alongY ? (side < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (side < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
+                    lastRideKey = rideKey;
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
                     yield return SafeMove(rideKey, null, 16f);
                     if (!wasWet && !wet && i > 120)
@@ -2722,6 +2988,12 @@ namespace AnodyneSharp.Recording
                 IgnoredEnemies.Clear();
                 _ignoredGrid = Grid;
                 _ignoredMap = Map;
+            }
+            if (IgnoredEnemies.Count > 0 && BotRunner.Player != null)
+            {
+                // One given up on as out of reach that has come to us (an Annoyer leaving its perch) is a target again.
+                var pc = Player.Hitbox.Center;
+                IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name == "Annoyer" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
             }
             return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e)).ToList();
         }
@@ -4217,6 +4489,10 @@ namespace AnodyneSharp.Recording
                     return K(dodge2);
                 }
             }
+            if (OffTheFrog() is KeyFunctions[] off)
+            {
+                return off;
+            }
             BotRunner.Status = "fight/frog: wait";
             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
             {
@@ -4328,9 +4604,42 @@ namespace AnodyneSharp.Recording
                 BotRunner.Status = "fight/frog: out of the way, waiting for a clear way in";
                 return K(dodge);
             }
+            if (OffTheFrog() is KeyFunctions[] off)
+            {
+                return off;
+            }
             BotRunner.Status = "fight/frog: wait for a clear way in";
             BotRunner.NotStuck(); // waiting for the volleys to line up is progress (the stall count above gives up on it)
             return K();
+        }
+
+        /// <summary>
+        /// Keys stepping away from a frog we stand on or right beside (its volley's bullets start on top of it, and touching it hurts
+        /// too): never wait there. Null when no frog is that close or no way away is walkable.
+        /// </summary>
+        private static KeyFunctions[] OffTheFrog()
+        {
+            var pc = Player.Hitbox.Center;
+            var near = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog
+                    && Math.Abs(e.Hitbox.Center.X - pc.X) < 18 && Math.Abs(e.Hitbox.Center.Y - pc.Y) < 18);
+            if (near == null)
+            {
+                return null;
+            }
+            float ax = pc.X - near.Hitbox.Center.X, ay = pc.Y - near.Hitbox.Center.Y;
+            var keys = Math.Abs(ax) >= Math.Abs(ay)
+                ? new[] { ax < 0 ? KeyFunctions.Left : KeyFunctions.Right, ay < 0 ? KeyFunctions.Up : KeyFunctions.Down }
+                : new[] { ay < 0 ? KeyFunctions.Up : KeyFunctions.Down, ax < 0 ? KeyFunctions.Left : KeyFunctions.Right };
+            foreach (var k in keys)
+            {
+                var step = DirVector(k) * 16f;
+                if (BotNav.Walkable(BotNav.TileOf(Pos + step)))
+                {
+                    BotRunner.Status = "fight/frog: off the frog";
+                    return K(k);
+                }
+            }
+            return null;
         }
 
         private static Vector2? _frogTakeoff;
@@ -4854,6 +5163,10 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
+            if (!soft && only == null)
+            {
+                IgnoredEnemies.Clear(); // an explicit fight is for every enemy here, also the ones a soft fight on the way gave up on
+            }
             yield return FightCore(timeoutFrames, soft, only);
             yield return DodgeLeftoverBullets();
         }
@@ -4960,7 +5273,7 @@ namespace AnodyneSharp.Recording
             int lastCount = -1, noKill = 0;
             Entity forced = null;
             Entity committed = null; // the target we are working on: switching to whichever is nearest every frame means never finishing an approach
-            int forcedFrames = 0, aggroFrames = 0, relocFrames = 0;
+            int forcedFrames = 0, aggroFrames = 0, relocFrames = 0, ambushFrames = 0;
             Point? reloc = null;
             List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
             int heldAge = 0;
@@ -5575,9 +5888,12 @@ namespace AnodyneSharp.Recording
                     yield return PolicyFrame(boomKeys, target);
                     continue;
                 }
-                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && Target_ColumnAboveClear(target) &&
+                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && ambushFrames < 900 && Target_ColumnAboveClear(target) &&
                     FightPolicies.VerticalShieldy(PolicyCtx(target), pmem) is PKey[] vKeys)
                 {
+                    // (waiting for it is on purpose, but not for ever: after 15s go at it the ordinary way)
+                    ambushFrames++;
+                    BotRunner.NotStuck();
                     BotRunner.Status = "fight/ambush vertical";
                     if (noKill > 0 && noKill < 1200)
                     {

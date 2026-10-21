@@ -178,6 +178,10 @@ namespace AnodyneSharp.Recording
                         dustTiles.Add(TileOf(e.Position + new Vector2(8, 8)));
                     }
                 }
+                if (BotRunner.Player?.broom.dust != null)
+                {
+                    dustTiles.Add(TileOf(BotRunner.Player.Position)); // the dust in the broom goes wherever the player goes
+                }
             }
             foreach (var dt in dustTiles)
             {
@@ -216,15 +220,42 @@ namespace AnodyneSharp.Recording
         /// </summary>
         public static List<Point> RaftPath(Point from, bool wet, Point goal, bool jump)
         {
+            // Round the dash traps when there is any other way (walking past one in a corridor is a hit more often than not).
+            var traps = new HashSet<Point>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e.GetType().Name is "BounceDashTrap" or "OnSightDashTrap")
+                {
+                    var t = TileOf(e.Position + new Vector2(8, 8));
+                    foreach (var o in new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                    {
+                        var n = new Point(t.X + o.X, t.Y + o.Y);
+                        if (n != from && n != goal)
+                        {
+                            traps.Add(n);
+                        }
+                    }
+                }
+            }
+            return (traps.Count > 0 ? RaftPathCore(from, wet, goal, jump, traps) : null) ?? RaftPathCore(from, wet, goal, jump, null);
+        }
+
+        private static List<Point> RaftPathCore(Point from, bool wet, Point goal, bool jump, HashSet<Point> avoid)
+        {
             RefreshGates();
+            RefreshShooterTiles(); // a Four_Shooter in the river is solid, and rafting into it is sitting in its crossfire
             var haz = Hazards();
+            if (avoid != null)
+            {
+                haz.UnionWith(avoid);
+            }
             bool oldJ = AllowJump, oldW = AllowWater;
             AllowJump = jump;
             AllowWater = false;
             // State: tile, on a raft, and "the raft we just got off is lying here on this screen" (usable for the next crossing).
             var prev = new Dictionary<(Point, bool, bool), (Point, bool, bool)>();
             var q = new Queue<(Point, bool, bool)>();
-            var start = (from, wet, false);
+            var start = (from, wet, !wet && BotRunner.Player?.broom.dust != null); // a dust in the broom is a raft to hand
             prev[start] = start;
             q.Enqueue(start);
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
@@ -235,6 +266,10 @@ namespace AnodyneSharp.Recording
                 var cameFrom = prev[(c, w, carry)].Item1;
                 foreach (var n in Steps(cameFrom, c))
                 {
+                    if (RaftBlocked.Contains((c, n)))
+                    {
+                        continue;
+                    }
                     bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n) && !(RaftNarrow && w));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
@@ -246,7 +281,7 @@ namespace AnodyneSharp.Recording
                         if (nw)
                         {
                             var (al, _) = CurrentMap.GetTileClass(n);
-                            if (al != Touching.NONE || _gatesClosed.Contains(n) || (!w && !carry && !DustReachableFrom(c)))
+                            if (al != Touching.NONE || _gatesClosed.Contains(n) || _shooterTiles.Contains(n) || (!w && !carry && !DustReachableFrom(c)))
                             {
                                 continue;
                             }
@@ -287,6 +322,9 @@ namespace AnodyneSharp.Recording
             path.Reverse();
             return path;
         }
+
+        /// <summary>Raft steps (tile to tile) found impassable while riding, e.g. a screen edge the current keeps pushing back over.</summary>
+        public static readonly HashSet<(Point, Point)> RaftBlocked = new();
 
         /// <summary>Set while riding a dust raft: conveyor (river) tiles count as walkable then.</summary>
         public static bool AllowWater;
@@ -624,11 +662,24 @@ namespace AnodyneSharp.Recording
                         starts.Add(new Point(tx, cy));
                     }
                 }
+                // The bullets fly along the emitter's middle: a dust on that line stops the beam over every row (column) it touches.
+                var dusts = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust"));
+                int reach = 24;
+                var mid = TileOf(e.Position + new Vector2(8, 8));
+                for (int i = 1; i < 24; i++)
+                {
+                    mid = new Point(mid.X + d.X, mid.Y + d.Y);
+                    if (System.Linq.Enumerable.Any(dusts, x => TileOf(x.Position + new Vector2(8, 8)) == mid))
+                    {
+                        reach = i;
+                        break;
+                    }
+                }
                 foreach (var start in starts)
                 {
                     var t = start;
                     set[t] = d.X != 0 ? 0 : 1; // the emitter tile itself: every bullet is born there and dwells a while, it is no shortcut past the beam
-                    for (int i = 1; i < 24; i++)
+                    for (int i = 1; i < reach; i++)
                     {
                         t = new Point(t.X + d.X, t.Y + d.Y);
                         if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))

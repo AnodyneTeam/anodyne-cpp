@@ -998,6 +998,20 @@ namespace AnodyneSharp.Recording
                         goto replan;
                     }
                 }
+                if (!PassingTrap && path.Count > 0 && SightTrapOnPath(path) is (Entity trap, Point side, int ti))
+                {
+                    // An idle dash trap sitting in a one-tile way: bait it from the side, then slip past while it is coming back.
+                    PassingTrap = true;
+                    try
+                    {
+                        yield return PassSightTrap(trap, path, ti);
+                    }
+                    finally
+                    {
+                        PassingTrap = false;
+                    }
+                    goto replan;
+                }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
                     string via = string.Join(">", path.Take(14).Select(p => $"{p.X},{p.Y}"));
