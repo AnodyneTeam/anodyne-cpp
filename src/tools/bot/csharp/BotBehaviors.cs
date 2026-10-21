@@ -149,7 +149,18 @@ namespace AnodyneSharp.Recording
                     case 'm': yield return LureMovers(n); break; // m<s>: lure every Mover on the screen into a steam beam (or a button), at most s seconds
                     case 'i': yield return CollectCicada(); break;
                     case 'o': yield return EnterDoorTo(tok.Substring(1)); break; // o<MAP>: walk through this map's door that leads to MAP
-                    case 'e': yield return Tap(KeyFunctions.Cancel); yield return Wait(30); break; // e: jump (the boots)
+                    case 'e':
+                        if (tok.Length > 1)
+                        {
+                            // e<r|l|u|d>[at]: a running jump that way (over holes), taking off once x (r/l) or y (u/d) reaches at
+                            yield return JumpToward(tok[1] switch { 'l' => KeyFunctions.Left, 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, _ => KeyFunctions.Right },
+                                tok.Length > 2 ? float.Parse(tok.Substring(2)) : float.NaN);
+                        }
+                        else
+                        {
+                            yield return Tap(KeyFunctions.Cancel); yield return Wait(30); // e: jump (the boots)
+                        }
+                        break;
                     case 'c':
                     {
                         // DEV ONLY (ANODYNE_BOT_DEV=1): top the card count up to n without earning the cards, to develop the later parts while the
@@ -2014,6 +2025,30 @@ namespace AnodyneSharp.Recording
         /// down where we were when it fired, behind us), jump the pit if there is one, swing twice a second apart (it flickers in between)
         /// and back off if it still lives. Costs a heart or so: the sections that use it have a budget.
         /// </summary>
+        /// <summary>Runs dir until the take-off coordinate (if any) and jumps holding dir all the way until landing (e.g. over a pit), then
+        /// stands still a moment. A hole only swallows the player after a few frames on it, so the take-off can be a little over its edge.</summary>
+        protected static IEnumerable<object> JumpToward(KeyFunctions dir, float at)
+        {
+            bool horiz = dir == KeyFunctions.Left || dir == KeyFunctions.Right;
+            bool plus = dir == KeyFunctions.Right || dir == KeyFunctions.Down;
+            for (int i = 0; i < 120 && !float.IsNaN(at); i++)
+            {
+                float c = horiz ? Pos.X : Pos.Y;
+                if (plus ? c >= at : c <= at)
+                {
+                    break;
+                }
+                yield return K(dir);
+            }
+            yield return K(dir);
+            yield return K(KeyFunctions.Cancel, dir);
+            for (int i = 0; i < 60 && (i < 3 || Player.state == AnodyneSharp.Entities.PlayerState.AIR); i++)
+            {
+                yield return K(dir);
+            }
+            yield return Wait(10);
+        }
+
         protected static IEnumerable<object> FrogRush(float x, float y, KeyFunctions dir, bool jump)
         {
             var d = DirVector(dir);

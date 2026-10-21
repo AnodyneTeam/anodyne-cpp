@@ -62,4 +62,32 @@ namespace AnodyneSharp.Recording
             yield return Section("temple exit", () => Exec("O1 X1 H2,1 H2,2 H2,3 H2,4 Pb405,780 W60"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 13: back to the Temple once the windmill has moved its statue. The Nexus pad lands on (4,0); a running jump
+    /// over the two holes on (5,0) reaches the key and the Pew Pew card (the intended route is the boulder puzzle), the key opens the
+    /// (4,3) key block and the bottom door of (4,4) leads outside onto the Overworld's east woods: a loop through the laser rooms, the
+    /// Annoyer/Dog rooms and back west and north to the Annoyer card chest on (5,7).
+    /// </summary>
+    public class Temple2 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Temple again: Pew Pew card, then outside to the Annoyer card");
+            yield return Section("temple2 nexus to the temple", () => Exec("W30 O1 X1 n0 W60 >908,1232 U20 W10 A W60 T W200 `t2_in"));
+            // (a hole swallows the player only after 8 frames on it: take off a little past the first hole's edge to clear both)
+            yield return Section("temple2 pew pew card", () => Exec("O1 X1 H5,0 W10 >846,20 W10 er863 W20 I912,16,d W60 T W30 I928,16,d W60 T W30 `t2_chests"));
+            yield return Section("temple2 key block", () => Exec("O1 X1 >900,20 W10 el888 W20 H4,0 H4,1 H4,2 H4,3 W20 I720,496,d W60 H4,4 W30 `t2_s44"));
+            yield return Section("temple2 out", () => Exec("O1 X1 >724,770 D40 W90 `t2_out"));
+            // (the planner counts the checkpoint by the door as solid: step round it by hand)
+            yield return Section("temple2 past the checkpoint", () => Exec("O1 X1 D10 W5 R38 W5 D50 W10 `t2_east"));
+            // (7,7): down the lane between the two fast lasers' columns, which end on the wall at row 79
+            yield return Section("temple2 laser lanes", () => Exec("O1 X1 H7,6 >1234,1110 >1234,1300 >1290,1330 H8,8 `t2_88"));
+            // (8,7): the slow laser's column is never clear (a bullet every 20px, 20px of bullet and player): one hit, as in a human run
+            yield return Section("temple2 slow laser", () => Exec("O1 X1 >1332,1298 >1332,1240 g1 O0 >1380,1240 >1380,1310 O1 g0 H9,8 H9,9 `t2_99"));
+            // (8,9): three Dogs; walking past them costs a heart, fighting them four
+            yield return Section("temple2 dogs", () => Exec("O1 X1 F W30 X0 H8,9 >1316,1430 W5 `t2_dogs"));
+            yield return Section("temple2 annoyer card", () => Exec("O1 X1 H7,8 H7,9 H6,9 H5,9 X0 H5,8 X1 H6,8 H6,7 I912,1232,d W60 T W30 `t2_card"));
+        }
+    }
 }
