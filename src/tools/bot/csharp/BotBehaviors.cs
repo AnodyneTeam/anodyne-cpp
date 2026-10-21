@@ -412,6 +412,7 @@ namespace AnodyneSharp.Recording
                     case 'C':
                         for (int i = 0; i < n; i++) { yield return Tap(KeyFunctions.Cancel); yield return Wait(8); }
                         break;
+                    case ':': yield return KillTownsfolk(n); break; // :<n>: sweep this screen's Black and White Town walkers until n are dead in all
                     default: throw new ArgumentException("bad token " + tok);
                 }
             }
@@ -693,7 +694,7 @@ namespace AnodyneSharp.Recording
         {
             // the steam jet's nozzle (OnOffLaser) is a harmless solid block that only matches the projectile names: its beam is the danger
             return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) && e.GetType().Name != "OnOffLaser" &&
-                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
+                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" or "SuburbKiller" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
         }
 
         private static Vector2 DirVector(KeyFunctions k) => k switch
@@ -2025,6 +2026,88 @@ namespace AnodyneSharp.Recording
         /// down where we were when it fired, behind us), jump the pit if there is one, swing twice a second apart (it flickers in between)
         /// and back off if it still lives. Costs a heart or so: the sections that use it have a budget.
         /// </summary>
+        /// <summary>
+        /// Black and White Town: the man in front of the house only lets you in once ten townsfolk are dead (event SuburbKilled). They
+        /// are not enemies (one broom hit, never hurt you) and wander at 20px/s, turning every second or two: walk up to the nearest
+        /// one still walking on this screen and swing, keeping clear of the killers on the way (SafeMove counts them as dangers).
+        /// </summary>
+        protected static IEnumerable<object> KillTownsfolk(int total)
+        {
+            var skip = new HashSet<Entity>(); // walled off from us (in a yard, behind the fence)
+            Entity chased = null;
+            int chaseFrames = 0;
+            for (int guard = 0; guard < 3000 && GlobalState.events.GetEvent("SuburbKilled") < total; guard++)
+            {
+                var me = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+                var killers = BotRunner.Entities().Where(e => e.exists && BotNav.IsSuburbKiller(e)).Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).ToList();
+                var walker = BotRunner.Entities().Where(e => e.exists && !skip.Contains(e) && e.GetType().Name == "SuburbWalker" && e.velocity != Vector2.Zero && new Point((int)(e.Position.X / 160), (int)(e.Position.Y / 160)) == Grid
+                        && killers.All(k => (k - new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).Length() > 48f)) // (one by a killer is left alone: the killer wakes as we swing)
+                    .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length()).FirstOrDefault();
+                if (walker == null)
+                {
+                    System.Console.Error.WriteLine($"townsfolk dead: {GlobalState.events.GetEvent("SuburbKilled")} (none left to reach on {Grid}, {skip.Count} walled off)");
+                    yield break;
+                }
+                BotRunner.Status = $"townsfolk {GlobalState.events.GetEvent("SuburbKilled")}/{total}";
+                chaseFrames = walker == chased ? chaseFrames + 1 : 0;
+                chased = walker;
+                if (chaseFrames > 600)
+                {
+                    skip.Add(walker);
+                    continue;
+                }
+                if (killers.Select(k => me - k).Where(v => v.Length() < 44f).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 away)
+                {
+                    // a killer close by (awake ones creep after us at 30px/s): back off from it first, whichever way is open
+                    var keys = (Math.Abs(away.X) > Math.Abs(away.Y)
+                        ? new[] { away.X < 0 ? KeyFunctions.Left : KeyFunctions.Right, away.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down }
+                        : new[] { away.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down, away.X < 0 ? KeyFunctions.Left : KeyFunctions.Right });
+                    var before = Pos;
+                    yield return K(keys[0]);
+                    if ((Pos - before).Length() < 0.5f)
+                    {
+                        yield return K(keys[1]);
+                    }
+                    chaseFrames += 2;
+                    continue;
+                }
+                var d = new Vector2(walker.Hitbox.Center.X, walker.Hitbox.Center.Y) - me;
+                if (d.Length() > 36f)
+                {
+                    // far, maybe round a wall: walk the tile route to beside it (it moves 20px/s, so a stale goal is still close)
+                    var wt = BotNav.TileOf(new Vector2(walker.Hitbox.Center.X - 5, walker.Hitbox.Center.Y - 6));
+                    var route = BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - wt.X) + Math.Abs(t.Y - wt.Y) <= 1);
+                    if (route == null)
+                    {
+                        skip.Add(walker);
+                        continue;
+                    }
+                    if (route.Count > 0)
+                    {
+                        var c = BotNav.CentreOf(route[0]);
+                        float rx = c.X - Pos.X, ry = c.Y - Pos.Y;
+                        bool horiz = Math.Abs(rx) > 1.5f;
+                        yield return SafeMove(horiz ? (rx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ry < 0 ? KeyFunctions.Up : KeyFunctions.Down), null, Math.Max(1f, horiz ? Math.Abs(rx) : Math.Abs(ry)));
+                        continue;
+                    }
+                }
+                var face = Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (d.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                float across = Math.Abs(d.X) > Math.Abs(d.Y) ? Math.Abs(d.Y) : Math.Abs(d.X);
+                if (d.Length() < 20f && across < 8f)
+                {
+                    yield return K(face);
+                    yield return Tap(KeyFunctions.Accept);
+                    yield return Wait(16);
+                    continue;
+                }
+                // line up across first when close, else close the distance along the long axis
+                var step = d.Length() < 28f && across >= 8f
+                    ? (Math.Abs(d.X) > Math.Abs(d.Y) ? (d.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (d.X < 0 ? KeyFunctions.Left : KeyFunctions.Right))
+                    : face;
+                yield return SafeMove(step, null, 6f);
+            }
+        }
+
         /// <summary>Runs dir until the take-off coordinate (if any) and jumps holding dir all the way until landing (e.g. over a pit), then
         /// stands still a moment. A hole only swallows the player after a few frames on it, so the take-off can be a little over its edge.</summary>
         protected static IEnumerable<object> JumpToward(KeyFunctions dir, float at)
@@ -2650,7 +2733,7 @@ namespace AnodyneSharp.Recording
                 bool wasWet = false;
                 var lastTile = BotNav.TileOf(Pos);
                 var rideLast = Pos;
-                int rideStall = 0;
+                int rideStall = 0, raftSwings = 0;
                 KeyFunctions? lastRideKey = null;
                 var edgeCrossings = new Dictionary<(Point, Point), int>();
                 for (int i = 0; i < 1500; i++)
@@ -2749,6 +2832,18 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                     lastRideKey = rideKey;
+                    // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
+                    // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
+                    if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime")
+                        .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
+                        .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
+                    {
+                        raftSwings++;
+                        yield return K(Math.Abs(foe.X) > Math.Abs(foe.Y) ? (foe.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (foe.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        yield return Tap(KeyFunctions.Accept);
+                        yield return Wait(14);
+                        continue;
+                    }
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
                     yield return SafeMove(rideKey, null, 16f);
                     if (!wasWet && !wet && i > 120)

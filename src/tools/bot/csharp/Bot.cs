@@ -875,7 +875,7 @@ namespace AnodyneSharp.Recording
                 }
                 var path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                 BotNav.Avoid = null;
-                if (!InRaft && avoidStationary == null && Enemies().Any(e => e.velocity == Vector2.Zero))
+                if (!InRaft && avoidStationary == null && (Enemies().Any(e => e.velocity == Vector2.Zero) || BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e))))
                 {
                     // Keep a berth round enemies that stand still (touching one hurts): a route that does is used if there is one.
                     List<Point> wide = null;
@@ -1375,7 +1375,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1398,6 +1398,7 @@ namespace AnodyneSharp.Recording
             "crowd" => new Crowd(),
             "windmill" => new Windmill(),
             "temple2" => new Temple2(),
+            "suburb" => new Suburb(),
             _ => throw new ArgumentException(name)
         };
 

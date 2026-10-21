@@ -783,17 +783,26 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Tiles within `margin` px of any living enemy except `except`.</summary>
+        /// <summary>
+        /// Black and White Town's killers: not enemies (no health, nothing kills them) but a touch costs 6 hearts. One stands still
+        /// until the player comes within 36px, then creeps after them at 30px/s for good: a berth that wide leaves it asleep.
+        /// </summary>
+        public static bool IsSuburbKiller(Entity e) => e.GetType().Name == "SuburbKiller";
+        public const int KillerWake = 30;
+
         public static HashSet<Point> NearEnemies(int margin, Entity except = null, bool stationaryOnly = false)
         {
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e == except || !e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || (stationaryOnly && e.velocity != Vector2.Zero))
+                bool killer = IsSuburbKiller(e);
+                if (!e.exists || e == except || !(killer || e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)) || (stationaryOnly && e.velocity != Vector2.Zero))
                 {
                     continue;
                 }
                 var r = e.Hitbox;
-                r.Inflate(margin, margin);
+                int m = killer ? margin + KillerWake : margin;
+                r.Inflate(m, m);
                 for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
                 {
                     for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
