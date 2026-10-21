@@ -563,6 +563,8 @@ namespace AnodyneSharp.Recording
         /// <summary>Extra px kept around beam bullets (they leave 12px gaps for a 10px player, so 0 is needed to slip through a dense row).</summary>
         public static int LaserMargin = 1;
         private static int _dodgeStreak;
+        private static long _jumpPressFrame = -10;
+        private static bool _jumpOnSpot;
 
         private const float WalkPxPerFrame = 70f / 60f;
 
@@ -1211,6 +1213,30 @@ namespace AnodyneSharp.Recording
             return int.MaxValue;
         }
 
+        /// <summary>Would a jump now (steering dir in the air, null for on the spot) come down into something: frames 26..34 of walking that way.</summary>
+        private static bool LandsInHit(KeyFunctions? dir, List<Threat> threats)
+        {
+            var pb = Player.Hitbox;
+            var v = dir is KeyFunctions d ? DirVector(d) * WalkPxPerFrame : Vector2.Zero;
+            for (int f = 26; f <= Math.Min(34, Horizon); f++)
+            {
+                var p = new Vector2(pb.X, pb.Y) + v * Math.Min(f, 28);
+                var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                foreach (var th in threats)
+                {
+                    if (th.At[f] is Rectangle r)
+                    {
+                        r.Inflate(th.Margin, th.Margin);
+                        if (mine.Intersects(r))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
         private static bool WalkableAhead(KeyFunctions dir, int frames)
         {
             var v = DirVector(dir) * WalkPxPerFrame * frames;
@@ -1455,19 +1481,35 @@ namespace AnodyneSharp.Recording
                 if (Player.state == AnodyneSharp.Entities.PlayerState.AIR)
                 {
                     Dodged = true;
-                    return K(wanted);
+                    return _jumpOnSpot ? K() : K(wanted);
                 }
+                _jumpOnSpot = false;
                 var moving = threats.Where(t => !t.Stationary).ToList();
                 if (moving.Count > 0)
                 {
                     int hitStill = PlanHitFrameStanding(0, KeyFunctions.Right, 0, moving);
                     int hitWalk = PlanHitFrame(wanted, 0, wanted, 24, moving);
                     int first = Math.Min(hitStill == int.MaxValue ? 999 : hitStill, hitWalk == int.MaxValue ? 999 : hitWalk);
-                    if (first <= 22)
+                    // (a jump is ~28 frames: one that comes down into the next bullet of a shooter's lane is no dodge, so look at the landing too;
+                    // jumping on the spot may land clear where the jump on the way does not)
+                    bool jumpOn = first <= 22, onSpot = false;
+                    if (jumpOn && LandsInHit(wanted, moving))
+                    {
+                        onSpot = !LandsInHit(null, moving);
+                        jumpOn = onSpot;
+                    }
+                    if (jumpOn)
                     {
                         Dodged = true;
-                        BotRunner.Status += " [jump the hit]";
-                        return K(KeyFunctions.Cancel, wanted);
+                        BotRunner.Status += onSpot ? " [jump the hit on the spot]" : " [jump the hit]";
+                        _jumpOnSpot = onSpot;
+                        if (_jumpPressFrame == BotRunner.Frame - 1)
+                        {
+                            // pressed last frame and still on the ground: the game only jumps on a fresh press, so let go for a frame
+                            return onSpot ? K() : K(wanted);
+                        }
+                        _jumpPressFrame = BotRunner.Frame;
+                        return onSpot ? K(KeyFunctions.Cancel) : K(KeyFunctions.Cancel, wanted);
                     }
                 }
             }

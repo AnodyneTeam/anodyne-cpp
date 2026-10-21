@@ -74,7 +74,8 @@ namespace AnodyneSharp.Recording
             yield return Section("fields east to the forest", () => Exec("O1 X1 f1 b1730,872 f0 oFOREST W60 `fo_in"));
             yield return Section("forest nexus point", () => Exec("O1 X1 H1,6 W30 `fo_pad"));
             // A dust raft over the lake along the bottom of the Forest to the Cliffs door.
-            yield return Section("forest to the cliffs", () => Exec("O1 X1 oCLIFF W60 `cl_in"));
+            // (no auto-fight: the Frog by the lake's west shore is out of reach from the raft, and going for it undoes every hop)
+            yield return Section("forest to the cliffs", () => Exec("O1 X0 oCLIFF W60 `cl_in"));
             yield return Section("cliffs to the crowd", () => Exec("O1 X1 H3,4 W30 oCROWD@738,812 W60 `cr_in"));
         }
     }
