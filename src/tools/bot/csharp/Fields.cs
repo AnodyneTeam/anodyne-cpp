@@ -561,6 +561,14 @@ namespace AnodyneSharp.Recording
                     yield return Hold(10, KeyFunctions.Down);
                     break;
                 }
+                case 20:
+                    // The Apartments' entrance (2,5): the active platform on the west holes, over a hole from the floor, rides up to the
+                    // top row and the way north.
+                    yield return StepTo(23, 57);
+                    yield return JumpOnto(21, 57, KeyFunctions.Left);
+                    yield return Ride(21, 57);
+                    yield return StepTo(21, 52);
+                    break;
                 default:
                     throw new InvalidOperationException($"bot: no platform route {which}");
             }

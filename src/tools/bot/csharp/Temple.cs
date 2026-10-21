@@ -117,4 +117,44 @@ namespace AnodyneSharp.Recording
             yield return Section("suburb corpse card", () => Exec("O1 X0 H4,3 H3,3 I560,576,d W30 T W90 W60 >564,578 U30 W90 H1,7 I256,1184,d W60 T W30 `sb_card"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 15: the Apartments. First a detour back into Red Cave's last chest for Broom Widen (the Apartments' first pillar
+    /// puzzle needs it), then in through the Suburb's pad: the moving-platform entrance, the pillar room, the (2,3) Silverfish room
+    /// (a fish herded onto one button while we stand on the other), the Dash Trap room, the rat-and-crystals room for the first key,
+    /// and south past the Gas Guy room to the Silverfish card under the spike roller.
+    /// </summary>
+    public class Apartment : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Apartments (Broom Widen from Red Cave first)");
+            yield return Section("apartment to red cave", () => Exec("W30 O1 X1 n0 W60 >588,896 U20 W10 A W60 T W200 >596,852 W30 oREDCAVE@551,883 W90 `ap_rc"));
+            // (3,6): a 2-hole pit taken with a running jump; the Widen chest is on (4,6)
+            yield return Section("apartment widen", () => Exec("O1 X0 H3,6 >528,1027 W5 er545 W20 H4,6 I768,976,d W60 T W30 `ap_widen"));
+            yield return Section("apartment entrance", () => Exec("W30 O1 X1 n0 W60 D30 W90 U4 W60 n0 W120 >828,1168 U20 W10 A W60 T W200 O1 X0 H2,2 H2,1 H2,0 H3,0 W20 oAPARTMENT W90 `ap_in"));
+            // Widen equipped; the platform ride to (2,4); its pillar switch hit twice (1s apart) with the wide broom; up into (2,3).
+            // (2,3): the fish facing left first runs right along row 34 to the couch (col 26); scared from below it runs up col 26 onto
+            // the (26,32) button and stays; we stand on the (21,38) one: two buttons at once open the west gate for good.
+            // Everything inside is one section: a death here respawns at the entrance with the rooms' state kept.
+            yield return Section("apartment silverfish card", () => Exec(
+                ";2 W10 X0 U24 W10 t20 W10 >404,818 U40 W10 J26,47,u W90 >402,723 R2 D1 u5 W30 >402,620 W30 " +
+                "G404,595,y G340,595 G340,550,y W40 G340,595,y G418,595 G418,570,y W40 G339,595,y G339,607,y W30 " +
+                // (1,3): round the still water by the bottom row and jump the row the top Dash Trap watches
+                "O1 X0 H1,3 W10 G291,547 G291,596,y G196,596 G196,550,y G228,550 G228,530,y eu514 U30 W30 " +
+                // (1,2): clear it for the north gate; (2,1): the permanent button by raft; (3,1): hit the crystal switch so the rat
+                // walks the top row into the far column, again as it heads down so it reaches the permanent button, again to walk the top
+                // row ourselves to the other button; the key chest behind both gates
+                "O1 X1 F1200 W30 H1,2 G240,380 U60 W30 H2,1 W30 >403,179 W30 X0 H3,1 W30 >499,274 W10 R2 A W70 {Rat,590,170,640,232 W5 A W30 " +
+                "{Rat,600,280,640,310 W70 A W30 G499,178,y G563,178 G563,242,y G581,242 W30 G563,242 G563,178,y G499,178 G499,290,y G531,290 G531,230,y I528,208,d W60 T W30 " +
+                // (3,2) right side by a running jump, (3,3) down col 37 past the Dog, (3,4) Gas Guy and Silverfish
+                "O1 X0 H3,2 >566,450 er583 W20 >613,500 W10 d600 >597,620 H3,4 W10 } W10 " +
+                // (3,5): the hidden spike roller drops on whoever crosses row 51 and sweeps the room down to row 58, over the chest's
+                // only standing spot. Let it go by from the doorway, flip the (32,58) switch (lowers the (34,51) crystal), leave and come
+                // back (the roller resets), and this time dash right past the crystal and down into the chest nook ahead of it, open the
+                // chest and jump back up over the roller as it comes.
+                ">515,770 W10 G515,812,y G515,803,y W420 G515,866,y ed866 W5 G515,914,y D1 A W70 G515,898,y eu898 W5 G515,818,y U40 W30 " +
+                "G515,800,y G515,816,y G564,816 G564,836,y G579,850 G579,882,y ed882 W5 D20 R12 U4 A W30 T W5 L12 U12 {FallingSpikeRoller,496,893,640,950,600 eu W20 `ap_sfcard"));
+        }
+    }
 }

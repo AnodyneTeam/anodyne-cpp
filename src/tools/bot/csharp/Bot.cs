@@ -525,6 +525,18 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
+            if (Player != null && Player.reversed)
+            {
+                // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go
+                held = held.Select(k => k switch
+                {
+                    KeyFunctions.Up => KeyFunctions.Down,
+                    KeyFunctions.Down => KeyFunctions.Up,
+                    KeyFunctions.Left => KeyFunctions.Right,
+                    KeyFunctions.Right => KeyFunctions.Left,
+                    _ => k,
+                }).ToArray();
+            }
             SwingAudit(held);
             RingRecord(held);
             WriteGbaFrame(held, _stack.Count == 0);
@@ -1375,7 +1387,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1399,6 +1411,7 @@ namespace AnodyneSharp.Recording
             "windmill" => new Windmill(),
             "temple2" => new Temple2(),
             "suburb" => new Suburb(),
+            "apartment" => new Apartment(),
             _ => throw new ArgumentException(name)
         };
 

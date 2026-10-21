@@ -412,7 +412,29 @@ namespace AnodyneSharp.Recording
                     case 'C':
                         for (int i = 0; i < n; i++) { yield return Tap(KeyFunctions.Cancel); yield return Wait(8); }
                         break;
+                    case ';': yield return MenuEquipBroom(n); break; // ;<k>: equip broom k from the pause menu (0 plain, 1 extend, 2 widen, 3 swap)
+                    case '}': yield return KillSilverfish(n > 1 ? n : 3600); break; // }[frames]: broom every Silverfish on this screen (walk up to each from the side away from a wall)
                     case ':': yield return KillTownsfolk(n); break; // :<n>: sweep this screen's Black and White Town walkers until n are dead in all
+                    case '{':
+                    {
+                        // {<Type>,x0,y0,x1,y1[,frames]: stand still until a live entity of that type is inside the world rectangle (by its position), e.g. a rat walking into the spot where we flip the pillars on it
+                        var a = tok.Substring(1).Split(',');
+                        var r = new Rectangle(int.Parse(a[1]), int.Parse(a[2]), int.Parse(a[3]) - int.Parse(a[1]), int.Parse(a[4]) - int.Parse(a[2]));
+                        int limit = a.Length > 5 ? int.Parse(a[5]) : 1200;
+                        for (int i = 0; ; i++)
+                        {
+                            if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == a[0] && r.Contains(new Point((int)e.Position.X, (int)e.Position.Y))))
+                            {
+                                break;
+                            }
+                            if (i >= limit)
+                            {
+                                throw new InvalidOperationException($"bot: no {a[0]} came into {r} in {limit} frames on {Map}");
+                            }
+                            yield return Wait(1);
+                        }
+                        break;
+                    }
                     default: throw new ArgumentException("bad token " + tok);
                 }
             }
@@ -2031,6 +2053,128 @@ namespace AnodyneSharp.Recording
         /// are not enemies (one broom hit, never hurt you) and wander at 20px/s, turning every second or two: walk up to the nearest
         /// one still walking on this screen and swing, keeping clear of the killers on the way (SafeMove counts them as dangers).
         /// </summary>
+        /// <summary>
+        /// Brooms every Silverfish on this screen. A silverfish runs straight away from us (50px/s, until it hits a wall) once we are within 30px
+        /// or in its line of sight, so chasing one is hopeless: wait while it runs, then walk up to it from the side opposite a wall (it bolts into
+        /// that wall and stays put) and swing. One in the open is first scared from the side that sends it into the nearest wall.
+        /// </summary>
+        protected static IEnumerable<object> KillSilverfish(int frames)
+        {
+            bool Wall(Point t) => BotNav.IsBeamWall(t) || BotRunner.Entities().Any(g => g.exists && g.Solid && g.GetType().Name == "Gate" && BotNav.TileOf(g.Position) == t);
+            var dirs = new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) };
+            var gasMem = new PolicyMem();
+            var last = new Dictionary<Entity, Vector2>();
+            for (int i = 0; i < frames; i++)
+            {
+                var me = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+                var moving = new HashSet<Entity>();
+                foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Silverfish"))
+                {
+                    // moving = it actually moved since the last frame (one pushing into a thin wall keeps its velocity but never gets anywhere)
+                    if (e.velocity != Vector2.Zero && (!last.TryGetValue(e, out var lp) || (lp - e.Position).Length() > 0.1f))
+                    {
+                        moving.Add(e);
+                    }
+                    last[e] = e.Position;
+                }
+                var fish = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Silverfish" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid)
+                    .OrderBy(e => (e.Center - me).Length()).FirstOrDefault();
+                if (fish == null)
+                {
+                    yield break;
+                }
+                BotRunner.Status = $"silverfish at {fish.Position}";
+                // one running at us (a first run goes the way it did not face, wherever we are): step out of its lane
+                var bolt = moving.FirstOrDefault(e => e.velocity.X != 0 ? Math.Abs(e.Center.Y - me.Y) < 15 && (me.X - e.Center.X) * e.velocity.X > 0 && Math.Abs(me.X - e.Center.X) < 64
+                                          : Math.Abs(e.Center.X - me.X) < 14 && (me.Y - e.Center.Y) * e.velocity.Y > 0 && Math.Abs(me.Y - e.Center.Y) < 64);
+                if (bolt != null)
+                {
+                    var side = bolt.velocity.X != 0 ? (me.Y < bolt.Center.Y ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Down, KeyFunctions.Up })
+                                                    : (me.X < bolt.Center.X ? new[] { KeyFunctions.Left, KeyFunctions.Right } : new[] { KeyFunctions.Right, KeyFunctions.Left });
+                    var before = Pos;
+                    yield return K(side[0]);
+                    if ((Pos - before).Length() < 0.3f)
+                    {
+                        yield return K(side[1]);
+                    }
+                    continue;
+                }
+                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid))
+                {
+                    // the Gas Guy homes in on us through everything: broom it first (its gas kills silverfish anyway)
+                    var gas = BotRunner.Entities().First(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid);
+                    BotRunner.Status = $"gas guy at {gas.Position}";
+                    yield return PolicyFrame(FightPolicies.Slime(PolicyCtx(gas), gasMem) ?? new PKey[0], gas); // it comes to us: keep it at broom's length and swing
+                    continue;
+                }
+                if (moving.Contains(fish))
+                {
+                    yield return K(); // running: let it reach its wall
+                    continue;
+                }
+                var ft = BotNav.TileOf(fish.Center - new Vector2(BotNav.HalfW, BotNav.HalfH));
+                // the side to come from: one we can stand on, with a wall right behind the fish (else the side whose run is shortest)
+                Point best = Point.Zero;
+                int bestRun = int.MaxValue;
+                foreach (var s in dirs)
+                {
+                    var stand = new Point(ft.X + s.X, ft.Y + s.Y);
+                    if (!BotNav.Walkable(stand) || BotNav.FindPath(BotNav.TileOf(Pos), stand) == null)
+                    {
+                        continue;
+                    }
+                    int run = 0;
+                    while (run < 10 && !Wall(new Point(ft.X - s.X * (run + 1), ft.Y - s.Y * (run + 1))))
+                    {
+                        run++;
+                    }
+                    if (run < bestRun)
+                    {
+                        bestRun = run;
+                        best = s;
+                    }
+                }
+                if (bestRun == int.MaxValue)
+                {
+                    System.Console.Error.WriteLine($"silverfish at {fish.Position}: no side to reach it from");
+                    yield break;
+                }
+                // stand 21px out from its centre on that side, level with it
+                var goal = fish.Center + new Vector2(best.X, best.Y) * 21f;
+                var d = goal - me;
+                float along = best.X != 0 ? d.X : d.Y, across = best.X != 0 ? d.Y : d.X;
+                if (Math.Abs(along) > 24 || Math.Abs(across) > 24)
+                {
+                    // far: walk the tile route to the tile two out on that side (outside its 30px fright radius as long as it can)
+                    var far = new Point(ft.X + best.X * 2, ft.Y + best.Y * 2);
+                    var target = BotNav.Walkable(far) ? far : new Point(ft.X + best.X, ft.Y + best.Y);
+                    var route = BotNav.FindPath(BotNav.TileOf(Pos), target);
+                    if (route != null && route.Count > 0)
+                    {
+                        var c = BotNav.CentreOf(route[0]);
+                        float rx = c.X - Pos.X, ry = c.Y - Pos.Y;
+                        yield return K(Math.Abs(rx) > 1.5f ? (rx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ry < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
+                }
+                if (Math.Abs(across) > 2)
+                {
+                    yield return K(best.X != 0 ? (across < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (across < 0 ? KeyFunctions.Left : KeyFunctions.Right));
+                    continue;
+                }
+                var face = best.X > 0 ? KeyFunctions.Left : best.X < 0 ? KeyFunctions.Right : best.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
+                if (Math.Abs(along) > 2)
+                {
+                    yield return K(best.X != 0 ? (along < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (along < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    continue;
+                }
+                yield return K(face);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(16);
+            }
+            throw new TimeoutException($"bot: silverfish still alive after {frames} frames on {Map} {Grid}");
+        }
+
         protected static IEnumerable<object> KillTownsfolk(int total)
         {
             var skip = new HashSet<Entity>(); // walled off from us (in a yard, behind the fence)
@@ -2368,6 +2512,32 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Opens the pause menu, goes to the Map tab and takes the "return to this area's Nexus pad" warp.</summary>
+        /// <summary>Pause menu -> Items (the second tab) -> down to broom row k (0 plain, 1 extend, 2 widen, 3 swap) -> equip -> close.</summary>
+        protected static IEnumerable<object> MenuEquipBroom(int k)
+        {
+            yield return Tap(KeyFunctions.Pause);
+            yield return Wait(20);
+            for (int i = 0; i < 8; i++)
+            {
+                yield return Tap(KeyFunctions.Up);
+                yield return Wait(4);
+            }
+            yield return Tap(KeyFunctions.Down);
+            yield return Wait(4);
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(10);
+            for (int i = 0; i < k; i++)
+            {
+                yield return Tap(KeyFunctions.Down);
+                yield return Wait(4);
+            }
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(10);
+            System.Console.Error.WriteLine($"equipped broom: {GlobalState.inventory.EquippedBroom}");
+            yield return Tap(KeyFunctions.Pause);
+            yield return Wait(20);
+        }
+
         protected static IEnumerable<object> MenuReturnToPad(int tab)
         {
             yield return Tap(KeyFunctions.Pause);
@@ -6772,7 +6942,7 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if (target.GetType().Name == "Slime" && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
+                if ((target.GetType().Name == "Slime" || target.GetType().Name == "GasGuy") && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
                 {
                     if (i % 5 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
