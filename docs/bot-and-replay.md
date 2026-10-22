@@ -125,7 +125,7 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Extra tokens: `` `name `` snapshot - `g<n>` heart budget - `y<percent>` scale the path cost of beam tiles - `p1` no fetching dust
   on the way - `l<col>,<r0>,<r1>` dust leapfrog up a beam column - `Pb<x>,<y>` walk only while still on the dungeon map.
 - Apartments tokens: `[` get the screen's Rat onto one button while we hold the other (simulates the rat's clockwise turns, tries
-  every one-dust move, sweeps the best one into place) - `{Type,x0,y0,x1,y1[,frames]` wait until an entity of that type is in a
+  every one-dust move, sweeps the best one into place; if a dash trap kills the rat it steps out of the screen and back in for a fresh one) - `{Type,x0,y0,x1,y1[,frames]` wait until an entity of that type is in a
   world rectangle - `}` broom every Silverfish here - `/` print the screen as text (tiles, every entity's letter, then each
   entity's exact box, velocity, facing and frame); the same dump is printed on every hit and every failure, and is much cheaper to
   read than a screenshot. `/x,y` prints another screen of the map (tiles and entity presets, DEAD for killed/opened ones).
@@ -173,6 +173,10 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Enemies without a permanence flag (Annoyers, Slashers, ...) respawn whenever their screen is entered again. A pair of Annoyers at a
   doorway hits you during the frozen screen transition, every time: use another way out (the pause menu's dungeon-entrance warp).
 - Slasher: 3 hits, 0.5s apart; strike for the first 70 frames of its 1.4s float, then get out of line of the cut.
+  While Slashers wind up, the fight simulates each one's drift towards us and its exact cut box (long cut when we are 36px or
+  more from its centre, otherwise wide) for 8 directions and a few walk lengths, and runs the way that stays clear, or else the one
+  hit latest. Two hits a room are still common, so the Apartments' water and south key sections are budgeted (`g3`, `g2`).
+- `X0` turns auto-fight off for the rest of a section: put `X1` back before a room whose fight should start on arrival (the Watcher).
 
 ## Status
 
