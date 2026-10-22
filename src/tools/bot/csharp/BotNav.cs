@@ -792,7 +792,17 @@ namespace AnodyneSharp.Recording
         public static bool IsDashLeap(Point a, Point b)
         {
             int dx = b.X - a.X, dy = b.Y - a.Y;
-            if ((dx != 0 && dy != 0) || Math.Abs(dx + dy) < 3)
+            if (dx != 0 && dy != 0)
+            {
+                // (one tile to the side at the far end: the side key drifts us over in the air)
+                if (Math.Min(Math.Abs(dx), Math.Abs(dy)) > 2 || Math.Max(Math.Abs(dx), Math.Abs(dy)) < 3)
+                {
+                    return false;
+                }
+                var dm = Math.Abs(dx) > Math.Abs(dy) ? new Point(Math.Sign(dx), 0) : new Point(0, Math.Sign(dy));
+                return DashLeapTiles(a, dm) >= Math.Max(Math.Abs(dx), Math.Abs(dy));
+            }
+            if (Math.Abs(dx + dy) < 3)
             {
                 return false;
             }
@@ -867,6 +877,35 @@ namespace AnodyneSharp.Recording
                         {
                             yield return t;
                             break;
+                        }
+                    }
+                    // Or a tile to one side at the far end: in the air the side key drifts us ~27px across (a walk's worth) while the
+                    // dash carries us along, so a landing one row or column over is in reach too.
+                    // (two over too: lined up on the lane's side edge before take-off, the drift just carries us there)
+                    foreach (var l in new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X), new Point(2 * d.Y, 2 * d.X), new Point(-2 * d.Y, -2 * d.X) })
+                    {
+                        bool gap = false;
+                        var l1 = new Point(Math.Sign(l.X), Math.Sign(l.Y));
+                        for (int k = 1; k <= most; k++)
+                        {
+                            var on = new Point(c.X + d.X * k, c.Y + d.Y * k);
+                            var side = new Point(on.X + l.X, on.Y + l.Y);
+                            var mid = new Point(on.X + l1.X, on.Y + l1.Y);
+                            bool sideWall = CurrentMap.GetTileClass(side).Item1 != Touching.NONE || CurrentMap.GetTileClass(mid).Item1 != Touching.NONE;
+                            if (k >= 3 && gap && !sideWall && LeapFloor(side))
+                            {
+                                yield return side; // (the lane we left may end in a wall: we are over the side one by then)
+                                break;
+                            }
+                            if (sideWall || CurrentMap.GetTileClass(on).Item1 != Touching.NONE)
+                            {
+                                break; // a wall across the flight
+                            }
+                            if (LeapFloor(on) || LeapFloor(side) || LeapFloor(mid))
+                            {
+                                break; // floor on the way: no gap to leap, walk
+                            }
+                            gap = true;
                         }
                     }
                 }

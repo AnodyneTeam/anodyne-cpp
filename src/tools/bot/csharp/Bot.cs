@@ -1071,12 +1071,16 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> DashLeap(Point a, Point b)
         {
-            var d = new Point(Math.Sign(b.X - a.X), Math.Sign(b.Y - a.Y));
+            // (along the longer way; a landing one tile to the side is reached by holding that way too once in the air)
+            var d = Math.Abs(b.X - a.X) > Math.Abs(b.Y - a.Y) ? new Point(Math.Sign(b.X - a.X), 0) : new Point(0, Math.Sign(b.Y - a.Y));
+            var lat = new Point(d.X == 0 ? Math.Sign(b.X - a.X) : 0, d.Y == 0 ? Math.Sign(b.Y - a.Y) : 0);
+            KeyFunctions? latKey = lat.X > 0 ? KeyFunctions.Right : lat.X < 0 ? KeyFunctions.Left : lat.Y > 0 ? KeyFunctions.Down : lat.Y < 0 ? KeyFunctions.Up : null;
             var key = d.X > 0 ? KeyFunctions.Right : d.X < 0 ? KeyFunctions.Left : d.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up;
             // the run-up: the tile before the first pad of the row (or the first pad, against a wall)
             // (the take-off tile need not be the last pad: a fire pillar's tile may lie between, so back past the whole row)
-            var start = a;
-            bool padSeen = BotNav.DashPads().ContainsKey(a);
+            // (pads with a floor tile between them count too, as PadsBehind counts them: the second only doubles the dash if we hit the
+            // first one on the way)
+            int farPad = BotNav.DashPads().ContainsKey(a) ? 0 : -1, reachable = 0;
             for (int k = 1; k <= 4; k++)
             {
                 var t = new Point(a.X - d.X * k, a.Y - d.Y * k);
@@ -1084,14 +1088,14 @@ namespace AnodyneSharp.Recording
                 {
                     break;
                 }
-                start = t;
-                bool pad = BotNav.DashPads().ContainsKey(t);
-                if (!pad && padSeen)
+                reachable = k;
+                if (BotNav.DashPads().TryGetValue(t, out var pd) && pd == d)
                 {
-                    break;
+                    farPad = k;
                 }
-                padSeen |= pad;
             }
+            int back = farPad < 0 ? reachable : Math.Min(farPad + 1, reachable);
+            var start = new Point(a.X - d.X * back, a.Y - d.Y * back);
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
                 System.Console.Error.WriteLine($"  dash leap {a.X},{a.Y} -> {b.X},{b.Y}: run up from {start} ({BotNav.PadsBehind(a, d)} pads)");
@@ -1207,13 +1211,25 @@ namespace AnodyneSharp.Recording
             bool vertical = d.Y != 0;
             float edge = vertical ? (d.Y < 0 ? a.Y * 16 + 3 : a.Y * 16 + 13) : (d.X < 0 ? a.X * 16 + 3 : a.X * 16 + 13);
             float lineup = vertical ? a.X * 16 + 8 : a.Y * 16 + 8;
+            int latN = Math.Abs(vertical ? b.X - a.X : b.Y - a.Y);
+            if (latN >= 2)
+            {
+                lineup += (vertical ? lat.X : lat.Y) * 6f; // (start from the lane's side edge: the drift alone falls short of two tiles)
+            }
+            float latGoal = vertical ? b.X * 16 + 8 : b.Y * 16 + 8;
             bool jumped = false;
             for (int w = 0; w < 120; w++)
             {
                 var c = Player.Hitbox.Center;
                 float along = vertical ? c.Y : c.X, across = vertical ? c.X : c.Y;
                 var keys = new List<KeyFunctions> { key };
-                if (Math.Abs(across - lineup) > 1.5f)
+                // (over two: on the last tile, its pad already fired, edge over too; the dash keeps its pace with a side key down)
+                bool onLast = BotNav.TileOf(new Vector2(c.X, c.Y)) == a;
+                if ((jumped || latN >= 2 && onLast) && latKey is KeyFunctions lk && (latGoal - across) * (vertical ? lat.X : lat.Y) > 2f)
+                {
+                    keys.Add(lk); // drift over to the side landing
+                }
+                else if (!jumped && Math.Abs(across - lineup) > 1.5f)
                 {
                     keys.Add(vertical ? (across < lineup ? KeyFunctions.Right : KeyFunctions.Left) : (across < lineup ? KeyFunctions.Down : KeyFunctions.Up));
                 }
@@ -1305,6 +1321,33 @@ namespace AnodyneSharp.Recording
                 if (Map != startMap)
                 {
                     yield break; // a door took us to another map part-way: the goal was a tile of the old one, we are through
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  replan {replans}: grid {Grid} pos {Pos} hitbox {Player.Hitbox} trans {GlobalState.ScreenTransition}");
+                }
+                if (!GlobalState.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center))
+                {
+                    // Outside the screen the game says we are on, not scrolling: we came in over a gate (standing on one holds it open),
+                    // stepped back off it and it shut behind us. Go back out across the edge, and count the gate as shut from now on.
+                    var scr = GlobalState.ScreenHitbox;
+                    var c = Player.Hitbox.Center;
+                    var outKey = c.Y < scr.Top ? KeyFunctions.Up : c.Y >= scr.Bottom ? KeyFunctions.Down : c.X < scr.Left ? KeyFunctions.Left : KeyFunctions.Right;
+                    var inStep = outKey == KeyFunctions.Up ? new Point(0, 1) : outKey == KeyFunctions.Down ? new Point(0, -1) : outKey == KeyFunctions.Left ? new Point(1, 0) : new Point(-1, 0);
+                    var shut = BotNav.TileOf(Pos) + inStep;
+                    BotNav.Blocked.Add(shut);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  outside screen {Grid} at {Pos}: back out {outKey}, gate tile {shut} counted shut");
+                    }
+                    for (int w = 0; w < 60 && !GlobalState.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center); w++)
+                    {
+                        yield return K(outKey);
+                    }
+                    for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                    {
+                        yield return K();
+                    }
                 }
                 if (avoidStationary != null)
                 {
@@ -1707,7 +1750,7 @@ namespace AnodyneSharp.Recording
                                 var pbx0 = Player.Hitbox;
                                 var lane = Rectangle.Union(pbx0, new Rectangle((int)landC0.X, (int)landC0.Y, pbx0.Width, pbx0.Height));
                                 lane.Inflate(4, 4);
-                                bool clear = true, meSafe = true;
+                                bool clear = true, meSafe = true, clearForJump = true;
                                 var me0 = pbx0;
                                 me0.Inflate(4, 4);
                                 foreach (var t in PredictThreats(null).Where(t => t.HurtsInAir))
@@ -1715,13 +1758,15 @@ namespace AnodyneSharp.Recording
                                     for (int k = 0; k <= 60 && clear; k++)
                                     {
                                         clear = !(t.At[k] is Rectangle r && lane.Intersects(r));
+                                        clearForJump &= clear || k > 34;
                                     }
                                     for (int k = 0; k <= 45 && meSafe; k++)
                                     {
                                         meSafe = !(t.At[k] is Rectangle r && me0.Intersects(r));
                                     }
                                 }
-                                if (clear)
+                                // (standing where it will burn - on a fire pillar's tile, say - the lane need only stay clear for the jump itself)
+                                if (clear || !meSafe && clearForJump)
                                 {
                                     break;
                                 }

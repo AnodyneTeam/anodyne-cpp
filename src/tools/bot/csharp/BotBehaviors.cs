@@ -473,7 +473,7 @@ namespace AnodyneSharp.Recording
                         {
                             if (pr.Type.Name.Contains(f))
                             {
-                                sb.Append($"  {pr.Type.Name} screen {(int)pr.Position.X / 160},{(int)pr.Position.Y / 160} pos {(int)pr.Position.X},{(int)pr.Position.Y} frame {pr.Frame} tv {pr.TypeValue}\n");
+                                sb.Append($"  {pr.Type.Name} screen {(int)pr.Position.X / 160},{(int)pr.Position.Y / 160} pos {(int)pr.Position.X},{(int)pr.Position.Y} frame {pr.Frame} tv {pr.TypeValue} act {pr.Activated} alive {pr.Alive}\n");
                             }
                         }
                         System.Console.Error.WriteLine(sb);
@@ -2112,6 +2112,127 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// One button a Rat has to walk onto, at the end of a way through switch pillars that are never all down at once (the pillar
+        /// switch flips every pillar on the screen): stand by the switch facing it and steer the rat by flipping at the right moments.
+        /// Each frame the rat's next few seconds are simulated as things are and as they would be flipped; we flip when that gets it
+        /// nearer the button (counted in steps along the floor) than leaving it, and wait otherwise.
+        /// </summary>
+        protected static IEnumerable<object> RatPillarGuide(int limit)
+        {
+            var grid = Grid;
+            var pswitch = BotRunner.Entities().First(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch);
+            var button = BotRunner.Entities().First(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button);
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.WalkableNoPillars(t);
+            var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            // steps along the floor to the button (pillars taken as down: they are what we change)
+            var bt = TileAt(button.Hitbox);
+            var dist = new Dictionary<Point, int> { [bt] = 0 };
+            var q = new Queue<Point>();
+            q.Enqueue(bt);
+            while (q.Count > 0)
+            {
+                var c = q.Dequeue();
+                foreach (var o in o4)
+                {
+                    var n = new Point(c.X + o.X, c.Y + o.Y);
+                    if (Floor(n) && !dist.ContainsKey(n))
+                    {
+                        dist[n] = dist[c] + 1;
+                        q.Enqueue(n);
+                    }
+                }
+            }
+            var here = BotNav.TileOf(Pos);
+            var st = TileAt(pswitch.Hitbox);
+            Point? from = null;
+            foreach (var o in o4)
+            {
+                var c = new Point(st.X + o.X, st.Y + o.Y);
+                var way = c == here ? new List<Point>() : BotNav.FindPath(here, c);
+                if (Floor(c) && way != null && way.All(Floor))
+                {
+                    from = c;
+                    break;
+                }
+            }
+            if (from == null)
+            {
+                throw new Exception($"rat by the pillars: no floor next to the pillar switch at {st} that we can walk to on this screen");
+            }
+            var ff = from.Value;
+            var fc = BotNav.CentreOf(ff);
+            var faceKey = FaceChar(new Point(st.X - ff.X, st.Y - ff.Y)) switch { 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, 'l' => KeyFunctions.Left, _ => KeyFunctions.Right };
+            yield return GoTo(fc.X, fc.Y);
+            yield return WalkTo(fc.X, fc.Y, tol: 1f);
+            yield return Hold(1, faceKey);
+            int start = GlobalState.PUZZLES_SOLVED;
+            bool fight = AutoFight;
+            AutoFight = false; // the rat is the tool here, not a target
+            try
+            {
+                const int H = 240;
+                int lastFlip = -100;
+                var mine = new Rectangle(ff.X * 16 + 1, ff.Y * 16, 14, 16);
+                for (int f = 0; f < limit && GlobalState.PUZZLES_SOLVED == start; f++)
+                {
+                    BotRunner.NotStuck();
+                    var rat = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Rat);
+                    if (rat == null)
+                    {
+                        throw new Exception("rat by the pillars: the rat is gone");
+                    }
+                    // (how near the button it gets in the next few seconds, and how soon; a bite on us counts against it)
+                    (int d, int when, bool bites) Judge(bool flip)
+                    {
+                        var run = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity, rat.Hitbox.Width, RatBlocks(flip), H);
+                        int best = int.MaxValue, at = 0;
+                        bool bit = false;
+                        for (int k = 0; k <= H; k++)
+                        {
+                            var t = TileAt(new Rectangle((int)run[k].pos.X, (int)run[k].pos.Y, rat.Hitbox.Width, rat.Hitbox.Height));
+                            int dd = dist.TryGetValue(t, out int v) ? v : 999;
+                            if (dd < best)
+                            {
+                                (best, at) = (dd, k);
+                            }
+                            bit |= k < 90 && RatBite(run[k].pos).Intersects(mine);
+                        }
+                        return (best, at, bit);
+                    }
+                    var keep = Judge(false);
+                    bool canSwing = f - lastFlip > 20 && !(Player.broom != null && Player.broom.exists) && Player.state == PlayerState.GROUND;
+                    if (canSwing)
+                    {
+                        var flip = Judge(true);
+                        bool better = !flip.bites && (keep.bites || flip.d < keep.d || flip.d == keep.d && flip.d < 999 && flip.when + 30 < keep.when);
+                        if (better)
+                        {
+                            lastFlip = f;
+                            BotRunner.Status = $"rat by the pillars: flip (to {flip.d} steps from the button in {flip.when}f, else {keep.d} in {keep.when}f)";
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  {BotRunner.Status} rat {rat.Hitbox} v={rat.velocity}");
+                            }
+                            yield return K(KeyFunctions.Accept);
+                            continue;
+                        }
+                    }
+                    BotRunner.Status = $"rat by the pillars: wait (it gets to {keep.d} steps from the button in {keep.when}f)";
+                    yield return Player.facing != FacingOf(faceKey) ? K(faceKey) : K();
+                }
+                if (GlobalState.PUZZLES_SOLVED == start)
+                {
+                    throw new Exception($"rat by the pillars: the rat did not get onto the button in {limit} frames");
+                }
+            }
+            finally
+            {
+                AutoFight = fight;
+            }
+        }
+
+        /// <summary>
         /// Rats on buttons: two buttons held at once open a gate, and either we hold one while a Rat walks over the other, or two Rats are on
         /// both at once. Rats turn clockwise at walls, dust, gates and raised switch pillars (and die on dash traps), so this searches what we
         /// can change (move one dust, when to start doing it, or hit the pillar switch to flip the pillars) for the layout after which, from
@@ -2134,6 +2255,11 @@ namespace AnodyneSharp.Recording
                 yield return GoScreenTo(g.X, g.Y);
                 yield return Wait(20);
                 yield return RatOnButton(limit, 0, retries + 1);
+                yield break;
+            }
+            if (rats.Count > 0 && buttons.Count == 1 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
+            {
+                yield return RatPillarGuide(limit);
                 yield break;
             }
             if (rats.Count == 0 || buttons.Count != 2)
@@ -3626,15 +3752,18 @@ namespace AnodyneSharp.Recording
             }
             var fastWalk0 = FastWalkable(); // (looks tiles up lazily, during the searches: Wade stays set until they are done)
             // A dodge (survive) plan stays on this screen: backing out through the edge into the previous one hands the fight to a screen
-            // transition (and the enemies there); there is nearly always room to sidestep up or down instead.
+            // transition (and the enemies there); there is nearly always room to sidestep up or down instead. So does a plan to a goal on
+            // this screen (a fight's: stepping back off a gate we came in over, which our standing on held open, shuts it behind us).
             var gridNow = Grid;
-            Func<Rectangle, bool> fastWalk = survive
+            var scrBox = new Rectangle(gridNow.X * 160, gridNow.Y * 160, 160, 160);
+            bool stayOn = survive || scrBox.Contains(new Rectangle((int)goal.X, (int)goal.Y, Player.Hitbox.Width, Player.Hitbox.Height)) && scrBox.Contains(Player.Hitbox);
+            Func<Rectangle, bool> fastWalk = stayOn
                 ? r => fastWalk0(r) && r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160
                 : fastWalk0;
             // (with the boots, and on the ground on dry land: jumps too, over what sweeps the floor and across pits)
             Func<Rectangle, bool> airOk = GlobalState.inventory.CanJump && Player.state == PlayerState.GROUND && Player.raft == null && !BotNav.IsConveyor(BotNav.TileOf(Pos))
                 && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null
-                ? r => WallFree(r) && (!survive || r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160)
+                ? r => WallFree(r) && (!stayOn || r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160)
                 : null;
             // Dash pads on this screen (the planner rides them: a run the way one points outpaces what walks)
             var pads = BotRunner.Entities().OfType<AnodyneSharp.Entities.Gadget.DashPad>().Where(e => e.exists && e.Hitbox.Intersects(new Rectangle(gridNow.X * 160, gridNow.Y * 160, 160, 160)))
@@ -8338,16 +8467,45 @@ namespace AnodyneSharp.Recording
                     // Keep off: the floor spot near us that stays clear of everything longest (and is not in a corner with it). While it
                     // spits, its fire fans out at most 40 degrees off the way it faces (one of four, at us): stand off the diagonal, out
                     // of every fan (its fireballs in flight are dodged as they are).
-                    var lc = lion.Hitbox.Center.ToVector2();
+                    // (exactly as Lion.Fireball.Spawn does it: it turns to face us by top-left corners, each shot leaves from the edge it
+                    // faces with a random slant - up to 26 in 32 across, 16 in 32 up or down - and flies 80px on either axis; the fan is
+                    // swept with our box and the shot's, a couple of px to spare)
+                    var lp = lion.Position;
                     bool OutOfFan(Vector2 c)
                     {
-                        var v = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lc;
-                        if (v.Length() > 100f)
+                        var dir = c - lp;
+                        bool side = Math.Abs(dir.X) > Math.Abs(dir.Y);
+                        Vector2 o;
+                        float sx, sy; // the shot's way before the slant, and how far the slant goes
+                        if (side)
                         {
-                            return true;
+                            o = dir.X > 0 ? new Vector2(lp.X + 30, lp.Y + 2) : new Vector2(lp.X, lp.Y + 2);
+                            (sx, sy) = (dir.X > 0 ? 32 : -32, 26);
                         }
-                        float ang = MathF.Atan2(Math.Min(Math.Abs(v.X), Math.Abs(v.Y)), Math.Max(Math.Abs(v.X), Math.Abs(v.Y))) * 180f / MathF.PI;
-                        return ang >= 41f && v.Length() > 28f;
+                        else
+                        {
+                            o = dir.Y > 0 ? new Vector2(lp.X + 8, lp.Y + 22) : new Vector2(lp.X + 8, lp.Y - 2);
+                            (sx, sy) = (16, dir.Y > 0 ? 32 : -32);
+                        }
+                        var me = new Rectangle((int)c.X - 2, (int)c.Y - 2, pb.Width + 4, pb.Height + 4);
+                        for (float r = -1f; r <= 1.001f; r += 0.125f)
+                        {
+                            var v = side ? new Vector2(sx, sy * r) : new Vector2(sx * r, sy);
+                            v.Normalize();
+                            for (float d = 0; d <= 116f; d += 4f)
+                            {
+                                var at = o + v * d;
+                                if (Math.Abs(at.X - o.X) > 80f || Math.Abs(at.Y - o.Y) > 80f)
+                                {
+                                    break;
+                                }
+                                if (me.Intersects(new Rectangle((int)at.X, (int)at.Y, 8, 8)))
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                        return true;
                     }
                     if (spitting)
                     {
