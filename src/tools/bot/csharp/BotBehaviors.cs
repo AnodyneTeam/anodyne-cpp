@@ -5370,7 +5370,8 @@ namespace AnodyneSharp.Recording
                 return held;
             }
             var pb = Player.Hitbox;
-            var doors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).ToList();
+            // (a JumpTrigger too: the ledge it drops us off is one way, and a chase that takes it can leave the route behind for good)
+            var doors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal") || e.GetType().Name == "JumpTrigger")).ToList();
             if (doors.Count == 0)
             {
                 return held;
@@ -9369,7 +9370,7 @@ namespace AnodyneSharp.Recording
                 {
                     // Knocked (or walked: a dodge, a wade) onto another screen. The fight is still there to win (a section that called it goes
                     // on as if it were): back in and on with it, twice at most; after that, that room's enemies are not this fight's business.
-                    if (backIn < 2 && !soft && Map == startMap && GlobalState.CUR_HEALTH >= 3)
+                    if (backIn < 2 && Map == startMap && GlobalState.CUR_HEALTH >= 3)
                     {
                         backIn++;
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
