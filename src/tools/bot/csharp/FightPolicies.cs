@@ -14,6 +14,7 @@ namespace AnodyneSharp.Recording
         public bool Swinging;        // the broom is out (a swing in progress: pressing Accept now does nothing)
         public Rectangle T;          // target hitbox
         public Vector2 TV;           // target velocity (px/s)
+        public bool Fast;            // a bullet Slime (twice a Slime's speed)
         public Func<Rectangle, bool> Walk = _ => true; // is this player-sized rectangle on floor?
         public Func<Rectangle, bool> Hazard = _ => false; // is this player-sized rectangle in a beam lane (or otherwise a place not to loiter)?
         public System.Collections.Generic.IList<Rectangle> Others = new Rectangle[0]; // the other living enemies on the screen
@@ -350,6 +351,11 @@ namespace AnodyneSharp.Recording
         public static PKey[] Slime(PCtx c, PolicyMem m)
         {
             var sb = c.T;
+            if (c.Fast)
+            {
+                // A bullet Slime moves twice as fast: deal with where it will be in a few frames (its touch comes before we react otherwise).
+                sb.Offset((int)Math.Round(c.TV.X * 0.15f), (int)Math.Round(c.TV.Y * 0.15f));
+            }
             var pb = c.P;
             float dx = sb.Center.X - pb.Center.X, dy = sb.Center.Y - pb.Center.Y;
             int gx = Math.Max(sb.Left - pb.Right, pb.Left - sb.Right);

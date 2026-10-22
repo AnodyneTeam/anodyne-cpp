@@ -252,6 +252,12 @@ namespace AnodyneSharp.Recording
                 // Stay on its middle (it carries us, but a pixel off each frame adds up).
                 var d = Mid(plat) - Me;
                 var keys = new List<KeyFunctions>();
+                if (!moved && i % 60 == 59 && Active(plat) && Player.state == PlayerState.GROUND && d.Length() < 4f)
+                {
+                    // On it, it is live, and it has not set off (the landing did not count): hop in place to land on it again.
+                    Trace("platform did not set off: hop on it again");
+                    keys.Add(KeyFunctions.Cancel);
+                }
                 if (d.X > 2f) { keys.Add(KeyFunctions.Right); } else if (d.X < -2f) { keys.Add(KeyFunctions.Left); }
                 if (d.Y > 2f) { keys.Add(KeyFunctions.Down); } else if (d.Y < -2f) { keys.Add(KeyFunctions.Up); }
                 BotRunner.Status = $"platforms: ride {tx},{ty}";
@@ -318,7 +324,7 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Sweep from (tx,ty) until we carry dust (carry) or have set it down (!carry): a swing does not always catch it.</summary>
-        private static IEnumerable<object> SweepTill(int tx, int ty, KeyFunctions face, Facing facing, bool carry)
+        internal static IEnumerable<object> SweepTill(int tx, int ty, KeyFunctions face, Facing facing, bool carry)
         {
             for (int i = 0; i < 4 && (Player.broom.dust != null) != carry; i++)
             {

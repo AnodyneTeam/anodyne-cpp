@@ -19,11 +19,43 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> Exec(string tokens)
         {
+            int skip = 0;
             foreach (var tok in tokens.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
+                if (skip > 0)
+                {
+                    skip--;
+                    continue;
+                }
                 int n = tok.Length > 1 && int.TryParse(tok.Substring(1), out int v) ? v : 1;
                 switch (tok[0])
                 {
+                    case ')':
+                    {
+                        // )x,y,r[,frames]: stand by until no enemy is within r px of x,y (a hop across a gap lands among them otherwise)
+                        var a = tok.Substring(1).Split(',').Select(float.Parse).ToArray();
+                        var at = new Vector2(a[0], a[1]);
+                        int most = a.Length > 3 ? (int)a[3] : 600;
+                        for (int w = 0; w < most && Enemies().Any(e => (e.Hitbox.Center.ToVector2() - at).Length() < a[2]); w++)
+                        {
+                            BotRunner.Status = $"wait for the enemies to leave {at}";
+                            BotRunner.NotStuck();
+                            yield return K();
+                        }
+                        break;
+                    }
+                    case '\'':
+                    {
+                        // 'tx,ty,k: skip the next k tokens unless tile tx,ty can be walked to from here (a fight may leave us either side of a hole)
+                        var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
+                        var here = BotNav.TileOf(Player.Position);
+                        var to = new Point(a[0], a[1]);
+                        if (here != to && BotNav.FindPath(here, to) == null)
+                        {
+                            skip = a[2];
+                        }
+                        break;
+                    }
                     case 'U': yield return Hold(n, KeyFunctions.Up); break;
                     case 'D': yield return Hold(n, KeyFunctions.Down); break;
                     case 'L': yield return Hold(n, KeyFunctions.Left); break;
@@ -121,7 +153,23 @@ namespace AnodyneSharp.Recording
                     {
                         // Jx,y,dir: stand on tile x,y, face dir (u/d/l/r) and press Accept (pick up / place dust, press a switch...)
                         var a = tok.Substring(1).Split(',');
-                        yield return StandFaceAccept(int.Parse(a[0]), int.Parse(a[1]), a[2][0]);
+                        if (a[2].Length > 1)
+                        {
+                            // Jx,y,d+ / Jx,y,d-: sweep up / set down dust, standing so it lands square on the tile in front (a platform's
+                            // box is small: dust set down a few px off misses it and falls in the hole), retried until it took
+                            var (key, facing) = a[2][0] switch
+                            {
+                                'u' => (KeyFunctions.Up, Facing.UP),
+                                'd' => (KeyFunctions.Down, Facing.DOWN),
+                                'l' => (KeyFunctions.Left, Facing.LEFT),
+                                _ => (KeyFunctions.Right, Facing.RIGHT)
+                            };
+                            yield return CrowdPlatforms.SweepTill(int.Parse(a[0]), int.Parse(a[1]), key, facing, a[2][1] == '+');
+                        }
+                        else
+                        {
+                            yield return StandFaceAccept(int.Parse(a[0]), int.Parse(a[1]), a[2][0]);
+                        }
                         break;
                     }
                     case 'K': yield return TempleLaserDust(); break;
@@ -4861,9 +4909,9 @@ namespace AnodyneSharp.Recording
 
         internal static KeyFunctions[] BulletHop(KeyFunctions[] held)
         {
-            if (Player != null && Player.state == AnodyneSharp.Entities.PlayerState.AIR && _hopDir is KeyFunctions hd && BotRunner.Frame <= _hopUntil)
+            if (Player != null && Player.state == AnodyneSharp.Entities.PlayerState.AIR && BotRunner.Frame <= _hopUntil && _hopDir is KeyFunctions hd)
             {
-                return new[] { hd }; // (keep going across the shot's line all the way)
+                return new[] { hd }; // (keep going across the shot's line all the way: steering in the air elsewhere lands in holes)
             }
             if (Player == null || Player.state != AnodyneSharp.Entities.PlayerState.GROUND || Environment.GetEnvironmentVariable("ANODYNE_NO_BULLETHOP") != null)
             {
@@ -4884,32 +4932,55 @@ namespace AnodyneSharp.Recording
                 if (gap < 30 && SlimeShotIn(sl) is float due && due <= 1.5f / 60f)
                 {
                     BotRunner.Status = "hop the slime's next shot";
-                    return HopAcross(Player.Position - sl.Position);
+                    if (HopAcross(Player.Position - sl.Position) is KeyFunctions[] hop)
+                    {
+                        return hop;
+                    }
                 }
             }
             return held;
         }
 
         /// <summary>
-        /// A jump across a shot's line (it moves too slowly to pass under a jump in place): sideways to `line` onto floor when either side has
-        /// some, else in place.
+        /// A jump across a shot's line (it moves too slowly to pass under a jump in place): sideways to `line` where we land on floor, else
+        /// back along it, else forward. A jump keeps the speed we had along any axis no key is held on, so the landing counts that too (a hop
+        /// "in place" while walking drifts on into a hole). Null when no landing is safe.
         /// </summary>
         private static KeyFunctions[] HopAcross(Vector2 line)
         {
-            foreach (var k in Math.Abs(line.X) > Math.Abs(line.Y) ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Left, KeyFunctions.Right })
+            bool alongX = Math.Abs(line.X) > Math.Abs(line.Y);
+            var keys = alongX
+                ? new[] { KeyFunctions.Up, KeyFunctions.Down, line.X > 0 ? KeyFunctions.Right : KeyFunctions.Left, line.X > 0 ? KeyFunctions.Left : KeyFunctions.Right }
+                : new[] { KeyFunctions.Left, KeyFunctions.Right, line.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up, line.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down };
+            const float air = 0.46f; // (the jump's length, s)
+            foreach (var k in keys)
             {
+                var d = DirVector(k);
+                var drift = Player.velocity * air;
+                var move = d.X != 0 ? new Vector2(d.X * 24f, drift.Y) : new Vector2(drift.X, d.Y * 24f);
                 var land = Player.Hitbox;
-                var d = DirVector(k) * 28f;
-                land.Offset((int)d.X, (int)d.Y);
-                if (StandsSafe(land))
+                land.Offset((int)Math.Round(move.X), (int)Math.Round(move.Y));
+                land.Inflate(3, 3); // (no hole tile at all under the landing: the jump's length is not exact, and the fight walks on as we land)
+                if (new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
+                    .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t)))
                 {
                     _hopDir = k;
                     _hopUntil = BotRunner.Frame + 40;
                     return new[] { KeyFunctions.Cancel, k };
                 }
             }
-            _hopDir = null;
-            return new[] { KeyFunctions.Cancel };
+            return null;
+        }
+
+        /// <summary>Whether a Dog is in its Attack state (its three dashes), or null when that cannot be read.</summary>
+        private static bool? DogAttacking(Entity dog)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var active = root == null || abs == null ? null : abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var top = active?.Cast<object>().FirstOrDefault();
+            return top == null ? null : top.GetType().Name == "AttackState";
         }
 
         /// <summary>Seconds until a bullet Slime's next shot (its Move state's ShootTimer), or null when it is not moving (hurt, dying).</summary>
@@ -6452,6 +6523,7 @@ namespace AnodyneSharp.Recording
             Swinging = Player.broom != null && Player.broom.exists,
             T = target.Hitbox,
             TV = target.velocity,
+            Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
             Walk = CornersWalkable,
             Hazard = LaneHazard(),
             Others = Enemies().Where(e => e != target).Select(e => e.Hitbox).ToList()
@@ -8478,7 +8550,10 @@ namespace AnodyneSharp.Recording
                     if (dogDashing)
                     {
                         dogAttackFrame++;
-                        if (dogAttackFrame > 190)
+                        // Its attack is over when it leaves the Attack state (then it barks a second before the next one, which is the time
+                        // to hit it: guessing the end from the dash speed lost most of that second). 190 frames when that cannot be read.
+                        var dogInAttack = DogAttacking(target);
+                        if (dogInAttack == false || (dogInAttack == null && dogAttackFrame > 190) || dogAttackFrame > 260)
                         {
                             dogDashing = false;
                         }

@@ -226,8 +226,8 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel roof to (2,2)", () => Exec("O1 X1 H1,0 H0,0 W10 >56,120 U30 W90 `ho_22"));
             // (2,3): jump the holes to the dust, carry it down onto the (28,36) LEFT platform and ride it west. Going into (1,3) over its
             // gate holds the gate open.
-            yield return Section("hotel (2,3) dust platform to (1,3)", () => Exec("O1 X0 H2,3 W10 G386,514 W5 er414 W20 J28,32,u W10 " +
-                "G450,530 W5 ed530 W20 J28,35,d W20 (28,36 W10 G340,562 W5 L40 W30 `ho_13"));
+            yield return Section("hotel (2,3) dust platform to (1,3)", () => Exec("O1 X0 H2,3 W10 G386,514 W5 er414 W20 J28,32,u+ W10 " +
+                "G450,530 W5 ed530 W20 J28,35,d- W20 (28,36 W10 G340,562 W5 L40 W30 `ho_13"));
             // (1,3)'s slimes open its south gates; (1,4)'s west column leads down to the (1,5) button, which opens (1,5)'s east gate.
             yield return Section("hotel (1,3) slimes and the (1,5) button", () => Exec("O1 X1 F W90 X0 >180,850 W30 `ho_15"));
             // Back up and through (1,3)'s other gate onto (1,4)'s button (opens the gate to (2,4)), then drop over the holes to (1,5).
@@ -236,6 +236,32 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel (1,5) frogs to (2,5)", () => Exec("O1 X0 >245,866 W5 ed W40 G245,915 W5 er W40 >310,915 W5 R40 W30 `ho_25"));
             // (2,5): the checkpoint, the button that opens the gates from (2,4), and the Hotel's Nexus pad.
             yield return Section("hotel nexus pad", () => Exec("O1 X0 >356,886 W20 >338,818 W40 >441,872 W60 `ho_pad"));
+        }
+    }
+
+    /// <summary>
+    /// The Hotel's keys (the dungeon is one big puzzle; see the hotel-route notes): from the pad, the menu warp back to the (2,2) entrance.
+    /// </summary>
+    public class Hotel2 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel's keys");
+            yield return Section("hotel2 back to the entrance", () => Exec("W30 O1 X0 n0 W120 `h2_22"));
+            // (2,3): jump the holes east (the dust stays for later), down past (28,34) and out east to (3,3).
+            yield return Section("hotel2 (2,3) east to (3,3)", () => Exec("O1 X0 H2,3 W10 G386,514 W5 er414 W20 G450,530 W5 ed530 W20 R40 W30 `h2_33"));
+            // (3,4): its dust onto the dead DOWN platform beside it, ride it down, out south to (3,5) and east to (4,5).
+            yield return Section("hotel2 (3,4) dust platform", () => Exec("O1 X1 H3,4 W10 X0 J37,41,r+ W10 J37,41,l- W20 (36,41 W10 G600,770 W5 D30 W30 " +
+                ">642,818 W10 `h2_45"));
+            // (4,5), first visit: its dust onto the DOWN platform to the pocket, hop the hole to the bullet Slimes and kill them (that opens the
+            // north gate for good), their dust back over the hole onto the UP platform, and up. A fight may end with us back in the pocket.
+            yield return Section("hotel2 (4,5) slimes", () => Exec("O1 X0 J41,51,r+ W10 J42,51,d- W20 (42,52 W10 )712,920,40 G690,915 W5 er697 W20 G752,915 X1 F W60 X0 " +
+                "'43,57,5 )712,920,40 G690,915 W5 er697 W30 J47,58,r+ W10 G722,915 W5 el W30 J43,57,u- W20 (43,56 W10 `h2_45b"));
+            // (4,5) again: out west and back puts its dust back; onto the RIGHT platform this time, across to the open gate, and (4,4)'s Dog.
+            yield return Section("hotel2 (4,5) to (4,4) and its dog", () => Exec("O1 X0 G691,822 W5 G660,822 W5 G610,820 W20 G660,820 W20 J41,51,r+ W10 " +
+                "J42,51,r- W20 (43,51 W10 G760,820 W5 G771,818 W5 U60 W30 X1 F W60 `h2_44"));
+            // (4,3): the key chest past the Annoyers and the laser lanes (a chest opens from below).
+            yield return Section("hotel2 (4,3) key", () => Exec("O1 X1 H4,3 W20 F W30 I768,496,d W60 T W30 `h2_key1"));
         }
     }
 }
