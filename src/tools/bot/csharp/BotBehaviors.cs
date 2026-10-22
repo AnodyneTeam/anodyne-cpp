@@ -9266,6 +9266,8 @@ namespace AnodyneSharp.Recording
             int swing = 0, lastSwing = -1000;
             var ignoredTargets = IgnoredEnemies;
             var startGrid = Grid;
+            string startMap = Map;
+            int backIn = 0; // times we went back into the fight's screen after leaving it
             Vector2 lastPos = Pos;
             int stillFrames = 0;
             int unstick = 0;
@@ -9304,7 +9306,19 @@ namespace AnodyneSharp.Recording
                 }
                 if (Grid != startGrid)
                 {
-                    // Knocked (or walked) onto another screen: that room's enemies are not this fight's business.
+                    // Knocked (or walked: a dodge, a wade) onto another screen. The fight is still there to win (a section that called it goes
+                    // on as if it were): back in and on with it, twice at most; after that, that room's enemies are not this fight's business.
+                    if (backIn < 2 && !soft && Map == startMap && GlobalState.CUR_HEALTH >= 3)
+                    {
+                        backIn++;
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  fight: knocked onto {Grid} with the fight on {startGrid} unfinished: going back in");
+                        }
+                        yield return GoScreenTo(startGrid.X, startGrid.Y);
+                        lastCount = -1;
+                        continue;
+                    }
                     yield break;
                 }
                 if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos))
