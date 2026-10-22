@@ -667,6 +667,10 @@ namespace AnodyneSharp.Recording
                             continue; // the one we saved at last does not heal
                         }
                         var stand = new Vector2(pos.X - 1, pos.Y - 3);
+                        if (_costlyCheckpoints.Contains((GlobalState.CURRENT_MAP_NAME, stand)))
+                        {
+                            continue; // (one that hurt us while we healed there: something guards it)
+                        }
                         var rp = BotNav.RaftPath(here, OnConveyor(here), BotNav.TileOf(stand), jump);
                         if (rp != null && rp.Count < bestLen)
                         {
@@ -699,6 +703,10 @@ namespace AnodyneSharp.Recording
                         yield return Wait(30);
                         yield return ReadDialogue();
                         _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
+                        if (!_healOk)
+                        {
+                            _costlyCheckpoints.Add((GlobalState.CURRENT_MAP_NAME, st));
+                        }
                     }
                     else if (warp && attempt == 0 && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad"))
                     {
@@ -723,6 +731,7 @@ namespace AnodyneSharp.Recording
         }
 
         private static bool _healOk;
+        private static readonly HashSet<(string, Vector2)> _costlyCheckpoints = new();
 
         protected static Point Grid => GlobalState.CurrentMapGrid;
 
@@ -4905,7 +4914,7 @@ namespace AnodyneSharp.Recording
                 }
                 bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
                 // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
-                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 1500;
+                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 6000;
                 if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
                     if (!lowHp)
@@ -7429,6 +7438,16 @@ namespace AnodyneSharp.Recording
                     r.Inflate(3, 3);
                     return r;
                 }).ToList();
+            // (and the Slime shots still flying as we come down: hopping along one's line lands us on it)
+            foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
+            {
+                foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                {
+                    var r = new Rectangle((int)(b.Position.X + b.velocity.X * air), (int)(b.Position.Y + b.velocity.Y * air), 8, 8);
+                    r.Inflate(4, 4);
+                    bodies.Add(r);
+                }
+            }
             // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
             foreach (var (k, margin) in keys.Select(k => (k, 3)).Concat(keys.Select(k => (k, 0))))
             {
