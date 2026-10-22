@@ -78,6 +78,15 @@ namespace AnodyneSharp.Recording
                     _gatesOpen.Add(t);
                     continue;
                 }
+                // A gate on the edge of the next screen, right against this one: entering a screen over a gate holds it open.
+                int gx = t.X / 10, gy = t.Y / 10, lx = t.X % 10, ly = t.Y % 10;
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Gate) && !pr.Type.Name.StartsWith("Big") &&
+                    ((ly == 0 && gx == grid.X && gy == grid.Y + 1) || (ly == 9 && gx == grid.X && gy == grid.Y - 1) ||
+                     (lx == 0 && gy == grid.Y && gx == grid.X + 1) || (lx == 9 && gy == grid.Y && gx == grid.X - 1)))
+                {
+                    _gatesOpen.Add(t);
+                    continue;
+                }
                 _gatesClosed.Add(t);
                 if (pr.Type.Name.StartsWith("Big"))
                 {
@@ -552,9 +561,9 @@ namespace AnodyneSharp.Recording
                     {
                         return false;
                     }
-                    if (LeapFloor(t))
+                    if (LeapFloor(t) && !_shooterTiles.Contains(t))
                     {
-                        floor = true;
+                        floor = true; // (a frog or plant on the tile between: jumped clean over, touching it hurts)
                     }
                     else
                     {
@@ -1405,7 +1414,8 @@ namespace AnodyneSharp.Recording
                 _crossCracked = false;
                 _leaps = false;
             }
-            if (p == null && !strict && _shooterTiles.Count > 0)
+            // (with the boots, the caller's search with jumps comes next: a leap clean over it beats walking into it)
+            if (p == null && !strict && _shooterTiles.Count > 0 && (AllowJump || !GlobalState.inventory.CanJump))
             {
                 // A plant or frog sits in the only way through: they are not solid, so it is walked over (its bullets are dodged, or
                 // the walker strikes it as a blocker) rather than no way at all.

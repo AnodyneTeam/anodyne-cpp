@@ -5417,8 +5417,12 @@ namespace AnodyneSharp.Recording
                 var pc = Player.Hitbox.Center;
                 IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name == "Annoyer" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
             }
-            return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)).ToList();
+            // (the Hotel boss's death marker is an invisible "enemy" at 0,0 that only keeps the gates shut: the boss itself is the target)
+            return BotRunner.Entities().Where(e => e.exists && (e.GetType().IsDefined(typeof(EnemyAttribute), false) || IsEyeBoss(e)) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)
+                && e is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker).ToList();
         }
+
+        private static bool IsEyeBoss(Entity e) => e is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase or AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase;
 
         /// <summary>
         /// A Hotel Dustmaid that has not seen us carry dust: it stands still, a broom does nothing to it and touching it hurts. Not a target
@@ -6857,6 +6861,549 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>The walkable tiles connected to `start` (within `limit` tiles), ignoring enemies.</summary>
+        /// <summary>
+        /// The box the broom sweeps when we stand with our hitbox at `p` facing `f` (the normal broom: 16x16 just beyond our 10x12 box,
+        /// see Broom.UpdatePos at its full reach).
+        /// </summary>
+        private static Rectangle BroomBoxAt(Vector2 p, Facing f)
+        {
+            int x = (int)Math.Round(p.X), y = (int)Math.Round(p.Y);
+            return f switch
+            {
+                Facing.LEFT => new Rectangle(x - 15, y, 16, 16),
+                Facing.RIGHT => new Rectangle(x + 9, y - 2, 16, 16),
+                Facing.UP => new Rectangle(x - 2, y - 14, 16, 16),
+                _ => new Rectangle(x - 6, y + 10, 16, 16),
+            };
+        }
+
+        /// <summary>
+        /// The Hotel's Eye boss, both phases. In the water (8,9) the eye drifts about its pool bouncing off the walls, shooting bullets that
+        /// bounce round the room; touching it only hurts for the 0.8s after a hit (when it flees the way we faced). In the land phase (8,10)
+        /// it paces a 3x3 patch, hurts to touch, lobs bullets at where we stand and charges to the right wall after every hit. Either way:
+        /// predict where it will be, wait on firm floor where the broom meets it, swing as it arrives; pop bullets about to touch us with
+        /// the broom, and keep moving (lobbed shots come down where we were).
+        /// </summary>
+        protected static IEnumerable<object> EyeBossFight()
+        {
+            var room = Grid;
+            var tl = new Vector2(room.X * 160 + 16, room.Y * 160 + 16);
+            int lastSwing = -100, hitAt = -1000;
+            bool wasFlickering = false;
+            Point? spotGoal = null;
+            Facing spotFace = Facing.DOWN;
+            int replan = 0;
+            for (int i = 0; i < 30000; i++)
+            {
+                BotRunner.NotStuck();
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                if (Grid != room)
+                {
+                    yield break;
+                }
+                var boss = BotRunner.Entities().FirstOrDefault(e => e.exists && IsEyeBoss(e));
+                if (boss == null)
+                {
+                    BotRunner.Status = "eye boss: gone";
+                    yield return CollectHearts();
+                    yield break;
+                }
+                bool water = boss is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase;
+                if ((i % 60 == 0 || (Environment.GetEnvironmentVariable("ANODYNE_EYE_TRACE") != null && i - hitAt < 40)) && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  eye f{i} [{BotRunner.Status}] me={Player.Hitbox} face={Player.facing} boss={boss.Hitbox} v={boss.velocity} solid={boss.Solid} flick={boss._flickering} spot={spotGoal}/{spotFace} hp={GlobalState.CUR_HEALTH}");
+                }
+                if (water && AnodyneSharp.Sounds.SoundManager.CurrentSongName != "hotel-boss")
+                {
+                    // It wakes once we are a little way into the room (below its top 24px): step down onto the bank.
+                    var wake = FloodRegion(BotNav.TileOf(Pos), 200).Where(t => !OnConveyor(t) && t.Y * 16 > tl.Y + 26)
+                        .OrderBy(t => (BotNav.CentreOf(t) - Pos).LengthSquared()).Cast<Point?>().FirstOrDefault();
+                    BotRunner.Status = "eye boss: wake it";
+                    if (wake is Point wt)
+                    {
+                        var wc = BotNav.CentreOf(wt);
+                        yield return GoTo(wc.X, wc.Y);
+                        yield return Wait(30);
+                        continue;
+                    }
+                    // Only its pool reaches that far down: wade a step in (it wakes at once) and straight back out to the bank.
+                    BotNav.AllowWater = true;
+                    var dip = BotNav.FindPath(BotNav.TileOf(Pos), t => OnConveyor(t) && t.Y * 16 + 2 > tl.Y + 24 + BotNav.HalfH);
+                    BotNav.AllowWater = false;
+                    if (dip == null || dip.Count == 0 || dip.Count(OnConveyor) > 2)
+                    {
+                        throw new InvalidOperationException("bot: no floor to wake the eye boss from");
+                    }
+                    var dc = BotNav.CentreOf(dip[dip.Count - 1]);
+                    for (int w = 0; w < 60 && AnodyneSharp.Sounds.SoundManager.CurrentSongName != "hotel-boss" && !Talking; w++)
+                    {
+                        float ddx = dc.X - Pos.X, ddy = dc.Y - Pos.Y;
+                        yield return K(Math.Abs(ddx) > 1.5f ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                    continue;
+                }
+                if (Player.raft == null && OnConveyor(BotNav.TileOf(Pos)))
+                {
+                    // wading (the dip that woke it, or knocked in): back to the bank before we sink
+                    var ashore = BotNav.WadePath(BotNav.TileOf(Pos), t => !OnConveyor(t) && t.X / 10 == room.X && t.Y / 10 == room.Y);
+                    if (ashore != null && ashore.Count > 0)
+                    {
+                        BotRunner.Status = "eye boss: out of the water";
+                        var ac = BotNav.CentreOf(ashore[0]);
+                        float ax = ac.X - Pos.X, ay = ac.Y - Pos.Y;
+                        yield return K(Math.Abs(ax) > 1.5f ? (ax < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ay < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
+                }
+                if (!water && !boss.Solid)
+                {
+                    BotRunner.Status = "eye boss: coming down";
+                    yield return K();
+                    continue;
+                }
+                var pb = Player.Hitbox;
+                var me = new Vector2(pb.X, pb.Y);
+                // Bullets: each water bullet runs straight at 70px/s and bounces round the room. Follow them a second ahead: one that
+                // would touch us is popped with the broom when it comes into the broom's box first, else stepped round (the land
+                // phase's lobbed shots are only stepped round).
+                // (a lobbed land shot only hurts the moment it comes down and while it bursts there: it flies 1.5s at 45px up)
+                var shots = boss.SubEntities().Where(b => b.exists && b is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker
+                    && ((b is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase.Bullet && b.velocity != Vector2.Zero) || b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)).ToList();
+                const int Ahead = 40;
+                var area = new Rectangle((int)tl.X, (int)tl.Y, 16 * 8, 16 * 9);
+                var paths = shots.Select(b =>
+                    {
+                        var r = new Rectangle[Ahead + 1];
+                        var bp = new Vector2(b.Hitbox.X, b.Hitbox.Y);
+                        var v = b.velocity;
+                        int w = b.Hitbox.Width, h = b.Hitbox.Height;
+                        if (b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)
+                        {
+                            int remF = b.velocity == Vector2.Zero ? 0 : (int)Math.Round((1.5f - LobTime(b)) * 60f);
+                            var land = new Rectangle((int)(bp.X + v.X * remF / 60f) - 1, (int)(bp.Y + v.Y * remF / 60f) - 1, w + 2, h + 2);
+                            for (int t = 0; t <= Ahead; t++)
+                            {
+                                r[t] = t >= remF - 6 && t <= remF + 16 ? land : Rectangle.Empty; // (a margin: it comes down a frame or two either side of the clock)
+                            }
+                            return r;
+                        }
+                        for (int t = 0; t <= Ahead; t++)
+                        {
+                            r[t] = new Rectangle((int)bp.X, (int)bp.Y, w, h);
+                            bp += v / 60f;
+                            if ((bp.X < area.Left && v.X < 0) || (bp.X + w > area.Right && v.X > 0)) { v.X = -v.X; }
+                            if ((bp.Y < area.Top && v.Y < 0) || (bp.Y + h > area.Bottom && v.Y > 0)) { v.Y = -v.Y; }
+                        }
+                        return r;
+                    }).ToList();
+                if (!water && boss.Solid)
+                {
+                    // On land the eye itself hurts to touch: its walk (or charge) is one more thing to keep out of the way of.
+                    var eb0 = boss.Hitbox;
+                    var bp0 = new Vector2(eb0.X, eb0.Y);
+                    Vector2? goal0 = i - hitAt < 90 ? new Vector2(tl.X + 16 * 8 - eb0.Width, tl.Y + 57) : EyeLandPace(boss);
+                    float vx0 = i - hitAt < 90 ? 1.7f : 1f;
+                    var track = new Rectangle[Ahead + 1];
+                    for (int t = 0; t <= Ahead; t++)
+                    {
+                        track[t] = new Rectangle((int)bp0.X - 1, (int)bp0.Y - 1, eb0.Width + 2, eb0.Height + 2);
+                        if (goal0 is Vector2 g0)
+                        {
+                            bp0.X += Math.Clamp(g0.X - bp0.X, -vx0, vx0);
+                            bp0.Y += Math.Clamp(g0.Y - bp0.Y, -1f, 1f);
+                        }
+                    }
+                    paths.Add(track);
+                }
+                // A swing roots us for its 18 frames: only swing when nothing reaches us meanwhile, bar a shot the swing itself sweeps away.
+                bool SwingSafe(Facing f)
+                {
+                    var bro = BroomBoxAt(me, f);
+                    var body = pb;
+                    body.Inflate(1, 1);
+                    foreach (var r in paths)
+                    {
+                        for (int t = 1; t <= 22; t++)
+                        {
+                            if (r[t].Intersects(body))
+                            {
+                                bool swept = false;
+                                for (int u = 0; u <= Math.Min(t, 8); u++)
+                                {
+                                    swept |= r[u].Intersects(bro);
+                                }
+                                if (!swept)
+                                {
+                                    return false;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    return true;
+                }
+                bool rooted = Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK;
+                if (paths.Count > 0 && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !rooted)
+                {
+                    int FirstTouch(Func<int, Rectangle> self, int upTo)
+                    {
+                        for (int t = 1; t <= upTo; t++)
+                        {
+                            var sb = self(t);
+                            if (paths.Any(r => r[t].Intersects(sb)))
+                            {
+                                return t;
+                            }
+                        }
+                        return int.MaxValue;
+                    }
+                    var meBox = pb;
+                    meBox.Inflate(1, 1);
+                    int touch = FirstTouch(_ => meBox, Ahead);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_EYE_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"    shots f{i} me={pb} st={Player.state} touch={touch} hp={GlobalState.CUR_HEALTH} " + string.Join(" ", shots.Select(b => $"{b.Hitbox.X},{b.Hitbox.Y} v{b.velocity.X:0},{b.velocity.Y:0} {b.CurAnimName} lob={LobTime(b):0.00} off={b.offset.Y:0}")));
+                    }
+                    if (touch <= 30)
+                    {
+                        // Pop it: a facing whose broom box it enters before it reaches us, and swing just as it does.
+                        if (water && i - lastSwing > 16)
+                        {
+                            foreach (var f in new[] { Player.facing, Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                            {
+                                var bro = BroomBoxAt(me, f);
+                                int enter = -1;
+                                for (int t = 0; t < touch && t <= 6; t++)
+                                {
+                                    if (paths.Any(r => r[t].Intersects(bro)))
+                                    {
+                                        enter = t;
+                                        break;
+                                    }
+                                }
+                                if (enter < 0)
+                                {
+                                    continue;
+                                }
+                                if (!SwingSafe(f))
+                                {
+                                    continue;
+                                }
+                                BotRunner.Status = "eye boss: pop a bullet";
+                                if (Player.facing != f)
+                                {
+                                    yield return K(KeyOf(f));
+                                }
+                                lastSwing = i;
+                                yield return K(KeyFunctions.Accept);
+                                goto next;
+                            }
+                        }
+                        // Step round it: the way (or diagonal) that keeps clear of every shot for the next second, on floor we may stand on.
+                        bool afloatNow = HasRaft() && OnConveyor(BotNav.TileOf(Pos));
+                        KeyFunctions[] bestKeys = null;
+                        int bestT = touch;
+                        foreach (var dk in new[] { new[] { KeyFunctions.Up }, new[] { KeyFunctions.Down }, new[] { KeyFunctions.Left }, new[] { KeyFunctions.Right },
+                            new[] { KeyFunctions.Up, KeyFunctions.Left }, new[] { KeyFunctions.Up, KeyFunctions.Right }, new[] { KeyFunctions.Down, KeyFunctions.Left }, new[] { KeyFunctions.Down, KeyFunctions.Right } })
+                        {
+                            var d = Vector2.Zero;
+                            foreach (var k in dk)
+                            {
+                                d += DirVector(k);
+                            }
+                            if (d.X != 0 && d.Y != 0)
+                            {
+                                d *= 0.7071f;
+                            }
+                            var at = me;
+                            bool ok = true;
+                            for (int t = 1; t <= 20 && ok; t++)
+                            {
+                                at += d * WalkPxPerFrame;
+                                var tile = BotNav.TileOf(at);
+                                if (afloatNow ? !OnConveyor(tile) : (OnConveyor(tile) || !BotNav.Walkable(tile) || BotNav.IsHole(tile)))
+                                {
+                                    ok = false;
+                                }
+                            }
+                            if (!ok)
+                            {
+                                continue;
+                            }
+                            var dd = d;
+                            int hitT = FirstTouch(t => new Rectangle((int)(me.X + dd.X * WalkPxPerFrame * Math.Min(t, 20)) - 1, (int)(me.Y + dd.Y * WalkPxPerFrame * Math.Min(t, 20)) - 1, pb.Width + 2, pb.Height + 2), Ahead);
+                            if (hitT > bestT)
+                            {
+                                bestT = hitT;
+                                bestKeys = dk;
+                            }
+                        }
+                        if (bestKeys != null)
+                        {
+                            BotRunner.Status = $"eye boss: step round a bullet ({string.Join("+", bestKeys)})";
+                            yield return bestKeys;
+                            continue;
+                        }
+                    }
+                }
+                {
+                    // Where the eye will be: straight on with its velocity, bouncing in its box (the water); on land it walks to its next
+                    // pacing point at 60px/s, so where it is now is near enough over the few frames that count.
+                    var box = new Rectangle((int)tl.X + 12, (int)tl.Y + 16, 16 * 7 + 4 - 12, 16 * 8 - 16);
+                    var eb = boss.Hitbox;
+                    var bpos = new Vector2(eb.X, eb.Y);
+                    var bv = boss.velocity;
+                    var future = new List<Rectangle>();
+                    // On land it walks (60px/s each way) to the pacing point its Pace routine is holding out, read off the running fight;
+                    // for a second and a half after a hit it charges to the right wall instead (1.7x on the way across).
+                    Vector2? landGoal = null;
+                    float landVx = 1f, landVy = 1f;
+                    if (!water)
+                    {
+                        if (i - hitAt < 90)
+                        {
+                            landGoal = new Vector2(tl.X + 16 * 8 - eb.Width, tl.Y + 57);
+                            landVx = 1.7f;
+                        }
+                        else if (EyeLandPace(boss) is Vector2 pg)
+                        {
+                            landGoal = pg;
+                        }
+                    }
+                    for (int t = 0; t <= 90; t++)
+                    {
+                        future.Add(new Rectangle((int)bpos.X, (int)bpos.Y, eb.Width, eb.Height));
+                        if (!water && landGoal is Vector2 lg)
+                        {
+                            bpos.X += Math.Clamp(lg.X - bpos.X, -landVx, landVx);
+                            bpos.Y += Math.Clamp(lg.Y - bpos.Y, -landVy, landVy);
+                        }
+                        if (water)
+                        {
+                            bpos += bv / 60f;
+                            if ((bpos.X < box.Left && bv.X < 0) || (bpos.X + eb.Width > box.Right && bv.X > 0))
+                            {
+                                bv.X = -bv.X;
+                            }
+                            if ((bpos.Y < box.Top && bv.Y < 0) || (bpos.Y + eb.Height > box.Bottom && bv.Y > 0))
+                            {
+                                bv.Y = -bv.Y;
+                            }
+                        }
+                    }
+                    if (boss._flickering && !wasFlickering)
+                    {
+                        hitAt = i;
+                    }
+                    wasFlickering = boss._flickering;
+                    // Just hit, the water eye flees at speed for 0.8s and touching it then hurts (a hit on land throws it about too): keep out
+                    // of its way till it calms, on whatever reachable spot its path stays furthest from.
+                    int calmIn = (water ? 52 : 70) - (i - hitAt);
+                    if (calmIn > 0)
+                    {
+                        BotNav.AllowWater = water && HasRaft();
+                        // (afloat, stay afloat: stepping ashore leaves the raft behind, and the eye is only reached from the water)
+                        bool onRaft = BotNav.AllowWater && OnConveyor(BotNav.TileOf(Pos));
+                        var room2 = FloodRegion(BotNav.TileOf(Pos), 200).Where(t => (onRaft ? OnConveyor(t) : !OnConveyor(t)) && !BotNav.IsHole(t) && (onRaft || SpotStands(t))).ToList();
+                        BotNav.AllowWater = false;
+                        Point far = BotNav.TileOf(Pos);
+                        float farBest = float.MinValue;
+                        foreach (var t in room2)
+                        {
+                            var sp = BotNav.CentreOf(t);
+                            int eta = (int)((sp - me).Length() / WalkPxPerFrame);
+                            if (eta > calmIn + 20)
+                            {
+                                continue;
+                            }
+                            float worst = float.MaxValue;
+                            for (int t2 = 0; t2 <= Math.Min(90, calmIn + 10); t2++)
+                            {
+                                // (where we are along the way there at t2, roughly)
+                                var at = eta == 0 ? sp : Vector2.Lerp(me, sp, Math.Min(1f, t2 / (float)Math.Max(1, eta)));
+                                var fc = future[t2].Center;
+                                worst = Math.Min(worst, (new Vector2(fc.X, fc.Y) - at - new Vector2(pb.Width / 2f, pb.Height / 2f)).Length());
+                            }
+                            if (worst > farBest)
+                            {
+                                farBest = worst;
+                                far = t;
+                            }
+                        }
+                        var fcen = BotNav.CentreOf(far);
+                        float fx = fcen.X - me.X, fy = fcen.Y - me.Y;
+                        BotRunner.Status = $"eye boss: out of its way to {far.X},{far.Y} ({calmIn} frames)";
+                        if (Math.Abs(fx) > 1.5f || Math.Abs(fy) > 1.5f)
+                        {
+                            var fk = new List<KeyFunctions>();
+                            if (Math.Abs(fx) > 1.5f)
+                            {
+                                fk.Add(fx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                            }
+                            if (Math.Abs(fy) > 1.5f)
+                            {
+                                fk.Add(fy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                            }
+                            var fks = fk.ToArray();
+                            yield return HasRaft() && OnConveyor(BotNav.TileOf(Pos)) ? KeepOnWater(fks, fks[0]) : fks;
+                        }
+                        else
+                        {
+                            yield return K();
+                        }
+                        replan = 0;
+                        continue;
+                    }
+                    // In reach now: swing.
+                    // (not while it overlaps us: a hit sends it off at speed and it hurts to touch then, so it must not be on top of us)
+                    var clear = pb;
+                    clear.Inflate(2, 2);
+                    if (BroomBoxAt(me, Player.facing).Intersects(eb) && !clear.Intersects(eb) && i - lastSwing > 14 && !boss._flickering && SwingSafe(Player.facing))
+                    {
+                        lastSwing = i;
+                        BotRunner.Status = "eye boss: swing";
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    if (--replan <= 0 || spotGoal == null)
+                    {
+                        replan = 10;
+                        // (a raft, or the pool's dust to make one, opens the water: the eye waits for its first hit out in the middle)
+                        bool afloat = water && (HasRaft() || BotRunner.Entities().Any(d => d.exists && d is AnodyneSharp.Entities.Dust && (int)d.Position.X / 160 == room.X && (int)d.Position.Y / 160 == room.Y));
+                        BotNav.AllowWater = afloat;
+                        bool riding = afloat && HasRaft() && OnConveyor(BotNav.TileOf(Pos));
+                        var region = FloodRegion(BotNav.TileOf(Pos), 200).Where(t => (riding ? OnConveyor(t) : afloat || !OnConveyor(t)) && !BotNav.IsHole(t) && (OnConveyor(t) || SpotStands(t))).ToList();
+                        BotNav.AllowWater = false;
+                        int best = int.MaxValue;
+                        foreach (var t in region)
+                        {
+                            var sp = BotNav.CentreOf(t);
+                            int eta = (int)((sp - me).Length() / WalkPxPerFrame) + 4;
+                            var spBox = new Rectangle((int)sp.X - 1, (int)sp.Y - 1, pb.Width + 2, pb.Height + 2);
+                            if (!water && paths.Take(shots.Count).Any(r => r.Any(q => q.Intersects(spBox))))
+                            {
+                                continue; // a lobbed shot comes down there: not the place to wait
+                            }
+                            // (the water eye flees a hit up or down, whichever way we face: hit it facing up or down and it goes off along
+                            // its column, not back over us after a bounce off the near wall)
+                            foreach (var f in water ? new[] { Facing.UP, Facing.DOWN } : new[] { Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                            {
+                                var bro = BroomBoxAt(sp, f);
+                                var self = new Rectangle((int)sp.X - 2, (int)sp.Y - 2, pb.Width + 4, pb.Height + 4);
+                                for (int t2 = Math.Min(eta, 90); t2 <= 90; t2++)
+                                {
+                                    if (future[t2].Intersects(self))
+                                    {
+                                        if (!water)
+                                        {
+                                            break; // standing there on land is being walked into
+                                        }
+                                        continue; // (the water eye drifts over us harmlessly, but no swing then)
+                                    }
+                                    if (bro.Intersects(future[t2]))
+                                    {
+                                        int score = t2 * 2 + eta;
+                                        if (sp.X + pb.Width / 2f > future[t2].Center.X - 4)
+                                        {
+                                            // A hit facing up/down also sends the water eye off to the right (20px/s, faster each hit), and the
+                                            // land eye charges to the right wall after every hit: strike from its left and it goes off clear of
+                                            // us while it is dangerous, rather than across us.
+                                            score += 60;
+                                        }
+                                        if (score < best)
+                                        {
+                                            best = score;
+                                            spotGoal = t;
+                                            spotFace = f;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (spotGoal == null || best == int.MaxValue)
+                        {
+                            // nowhere it comes within reach soon: the nearest floor to it
+                            spotGoal = region.OrderBy(t => (BotNav.CentreOf(t) - new Vector2(eb.Center.X, eb.Center.Y)).LengthSquared()).FirstOrDefault();
+                            spotFace = Facing.DOWN;
+                        }
+                    }
+                    var gc = BotNav.CentreOf(spotGoal.Value);
+                    float dx = gc.X - me.X, dy = gc.Y - me.Y;
+                    if (OnConveyor(spotGoal.Value) && !HasRaft() && BotNav.TileOf(Pos) != spotGoal.Value)
+                    {
+                        BotRunner.Status = $"eye boss: raft out to {spotGoal.Value.X},{spotGoal.Value.Y}";
+                        yield return RaftTo(gc.X, gc.Y);
+                        replan = 0;
+                        continue;
+                    }
+                    if (Math.Abs(dx) > 1.5f || Math.Abs(dy) > 1.5f)
+                    {
+                        BotRunner.Status = $"eye boss: to {spotGoal.Value.X},{spotGoal.Value.Y} facing {spotFace}";
+                        BotNav.AllowWater = HasRaft();
+                        var path = BotNav.FindPath(BotNav.TileOf(Pos), q => q == spotGoal.Value, spotGoal.Value);
+                        BotNav.AllowWater = false;
+                        var step = path != null && path.Count > 0 ? BotNav.CentreOf(path[0]) : gc;
+                        float sx = step.X - me.X, sy = step.Y - me.Y;
+                        var key = Math.Abs(sx) > 1.5f ? (sx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (sy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        var mk = SafeMove(key, water ? boss : null, 16f);
+                        yield return HasRaft() && OnConveyor(BotNav.TileOf(Pos)) ? KeepOnWater(mk, key) : mk;
+                        continue;
+                    }
+                    if (Player.facing != spotFace)
+                    {
+                        yield return K(KeyOf(spotFace));
+                        continue;
+                    }
+                    BotRunner.Status = $"eye boss: wait for it at {spotGoal.Value.X},{spotGoal.Value.Y}";
+                    yield return water ? K() : SafeMove(KeyOf(spotFace), boss, 2f) is KeyFunctions[] sk && Dodged ? sk : K();
+                    continue;
+                }
+            next:;
+            }
+            throw new TimeoutException($"bot: the eye boss outlasted us on {Map}");
+        }
+
+        /// <summary>A tile whose centre we can stand on with a few px to spare all round (no spikes or pit at the edge of our box).</summary>
+        private static bool SpotStands(Point t)
+        {
+            var c = BotNav.CentreOf(t);
+            return BotNav.BoxStands(new Rectangle((int)c.X - 3, (int)c.Y - 3, 16, 18));
+        }
+
+        /// <summary>Seconds a land-phase eye shot has been in the air (its Parabola_Thing's clock), 0 if unreadable.</summary>
+        private static float LobTime(Entity shot)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var par = shot.GetType().GetField("parabola", F)?.GetValue(shot);
+            return par?.GetType().GetField("t", F)?.GetValue(par) is float t ? t : 0f;
+        }
+
+        /// <summary>The point the land-phase eye is pacing towards (its LandLogic's Pace enumerator, by reflection), or null.</summary>
+        private static Vector2? EyeLandPace(Entity boss)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
+            var st = boss.GetType().GetField("state", F)?.GetValue(boss);
+            if (st == null)
+            {
+                return null;
+            }
+            foreach (var f in st.GetType().GetFields(F))
+            {
+                if (f.GetValue(st) is IEnumerator<Vector2> pace)
+                {
+                    return pace.Current;
+                }
+            }
+            return null;
+        }
+
+        private static KeyFunctions KeyOf(Facing f) => f switch { Facing.UP => KeyFunctions.Up, Facing.DOWN => KeyFunctions.Down, Facing.LEFT => KeyFunctions.Left, _ => KeyFunctions.Right };
+
         private static HashSet<Point> FloodRegion(Point start, int limit)
         {
             var g = new Point(start.X / 10, start.Y / 10); // stay on this screen: the question is what can be reached without leaving it
@@ -8120,6 +8667,11 @@ namespace AnodyneSharp.Recording
                 yield return SeerFight();
                 yield break;
             }
+            if (Enemies().Any(IsEyeBoss))
+            {
+                yield return EyeBossFight();
+                yield break;
+            }
             if (Enemies().Any(e => e.GetType().Name == "Red_Boss"))
             {
                 yield return RedBossFight();
@@ -8429,7 +8981,10 @@ namespace AnodyneSharp.Recording
                 }
                 if (committed == null || !committed.exists || !enemies.Contains(committed))
                 {
-                    committed = enemies.OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
+                    // A bullet Slime shoots at us from anywhere while we stand about waiting out a plant's or frog's volleys: it goes first.
+                    bool rooted = enemies.Any(e => e.GetType().Name is "Burst_Plant" or "Frog");
+                    committed = enemies.OrderBy(e => rooted && e is AnodyneSharp.Entities.Enemy.Slime sl && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() ? 0 : 1)
+                        .ThenBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
                 }
                 var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
                 if (i % 10 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
