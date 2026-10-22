@@ -1083,6 +1083,15 @@ namespace AnodyneSharp.Recording
                         BotNav.AllowWater = true;
                         var wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                         BotNav.AllowWater = false;
+                        if (wade != null && !(wade.Count(t => BotNav.IsConveyor(t)) <= 2 || BotNav.WadeOk(wade, BotNav.TileOf(Pos))))
+                        {
+                            // too long a wade the short way: round by the banks, a short stretch at a time
+                            wade = BotNav.WadePath(BotNav.TileOf(Pos), isGoal, forced);
+                            if (wade != null && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  wade by the banks: {string.Join(">", wade.Select(q => $"{q.X},{q.Y}{(BotNav.IsConveyor(q) ? "~" : "")}"))}");
+                            }
+                        }
                         if (wade != null && (wade.Count(t => BotNav.IsConveyor(t)) <= 2 || BotNav.WadeOk(wade, BotNav.TileOf(Pos))))
                         {
                             path = wade;
@@ -1498,16 +1507,32 @@ namespace AnodyneSharp.Recording
                                 yield return JumpToward(dir, takeoff);
                                 goto replan;
                             }
-                            var avoid = BotNav.NearEnemies(12);
-                            BotNav.Avoid = avoid;
-                            var detour = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
-                            BotNav.Avoid = null;
+                            HashSet<Point> avoid = null;
+                            List<Point> detour = null;
+                            // (a tighter berth when a wide one leaves no way: a Dustmaid asleep in a corridor two tiles wide)
+                            foreach (int berthM in new[] { 12, 6, 1 })
+                            {
+                                avoid = BotNav.NearEnemies(berthM);
+                                avoid.Remove(BotNav.TileOf(Pos));
+                                BotNav.Avoid = avoid;
+                                detour = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                                BotNav.Avoid = null;
+                                if (detour != null)
+                                {
+                                    break;
+                                }
+                            }
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
                                 System.Console.Error.WriteLine($"  blocked by stationary {blocker.GetType().Name}@{blocker.Hitbox.X},{blocker.Hitbox.Y} at {Pos}: " + (detour != null ? $"detour of {detour.Count} tiles via {string.Join(">", detour.Take(8).Select(q => $"{q.X},{q.Y}"))} from tile {BotNav.TileOf(Pos)} (dir {dir})" : "no detour, fighting it"));
                             }
                             if (detour != null && detour.Count > 0 && (detour.Count <= path.Count + 20 || !GlobalState.inventory.HasBroom))
                             {
+                                avoidStationary = avoid;
+                            }
+                            else if (DormantDustmaid(blocker))
+                            {
+                                // asleep it cannot be hurt, and touching it hurts: never a fight; edge past it (the dodging walk keeps clear)
                                 avoidStationary = avoid;
                             }
                             else if (GlobalState.inventory.HasBroom && blocker.GetType().Name == "Shieldy")

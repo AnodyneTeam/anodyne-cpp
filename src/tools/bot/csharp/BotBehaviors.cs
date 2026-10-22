@@ -611,8 +611,16 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> GoScreenTo(int tx, int ty)
         {
             var from = Grid;
-            yield return GoToWhere(t => t.X * 16 >= tx * 160 && t.X * 16 < tx * 160 + 160 && t.Y * 16 >= ty * 160 && t.Y * 16 < ty * 160 + 160,
-                $"screen {tx},{ty}");
+            Func<Point, bool> inScreen = t => t.X * 16 >= tx * 160 && t.X * 16 < tx * 160 + 160 && t.Y * 16 >= ty * 160 && t.Y * 16 < ty * 160 + 160;
+            // Arrive on dry land when the screen has any we can get to: its nearest edge tile may be water (a channel through the wall),
+            // and stopping there means a wade that runs on into the screen's water, or a raft for a hop that is not needed.
+            Func<Point, bool> dry = t => inScreen(t) && !BotNav.IsConveyor(t);
+            BotNav.AllowWater = true;
+            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            bool dryOk = BotNav.FindPath(BotNav.TileOf(Pos), t => dry(t)) != null;
+            BotNav.AllowWater = false;
+            BotNav.AllowJump = false;
+            yield return GoToWhere(t => dryOk ? dry(t) : inScreen(t), $"screen {tx},{ty}");
             yield return Until(() => !GlobalState.ScreenTransition && Grid == new Point(tx, ty), 600, $"arrive on screen {tx},{ty}");
             if (from != new Point(tx, ty))
             {
@@ -630,6 +638,18 @@ namespace AnodyneSharp.Recording
                     (e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)))
                     .Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}");
                 System.Console.Error.WriteLine("     " + string.Join(" ", interesting));
+            }
+            if (Player.raft == null && OnConveyor(BotNav.TileOf(Pos)))
+            {
+                // arrived wading (the screen's edge is water): no standing about fighting while we sink, get ashore first
+                BotNav.AllowWater = true;
+                var ashore = BotNav.FindPath(BotNav.TileOf(Pos), t => !OnConveyor(t) && t.X / 10 == tx && t.Y / 10 == ty);
+                BotNav.AllowWater = false;
+                if (ashore != null && ashore.Count > 0)
+                {
+                    var land = BotNav.CentreOf(ashore[ashore.Count - 1]);
+                    yield return GoTo(land.X, land.Y);
+                }
             }
             if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
             {
@@ -2006,6 +2026,11 @@ namespace AnodyneSharp.Recording
 
         private static readonly System.Reflection.FieldInfo GatePreset =
             typeof(AnodyneSharp.Entities.Gadget.Gate).GetField("_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>Whether the screen has a shut gate that opens on enemies killed (frame 0-4, 10-14).</summary>
+        private static bool KillGateShut() =>
+            BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Gate && e.Solid
+                && GatePreset?.GetValue(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 < 5);
 
         /// <summary>Whether the screen has buttons and a shut gate that opens on puzzles solved (frame 5-7) rather than kills.</summary>
         private static bool PuzzleGateShut()
@@ -4108,11 +4133,12 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Sweeps up the nearest loose Dust that is on dry land and reachable (the broom then carries it).</summary>
-        protected static IEnumerable<object> PickUpDust(bool optional = false)
+        /// <param name="outrun">the dust is wanted somewhere close by (a raft launch): Dustmaids walk at 20px/s, so carry it there and leave them behind rather than fight</param>
+        protected static IEnumerable<object> PickUpDust(bool optional = false, bool outrun = false)
         {
             yield return PickUpDustCore(optional);
             bool Maids() => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid);
-            if (Player.broom.dust == null || !Maids() || !GlobalState.inventory.HasBroom)
+            if (outrun || Player.broom.dust == null || !Maids() || !GlobalState.inventory.HasBroom)
             {
                 yield break;
             }
@@ -4423,6 +4449,13 @@ namespace AnodyneSharp.Recording
                 }
                 bool wetNow = OnConveyor(here);
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
+                if (path == null && round > 0 && !wetNow)
+                {
+                    // Put ashore part way with the raft's dust left out on the water: the rest may be a short wade (or dry) from here.
+                    RaftLog($"no raft route on from {here}: walking/wading the rest");
+                    yield return GoTo(gx, gy);
+                    yield break;
+                }
                 if (path == null)
                 {
                     DumpTiles(here, goal);
@@ -4451,7 +4484,7 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = $"raft: dust onto the water at {wt.X},{wt.Y}";
                     if (Player.broom.dust == null)
                     {
-                        yield return PickUpDust();
+                        yield return PickUpDust(outrun: true);
                     }
                     yield return StandFaceAccept(s.X, s.Y, FaceChar(new Point(wt.X - s.X, wt.Y - s.Y)));
                     yield return Wait(15);
@@ -4538,7 +4571,7 @@ namespace AnodyneSharp.Recording
                     }
                     var c = BotNav.CentreOf(p2[0]);
                     float ddx = c.X - Pos.X, ddy = c.Y - Pos.Y;
-                    if (i % 20 == 0 && i < 200)
+                    if ((i % 20 == 0 && i < 200) || Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
                         RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos}");
                     }
@@ -4572,13 +4605,24 @@ namespace AnodyneSharp.Recording
                         .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
                         raftSwings++;
-                        yield return K(Math.Abs(foe.X) > Math.Abs(foe.Y) ? (foe.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (foe.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        var faceKey = Math.Abs(foe.X) > Math.Abs(foe.Y) ? (foe.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (foe.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        var faceWant = faceKey switch { KeyFunctions.Left => Facing.LEFT, KeyFunctions.Right => Facing.RIGHT, KeyFunctions.Up => Facing.UP, _ => Facing.DOWN };
+                        if (Player.facing != faceWant)
+                        {
+                            // (turning nudges the raft a pixel that way: every swing a turn would walk us ashore beside the foe)
+                            yield return K(faceKey);
+                        }
                         yield return Tap(KeyFunctions.Accept);
                         yield return Wait(14);
                         continue;
                     }
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
-                    yield return SafeMove(rideKey, null, 16f);
+                    var rideKeys = wet ? KeepOnWater(SafeMove(rideKey, null, 16f), rideKey) : SafeMove(rideKey, null, 16f);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
+                    {
+                        RaftLog($"  keys {string.Join("+", rideKeys)} (ride {rideKey}, stall {rideStall}, swings {raftSwings}) v={Player.velocity} touching={Player.touching} raft={Player.raft?.Position} state={Player.state}");
+                    }
+                    yield return rideKeys;
                     if (!wasWet && !wet && i > 120)
                     {
                         break;
@@ -4589,6 +4633,27 @@ namespace AnodyneSharp.Recording
             {
                 yield return GoTo(gx, gy);
             }
+        }
+
+        /// <summary>
+        /// A dodge picked on the raft must not step off it: a sidestep by the bank puts us ashore next to whatever we were dodging. Drops
+        /// any direction whose next few pixels leave the water (the raft goes on along the route if nothing is left).
+        /// </summary>
+        private static KeyFunctions[] KeepOnWater(KeyFunctions[] keys, KeyFunctions rideKey)
+        {
+            // (half a tile of margin: the game's idea of "on the water" is not quite our centre tile)
+            bool Wet(KeyFunctions k) => BotNav.IsConveyor(BotNav.TileOf(Pos + DirVector(k) * 8f));
+            static KeyFunctions Opposite(KeyFunctions k) => k switch { KeyFunctions.Up => KeyFunctions.Down, KeyFunctions.Down => KeyFunctions.Up, KeyFunctions.Left => KeyFunctions.Right, _ => KeyFunctions.Left };
+            bool IsDir(KeyFunctions k) => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right;
+            // a sidestep towards the bank becomes one the other way, out on the water, when there is water there
+            // (the route's own step ashore is no dodge: leave it be)
+            var kept = keys.Select(k => !IsDir(k) || k == rideKey || Wet(k) ? k : (!keys.Contains(Opposite(k)) && Wet(Opposite(k)) ? Opposite(k) : (KeyFunctions?)null))
+                .Where(k => k != null).Select(k => k.Value).ToArray();
+            if (kept.SequenceEqual(keys))
+            {
+                return keys;
+            }
+            return kept.Any(IsDir) ? kept : K(rideKey);
         }
 
         /// <summary>
@@ -5118,6 +5183,10 @@ namespace AnodyneSharp.Recording
             if (Player == null || Player.state != AnodyneSharp.Entities.PlayerState.GROUND || Environment.GetEnvironmentVariable("ANODYNE_NO_BULLETHOP") != null)
             {
                 return held;
+            }
+            if (Player.raft != null)
+            {
+                return held; // a hop off the raft comes down ashore (beside the Slime) or in the water, never back on the raft
             }
             var pb = Player.Hitbox;
             pb.Inflate(1, 1);
@@ -7107,6 +7176,10 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
+                if (Player.raft == null && OnConveyor(BotNav.TileOf(spots[i].pos)))
+                {
+                    continue; // a spot in the water: we would sink standing there
+                }
                 float dist = (spots[i].pos - here).Length();
                 int eta = (int)(dist / WalkPxPerFrame);
                 float cost = dist + (SafeAt(spots[i].pos, eta, eta + 40) ? 0 : 150);
@@ -7215,7 +7288,7 @@ namespace AnodyneSharp.Recording
                     {
                         sb.Append(th.At[k] is Rectangle tr ? $" {k}:{tr.X},{tr.Y}" : "");
                     }
-                    System.Console.Error.WriteLine($"    wait f{BotRunner.Frame} me={pb} bullet {th.Source?.Position} v={th.Source?.velocity}{sb}");
+                    System.Console.Error.WriteLine($"    wait f{BotRunner.Frame} me={pb} st={Player.state} sink={Sinking} v={Player.velocity} tile={BotNav.TileOf(Pos)} wet={OnConveyor(BotNav.TileOf(Pos))} bullet {th.Source?.Position} v={th.Source?.velocity}{sb}");
                 }
             }
             return K();
@@ -8022,8 +8095,16 @@ namespace AnodyneSharp.Recording
                 // On the way somewhere, a rooted enemy (a Burst Plant behind a wall) that cannot be walked up to is no fight: its bullets
                 // come over walls, so standing about trying only costs hearts. Leave it be.
                 var here = BotNav.TileOf(Pos);
+                // With no gate on the screen counting kills, a rooted shooter is only scenery that shoots: the walker dodges its
+                // bullets on the way past, and walking up to it to strike is what gets us cornered between its volleys.
+                bool killGate = KillGateShut();
                 foreach (var e in Enemies().Where(e => e.velocity == Vector2.Zero && e.GetType().Name is "Burst_Plant" or "Frog"))
                 {
+                    if (!killGate)
+                    {
+                        IgnoredEnemies.Add(e);
+                        continue;
+                    }
                     var et = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
                     BotNav.AllowJump = GlobalState.inventory.CanJump;
                     var reach = BotNav.FindPath(here, q => Math.Abs(q.X - et.X) + Math.Abs(q.Y - et.Y) <= 1, null, strict: true);
@@ -8128,6 +8209,20 @@ namespace AnodyneSharp.Recording
                 {
                     // Knocked (or walked) onto another screen: that room's enemies are not this fight's business.
                     yield break;
+                }
+                if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos)))
+                {
+                    // Wading (knocked in, or put back at a screen entrance that is water after drowning): we sink in 3s, so ashore first.
+                    var wadeFrom = BotNav.TileOf(Pos);
+                    var ashore = BotNav.WadePath(wadeFrom, t => !OnConveyor(t) && t.X / 10 == startGrid.X && t.Y / 10 == startGrid.Y);
+                    if (ashore != null && ashore.Count > 0)
+                    {
+                        BotRunner.Status = "fight: wade ashore first";
+                        var nextC = BotNav.CentreOf(ashore[0]);
+                        float ax = nextC.X - Pos.X, ay = nextC.Y - Pos.Y;
+                        yield return K(Math.Abs(ax) > 2f ? (ax < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ay < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
                 }
                 if (planHold > 0)
                 {

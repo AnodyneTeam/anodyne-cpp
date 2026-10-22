@@ -53,6 +53,8 @@ namespace AnodyneSharp.Recording
         {
             _gatesOpen = new HashSet<Point>();
             _gatesClosed = new HashSet<Point>();
+            // A key block with a key in hand is a door we open on the way (the walker does, on reaching it): plan through it.
+            bool haveKey = GlobalState.inventory.GetCurrentMapKeys() > 0;
             foreach (var e in BotRunner.Entities())
             {
                 if (!e.exists || !e.GetType().Name.EndsWith("Gate"))
@@ -60,7 +62,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var t = new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16);
-                (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
+                (e.Solid && !(haveKey && e is AnodyneSharp.Entities.Gadget.SmallKeyGate) ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
             var grid = GlobalState.CurrentMapGrid;
@@ -71,6 +73,11 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                if (haveKey && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
+                {
+                    _gatesOpen.Add(t);
+                    continue;
+                }
                 _gatesClosed.Add(t);
                 if (pr.Type.Name.StartsWith("Big"))
                 {
@@ -689,28 +696,107 @@ namespace AnodyneSharp.Recording
                     prev = t;
                     continue;
                 }
-                var flow = FlowDir(t);
-                float push = 35f;
-                if (flow == Touching.NONE && SteamFlow(t) is Touching steam)
-                {
-                    flow = steam; // a steam pipe blowing across still water shoves us over it (50px/s)
-                    push = 50f;
-                }
-                int dx = t.X - prev.X, dy = t.Y - prev.Y;
-                float along = flow switch { Touching.DOWN => dy, Touching.UP => -dy, Touching.RIGHT => dx, Touching.LEFT => -dx, _ => 0 };
-                float speed = 35f + push * along;
-                if (speed < 10f)
-                {
-                    return false;
-                }
-                secs += 16f / speed;
-                if (secs > 2.4f)
+                secs += WadeSecs(prev, t);
+                if (secs > WadeLimit)
                 {
                     return false;
                 }
                 prev = t;
             }
             return true;
+        }
+
+        private const float WadeLimit = 2.4f;
+
+        /// <summary>Seconds to wade from `prev` into water tile `t` (infinite against a current we cannot make headway in).</summary>
+        private static float WadeSecs(Point prev, Point t)
+        {
+            var flow = FlowDir(t);
+            float push = 35f;
+            if (flow == Touching.NONE && SteamFlow(t) is Touching steam)
+            {
+                flow = steam; // a steam pipe blowing across still water shoves us over it (50px/s)
+                push = 50f;
+            }
+            int dx = t.X - prev.X, dy = t.Y - prev.Y;
+            float along = flow switch { Touching.DOWN => dy, Touching.UP => -dy, Touching.RIGHT => dx, Touching.LEFT => -dx, _ => 0 };
+            float speed = 35f + push * along;
+            return speed < 10f ? float.PositiveInfinity : 16f / speed;
+        }
+
+        /// <summary>
+        /// A route that wades only where each stretch of water is short enough to get out of before sinking: the shortest route may
+        /// wade a long channel where going round by the banks crosses two short ones. Searches (tile, time already spent in this
+        /// stretch of water); null when there is no such route.
+        /// </summary>
+        public static List<Point> WadePath(Point a, Func<Point, bool> isGoal, Point? forced = null)
+        {
+            bool water = AllowWater;
+            AllowWater = true;
+            try
+            {
+                RefreshGates();
+                var hazards = Hazards();
+                // (time quantised to 1/20s, so a tile reached a little later in its stretch of water is a different state)
+                var best = new Dictionary<(Point, int), int>();
+                var prev = new Dictionary<(Point, int), (Point, int)>();
+                var pq = new PriorityQueue<(Point, int), int>();
+                var start = (a, 0);
+                best[start] = 0;
+                prev[start] = start;
+                pq.Enqueue(start, 0);
+                while (pq.TryDequeue(out var st, out int cost))
+                {
+                    if (cost > best[st])
+                    {
+                        continue;
+                    }
+                    var (c, run) = st;
+                    if (c != a && !IsConveyor(c) && isGoal(c))
+                    {
+                        var path = new List<Point>();
+                        for (var s = st; s != start; s = prev[s])
+                        {
+                            path.Add(s.Item1);
+                        }
+                        path.Reverse();
+                        return path;
+                    }
+                    var from = prev[st].Item1;
+                    foreach (var n in Steps(from == c ? c : from, c))
+                    {
+                        if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
+                        {
+                            continue;
+                        }
+                        int nrun = 0;
+                        int step = 1;
+                        if (IsConveyor(n))
+                        {
+                            float secs = run / 20f + WadeSecs(c, n);
+                            if (secs > WadeLimit)
+                            {
+                                continue;
+                            }
+                            nrun = (int)Math.Ceiling(secs * 20f);
+                            step = 3; // (wading is slow and every stretch a risk: a little way round on dry land is better)
+                        }
+                        var ns = (n, nrun);
+                        int nc = cost + step;
+                        if (!best.TryGetValue(ns, out int old) || nc < old)
+                        {
+                            best[ns] = nc;
+                            prev[ns] = st;
+                            pq.Enqueue(ns, nc);
+                        }
+                    }
+                }
+                return null;
+            }
+            finally
+            {
+                AllowWater = water;
+            }
         }
 
         public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
@@ -1318,6 +1404,27 @@ namespace AnodyneSharp.Recording
                 }
                 _crossCracked = false;
                 _leaps = false;
+            }
+            if (p == null && !strict && _shooterTiles.Count > 0)
+            {
+                // A plant or frog sits in the only way through: they are not solid, so it is walked over (its bullets are dodged, or
+                // the walker strikes it as a blocker) rather than no way at all.
+                var shooters = _shooterTiles;
+                _shooterTiles = new HashSet<Point>();
+                try
+                {
+                    p = FindPathCore(a, isGoal, forced);
+                    if (p == null)
+                    {
+                        _respectClosedGates = false;
+                        p = FindPathCore(a, isGoal, forced);
+                        _respectClosedGates = true;
+                    }
+                }
+                finally
+                {
+                    _shooterTiles = shooters;
+                }
             }
             return p;
         }
