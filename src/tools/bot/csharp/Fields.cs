@@ -122,8 +122,8 @@ namespace AnodyneSharp.Recording
             yield return Section("crowd health", () => Exec("O1 X1 I352,336,d W60 `cr_hp"));
             yield return Section("crowd (3,3) door", () => Exec("O1 X1 >565,592 W10 O1 X0 U40 W20 U40 W90 `cr_52"));
             yield return Section("crowd (7,2) frogs", () => Exec("O1 X0 >838,352 U30 W90 O1 X1 F3000 W60 `cr_72f"));
-            // (the crowd's people wander about the keyblock and can stand between us and it: push at it again a little later)
-            yield return Section("crowd (7,1) keyblock", () => Exec("O1 X0 >1190,330 >1189,262 G1191,262 U40 W20 U60 W90 G1191,262 U60 W90 G1191,262 U60 >1190,140 W10 `cr_71"));
+            // (the crowd's people wander about the keyblock and can stand between us and it: G..,ku waits for them and pushes again)
+            yield return Section("crowd (7,1) keyblock", () => Exec("O1 X0 >1190,330 >1189,262 G1191,262,ku W20 >1190,140 W10 `cr_71"));
             yield return Section("crowd (8,0) (9,0) platforms", () => Exec("O1 X0 >1270,72 R30 W60 t10 >1432,72 R30 W60 t11 `cr_90b"));
             yield return Section("crowd (9,1) rollers", () => Exec("O1 X0 >1508,155 D8 t12 >1560,330 W30 `cr_92"));
             // The (9,2) button (opens the gate south), then the fall doors: (9,2) to (3,4) to the boss's door on (9,7).

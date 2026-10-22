@@ -430,6 +430,12 @@ namespace AnodyneSharp.Recording
                     case 'G':
                     {
                         var xy = tok.Substring(1).Split(',');
+                        if (xy.Length > 2 && xy[2].Length == 2 && xy[2][0] == 'k')
+                        {
+                            // G<x>,<y>,k<u|d|l|r>: from x,y push that way into the keyblock there until it opens (see OpenKeyBlock)
+                            yield return OpenKeyBlock(float.Parse(xy[0]), float.Parse(xy[1]), xy[2][1] switch { 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, 'l' => KeyFunctions.Left, _ => KeyFunctions.Right });
+                            break;
+                        }
                         yield return WalkTo(float.Parse(xy[0]), float.Parse(xy[1]), yFirst: xy.Length > 2 && xy[2] != "d", diagonal: xy.Length > 2 && xy[2] == "d"); // G<x>,<y>[,y|,d]: y first, or diagonally
                         break;
                     }
@@ -1306,6 +1312,23 @@ namespace AnodyneSharp.Recording
                 {
                     spot = new Vector2(tb.Center.X - 5, off.Y > 0 ? tb.Bottom + 3 : tb.Top - 3 - 12);
                     face = off.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
+                }
+                if (!StandsSafe(new Rectangle((int)spot.X, (int)spot.Y, 10, 12)))
+                {
+                    // That side is wall (we stood beside it, below a wall, for 300 frames): the nearest side we can stand on.
+                    var sides = new (Vector2 at, KeyFunctions f)[]
+                    {
+                        (new Vector2(tb.Right + 3, tb.Center.Y - 6), KeyFunctions.Left),
+                        (new Vector2(tb.Left - 13, tb.Center.Y - 6), KeyFunctions.Right),
+                        (new Vector2(tb.Center.X - 5, tb.Bottom + 3), KeyFunctions.Up),
+                        (new Vector2(tb.Center.X - 5, tb.Top - 15), KeyFunctions.Down),
+                    };
+                    var ok = sides.Where(sd => StandsSafe(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12))).OrderBy(sd => (sd.at - me).Length()).ToList();
+                    if (ok.Count > 0)
+                    {
+                        spot = ok[0].at;
+                        face = ok[0].f;
+                    }
                 }
                 if ((spot - me).Length() > 2f)
                 {
@@ -4856,6 +4879,69 @@ namespace AnodyneSharp.Recording
             return dir is KeyFunctions.Left or KeyFunctions.Right ? at.X : at.Y;
         }
 
+        /// <summary>
+        /// Walks to `x,y` and pushes `dir` into the keyblock beside it until it opens: a timed push misses whenever something is in the
+        /// way (the Crowd's wandering people stand between us and its keyblock), so wait for the way to clear and push again.
+        /// </summary>
+        protected static IEnumerable<object> OpenKeyBlock(float x, float y, KeyFunctions dir)
+        {
+            var at = new Vector2(x, y);
+            var gate = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
+                .OrderBy(e => (e.Center - (at + DirVector(dir) * 16)).LengthSquared()).FirstOrDefault();
+            if (gate == null)
+            {
+                throw new InvalidOperationException($"bot: no keyblock by {x},{y} on {Map}");
+            }
+            for (int attempt = 0; attempt < 12 && gate.Solid; attempt++)
+            {
+                BotRunner.Status = $"keyblock: clear of people (try {attempt + 1})";
+                for (int w = 0; w < 300 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Person
+                        && (e.Center - gate.Center).Length() < 28); w++)
+                {
+                    BotRunner.NotStuck();
+                    yield return K();
+                }
+                yield return WalkTo(x, y);
+                BotRunner.Status = $"keyblock: push (try {attempt + 1})";
+                for (int f = 0; f < 50 && gate.Solid; f++)
+                {
+                    yield return K(dir);
+                }
+                yield return Wait(20);
+                if (!string.IsNullOrEmpty(GlobalState.Dialogue))
+                {
+                    yield return ReadDialogue(); // ("you need a key": the push did reach it)
+                }
+            }
+            if (gate.Solid)
+            {
+                throw new InvalidOperationException($"bot: keyblock at {gate.Position} would not open on {Map} ({GlobalState.inventory.GetCurrentMapKeys()} keys)");
+            }
+        }
+
+        /// <summary>Tiles by the enemies other than Slashers (TeleGuys, Gas Guys...) that a run from a Slasher's cut keeps off.</summary>
+        static HashSet<Point> OthersBySlashers()
+        {
+            var set = new HashSet<Point>();
+            if (Environment.GetEnvironmentVariable("ANODYNE_NO_SLAVOID") != null)
+            {
+                return set;
+            }
+            foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name is "TeleGuy" or "GasGuy"))
+            {
+                var r = e.Hitbox;
+                r.Inflate(6, 6);
+                for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
+                {
+                    for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
+                    {
+                        set.Add(new Point(tx, ty));
+                    }
+                }
+            }
+            return set;
+        }
+
         static readonly HashSet<Entity> _unreachableHearts = new();
         static Entity _heartChased;
         static float _heartBest;
@@ -7933,6 +8019,13 @@ namespace AnodyneSharp.Recording
                 // beyond its body) when we are further than 36px, a strip across its front otherwise. The cut is only there for 0.25s, fixed where it
                 // was made. Neither strip reaches a spot diagonal to it (30px off on both axes), so during the wind-up step out to such a spot,
                 // and hit it while it floats or after its cut has gone.
+                // A Gas Guy on top of us hurts every time our blink runs out (it homes in, and nothing else here keeps off it): it comes
+                // first, whatever we were after (a TeleGuy far off kept us standing there while it took 7 hearts).
+                if (target.GetType().Name != "GasGuy" && Map == "APARTMENT"
+                    && enemies.FirstOrDefault(e => e.GetType().Name == "GasGuy" && (e.Center - Player.Center).Length() < 30) is Entity gasNear)
+                {
+                    target = gasNear;
+                }
                 SwingTarget = target;
                 SwingTargetFrame = BotRunner.Frame;
                 if (target is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
@@ -8177,13 +8270,20 @@ namespace AnodyneSharp.Recording
                                     }
                                 }
                             }
+                            // (round the others in the room: an idle TeleGuy hurts to touch, and a Gas Guy homes in)
+                            var others = OthersBySlashers();
+                            cands.ExceptWith(others);
+                            BotNav.Avoid = others;
                             var found = BotNav.FindPath(hereT, t => cands.Contains(t), hereT);
+                            BotNav.Avoid = null;
                             if (found != null && found.Count > 0)
                             {
                                 slGoal = found[found.Count - 1]; // chosen once per wind-up, so the dash does not dither as the Slasher drifts
                             }
                         }
+                        BotNav.Avoid = OthersBySlashers();
                         var goalPath = slGoal.HasValue && slGoal.Value != hereT ? BotNav.FindPath(hereT, t => t == slGoal.Value, slGoal.Value) : null;
+                        BotNav.Avoid = null;
                         if (goalPath != null && goalPath.Count > 0)
                         {
                             var nc2 = BotNav.CentreOf(goalPath[0]) + new Vector2(5, 6);
