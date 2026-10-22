@@ -1252,6 +1252,10 @@ namespace AnodyneSharp.Recording
             bool swung = false;
             for (int i = 0; i < 2400 && tg.exists && tg.CurAnimName != "dying"; i++)
             {
+                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && (e.Center - Player.Center).Length() < 44))
+                {
+                    yield break; // a Gas Guy on us comes first (its gas hurts every 0.8s): back to the fight, which goes for it
+                }
                 var pb = Player.Hitbox;
                 var tb = tg.Hitbox;
                 var me = new Vector2(pb.X, pb.Y);
@@ -2127,6 +2131,18 @@ namespace AnodyneSharp.Recording
                             var next = new Point((int)Math.Floor(o.X / 10f), (int)Math.Floor(o.Y / 10f));
                             System.Console.Error.WriteLine($"  silverfish on button: stuck at {ft}; out to screen {next} and back to start it over");
                             resets++;
+                            var oc = BotNav.CentreOf(o) + new Vector2(5, 6);
+                            if (BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Silverfish && (e.Center - oc).Length() < 28) is Entity inDoor)
+                            {
+                                // It has run into the doorway itself (and nothing we do makes it leave an edge it backs into): jump over it.
+                                var jd = next.X < grid.X ? KeyFunctions.Left : next.X > grid.X ? KeyFunctions.Right : next.Y < grid.Y ? KeyFunctions.Up : KeyFunctions.Down;
+                                var jv = DirVector(jd);
+                                var standAt = inDoor.Center - jv * 18f - new Vector2(5, 6);
+                                BotRunner.Status = "silverfish on button: jump the fish in the doorway";
+                                yield return GoTo(standAt.X, standAt.Y);
+                                yield return WalkTo(standAt.X, standAt.Y, tol: 1.5f, timeout: 90);
+                                yield return JumpToward(jd, float.NaN);
+                            }
                             yield return GoScreenTo(next.X, next.Y);
                             yield return Wait(10);
                             yield return GoScreenTo(grid.X, grid.Y);
@@ -4739,6 +4755,49 @@ namespace AnodyneSharp.Recording
         private static string _ignoredMap = "";
 
         static readonly Dictionary<Entity, (Vector2 pos, long moved)> _annoyerSeen = new();
+        internal static Entity SwingTarget;
+        internal static long SwingTargetFrame = -1;
+        static readonly Dictionary<Entity, long> _teleGuyPoof = new();
+
+        /// <summary>
+        /// A TeleGuy stands still until the broom hits it; then it poofs, comes back beside us and charges for 1.5s (~2.5s in all).
+        /// </summary>
+        internal static bool TeleGuyActive(Entity tg)
+        {
+            if (tg.CurAnimName is "poof" or "unpoof")
+            {
+                _teleGuyPoof[tg] = BotRunner.Frame;
+            }
+            return _teleGuyPoof.TryGetValue(tg, out long f) && BotRunner.Frame - f < 160;
+        }
+
+        /// <summary>
+        /// A swing in a fight that would broom an idle TeleGuy that is not the one we are after is held back: it would wake it, and it
+        /// charges at us while something else is about.
+        /// </summary>
+        internal static KeyFunctions[] SwingGuard(KeyFunctions[] held)
+        {
+            if (Player == null || !held.Contains(KeyFunctions.Accept) || SwingTargetFrame < BotRunner.Frame - 1 || SwingTarget is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
+            {
+                return held;
+            }
+            var pb = Player.Hitbox;
+            var reach = Player.facing switch
+            {
+                Facing.UP => new Rectangle(pb.X - 8, pb.Y - 26, pb.Width + 16, 26),
+                Facing.DOWN => new Rectangle(pb.X - 8, pb.Bottom, pb.Width + 16, 26),
+                Facing.LEFT => new Rectangle(pb.X - 26, pb.Y - 8, 26, pb.Height + 16),
+                _ => new Rectangle(pb.Right, pb.Y - 8, 26, pb.Height + 16),
+            };
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy && !TeleGuyActive(e) && e.Hitbox.Intersects(reach))
+                {
+                    return held.Where(k => k != KeyFunctions.Accept).ToArray();
+                }
+            }
+            return held;
+        }
         static readonly HashSet<Entity> _unreachableHearts = new();
         static Entity _heartChased;
         static float _heartBest;
@@ -7763,6 +7822,8 @@ namespace AnodyneSharp.Recording
                 // beyond its body) when we are further than 36px, a strip across its front otherwise. The cut is only there for 0.25s, fixed where it
                 // was made. Neither strip reaches a spot diagonal to it (30px off on both axes), so during the wind-up step out to such a spot,
                 // and hit it while it floats or after its cut has gone.
+                SwingTarget = target;
+                SwingTargetFrame = BotRunner.Frame;
                 if (target is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
                 {
                     yield return KillTeleGuy(target);
@@ -7791,6 +7852,17 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
+                if (target.GetType().Name != "Slasher" && Map == "APARTMENT" && enemies.Any(e => e.GetType().Name == "Slasher"))
+                {
+                    // Whatever we are after, a Slasher near us about to cut comes first: the dodge below plans round it.
+                    SlasherThreats(); // (keeps each one's phase up to date)
+                    var pcNow = Player.Center;
+                    if (enemies.Where(e => e.GetType().Name == "Slasher" && (e.Center - pcNow).Length() < 72)
+                            .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.SubEntities().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
+                    {
+                        target = soon;
+                    }
+                }
                 if (target.GetType().Name == "Slasher")
                 {
                     // All of them at once (one floats while another winds up): plan round every coming cut whenever one is near.
@@ -7808,26 +7880,55 @@ namespace AnodyneSharp.Recording
                         var vcOff = Player.VisualCenter - Player.Position;
                         var hbOff = new Vector2(Player.Hitbox.X, Player.Hitbox.Y) - Player.Position;
                         var winding = slList.Select(e => (e, left: SlasherCutIn(e))).Where(w => w.left >= 0 && w.left <= 64).ToList();
-                        (bool clear, Vector2 end, int hitAt) Sim(KeyFunctions[] runDir, int walk = 66)
+                        Vector2 Vel(KeyFunctions[] keys)
                         {
-                            var v = Vector2.Zero;
-                            foreach (var kf in runDir)
+                            var v0 = Vector2.Zero;
+                            foreach (var kf in keys ?? new KeyFunctions[0])
                             {
-                                v += DirVector(kf);
+                                v0 += DirVector(kf);
                             }
-                            v = v == Vector2.Zero ? v : Vector2.Normalize(v) * WalkPxPerFrame;
+                            return v0 == Vector2.Zero ? v0 : Vector2.Normalize(v0) * WalkPxPerFrame;
+                        }
+                        // (then: a second leg after the first walk, round a corner, instead of standing)
+                        (bool clear, Vector2 end, int hitAt) Sim(KeyFunctions[] runDir, int walk = 66, KeyFunctions[] then = null)
+                        {
+                            var v = Vel(runDir);
+                            var v2 = Vel(then);
                             var q = Player.Position;
                             var sp = winding.Select(w => w.e.Position).ToArray();
+                            // (what hurts to walk into on the way: a Gas Guy, drifting after us at 12px/s on each axis; its cloud only swaps the
+                            // d-pad. A TeleGuy standing about is left out: counting it boxes us in with the cuts more often than it saves a touch)
+                            var bodies = new List<Rectangle>();
+                            var gasBoxes = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "GasGuy").Select(e => e.Hitbox).ToList();
+                            var gasOff = gasBoxes.Select(_ => Vector2.Zero).ToArray();
                             var cut = new Rectangle?[winding.Count];
                             for (int k = 1; k <= 66; k++)
                             {
-                                var nq = q + (k <= walk ? v : Vector2.Zero);
+                                var nq = q + (k <= walk ? v : v2);
                                 if (CornersWalkable(new Rectangle((int)(nq.X + hbOff.X), (int)(nq.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height))
                                     && BotNav.TileOf(nq + hbOff).X / 10 == Grid.X && BotNav.TileOf(nq + hbOff).Y / 10 == Grid.Y)
                                 {
                                     q = nq;
                                 }
                                 var me2 = new Rectangle((int)(q.X + hbOff.X), (int)(q.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height);
+                                if (k <= 30 && bodies.Any(b => b.Intersects(me2)))
+                                {
+                                    return (false, q, k);
+                                }
+                                for (int g = 0; g < gasBoxes.Count && k <= 40; g++)
+                                {
+                                    var gc = new Vector2(gasBoxes[g].Center.X, gasBoxes[g].Center.Y) + gasOff[g];
+                                    var mc = new Vector2(me2.Center.X, me2.Center.Y);
+                                    AnodyneSharp.Utilities.MathUtilities.MoveTo(ref gasOff[g].X, gasOff[g].X + (mc.X - gc.X), 12);
+                                    AnodyneSharp.Utilities.MathUtilities.MoveTo(ref gasOff[g].Y, gasOff[g].Y + (mc.Y - gc.Y), 12);
+                                    var gb = gasBoxes[g];
+                                    gb.Offset((int)gasOff[g].X, (int)gasOff[g].Y);
+                                    gb.Inflate(1, 1);
+                                    if (gb.Intersects(me2))
+                                    {
+                                        return (false, q, k);
+                                    }
+                                }
                                 for (int w = 0; w < winding.Count; w++)
                                 {
                                     if (k < winding[w].left)
@@ -7890,6 +7991,34 @@ namespace AnodyneSharp.Recording
                                         }
                                     }
                                 }
+                                if (bestScore < 500)
+                                {
+                                    // no straight run is clear: try one turn on the way (along a wall, round a corner)
+                                    foreach (var runDir in StActions.Skip(1))
+                                    {
+                                        foreach (int walk in new[] { 8, 16, 26 })
+                                        {
+                                            foreach (var then in StActions.Skip(1))
+                                            {
+                                                if (then.SequenceEqual(runDir))
+                                                {
+                                                    continue;
+                                                }
+                                                var (clear, q, _) = Sim(runDir, walk, then);
+                                                if (!clear)
+                                                {
+                                                    continue;
+                                                }
+                                                float score = 900f - walk - 0.5f * (target.Center - (q + vcOff)).Length() + (_slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f);
+                                                if (score > bestScore)
+                                                {
+                                                    bestScore = score;
+                                                    best = runDir;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 _slasherRun = best;
                                 BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
                                 yield return K(best);
@@ -7931,7 +8060,7 @@ namespace AnodyneSharp.Recording
                                 foreach (var (lx, ly) in new[] { (48, 24), (24, 48), (64, 0), (0, 64) })
                                 {
                                     var ct = BotNav.TileOf(new Vector2(sc.X + ax * lx - 5, sc.Y + ay * ly - 6));
-                                    if (BotNav.Walkable(ct))
+                                    if (BotNav.Walkable(ct) && ct.X / 10 == Grid.X && ct.Y / 10 == Grid.Y) // (not off the screen: that ends the fight with it still alive)
                                     {
                                         cands.Add(ct);
                                     }
@@ -8725,7 +8854,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.
-                bool blockedClose = DodgeEnabled && noProgress > 40 && target.GetType().Name != "Annoyer";
+                bool blockedClose = DodgeEnabled && noProgress > 40 && target.GetType().Name is not ("Annoyer" or "GasGuy"); // (a Gas Guy comes to us: walking at it is walking into it)
                 if (distSq > 30 * 30 || blockedClose)
                 {
                     // Far away: follow the tile path (walls between us), re-planned every few frames.
@@ -8798,7 +8927,7 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if ((target.GetType().Name == "Slime" || target.GetType().Name == "GasGuy") && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
+                if ((target.GetType().Name == "Slime" || target.GetType().Name == "GasGuy") && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40 && target.GetType().Name != "GasGuy") && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
                 {
                     if (i % 5 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {

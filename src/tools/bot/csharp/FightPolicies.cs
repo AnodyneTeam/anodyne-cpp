@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+﻿using Microsoft.Xna.Framework;
 using System;
 
 namespace AnodyneSharp.Recording
@@ -379,7 +379,7 @@ namespace AnodyneSharp.Recording
             }
             bool horiz = Math.Abs(dx) >= Math.Abs(dy);
             float along = horiz ? dx : dy, across = horiz ? dy : dx;
-            float gap = Math.Abs(along) - (horiz ? 13 : 14);
+            float gap = horiz ? gx : gy; // (edge to edge: a Gas Guy is 24px tall, not a Slime's 16)
             var face = horiz ? (dx < 0 ? PKey.Left : PKey.Right) : (dy < 0 ? PKey.Up : PKey.Down);
             var away = horiz ? (dx < 0 ? PKey.Right : PKey.Left) : (dy < 0 ? PKey.Down : PKey.Up);
             var side = horiz ? (dy < 0 ? PKey.Up : PKey.Down) : (dx < 0 ? PKey.Left : PKey.Right);

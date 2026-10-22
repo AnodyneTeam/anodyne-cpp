@@ -167,8 +167,9 @@ namespace AnodyneSharp.Recording
             // their pillars let them, so flip its crystal twice (the second time with the top one right of col 13, so the rising pillar
             // shuts it in on the gap's side); stairs to (6,0); TeleGuys, rats; in (5,0) step back into the doorway first so the Gas Guys
             // come in a line; stairs to (0,0) and its chest.
+            // TODO: (5,0)'s Dog and Gas Guys can still cost 2 hearts (budgeted).
             yield return Section("apartment gas guy card", () => Exec(
-                "X1 W10 >371,140 >340,82 L40 W30 >300,82 W10 >291,34 U1 A W30 F1800 W30 >291,34 U1 {Shieldy,240,90,252,105 A W30 F W60 " +
+                "g2 X1 W10 >371,140 >340,82 L40 W30 >300,82 W10 >291,34 U1 A W30 F1800 W30 >291,34 U1 {Shieldy,240,90,252,105 A W30 F W60 " +
                 ">195,40 U30 W120 H6,1 W30 H5,1 W30 >868,150 W200 F W30 >819,40 U30 W120 I128,64,d W60 T W30 `ap_gascard"));
             // East wing: from (0,0) back to the entrance and up the (3,1) crystal to the (3,0) stairs, which come out in (6,0); (7,0)'s rat
             // walks onto its button by itself; hit (8,0)'s crystal switch on the way (its pillar would block the way back); in (7,1) `[`
