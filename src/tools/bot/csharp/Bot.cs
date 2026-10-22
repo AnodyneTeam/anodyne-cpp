@@ -944,6 +944,26 @@ namespace AnodyneSharp.Recording
         /// box stands clear of every pit's core and from which a jump with the keys towards b comes down clear too (for a carry a few px short
         /// or long), creeps there, stops, and jumps holding those keys until it lands.
         /// </summary>
+        /// <summary>Does this screen's stretch of the route (from step pi) pass over or beside a fire pillar? Then it is walked to their clock.</summary>
+        private static bool RouteRunsByPillars(List<Point> path, int pi)
+        {
+            var pillars = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Circus.FirePillar).Select(e => e.Hitbox).ToList();
+            if (pillars.Count == 0)
+            {
+                return false;
+            }
+            var scr = Grid;
+            for (int k = Math.Max(0, pi); k < path.Count && path[k].X / 10 == scr.X && path[k].Y / 10 == scr.Y; k++)
+            {
+                var tb = new Rectangle(path[k].X * 16 - 4, path[k].Y * 16 - 4, 24, 24);
+                if (pillars.Any(r => r.Intersects(tb)))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         protected static IEnumerable<object> Leap(Point a, Point b)
         {
             var spring = BotNav.SpringBetween(a, b);
@@ -1569,7 +1589,7 @@ namespace AnodyneSharp.Recording
                         goto replan;
                     }
                     if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
-                        && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller))
+                        && (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller) || RouteRunsByPillars(path, pi)))
                     {
                         // Spike rollers sweeping the room (bars that span it and turn only at walls): time this screen's stretch of the
                         // route against them, jumping each bar as it passes, then plan on from wherever that leaves us.

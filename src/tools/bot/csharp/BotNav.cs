@@ -432,6 +432,25 @@ namespace AnodyneSharp.Recording
 
         public static List<Point> RaftPathCore0(Point from, bool wet, Point goal, bool jump)
         {
+            var p = RaftPathCore1(from, wet, goal, jump);
+            if (p == null && !_crossCracked)
+            {
+                // Cracked tiles only give way after a second of standing on them: when they are the only way across, run over them.
+                _crossCracked = true;
+                try
+                {
+                    p = RaftPathCore1(from, wet, goal, jump);
+                }
+                finally
+                {
+                    _crossCracked = false;
+                }
+            }
+            return p;
+        }
+
+        private static List<Point> RaftPathCore1(Point from, bool wet, Point goal, bool jump)
+        {
             // Round the dash traps when there is any other way (walking past one in a corridor is a hit more often than not).
             var traps = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
@@ -1817,6 +1836,17 @@ namespace AnodyneSharp.Recording
             // (unless `strict`).
             _respectClosedGates = true;
             var p = FindPathCore(a, isGoal, forced);
+            if (p != null && p.Count > 20 && !_crossCracked)
+            {
+                // The way round cracked floor is long: running straight over it (it holds for a second under us) may be far shorter.
+                _crossCracked = true;
+                var pc = FindPathCore(a, isGoal, forced);
+                _crossCracked = false;
+                if (pc != null && pc.Count + 15 < p.Count)
+                {
+                    p = pc;
+                }
+            }
             if (p == null && !strict)
             {
                 _respectClosedGates = false;
