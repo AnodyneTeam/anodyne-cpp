@@ -38,8 +38,12 @@ namespace AnodyneSharp.Recording
         public static bool Reached; // did the last Plan reach the goal (true) or only find a plan that stays alive (false)?
 
         /// <returns>The index into Actions of the first block of a surviving plan, or -1 if none survives the horizon.</returns>
+        /// <param name="padAt">Dash pads: the way the pad under a box's centre sends a walker (0,0 for none). Walking on over one the way it
+        /// points, that axis speeds up to 1.3x (1.77x from a second pad) for as long as the key stays held.</param>
+        /// <param name="dash0">The dash we are already on (x and y speed factors, signed; 0 = none).</param>
         public static int Plan(Rectangle start, Vector2 goal, IReadOnlyList<StThreat> threats, Func<Rectangle, bool> walkable, int horizon,
-            float tol = 3f, int block = 3, int maxNodes = 2500, float weight = 2.5f, bool survive = false, Func<Rectangle, bool> airOk = null, int airFrames = 28)
+            float tol = 3f, int block = 3, int maxNodes = 2500, float weight = 2.5f, bool survive = false, Func<Rectangle, bool> airOk = null, int airFrames = 28,
+            Func<Rectangle, (int dx, int dy)> padAt = null, Vector2 dash0 = default)
         {
             // Starting on something we cannot walk onto (a dust pile shoved under us, the edge of a pool): every step "hits" it, and we
             // would stand still in whatever comes. The first few frames may cross what we already stand on (the game lets us walk off it).
@@ -48,6 +52,10 @@ namespace AnodyneSharp.Recording
             var ys = new List<float> { start.Y };
             var ts = new List<int> { 0 };
             var first = new List<int> { -1 };
+            var dxs = new List<float> { dash0.X };
+            var dys = new List<float> { dash0.Y };
+            // (the game's Player.Dash: a pad sets the axis to 1.3x if not dashing, to 1.77x if already, and cancels a dash the other way)
+            static float PadDash(float d, int dir) => d == 0 ? dir * 1.3f : d * dir < 0 ? 0f : Math.Abs(d) < 1.5f ? dir * 1.77f : d;
             var open = new PriorityQueue<int, float>();
             var seen = new HashSet<(int, int, int)>();
             float Hh(float x, float y) => survive ? 1000f : (goal - new Vector2(x, y)).Length() / Walk; // survive: no goal, any plan that lasts the horizon will do
@@ -85,12 +93,39 @@ namespace AnodyneSharp.Recording
                     var (ax, ay) = Actions[a];
                     float sp = (ax != 0 && ay != 0) ? Walk * 0.7f : Walk;
                     float x = nx, y = ny;
+                    float ddx = dxs[idx], ddy = dys[idx];
+                    // (a dash lasts only while its key is held)
+                    if (ddx * ax <= 0)
+                    {
+                        ddx = 0;
+                    }
+                    if (ddy * ay <= 0)
+                    {
+                        ddy = 0;
+                    }
                     bool ok = true;
                     for (int f = 1; f <= block && ok; f++)
                     {
-                        x += ax * sp;
-                        y += ay * sp;
+                        var before = padAt == null ? (0, 0) : padAt(new Rectangle((int)x, (int)y, start.Width, start.Height));
+                        x += ddx != 0 ? ddx * Walk : ax * sp;
+                        y += ddy != 0 ? ddy * Walk : ay * sp;
                         var mine = new Rectangle((int)x, (int)y, start.Width, start.Height);
+                        if (padAt != null && (ax != 0 || ay != 0))
+                        {
+                            var (pdx, pdy) = padAt(mine);
+                            if ((pdx != 0 || pdy != 0) && (pdx, pdy) != before)
+                            {
+                                // (not holding its way, its dash is let go at once, and it ends one we had the other way)
+                                if (pdx != 0)
+                                {
+                                    ddx = ax == pdx ? PadDash(ddx, pdx) : 0;
+                                }
+                                else
+                                {
+                                    ddy = ay == pdy ? PadDash(ddy, pdy) : 0;
+                                }
+                            }
+                        }
                         if ((ax != 0 || ay != 0) && !walkable(mine) && !(stuckIn && nt + f <= 8))
                         {
                             ok = false;
@@ -112,12 +147,14 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    if (!ok || !seen.Add(((int)(x / 2), (int)(y / 2), (nt + block) / block)))
+                    if (!ok || !seen.Add(((int)(x / 2) * 8 + (ddx == 0 ? 0 : 1) * 2 + (ddy == 0 ? 0 : 1), (int)(y / 2), (nt + block) / block)))
                     {
                         continue;
                     }
                     xs.Add(x);
                     ys.Add(y);
+                    dxs.Add(ddx);
+                    dys.Add(ddy);
                     ts.Add(nt + block);
                     first.Add(first[idx] < 0 ? a : first[idx]);
                     open.Enqueue(xs.Count - 1, nt + block + weight * Hh(x, y));
@@ -164,12 +201,14 @@ namespace AnodyneSharp.Recording
                                 }
                             }
                         }
-                        if (!ok || !seen.Add(((int)(x / 2), (int)(y / 2), (nt + airFrames) / block)))
+                        if (!ok || !seen.Add(((int)(x / 2) * 8, (int)(y / 2), (nt + airFrames) / block)))
                         {
                             continue;
                         }
                         xs.Add(x);
                         ys.Add(y);
+                        dxs.Add(0f);
+                        dys.Add(0f);
                         ts.Add(nt + airFrames);
                         first.Add(first[idx] < 0 ? Actions.Length + j : first[idx]);
                         open.Enqueue(xs.Count - 1, nt + airFrames + 6 + weight * Hh(x, y)); // (a little dearer than walking: a jump is a commitment)
@@ -206,7 +245,7 @@ namespace AnodyneSharp.Recording
                     bare.Add(new StThreat { At = th.At, Margin = 0, Stationary = th.Stationary, HurtsInAir = th.HurtsInAir });
                 }
                 int calls = CallsThisFrame;
-                int a = Plan(start, goal, bare, walkable, horizon, tol, block, maxNodes, weight, survive, airOk, airFrames);
+                int a = Plan(start, goal, bare, walkable, horizon, tol, block, maxNodes, weight, survive, airOk, airFrames, padAt, dash0);
                 CallsThisFrame = calls + 1;
                 return a;
             }
