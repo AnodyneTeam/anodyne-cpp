@@ -175,7 +175,10 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Slasher: 3 hits, 0.5s apart; strike for the first 70 frames of its 1.4s float, then get out of line of the cut.
   While Slashers wind up, the fight simulates each one's drift towards us and its exact cut box (long cut when we are 36px or
   more from its centre, otherwise wide) for 8 directions and a few walk lengths, and runs the way that stays clear, or else the one
-  hit latest. Two hits a room are still common, so the Apartments' water and south key sections are budgeted (`g3`, `g2`).
+  hit latest. The simulated Slashers collide with walls like the real ones (`SlasherDrift`: a Slasher a pixel off a corridor's
+  row cannot follow us into it), runs score extra for open floor round where they end (dead-end corridors were where the
+  cuts kept landing), and a step on the way in is only taken if it does not walk into a coming cut. The Apartments' (7,3)
+  pair went from 6+ hits to none; the water and south key sections keep their budgets (`g3`, `g2`) for RNG.
 - Spikes: any walk about to step from the floor onto ground spikes (a fight's chase, a dodge) jumps them instead when the far side
   ~27px on is clear floor (`SpikeGuard`). A planned jump over spikes or a pit waits until no threat (a Shieldy patrolling between
   spike rows, a bullet) will be where it lands.
@@ -191,7 +194,12 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Hotel Super Dog: five dashes (66-102px/s) each re-aimed at us; `DogAttackPlan` reads its attack clock and `DogSidestep`
   simulates every step (half speed when wading) to stand where the dash stops short.
 - Gas Guy: homes through walls at 12px/s; `GasGuyKeys` predicts its path, swings as it enters the broom box, and the runner mirrors
-  the keys while its gas reverses them.
+  the keys while its gas reverses them. A hit throws it far back: the bot walks after it over dry floor (not waiting seconds for
+  it to drift back, which ran fights out of time), and standing still for it on purpose does not count as being wedged.
+- `FightEdgeGuard`: while a fight runs on its screen, no key may carry us over the screen's edge (a gated room only counts kills
+  made in it; a dodge out of the doorway reset it).
+- Mid-air steering only checks where a jump lands, read off the jump's own parabola clock (`AirFramesLeft`): crossing a dash trap's
+  line in the air is the point of the jump, and counting the crossing as a hit had the bot hopping on the spot into the trap.
 - Dustmaids wake when any dust is held and chase forever over water: outrun them on the raft (`RaftPath` avoids their tiles,
   `NearestLaunch` picks the closest bank), never fight them. `ContactEscape` steps out of any enemy body after 4 frames of touch.
 - Bullet Slimes pinned under a Burst Plant's fire: the soft fight clears the reachable plant first, then presses the Slime,
