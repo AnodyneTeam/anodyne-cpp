@@ -132,7 +132,11 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - Hazard prediction in the walker: rats are replayed with their turns (walls, dust, special floors) and only their inner 8x8 bites;
   an idle on-sight dash trap's danger grows out along its lines at 80px/s from now (not the whole line forever), routes pay extra to
   cross a trap's line close to it, and a jump over a trap's line waits until it will land beyond it. Rats and Gas Guys hurt a
-  player in the air, so they never trigger a jump-dodge.
+  player in the air, so they never trigger a jump-dodge. Jumps are planned with the real air speed (0.83x walking).
+- Rats on screens without buttons are ambushed (`KillRat`: replay its loop, wait a little ahead of it facing back, swing as it
+  walks up); TeleGuys are hit, then we turn our back so it reappears on the side it was hit from and charges away, and we strike
+  its charge (`KillTeleGuy`); Gas Guys are predicted homing in at 12px/s and fought first when close. The fight never goes for a
+  dropped heart with an enemy within 36px of us.
 - Debug output: `ANODYNE_BOT_DEBUG=1` (paths, fights, hits), `ANODYNE_FIGHT_TRACE=1` (per-frame policy traces), `SEER_WAIT` /
   `SEER_TRACE_A/B` (Seer fight timing and frame traces).
 

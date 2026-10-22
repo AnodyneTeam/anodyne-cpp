@@ -1045,6 +1045,23 @@ namespace AnodyneSharp.Recording
                     result.Add(PredictRat(d));
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Apartment.GasGuy)
+                {
+                    // It sets its position straight towards ours at 12px/s on each axis (velocity stays 0, so it would read as standing):
+                    // it homes in on where we are now.
+                    var gt = new Threat { Name = "GasGuy", Source = d, Margin = 2, HurtsInAir = true };
+                    var pp = Player.Position;
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        float step = 12f * f / 60f;
+                        float gx = d.Position.X + Math.Clamp(pp.X - d.Position.X, -step, step), gy = d.Position.Y + Math.Clamp(pp.Y - d.Position.Y, -step, step);
+                        var r = d.Hitbox;
+                        r.Offset((int)(gx - d.Position.X), (int)(gy - d.Position.Y));
+                        gt.At[f] = r;
+                    }
+                    result.Add(gt);
+                    continue;
+                }
                 if (name is "Shieldy" or "BounceDashTrap")
                 {
                     result.Add(PredictPatroller(d)); // both walk a line and turn round at the first wall (the trap at 80px/s)
@@ -1056,7 +1073,7 @@ namespace AnodyneSharp.Recording
                     continue; // a bullet that has hit something is poofing out: harmless (and standing still, it would look like a wall)
                 }
                 bool still = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
-                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still, HurtsInAir = name == "GasGuy" };
+                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still };
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = d.Hitbox;
@@ -1124,6 +1141,200 @@ namespace AnodyneSharp.Recording
                 }
             }
             return res;
+        }
+
+        /// <summary>
+        /// A TeleGuy hurts by touch while it stands. Hit it and it poofs (0.5s), reappears 16px from us on the side opposite our facing, waits
+        /// 0.5s (harmless, and deaf to the broom), then for 1.5s charges at 60px/s back to where it was hit (where a hit kills it half the time,
+        /// else it poofs again). So right after the hit turn our back on it: it comes back on the side it was hit from, charges away from us
+        /// (to where it was), and we turn round and hit it as its charge starts. No sidestep needed, which a one-tile corridor would not allow.
+        /// </summary>
+        protected static IEnumerable<object> KillTeleGuy(Entity tg)
+        {
+            long lastPoof = -1000;
+            KeyFunctions hitFace = KeyFunctions.Down;
+            bool swung = false;
+            for (int i = 0; i < 2400 && tg.exists && tg.CurAnimName != "dying"; i++)
+            {
+                var pb = Player.Hitbox;
+                var tb = tg.Hitbox;
+                var me = new Vector2(pb.X, pb.Y);
+                string anim = tg.CurAnimName ?? "";
+                var back = hitFace switch { KeyFunctions.Up => KeyFunctions.Down, KeyFunctions.Down => KeyFunctions.Up, KeyFunctions.Left => KeyFunctions.Right, _ => KeyFunctions.Left };
+                if (anim == "poof")
+                {
+                    lastPoof = BotRunner.Frame;
+                    swung = false;
+                    BotRunner.Status = "teleguy: poofed, back turned";
+                    yield return Player.facing == FacingOf(back) ? K() : K(back);
+                    continue;
+                }
+                long since = BotRunner.Frame - lastPoof;
+                if (since < 140)
+                {
+                    // back beside us on the side we hit it from: face it again, and strike once its charge (after 0.5s) has begun
+                    if (Player.facing != FacingOf(hitFace))
+                    {
+                        yield return K(hitFace);
+                        continue;
+                    }
+                    if (since >= 36 && !swung)
+                    {
+                        BotRunner.Status = "teleguy: strike its charge";
+                        swung = true;
+                        yield return Tap(KeyFunctions.Accept);
+                        yield return Wait(10);
+                        continue;
+                    }
+                    BotRunner.Status = "teleguy: wait for its charge";
+                    yield return K();
+                    continue;
+                }
+                // Standing: walk up to it (not into it), face it and swing.
+                var tc = new Vector2(tb.Center.X, tb.Center.Y);
+                var pc = new Vector2(pb.Center.X, pb.Center.Y);
+                var off = pc - tc;
+                Vector2 spot;
+                KeyFunctions face;
+                if (Math.Abs(off.X) > Math.Abs(off.Y))
+                {
+                    spot = new Vector2(off.X > 0 ? tb.Right + 3 : tb.Left - 3 - 10, tb.Center.Y - 6);
+                    face = off.X > 0 ? KeyFunctions.Left : KeyFunctions.Right;
+                }
+                else
+                {
+                    spot = new Vector2(tb.Center.X - 5, off.Y > 0 ? tb.Bottom + 3 : tb.Top - 3 - 12);
+                    face = off.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
+                }
+                if ((spot - me).Length() > 2f)
+                {
+                    BotRunner.Status = "teleguy: walk up to it";
+                    if ((spot - me).Length() > 20f)
+                    {
+                        if (BotNav.FindPath(BotNav.TileOf(Pos), BotNav.TileOf(spot)) == null)
+                        {
+                            yield return K(); // (over a hole edge, falling or respawning: no route from here yet)
+                            continue;
+                        }
+                        yield return GoTo(spot.X, spot.Y, maxReplans: 1);
+                        continue;
+                    }
+                    float sx = spot.X - me.X, sy = spot.Y - me.Y;
+                    var ks = new List<KeyFunctions>();
+                    if (Math.Abs(sx) > 1f) { ks.Add(sx < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                    if (Math.Abs(sy) > 1f) { ks.Add(sy < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                    yield return K(ks.ToArray());
+                    continue;
+                }
+                hitFace = face;
+                yield return Hold(1, face);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(4);
+            }
+        }
+
+        private static Facing FacingOf(KeyFunctions k) => k switch { KeyFunctions.Up => Facing.UP, KeyFunctions.Down => Facing.DOWN, KeyFunctions.Left => Facing.LEFT, _ => Facing.RIGHT };
+
+        /// <summary>
+        /// A Rat walks a fixed loop and bites with its middle only: chasing it means meeting its bite. Instead replay its walk, pick a spot a
+        /// little ahead of where it will be once we can get there, stand there facing back along its way and swing as it walks up.
+        /// </summary>
+        protected static IEnumerable<object> KillRat(Entity rat)
+        {
+            int size = rat.Hitbox.Width;
+            for (int attempt = 0; attempt < 3 && rat.exists; attempt++)
+            {
+                var dusts = BotRunner.Entities().Where(x => x.exists && x is AnodyneSharp.Entities.Dust).Select(x => x.Hitbox).ToList();
+                var path = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity, size, dusts, 420);
+                var here = BotNav.TileOf(Pos);
+                var others = PredictThreats(rat); // the rest of the room (traps, bullets, other rats) must leave the spot alone too
+                (int f, Vector2 tl, KeyFunctions face)? pick = null;
+                for (int f = 40; f <= 380 && pick == null; f += 4)
+                {
+                    var v = path[f].v;
+                    if (v == Vector2.Zero || path[f + 30].v != v)
+                    {
+                        continue; // it turns before it reaches us
+                    }
+                    var dir = Vector2.Normalize(v);
+                    var rc = path[f].pos + new Vector2(size / 2f, size / 2f);
+                    var tl = rc + dir * 24 - new Vector2(5, 6);
+                    var box = new Rectangle((int)tl.X, (int)tl.Y, 10, 12);
+                    if (!StandsSafe(box))
+                    {
+                        continue;
+                    }
+                    bool crossed = false;
+                    for (int g = 0; g < f && !crossed; g++)
+                    {
+                        var bite = RatBite(path[g].pos);
+                        bite.Inflate(3, 3);
+                        crossed = bite.Intersects(box);
+                    }
+                    if (crossed)
+                    {
+                        continue; // it walks over the spot on the way there
+                    }
+                    bool unsafeSpot = false;
+                    var wide = box;
+                    wide.Inflate(2, 2);
+                    foreach (var th in others)
+                    {
+                        for (int g = 0; g <= Horizon && !unsafeSpot; g += 3)
+                        {
+                            unsafeSpot = th.At[g] is Rectangle tr && tr.Intersects(wide);
+                        }
+                    }
+                    if (unsafeSpot)
+                    {
+                        continue;
+                    }
+                    var route = BotNav.FindPath(here, t => t == BotNav.TileOf(tl), BotNav.TileOf(tl));
+                    if (route == null || (route.Count + 1) * 16 / WalkPxPerFrame + 20 > f)
+                    {
+                        continue;
+                    }
+                    var face = Math.Abs(dir.X) > Math.Abs(dir.Y) ? (dir.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dir.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                    pick = (f, tl, face);
+                }
+                if (pick == null)
+                {
+                    System.Console.Error.WriteLine($"  rat: no ambush spot within reach of {rat.Hitbox}");
+                    yield break;
+                }
+                var (pf, ptl, pface) = pick.Value;
+                long due = BotRunner.Frame + pf;
+                BotRunner.Status = $"rat: ambush at {ptl.X:0},{ptl.Y:0} facing {pface}";
+                yield return GoTo(ptl.X, ptl.Y);
+                for (int k = 0; k < 90 && (new Vector2(Player.Hitbox.X, Player.Hitbox.Y) - ptl).Length() > 1f; k++)
+                {
+                    // the last pixels with the dodger on (a plain walk here stepped into a rotator's fireball)
+                    var pp = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+                    var want = Math.Abs(ptl.X - pp.X) > 1f ? (ptl.X < pp.X ? KeyFunctions.Left : KeyFunctions.Right) : (ptl.Y < pp.Y ? KeyFunctions.Up : KeyFunctions.Down);
+                    yield return SafeMove(want, dist: (ptl - pp).Length());
+                }
+                yield return Hold(1, pface);
+                for (int i = 0; i < 200 && rat.exists && BotRunner.Frame < due + 60; i++)
+                {
+                    var pb = Player.Hitbox;
+                    var rb = rat.Hitbox;
+                    int gap = pface switch
+                    {
+                        KeyFunctions.Left => pb.Left - rb.Right,
+                        KeyFunctions.Right => rb.Left - pb.Right,
+                        KeyFunctions.Up => pb.Top - rb.Bottom,
+                        _ => rb.Top - pb.Bottom
+                    };
+                    bool inLine = pface is KeyFunctions.Left or KeyFunctions.Right ? Math.Abs(rb.Center.Y - pb.Center.Y) < 10 : Math.Abs(rb.Center.X - pb.Center.X) < 10;
+                    if (inLine && gap >= -2 && gap <= 9)
+                    {
+                        yield return Tap(KeyFunctions.Accept);
+                        yield return Wait(12);
+                        break;
+                    }
+                    yield return K();
+                }
+            }
         }
 
         /// <summary>
@@ -1465,7 +1676,7 @@ namespace AnodyneSharp.Recording
         private static bool LandsInHit(KeyFunctions? dir, List<Threat> threats)
         {
             var pb = Player.Hitbox;
-            var v = dir is KeyFunctions d ? DirVector(d) * WalkPxPerFrame : Vector2.Zero;
+            var v = dir is KeyFunctions d ? DirVector(d) * WalkPxPerFrame * 0.83f : Vector2.Zero; // (in the air we move at 0.83x)
             for (int f = 26; f <= Math.Min(34, Horizon); f++)
             {
                 var p = new Vector2(pb.X, pb.Y) + v * Math.Min(f, 28);
@@ -1730,7 +1941,7 @@ namespace AnodyneSharp.Recording
                 _jumpOnSpot = false;
                 var moving = threats.Where(t => !t.Stationary && !t.HurtsInAir).ToList();
                 var airHurt = threats.Where(t => t.HurtsInAir).ToList();
-                if (moving.Count > 0 && (airHurt.Count == 0 || PlanHitFrame(wanted, 0, wanted, 30, airHurt) == int.MaxValue))
+                if (moving.Count > 0 && (airHurt.Count == 0 || (PlanHitFrame(wanted, 0, wanted, 30, airHurt) == int.MaxValue && PlanHitFrameStanding(30, wanted, 0, airHurt) == int.MaxValue)))
                 {
                     int hitStill = PlanHitFrameStanding(0, KeyFunctions.Right, 0, moving);
                     int hitWalk = PlanHitFrame(wanted, 0, wanted, 24, moving);
@@ -1738,7 +1949,7 @@ namespace AnodyneSharp.Recording
                     // (a jump is ~28 frames: one that comes down into the next bullet of a shooter's lane is no dodge, so look at the landing too;
                     // jumping on the spot may land clear where the jump on the way does not)
                     bool jumpOn = first <= 22, onSpot = false;
-                    if (jumpOn && hitStill == int.MaxValue && hitWalk > 4 && LandsInHit(wanted, moving))
+                    if (jumpOn && hitStill == int.MaxValue && hitWalk > 1 && LandsInHit(wanted, moving))
                     {
                         // Standing is safe and the hit is a few steps off, but a jump from here would come down in it (a dash trap's
                         // whole line, say): walk on and take off later, so the jump carries us over it.
@@ -6195,6 +6406,11 @@ namespace AnodyneSharp.Recording
                 {
                     target = nearAnnoyer; // one hit kills it and it is the one that comes at us: deal with it before a patroller
                 }
+                if (enemies.Where(e => e.GetType().Name == "GasGuy").OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length()).FirstOrDefault() is Entity nearGas &&
+                    (new Vector2(nearGas.Hitbox.Center.X, nearGas.Hitbox.Center.Y) - me).Length() < 40)
+                {
+                    target = nearGas; // it homes in on us through anything: the one about to touch us comes first
+                }
                 if (forced == null && enemies.Any(e => e.GetType().Name == "Slime") && (target.GetType().Name == "Slime" ||
                     enemies.Where(e => e.GetType().Name == "Slime").Any(e => Math.Max(Math.Max(e.Hitbox.Left - Player.Hitbox.Right, Player.Hitbox.Left - e.Hitbox.Right), Math.Max(e.Hitbox.Top - Player.Hitbox.Bottom, Player.Hitbox.Top - e.Hitbox.Bottom)) < 44)))
                 {
@@ -6262,6 +6478,29 @@ namespace AnodyneSharp.Recording
                 // beyond its body) when we are further than 36px, a strip across its front otherwise. The cut is only there for 0.25s, fixed where it
                 // was made. Neither strip reaches a spot diagonal to it (30px off on both axes), so during the wind-up step out to such a spot,
                 // and hit it while it floats or after its cut has gone.
+                if (target is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
+                {
+                    yield return KillTeleGuy(target);
+                    if (target.exists)
+                    {
+                        IgnoredEnemies.Add(target);
+                    }
+                    continue;
+                }
+                if (target is AnodyneSharp.Entities.Enemy.Apartment.Rat)
+                {
+                    if (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button))
+                    {
+                        IgnoredEnemies.Add(target); // a rat in a room with buttons is likely the puzzle's tool (see RatOnButton): spare it
+                        continue;
+                    }
+                    yield return KillRat(target);
+                    if (target.exists)
+                    {
+                        IgnoredEnemies.Add(target); // no ambush spot worked: leave it to the walker's dodging
+                    }
+                    continue;
+                }
                 if (target.GetType().Name == "Slasher")
                 {
                     string anim = target.CurAnimName ?? "";
@@ -6564,7 +6803,8 @@ namespace AnodyneSharp.Recording
                 {
                     var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup")).OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length()).FirstOrDefault();
                     if (heart != null && (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length() < 110 &&
-                        !Enemies().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y)).Length() < 22))
+                        !Enemies().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y)).Length() < 22) &&
+                        !Dangers().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < 36)) // (not with one on us, even one the fight gave up on)
                     {
                         var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
                         var hpath = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);

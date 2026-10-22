@@ -163,6 +163,13 @@ namespace AnodyneSharp.Recording
                 "W30 n0 W120 X0 t20 W10 >404,818 U40 W10 J26,47,u W90 >402,723 R2 D1 u5 W30 >402,620 W30 O1 X0 >244,380 U60 W30 H2,1 W30 >403,179 W30 H3,1 W10 >499,274 W10 R2 A W60 X0 H3,2 H3,3 W10 G500,546,y L40 W20 " +
                 "G451,546 G451,514,y G355,514 G355,546,y G300,546 W10 H1,3 W10 G291,547 G291,596,y G196,596 G196,550,y G228,550 G228,530,y eu514 U30 W30 >244,380 U60 W30 " +
                 "H0,1 W20 >170,178 W10 F1800 W30 >387,34 R1 A W30 >19,330 W30 [ W10 I16,496,d W60 T W30 `ap_key2"));
+            // Gas Guy card: back up through (0,2) and the top corridor to (2,0)'s key block; (1,0)'s Shieldies only come to the col-18 gap when
+            // their pillars let them, so flip its crystal twice (the second time with the top one right of col 13, so the rising pillar
+            // shuts it in on the gap's side); stairs to (6,0); TeleGuys, rats; in (5,0) step back into the doorway first so the Gas Guys
+            // come in a line; stairs to (0,0) and its chest.
+            yield return Section("apartment gas guy card", () => Exec(
+                "X1 W10 >371,140 >340,82 L40 W30 >300,82 W10 >291,34 U1 A W30 F1800 W30 >291,34 U1 {Shieldy,240,90,252,105 A W30 F W60 " +
+                ">195,40 U30 W120 H6,1 W30 H5,1 W30 >868,150 W200 F W30 >819,40 U30 W120 I128,64,d W60 T W30 `ap_gascard"));
         }
     }
 }
