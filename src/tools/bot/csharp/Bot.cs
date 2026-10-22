@@ -912,9 +912,6 @@ namespace AnodyneSharp.Recording
         /// <summary>On a dust raft over water (a fight there would drop the raft); walking the shore between two rafts is not.</summary>
         private static bool OnWater() => InRaft && OnConveyor(BotNav.TileOf(Pos));
 
-        /// <summary>Px a jump carries with one direction key held (measured ~29); with two (a diagonal) the speed is shared out, ~21 on each axis. An axis
-        /// with no key keeps its speed (none from a standstill).</summary>
-        private const float LeapReach = 29f, LeapReachDiag = 21f;
 
         /// <summary>
         /// A free jump from tile a to tile b (BotNav.IsLeap: stepping stones in a pit, diagonals included). Picks a take-off spot on a where the
@@ -923,12 +920,17 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> Leap(Point a, Point b)
         {
+            var spring = BotNav.SpringBetween(a, b);
+            var landOn = spring ?? b; // off a spring: the jump only has to come down on the pad, it does the rest
+            var finalTile = b;
+            b = landOn;
             int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
-            float reach = sx != 0 && sy != 0 ? LeapReachDiag : LeapReach;
+            float reach = sx != 0 && sy != 0 ? BotNav.LeapReachDiag : BotNav.LeapReach;
             var hb = Player.Hitbox;
             var off = new Vector2(hb.X - Pos.X, hb.Y - Pos.Y);
             Rectangle Box(float x, float y) => new((int)Math.Round(x), (int)Math.Round(y), hb.Width, hb.Height);
-            bool Lands(Rectangle r) => BotNav.TileOf(new Vector2(r.X, r.Y) - off) == b && StandsSafe(r);
+            bool Lands(Rectangle r) => spring != null ? r.Intersects(new Rectangle(b.X * 16 + 2, b.Y * 16 + 2, 12, 12)) // (touching the pad as we come down is enough)
+                : BotNav.TileOf(new Vector2(r.X, r.Y) - off) == b && StandsSafe(r);
             Vector2? best = null;
             float bestScore = float.MaxValue;
             for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - hb.Height + 6; y++)
@@ -1009,6 +1011,11 @@ namespace AnodyneSharp.Recording
             {
                 yield return K(air);
             }
+            for (int j = 0; j < 90 && spring != null && (j < 4 || Player.state == PlayerState.AUTO_JUMP); j++)
+            {
+                BotRunner.Status = $"spring down to {finalTile.X},{finalTile.Y}";
+                yield return K(); // the pad's bounce carries us on
+            }
             yield return K();
         }
 
@@ -1037,7 +1044,7 @@ namespace AnodyneSharp.Recording
                 }
                 var path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                 BotNav.Avoid = null;
-                if (!InRaft && avoidStationary == null && (Enemies().Any(e => e.velocity == Vector2.Zero) || BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e))))
+                if (!InRaft && avoidStationary == null && (Enemies().Any(e => e.velocity == Vector2.Zero) || BotRunner.Entities().Any(e => e.exists && (BotNav.IsSuburbKiller(e) || DormantDustmaid(e)))))
                 {
                     // Keep a berth round enemies that stand still (touching one hurts): a route that does is used if there is one.
                     List<Point> wide = null;
@@ -1076,9 +1083,27 @@ namespace AnodyneSharp.Recording
                         BotNav.AllowWater = true;
                         var wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                         BotNav.AllowWater = false;
-                        if (wade != null && wade.Count(t => BotNav.IsConveyor(t)) <= 2)
+                        if (wade != null && (wade.Count(t => BotNav.IsConveyor(t)) <= 2 || BotNav.WadeOk(wade, BotNav.TileOf(Pos))))
                         {
                             path = wade;
+                        }
+                        else if (GlobalState.inventory.CanJump)
+                        {
+                            // wading and jumping both (a pit to jump on the way to a stream to wade down)
+                            BotNav.AllowWater = true;
+                            BotNav.AllowJump = true;
+                            wade = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
+                            BotNav.AllowWater = false;
+                            BotNav.AllowJump = false;
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  wade+jump: {(wade == null ? "none" : string.Join(">", wade.Select(q => $"{q.X},{q.Y}{(BotNav.IsConveyor(q) ? "~" + BotNav.FlowDir(q) : "")}")))} ok={(wade != null && BotNav.WadeOk(wade, BotNav.TileOf(Pos)))}");
+                            }
+                            if (wade != null && BotNav.WadeOk(wade, BotNav.TileOf(Pos)))
+                            {
+                                path = wade;
+                                jumping = true;
+                            }
                         }
                     }
                     // Or a river is in the way: cross it on a dust raft.
@@ -1138,7 +1163,13 @@ namespace AnodyneSharp.Recording
                     {
                         path = shortcut;
                     }
-                    else if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t)))
+                    else if (shortcut != null && shortcut.Count + 20 < path.Count && BotNav.WadeOk(shortcut, BotNav.TileOf(Pos)))
+                    {
+                        path = shortcut; // water that can be waded (with a current, or a short way)
+                        jumping = GlobalState.inventory.CanJump;
+                    }
+                    else if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t))
+                        && BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), shortcut[shortcut.Count - 1], GlobalState.inventory.CanJump) != null)
                     {
                         var lastT = BotNav.CentreOf(shortcut[shortcut.Count - 1]);
                         yield return RaftTo(lastT.X, lastT.Y);

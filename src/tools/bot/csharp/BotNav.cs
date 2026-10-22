@@ -342,6 +342,10 @@ namespace AnodyneSharp.Recording
         {
             bool Land(Point q)
             {
+                if (_gatesOpen.Contains(q))
+                {
+                    return true;
+                }
                 var (al, ev) = CurrentMap.GetTileClass(q);
                 return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.PUDDLE;
             }
@@ -370,6 +374,10 @@ namespace AnodyneSharp.Recording
         {
             bool Floor(Point q)
             {
+                if (_gatesOpen.Contains(q))
+                {
+                    return true;
+                }
                 var (al, ev) = CurrentMap.GetTileClass(q);
                 return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.SPIKE;
             }
@@ -429,6 +437,38 @@ namespace AnodyneSharp.Recording
             return _ledges;
         }
 
+        private static string _springMap;
+        private static Dictionary<Point, Point> _springs = new();
+
+        /// <summary>Spring pads (Jump_Trigger type 1): landing on one (a jump onto it) bounces the player 32/48/64px down. Tile -> landing tile.</summary>
+        public static Dictionary<Point, Point> Springs()
+        {
+            if (_springMap == GlobalState.CURRENT_MAP_NAME)
+            {
+                return _springs;
+            }
+            _springMap = GlobalState.CURRENT_MAP_NAME;
+            _springs = new Dictionary<Point, Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.SpringPad))
+                {
+                    continue;
+                }
+                int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
+                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                _springs[t] = new Point(t.X, t.Y + dist / 16);
+            }
+            return _springs;
+        }
+
+        /// <summary>The spring a jump from a to b bounces off (a spring right below a whose landing is b), if any.</summary>
+        public static Point? SpringBetween(Point a, Point b)
+        {
+            var below = new Point(a.X, a.Y + 1);
+            return Springs().TryGetValue(below, out var land) && land == b ? below : null;
+        }
+
         /// <summary>The tiles a search may step to from c (reached from prev): the four neighbours, or a ledge's landing (entered going down, that is the only way on).</summary>
         private static IEnumerable<Point> Steps(Point prev, Point c)
         {
@@ -449,6 +489,10 @@ namespace AnodyneSharp.Recording
                     yield return n;
                 }
             }
+            if (AllowJump && Springs().TryGetValue(new Point(c.X, c.Y + 1), out var bounce) && LeapFloor(c))
+            {
+                yield return bounce; // jump down onto the spring below: it throws us on down
+            }
             if (_leaps && AllowJump && LeapFloor(c))
             {
                 // Free jumps between islands of floor (stepping stones in a pit): a jump carries ~27px on each axis that has a key held, so
@@ -462,7 +506,7 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                         var n = new Point(c.X + dx, c.Y + dy);
-                        if (LeapFloor(n) && LeapClear(c, n))
+                        if (LeapFloor(n) && LeapClear(c, n) && LeapFits(c, n))
                         {
                             yield return n;
                         }
@@ -514,6 +558,73 @@ namespace AnodyneSharp.Recording
             return gap && !floor;
         }
 
+        private static readonly Dictionary<(Point, Point), bool> _leapFits = new();
+        private static string _leapFitsMap;
+
+        /// <summary>A free spot to stand on (the player's 10x12 box): no wall, water or spikes under a corner, and clear of every pit's 6x4 core.</summary>
+        public static bool BoxStands(Rectangle r)
+        {
+            foreach (var (x, y) in new[] { (r.Left, r.Top), (r.Right - 1, r.Top), (r.Left, r.Bottom - 1), (r.Right - 1, r.Bottom - 1) })
+            {
+                var t = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+                if (IsHole(t))
+                {
+                    if (new Rectangle(t.X * 16 + 5, t.Y * 16 + 5, 6, 4).Intersects(r))
+                    {
+                        return false;
+                    }
+                }
+                else if (!_gatesOpen.Contains(t) && (!Walkable(t) || IsConveyor(t) || IsSpike(t)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Px a jump carries with one direction key held (~29); with two, ~21 on each axis.</summary>
+        public const float LeapReach = 29f, LeapReachDiag = 21f;
+
+        /// <summary>
+        /// Is there a take-off spot on a from which a jump (keys towards b) lands clear on b, give or take 2px of carry? The search the
+        /// jump itself makes (Leap), done in the plan so it never offers a jump the physics cannot make.
+        /// </summary>
+        public static bool LeapFits(Point a, Point b)
+        {
+            if (_leapFitsMap != GlobalState.CURRENT_MAP_NAME)
+            {
+                _leapFits.Clear();
+                _leapFitsMap = GlobalState.CURRENT_MAP_NAME;
+            }
+            if (_leapFits.TryGetValue((a, b), out var known))
+            {
+                return known;
+            }
+            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+            float reach = sx != 0 && sy != 0 ? LeapReachDiag : LeapReach;
+            const int w = 10, h = 12;
+            bool ok = false;
+            for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - h + 6 && !ok; y++)
+            {
+                for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - w + 6 && !ok; x++)
+                {
+                    var s = new Rectangle(x, y, w, h);
+                    if (new Point((x + w / 2) / 16, (y + h / 2) / 16) != a || !BoxStands(s))
+                    {
+                        continue;
+                    }
+                    ok = true;
+                    foreach (float carry in new[] { reach - 2, reach, reach + 2 })
+                    {
+                        var l = new Rectangle((int)Math.Round(x + sx * carry), (int)Math.Round(y + sy * carry), w, h);
+                        ok &= new Point((l.X + w / 2) / 16, (l.Y + h / 2) / 16) == b && BoxStands(l);
+                    }
+                }
+            }
+            _leapFits[(a, b)] = ok;
+            return ok;
+        }
+
         /// <summary>Consecutive path tiles that are not neighbours and not a ledge drop: a free jump (see Steps).</summary>
         public static bool IsLeap(Point a, Point b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) > 1 && !(Ledges().TryGetValue(a, out var l) && l == b);
 
@@ -521,6 +632,86 @@ namespace AnodyneSharp.Recording
 
         /// <summary>A solid wall tile: it stops bullets (holes, water and spikes do not, they fly over them).</summary>
         public static bool IsBeamWall(Point t) => CurrentMap == null || CurrentMap.GetTileClass(t).Item1 == Touching.ANY;
+
+        private static System.Reflection.FieldInfo _tileObjectsField;
+
+        /// <summary>Which way the water on t flows (Touching.NONE for still water or no water).</summary>
+        public static Touching FlowDir(Point t)
+        {
+            if (!IsConveyor(t))
+            {
+                return Touching.NONE;
+            }
+            _tileObjectsField ??= typeof(Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var tiles = _tileObjectsField?.GetValue(CurrentMap) as Tile[];
+            int id = CurrentMap.GetTile(Layer.BG, t);
+            var dir = tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
+            return dir is Touching.UP or Touching.DOWN or Touching.LEFT or Touching.RIGHT ? dir : Touching.NONE; // (still water says ANY)
+        }
+
+        /// <summary>The way a steam pipe on this screen blows over t (its lane: up to 4 tiles out in front of it), if one does.</summary>
+        public static Touching? SteamFlow(Point t)
+        {
+            // from the map's presets, so screens not loaded yet count too (frame: 0 down, 1 right, 2 up, 3 left)
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Enemy.Hotel.SteamPipe))
+                {
+                    continue;
+                }
+                var pt = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                var (dx, dy, dir) = pr.Frame switch { 1 => (1, 0, Touching.RIGHT), 2 => (0, -1, Touching.UP), 3 => (-1, 0, Touching.LEFT), _ => (0, 1, Touching.DOWN) };
+                for (int k = 1; k <= 4; k++)
+                {
+                    if (t == new Point(pt.X + dx * k, pt.Y + dy * k))
+                    {
+                        return dir;
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Can a path's water be waded? Off a raft the player sinks for 3s and is then drowned back to the screen's entrance; walking in
+        /// water is 35px/s, plus the current's 35px/s along it (minus against it). So every unbroken run of water on the path must take
+        /// under ~2.4s (a run with the current is long, against it impossible).
+        /// </summary>
+        public static bool WadeOk(List<Point> path, Point from)
+        {
+            float secs = 0;
+            var prev = from;
+            foreach (var t in path)
+            {
+                if (!IsConveyor(t))
+                {
+                    secs = 0;
+                    prev = t;
+                    continue;
+                }
+                var flow = FlowDir(t);
+                float push = 35f;
+                if (flow == Touching.NONE && SteamFlow(t) is Touching steam)
+                {
+                    flow = steam; // a steam pipe blowing across still water shoves us over it (50px/s)
+                    push = 50f;
+                }
+                int dx = t.X - prev.X, dy = t.Y - prev.Y;
+                float along = flow switch { Touching.DOWN => dy, Touching.UP => -dy, Touching.RIGHT => dx, Touching.LEFT => -dx, _ => 0 };
+                float speed = 35f + push * along;
+                if (speed < 10f)
+                {
+                    return false;
+                }
+                secs += 16f / speed;
+                if (secs > 2.4f)
+                {
+                    return false;
+                }
+                prev = t;
+            }
+            return true;
+        }
 
         public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
 
@@ -871,9 +1062,9 @@ namespace AnodyneSharp.Recording
                 }
                 var d = e.facing switch
                 {
-                    Facing.RIGHT => new Point(1, 0),
-                    Facing.LEFT => new Point(-1, 0),
-                    Facing.UP => new Point(0, -1),
+                    AnodyneSharp.Entities.Facing.RIGHT => new Point(1, 0),
+                    AnodyneSharp.Entities.Facing.LEFT => new Point(-1, 0),
+                    AnodyneSharp.Entities.Facing.UP => new Point(0, -1),
                     _ => new Point(0, 1)
                 };
                 // An emitter need not sit on the tile grid (a laser at y=38 fires along y 38..54, over two tile rows): the beam covers every
@@ -941,7 +1132,7 @@ namespace AnodyneSharp.Recording
                 {
                     // A plugged beam still fires its bullets across the tiles between the emitter and the plug (a bullet spawns
                     // right at the muzzle and hits whoever stands there before it reaches the dust): walk round them if possible.
-                    var d = e.facing switch { Facing.RIGHT => new Point(1, 0), Facing.LEFT => new Point(-1, 0), Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
+                    var d = e.facing switch { AnodyneSharp.Entities.Facing.RIGHT => new Point(1, 0), AnodyneSharp.Entities.Facing.LEFT => new Point(-1, 0), AnodyneSharp.Entities.Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
                     var mt = TileOf(e.Position + new Vector2(8, 8));
                     var cells = new List<Point>();
                     for (int i = 1; i < 24; i++)

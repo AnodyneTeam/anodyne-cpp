@@ -3857,9 +3857,11 @@ namespace AnodyneSharp.Recording
                 BotNav.AllowJump = jumpOk;
                 var p = BotNav.FindPath(here, q => q == stand, stand);
                 BotNav.AllowJump = false;
-                if (p != null && p.Count < bestLen)
+                // (no walk there: maybe a raft ride; count the distance, well behind any walkable end)
+                int len = p != null ? p.Count : 10000 + Math.Abs(stand.X - here.X) + Math.Abs(stand.Y - here.Y);
+                if (len < bestLen)
                 {
-                    (best, bestStand, bestPush, bestLen) = (pr, stand, push, p.Count);
+                    (best, bestStand, bestPush, bestLen) = (pr, stand, push, len);
                 }
             }
             if (best == null)
@@ -4107,6 +4109,40 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Sweeps up the nearest loose Dust that is on dry land and reachable (the broom then carries it).</summary>
         protected static IEnumerable<object> PickUpDust(bool optional = false)
+        {
+            yield return PickUpDustCore(optional);
+            bool Maids() => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid);
+            if (Player.broom.dust == null || !Maids() || !GlobalState.inventory.HasBroom)
+            {
+                yield break;
+            }
+            // Dustmaids wake the moment we hold dust and then walk at us for good, and only then can they be hurt: put the dust straight
+            // back down, beat them (three hits each, they are slow), then pick it up again in peace.
+            BotRunner.Status = "dustmaids awake: put the dust down and fight them";
+            foreach (var face in new[] { Player.facing, Facing.DOWN, Facing.UP, Facing.LEFT, Facing.RIGHT })
+            {
+                var fk = face switch { Facing.UP => KeyFunctions.Up, Facing.DOWN => KeyFunctions.Down, Facing.LEFT => KeyFunctions.Left, _ => KeyFunctions.Right };
+                var ahead = BotNav.TileOf(Pos) + new Point(face == Facing.LEFT ? -1 : face == Facing.RIGHT ? 1 : 0, face == Facing.UP ? -1 : face == Facing.DOWN ? 1 : 0);
+                if (!BotNav.Walkable(ahead) || OnConveyor(ahead) || BotNav.IsHole(ahead))
+                {
+                    continue;
+                }
+                if (Player.facing != face)
+                {
+                    yield return Hold(1, fk);
+                }
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(20);
+                if (Player.broom.dust == null)
+                {
+                    break;
+                }
+            }
+            yield return Fight(3600, only: e => e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid);
+            yield return PickUpDustCore(optional);
+        }
+
+        private static IEnumerable<object> PickUpDustCore(bool optional)
         {
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
             // Loose dust on a river drifts with the current, so keep looking for a while.
@@ -7981,6 +8017,23 @@ namespace AnodyneSharp.Recording
             bool frogWasUp = false;
             Vector2 frogAim = Vector2.Zero;
             Vector2 dogTPos = Vector2.Zero;
+            if (soft)
+            {
+                // On the way somewhere, a rooted enemy (a Burst Plant behind a wall) that cannot be walked up to is no fight: its bullets
+                // come over walls, so standing about trying only costs hearts. Leave it be.
+                var here = BotNav.TileOf(Pos);
+                foreach (var e in Enemies().Where(e => e.velocity == Vector2.Zero && e.GetType().Name is "Burst_Plant" or "Frog"))
+                {
+                    var et = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
+                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    var reach = BotNav.FindPath(here, q => Math.Abs(q.X - et.X) + Math.Abs(q.Y - et.Y) <= 1, null, strict: true);
+                    BotNav.AllowJump = false;
+                    if (reach == null && !(Math.Abs(here.X - et.X) + Math.Abs(here.Y - et.Y) <= 1))
+                    {
+                        IgnoredEnemies.Add(e);
+                    }
+                }
+            }
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
                 yield return SeerFight();
@@ -9562,7 +9615,7 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if ((target.GetType().Name == "Slime" || target.GetType().Name == "GasGuy") && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40 && target.GetType().Name != "GasGuy") && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
+                if ((target.GetType().Name is "Slime" or "GasGuy" or "Dustmaid") && distSq < 55 * 55 && !(DodgeEnabled && noProgress > 40 && target.GetType().Name is not ("GasGuy" or "Dustmaid")) && FightPolicies.Slime(PolicyCtx(target), pmem) is PKey[] slimeKeys)
                 {
                     if (i % 5 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
