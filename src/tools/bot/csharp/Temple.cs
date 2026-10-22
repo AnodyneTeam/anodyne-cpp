@@ -157,17 +157,12 @@ namespace AnodyneSharp.Recording
                 "G515,800,y G515,816,y G564,816 G564,836,y G579,850 G579,882,y ed882 W5 D20 R12 U4 A W30 T W5 L12 U12 {FallingSpikeRoller,496,893,640,950,600 eu W20 `ap_sfcard"));
             // Second key: the (0,2) pillars before its gate are up whenever the (0,1) ones on the way in are down, so flip twice:
             // (3,1)'s crystal to get into (0,1), then (2,0)'s via the top corridor (Gas Guy fought in it). (2,0)'s rat runs up col 21,
-            // along row 1 and down our col 23, so go up at once, wait beside its path and swing; jump the row-6 dash traps both ways.
-            // (0,2): sweep the (5,24) dust to (6,26) and the rat loops over the (8,28) button while we hold the (3,28) one.
+            // along row 1 and down our col 23 (the walker predicts it and the dash traps' charges). (0,2): `[` finds the dust move that sends
+            // the rat round over one button while we hold the other.
             yield return Section("apartment key 2", () => Exec(
-                "W30 n0 W120 X0 t20 W10 >404,818 U40 W10 J26,47,u W90 >402,723 R2 D1 u5 W30 >402,620 W30 O1 X0 H1,3 W10 " +
-                "G291,547 G291,596,y G196,596 G196,550,y G228,550 G228,530,y eu514 U30 W30 " +
-                ">244,380 U60 W30 H2,1 W30 >403,179 W30 H3,1 W10 >499,274 W10 R2 A W60 X0 H3,2 H3,3 W10 G500,546,y L40 W20 " +
+                "W30 n0 W120 X0 t20 W10 >404,818 U40 W10 J26,47,u W90 >402,723 R2 D1 u5 W30 >402,620 W30 O1 X0 >244,380 U60 W30 H2,1 W30 >403,179 W30 H3,1 W10 >499,274 W10 R2 A W60 X0 H3,2 H3,3 W10 G500,546,y L40 W20 " +
                 "G451,546 G451,514,y G355,514 G355,546,y G300,546 W10 H1,3 W10 G291,547 G291,596,y G196,596 G196,550,y G228,550 G228,530,y eu514 U30 W30 >244,380 U60 W30 " +
-                "H0,1 W20 G131,243 G131,210,y G19,210 G19,178,y G150,178 R10 W10 F1800 W30 G371,178 W60 G371,146,y eu114 W30 " +
-                "G371,34,y G387,34 R1 A W20 L1 {Rat,365,16,385,30 A W30 G371,34 ed83 W30 G371,178,y G19,178 G19,210,y G19,300,y G19,330,y W30 " +
-                "G19,354,y G67,354 G67,370,y G83,370 D1 A W30 {Rat,90,425,130,460 G99,370 G99,402,y D1 A W30 G51,402 G51,450,y W60 " +
-                "G67,450 G67,490,y W30 I16,496,d W60 T W30 `ap_key2"));
+                "H0,1 W20 >170,178 W10 F1800 W30 >387,34 R1 A W30 >19,330 W30 [ W10 I16,496,d W60 T W30 `ap_key2"));
         }
     }
 }

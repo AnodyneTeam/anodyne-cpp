@@ -5,6 +5,7 @@ using AnodyneSharp.Registry;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AnodyneSharp.Recording
 {
@@ -494,6 +495,101 @@ namespace AnodyneSharp.Recording
             _shooterTiles = set;
         }
 
+        /// <summary>
+        /// The current screen as text (cheaper to read than a screenshot): one char per tile ('#' wall, '.' floor, 'h' hole, '~' water or
+        /// conveyor, '^' spikes, ',' puddle), each entity's letter on the tile under its centre and '@' for the player, then one line per entity
+        /// with its exact hitbox, velocity and facing.
+        /// </summary>
+        public static string RoomText()
+        {
+            var map = CurrentMap;
+            var pl = BotRunner.Player;
+            if (map == null || pl == null)
+            {
+                return "ROOM: no map";
+            }
+            var grid = GlobalState.CurrentMapGrid;
+            var cells = new char[10, 10];
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 10; x++)
+                {
+                    var t = new Point(grid.X * 10 + x, grid.Y * 10 + y);
+                    var (al, ev) = map.GetTileClass(t);
+                    cells[y, x] = ev switch
+                    {
+                        CollisionEventType.HOLE => 'h',
+                        CollisionEventType.CONVEYOR => '~',
+                        CollisionEventType.SPIKE => '^',
+                        CollisionEventType.PUDDLE => ',',
+                        _ => al == Touching.NONE ? '.' : '#',
+                    };
+                }
+            }
+            var sb = new System.Text.StringBuilder();
+            var lines = new List<string>();
+            var letters = new Dictionary<string, char>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e == pl || e is Player || !e.visible && e.width == 0)
+                {
+                    continue;
+                }
+                string name = e.GetType().Name;
+                if (name is "Foot_Overlay" or "PlayerReflection" or "Lookahead" or "Entity")
+                {
+                    continue;
+                }
+                if (!letters.TryGetValue(name, out char ch))
+                {
+                    ch = (char)('A' + letters.Count % 26);
+                    if (letters.Count >= 26)
+                    {
+                        ch = (char)('a' + (letters.Count - 26) % 26);
+                    }
+                    letters[name] = ch;
+                }
+                var hb = e.Hitbox;
+                int cx = (int)Math.Floor(hb.Center.X / 16f) - grid.X * 10, cy = (int)Math.Floor(hb.Center.Y / 16f) - grid.Y * 10;
+                if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
+                {
+                    cells[cy, cx] = ch;
+                }
+                string v = e.velocity == Vector2.Zero ? "" : $" v=({e.velocity.X:0},{e.velocity.Y:0})";
+                string frame = "";
+                try
+                {
+                    frame = $" f{e.Frame}";
+                }
+                catch (NullReferenceException)
+                {
+                    // no sprite to have a frame
+                }
+                lines.Add($"  {ch} {name} box={hb.X},{hb.Y} {hb.Width}x{hb.Height}{v} {e.facing}{frame}" + (e.Solid ? " solid" : ""));
+            }
+            var pb = pl.Hitbox;
+            int px = (int)Math.Floor(pb.Center.X / 16f) - grid.X * 10, py = (int)Math.Floor(pb.Center.Y / 16f) - grid.Y * 10;
+            if (px >= 0 && px < 10 && py >= 0 && py < 10)
+            {
+                cells[py, px] = '@';
+            }
+            sb.Append($"ROOM {GlobalState.CURRENT_MAP_NAME} screen {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left) player box={pb.X},{pb.Y} hp {GlobalState.CUR_HEALTH} {pl.state}\n");
+            for (int y = 0; y < 10; y++)
+            {
+                sb.Append($"  {grid.Y * 10 + y,3} ");
+                for (int x = 0; x < 10; x++)
+                {
+                    sb.Append(cells[y, x]);
+                }
+                sb.Append('\n');
+            }
+            foreach (var l in lines.Distinct())
+            {
+                sb.Append(l).Append('\n');
+            }
+            return sb.ToString();
+        }
+
         public static bool Walkable(Point t)
         {
             if (HardAvoid != null && HardAvoid.Contains(t))
@@ -776,6 +872,29 @@ namespace AnodyneSharp.Recording
                         {
                             zones[new Point(tx, ty)] = Math.Max(zones.TryGetValue(new Point(tx, ty), out int z0) ? z0 : 0, 40);
                         }
+                    }
+                }
+            }
+            // An idle on-sight dash trap charges whoever lines up with it at 80px/s: crossing its line far from it is safe (we are across
+            // before it arrives), next to it is a hit. Close-by tiles of its lines cost more, so the route crosses where it is far.
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity != Vector2.Zero)
+                {
+                    continue;
+                }
+                var t0 = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var t = t0;
+                    for (int i = 1; i < 10; i++)
+                    {
+                        t = new Point(t.X + d.X, t.Y + d.Y);
+                        if (!Walkable(t))
+                        {
+                            break;
+                        }
+                        zones[t] = (zones.TryGetValue(t, out int z1) ? z1 : 0) + Math.Max(2, 13 - 3 * i);
                     }
                 }
             }

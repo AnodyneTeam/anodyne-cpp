@@ -47,6 +47,7 @@ namespace AnodyneSharp.Recording
                         yield return InteractAt(float.Parse(a[0]), float.Parse(a[1]), a[2][0]);
                         break;
                     }
+                    case '/': System.Console.Error.Write(BotNav.RoomText()); break; // /: the screen as text (tiles, entities, player)
                     case 'E':
                     {
                         var sb = new System.Text.StringBuilder($"ENTITIES grid {Grid} player {Pos}\n");
@@ -413,6 +414,7 @@ namespace AnodyneSharp.Recording
                         for (int i = 0; i < n; i++) { yield return Tap(KeyFunctions.Cancel); yield return Wait(8); }
                         break;
                     case ';': yield return MenuEquipBroom(n); break; // ;<k>: equip broom k from the pause menu (0 plain, 1 extend, 2 widen, 3 swap)
+                    case '[': yield return RatOnButton(n > 1 ? n : 1800); break; // [[frames]: get the screen's Rat onto one button (one dust swept if need be) while we hold the other
                     case '}': yield return KillSilverfish(n > 1 ? n : 3600); break; // }[frames]: broom every Silverfish on this screen (walk up to each from the side away from a wall)
                     case ':': yield return KillTownsfolk(n); break; // :<n>: sweep this screen's Black and White Town walkers until n are dead in all
                     case '{':
@@ -774,6 +776,7 @@ namespace AnodyneSharp.Recording
             public string Name = "";
             public Entity Source;
             public bool Stationary;
+            public bool HurtsInAir; // (most things that hurt by touch skip a player in the air; a Rat or a Gas Guy does not)
         }
 
         private static readonly System.Reflection.FieldInfo PewTimerField =
@@ -1037,6 +1040,11 @@ namespace AnodyneSharp.Recording
                     result.AddRange(PredictSightTrap(d));
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Apartment.Rat)
+                {
+                    result.Add(PredictRat(d));
+                    continue;
+                }
                 if (name is "Shieldy" or "BounceDashTrap")
                 {
                     result.Add(PredictPatroller(d)); // both walk a line and turn round at the first wall (the trap at 80px/s)
@@ -1048,7 +1056,7 @@ namespace AnodyneSharp.Recording
                     continue; // a bullet that has hit something is poofing out: harmless (and standing still, it would look like a wall)
                 }
                 bool still = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
-                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still };
+                var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still, HurtsInAir = name == "GasGuy" };
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = d.Hitbox;
@@ -1063,6 +1071,197 @@ namespace AnodyneSharp.Recording
                 result.Add(t);
             }
             return result;
+        }
+
+        /// <summary>
+        /// A Rat walks at 40px/s and turns clockwise (down, left, up, right) the frame after a 1px feeler 7px ahead of its centre meets a wall,
+        /// dust or any special floor (water, hole, ...): replay that. Only the 8x8 square 4px in from its hitbox's corner hurts.
+        /// </summary>
+        private static Threat PredictRat(Entity e)
+        {
+            var t = new Threat { Name = "Rat", Source = e, Margin = 1, HurtsInAir = true };
+            var dusts = BotRunner.Entities().Where(x => x.exists && x is AnodyneSharp.Entities.Dust).Select(x => x.Hitbox).ToList();
+            var path = SimRat(new Vector2(e.Hitbox.X, e.Hitbox.Y), e.velocity, e.Hitbox.Width, dusts, Horizon);
+            for (int f = 0; f <= Horizon; f++)
+            {
+                t.At[f] = RatBite(path[f].pos);
+            }
+            return t;
+        }
+
+        /// <summary>The part of a Rat (hitbox top-left at p) that hurts.</summary>
+        private static Rectangle RatBite(Vector2 p) => new((int)p.X + 4, (int)p.Y + 4, 8, 8);
+
+        /// <summary>
+        /// A Rat's hitbox top-left and velocity for each of the next `frames` frames (index 0 = now): it walks straight and turns clockwise
+        /// the frame after a 1px feeler 7px ahead of its centre meets a wall, a special floor or one of `dusts`.
+        /// </summary>
+        private static (Vector2 pos, Vector2 v)[] SimRat(Vector2 pos, Vector2 v, int size, List<Rectangle> dusts, int frames)
+        {
+            var map = BotNav.CurrentMap;
+            var res = new (Vector2, Vector2)[frames + 1];
+            bool turn = false;
+            for (int f = 0; f <= frames; f++)
+            {
+                res[f] = (pos, v);
+                if (map == null || v == Vector2.Zero)
+                {
+                    continue;
+                }
+                if (turn)
+                {
+                    v = new Vector2(-v.Y, v.X);
+                    turn = false;
+                }
+                pos += v / 60f;
+                var dir = Math.Abs(v.X) > Math.Abs(v.Y) ? new Vector2(Math.Sign(v.X), 0) : new Vector2(0, Math.Sign(v.Y));
+                var p = pos + new Vector2(size / 2f, size / 2f) + dir * 7;
+                var (al, ev) = map.GetTileClass(new Point((int)Math.Floor(p.X / 16f), (int)Math.Floor(p.Y / 16f)));
+                turn = al != Touching.NONE || ev != AnodyneSharp.MapData.Tiles.CollisionEventType.NONE;
+                foreach (var d in dusts)
+                {
+                    turn |= d.Contains((int)p.X, (int)p.Y);
+                }
+            }
+            return res;
+        }
+
+        /// <summary>
+        /// The screen's Rat on one button while we stand on the other (two buttons at once open a gate). Rats turn clockwise at walls and dust,
+        /// so this searches the moves of one dust (or none) for the one after which the rat's loop runs over the far button, from wherever
+        /// along its way it is when we are done, and never over ours; then sweeps the dust there and holds our button until the puzzle counts.
+        /// </summary>
+        protected static IEnumerable<object> RatOnButton(int limit)
+        {
+            var rat = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Rat);
+            var buttons = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button).ToList();
+            if (rat == null || buttons.Count != 2)
+            {
+                throw new Exception($"rat on button: needs a rat and two buttons here (rat {rat != null}, {buttons.Count} buttons)");
+            }
+            var dustEs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
+            var grid = Grid;
+            int size = rat.Hitbox.Width;
+            var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            var buttonTiles = buttons.Select(b => TileAt(b.Hitbox)).ToList();
+            var dustTiles = dustEs.Select(d => TileAt(d.Hitbox)).ToList();
+            bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.Walkable(t);
+            // How well a dust layout works: from 15 points of the rat's way while we work (under `during`), the share of runs that press the
+            // far button within 25s without the rat ever biting where we stand on ours.
+            float Score(List<Rectangle> during, List<Rectangle> after, Rectangle far, Rectangle ours, out int when)
+            {
+                var way = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity, size, during, 600);
+                int ok = 0, n = 0;
+                when = 0;
+                for (int s = 0; s <= 600; s += 40)
+                {
+                    n++;
+                    var run = SimRat(way[s].pos, way[s].v, size, after, 1500);
+                    int hit = -1;
+                    bool bit = false;
+                    for (int f = 0; f <= 1500 && !bit; f++)
+                    {
+                        var hb = new Rectangle((int)run[f].pos.X, (int)run[f].pos.Y, size, size);
+                        if (hit < 0 && hb.Intersects(far))
+                        {
+                            hit = f;
+                        }
+                        bit = RatBite(run[f].pos).Intersects(ours);
+                    }
+                    if (hit >= 0 && !bit)
+                    {
+                        ok++;
+                        when = Math.Max(when, hit);
+                    }
+                }
+                return ok / (float)n;
+            }
+            var dustRects = dustEs.Select(d => d.Hitbox).ToList();
+            float best = -1;
+            int bestWhen = int.MaxValue;
+            (int mine, int dust, Point to, Point stand)? plan = null;
+            for (int mine = 0; mine < 2; mine++)
+            {
+                var ourTile = buttonTiles[mine];
+                var ours = new Rectangle(ourTile.X * 16 + 1, ourTile.Y * 16, 14, 16); // where we stand on it (a little wider than our hitbox)
+                var far = buttons[1 - mine].Hitbox;
+                float sc0 = Score(dustRects, dustRects, far, ours, out int w0);
+                if (sc0 > best || (sc0 == best && w0 < bestWhen))
+                {
+                    best = sc0;
+                    bestWhen = w0;
+                    plan = (mine, -1, Point.Zero, Point.Zero);
+                }
+                for (int di = 0; di < dustEs.Count; di++)
+                {
+                    var without = dustRects.Where((r, i) => i != di).ToList();
+                    for (int ty = grid.Y * 10; ty < grid.Y * 10 + 10; ty++)
+                    {
+                        for (int tx = grid.X * 10; tx < grid.X * 10 + 10; tx++)
+                        {
+                            var to = new Point(tx, ty);
+                            if (!Floor(to) || buttonTiles.Contains(to) || dustTiles.Contains(to))
+                            {
+                                continue;
+                            }
+                            var stand = o4.Select(o => new Point(tx + o.X, ty + o.Y)).FirstOrDefault(q => Floor(q) && !buttonTiles.Contains(q) && !dustTiles.Contains(q));
+                            if (stand == Point.Zero)
+                            {
+                                continue;
+                            }
+                            var after = new List<Rectangle>(without) { new Rectangle(tx * 16, ty * 16, 16, 16) };
+                            float sc = Score(without, after, far, ours, out int w);
+                            if (sc > best + 0.001f || (Math.Abs(sc - best) < 0.001f && w < bestWhen))
+                            {
+                                best = sc;
+                                bestWhen = w;
+                                plan = (mine, di, to, stand);
+                            }
+                        }
+                    }
+                }
+            }
+            if (plan == null || best < 0.5f)
+            {
+                throw new Exception($"rat on button: no single dust move gets the rat onto a button (best {best:0.00})");
+            }
+            var (m, dIdx, dest, standAt) = plan.Value;
+            System.Console.Error.WriteLine($"  rat on button: we hold {buttonTiles[m]}, " + (dIdx < 0 ? "dust stays" : $"dust {dustTiles[dIdx]} -> {dest} (from {standAt})") + $", works from {best:P0} of the rat's way, within {bestWhen}f");
+            int start = GlobalState.PUZZLES_SOLVED;
+            bool fight = AutoFight;
+            AutoFight = false; // the rat is the tool here, not a target
+            try
+            {
+                if (dIdx >= 0)
+                {
+                    var dt = dustTiles[dIdx];
+                    var from = o4.Select(o => new Point(dt.X + o.X, dt.Y + o.Y)).First(q => Floor(q) && !buttonTiles.Contains(q) && !dustTiles.Contains(q));
+                    yield return StandFaceAccept(from.X, from.Y, FaceChar(new Point(dt.X - from.X, dt.Y - from.Y)));
+                    yield return Wait(20);
+                    if (Player.broom.dust == null)
+                    {
+                        throw new Exception($"rat on button: did not pick up the dust at {dt}");
+                    }
+                    yield return StandFaceAccept(standAt.X, standAt.Y, FaceChar(new Point(dest.X - standAt.X, dest.Y - standAt.Y)));
+                    yield return Wait(20);
+                }
+                var bc = BotNav.CentreOf(buttonTiles[m]);
+                yield return GoTo(bc.X, bc.Y);
+                yield return WalkTo(bc.X, bc.Y, tol: 1f);
+                for (int f = 0; f < limit && GlobalState.PUZZLES_SOLVED < start + 2; f++)
+                {
+                    yield return Wait(1);
+                }
+                if (GlobalState.PUZZLES_SOLVED < start + 2)
+                {
+                    throw new Exception($"rat on button: the rat did not get onto the other button in {limit} frames");
+                }
+            }
+            finally
+            {
+                AutoFight = fight;
+            }
         }
 
         /// <summary>
@@ -1091,12 +1290,18 @@ namespace AnodyneSharp.Recording
             int l = Reach(new Point(-1, 0)), rr = Reach(new Point(1, 0)), u = Reach(new Point(0, -1)), dn = Reach(new Point(0, 1));
             var row = new Rectangle(r.Left - l, r.Top, r.Width + l + rr, r.Height);
             var col = new Rectangle(r.Left, r.Top - u, r.Width, r.Height + u + dn);
+            // It can only be as far along its lines as 80px/s has carried it since now (it starts when we line up, which is now at the soonest):
+            // a line crossed far from it is safe for a while, which a band standing over the whole line forever never allowed.
             foreach (var band in new[] { row, col })
             {
                 var t = new Threat { Name = "OnSightDashTrap", Margin = 1, Source = d, Stationary = false };
                 for (int f = 0; f <= Horizon; f++)
                 {
-                    t.At[f] = band;
+                    int reach = (int)(80f * f / 60f);
+                    var b = band == row
+                        ? new Rectangle(Math.Max(row.Left, r.Left - reach), r.Top, Math.Min(row.Right, r.Right + reach) - Math.Max(row.Left, r.Left - reach), r.Height)
+                        : new Rectangle(r.Left, Math.Max(col.Top, r.Top - reach), r.Width, Math.Min(col.Bottom, r.Bottom + reach) - Math.Max(col.Top, r.Top - reach));
+                    t.At[f] = b;
                 }
                 yield return t;
             }
@@ -1267,13 +1472,9 @@ namespace AnodyneSharp.Recording
                 var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
                 foreach (var th in threats)
                 {
-                    if (th.At[f] is Rectangle r)
+                    if (th.At[f] is Rectangle r && mine.Intersects(r)) // (exact: a margin here turned a clean jump over a dash trap's line into hopping on the spot)
                     {
-                        r.Inflate(th.Margin, th.Margin);
-                        if (mine.Intersects(r))
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
             }
@@ -1527,8 +1728,9 @@ namespace AnodyneSharp.Recording
                     return _jumpOnSpot ? K() : K(wanted);
                 }
                 _jumpOnSpot = false;
-                var moving = threats.Where(t => !t.Stationary).ToList();
-                if (moving.Count > 0)
+                var moving = threats.Where(t => !t.Stationary && !t.HurtsInAir).ToList();
+                var airHurt = threats.Where(t => t.HurtsInAir).ToList();
+                if (moving.Count > 0 && (airHurt.Count == 0 || PlanHitFrame(wanted, 0, wanted, 30, airHurt) == int.MaxValue))
                 {
                     int hitStill = PlanHitFrameStanding(0, KeyFunctions.Right, 0, moving);
                     int hitWalk = PlanHitFrame(wanted, 0, wanted, 24, moving);
@@ -1536,6 +1738,12 @@ namespace AnodyneSharp.Recording
                     // (a jump is ~28 frames: one that comes down into the next bullet of a shooter's lane is no dodge, so look at the landing too;
                     // jumping on the spot may land clear where the jump on the way does not)
                     bool jumpOn = first <= 22, onSpot = false;
+                    if (jumpOn && hitStill == int.MaxValue && hitWalk > 4 && LandsInHit(wanted, moving))
+                    {
+                        // Standing is safe and the hit is a few steps off, but a jump from here would come down in it (a dash trap's
+                        // whole line, say): walk on and take off later, so the jump carries us over it.
+                        return K(wanted);
+                    }
                     if (jumpOn && LandsInHit(wanted, moving))
                     {
                         onSpot = !LandsInHit(null, moving);

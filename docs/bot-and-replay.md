@@ -124,6 +124,15 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   narrow rivers instead of jumping off across them - `v<MAP>` (dev only, `ANODYNE_BOT_DEV=1`) mark a map's Nexus pad as visited.
 - Extra tokens: `` `name `` snapshot - `g<n>` heart budget - `y<percent>` scale the path cost of beam tiles - `p1` no fetching dust
   on the way - `l<col>,<r0>,<r1>` dust leapfrog up a beam column - `Pb<x>,<y>` walk only while still on the dungeon map.
+- Apartments tokens: `[` get the screen's Rat onto one button while we hold the other (simulates the rat's clockwise turns, tries
+  every one-dust move, sweeps the best one into place) - `{Type,x0,y0,x1,y1[,frames]` wait until an entity of that type is in a
+  world rectangle - `}` broom every Silverfish here - `/` print the screen as text (tiles, every entity's letter, then each
+  entity's exact box, velocity, facing and frame); the same dump is printed on every hit and every failure, and is much cheaper to
+  read than a screenshot.
+- Hazard prediction in the walker: rats are replayed with their turns (walls, dust, special floors) and only their inner 8x8 bites;
+  an idle on-sight dash trap's danger grows out along its lines at 80px/s from now (not the whole line forever), routes pay extra to
+  cross a trap's line close to it, and a jump over a trap's line waits until it will land beyond it. Rats and Gas Guys hurt a
+  player in the air, so they never trigger a jump-dodge.
 - Debug output: `ANODYNE_BOT_DEBUG=1` (paths, fights, hits), `ANODYNE_FIGHT_TRACE=1` (per-frame policy traces), `SEER_WAIT` /
   `SEER_TRACE_A/B` (Seer fight timing and frame traces).
 

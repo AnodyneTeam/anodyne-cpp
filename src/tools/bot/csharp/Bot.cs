@@ -276,6 +276,7 @@ namespace AnodyneSharp.Recording
         private static void DumpRing()
         {
             PrintSwingAudit();
+            try { System.Console.Error.Write(BotNav.RoomText()); } catch { }
             try
             {
                 var lines = new List<string>(_ring);
@@ -380,6 +381,7 @@ namespace AnodyneSharp.Recording
                 }
                 catch { }
                 System.Console.Error.WriteLine($"  HIT near: {near}");
+                try { System.Console.Error.Write(BotNav.RoomText()); } catch { }
             }
             if (_allowDamage) { _hpSeenAllow = hp; return; }
             if (why != null)
