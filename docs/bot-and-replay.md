@@ -128,7 +128,16 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   every one-dust move, sweeps the best one into place) - `{Type,x0,y0,x1,y1[,frames]` wait until an entity of that type is in a
   world rectangle - `}` broom every Silverfish here - `/` print the screen as text (tiles, every entity's letter, then each
   entity's exact box, velocity, facing and frame); the same dump is printed on every hit and every failure, and is much cheaper to
-  read than a screenshot.
+  read than a screenshot. `/x,y` prints another screen of the map (tiles and entity presets, DEAD for killed/opened ones).
+- More Apartments solvers: `]` gets the screen's Silverfish onto one button while we hold the other (BFS over fish tile x
+  crystal-switch state: scare pushes from a stand tile, pillar flips; a slide into a hole or water is fatal for the fish; a fish
+  stuck in a corner is reset by leaving the screen) - `_x,y` walk to a point through a crystal-pillar maze (BFS over tile x
+  switch state, hitting switches on the way) - `(x,y` ride the propelled platform at that tile (jump on from behind it) - a Gas
+  Guy in a room with traps or frogs is waited out at a spot off every trap line and struck when it floats into reach.
+- The Watcher (Apartments boss, `WatcherFight`, run by `F`/`H` in its room): strikes from the arena's top edge while it floats
+  over the holes (the broom just reaches), hits its Split pose from below and then steps out of its copies' row and beside its
+  drop, and sweeps it from above/below its dash row; fire balls and bodies are predicted for the space-time planner. Budget 3
+  hearts (TODO: the volley of dropped fire balls it aims at us after a dash still lands 0-2 times a fight).
 - Hazard prediction in the walker: rats are replayed with their turns (walls, dust, special floors) and only their inner 8x8 bites;
   an idle on-sight dash trap's danger grows out along its lines at 80px/s from now (not the whole line forever), routes pay extra to
   cross a trap's line close to it, and a jump over a trap's line waits until it will land beyond it. Rats and Gas Guys hurt a
@@ -208,7 +217,10 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   berth; a detour to the Forest's Mushroom card (raft up its drowning channel, swinging at the Slime and Annoyer from the raft) makes
   16 cards for the town's gate; then the maze's health upgrade, ten townsfolk (token `:<n>`) and the Suburbanite's Corpse card
   (17 cards). Each passes from the previous part's end. Still skipped on the route: Red Cave's (0,0) and (3,1) cards and the Crowd's
-  (8,2) card. Next: the Apartments (the town's north door).
+  (8,2) card. Part `apartment` (`Apartment` in `Temple.cs`): the Apartments from the town's north door: Broom Widen from Red
+  Cave, the Silverfish card under the spike roller, both keys of the west wing, the Gas Guy card, then the east wing (rat and
+  silverfish buttons, the platform rides, the water raft, the twin-platform room through the (7,2) door, the crystal maze), the
+  Watcher, its health upgrade and the (8,7) card: all 3 of its cards, 20 in all. Next: back at the Nexus, the next area.
   The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.

@@ -170,6 +170,38 @@ namespace AnodyneSharp.Recording
             yield return Section("apartment gas guy card", () => Exec(
                 "X1 W10 >371,140 >340,82 L40 W30 >300,82 W10 >291,34 U1 A W30 F1800 W30 >291,34 U1 {Shieldy,240,90,252,105 A W30 F W60 " +
                 ">195,40 U30 W120 H6,1 W30 H5,1 W30 >868,150 W200 F W30 >819,40 U30 W120 I128,64,d W60 T W30 `ap_gascard"));
+            // East wing: from (0,0) back to the entrance and up the (3,1) crystal to the (3,0) stairs, which come out in (6,0); (7,0)'s rat
+            // walks onto its button by itself; hit (8,0)'s crystal switch on the way (its pillar would block the way back); in (7,1) `[`
+            // sends the rat over one button while we hold the other.
+            yield return Section("apartment east wing", () => Exec(
+                "W5 >131,18 W10 n0 W120 X0 t20 W10 >404,818 U40 W10 J26,47,u W90 >402,723 R2 D1 u5 W30 >402,620 W30 O1 X0 >244,380 U60 W30 " +
+                "H2,1 W30 >403,179 W30 H3,1 W10 >499,274 W10 R2 A W60 X1 H3,0 W30 >611,130 U30 W120 H7,0 W30 >1139,82 L1 A W20 " +
+                "{Rat,1183,40,1192,60,1800 A W200 >1379,82 U1 A W30 >1219,170 W5 [ W30 `ap_east"));
+            // (8,1): the propelled platform over the pit to its button; (8,2) fight; (8,3) `]` scares the silverfish onto the button
+            // that opens the key chest.
+            yield return Section("apartment key 3", () => Exec(
+                ">1283,210 W10 (82,14 W10 G1379,226 G1379,242 W10 X1 H8,2 W30 F1800 W30 X1 H8,3 W30 ] W30 I1312,496,d W60 T W30 `ap_key3"));
+            // (7,3): the slashers, then a running jump into the water (too far to wade) to the dust raft and across to the button;
+            // (6,3), (6,4)'s key block.
+            yield return Section("apartment water", () => Exec(
+                "X1 H7,3 W30 F1800 W30 H7,3 W30 >1139,578 W10 er G1187,578 G1187,546 G1142,546 W10 G1123,546 W30 X0 W2 H6,3 W30 " +
+                "X1 H6,4 W30 F1800 W30 `ap_water"));
+            // (7,2): its key block, then the down door to (2,2): its two buttons by the two propelled platforms, and back up.
+            yield return Section("apartment twin platforms", () => Exec(
+                "X0 H7,2 W30 >1139,370 L30 W30 >1203,410 U20 W120 J27,26,l W20 J21,26,u W20 (21,25 W10 >339,338 W10 >451,338 W20 " +
+                "J28,21,d W20 >339,338 J21,21,d W20 (21,22 W10 >403,418 U20 W120 `ap_twin"));
+            // (6,2) fight; (5,2) `[` rat button; (5,3) the crystal maze (`_` plans the switch flips); (4,3) and the (4,2) door down to (4,7).
+            yield return Section("apartment maze", () => Exec(
+                "X1 H6,2 W30 F1800 W30 X0 H5,2 [ W30 X0 H5,3 W20 _803,610 W20 X1 H4,3 W30 F1800 W20 H4,2 W20 >771,338 U40 W120 `ap_maze"));
+            // (5,7) silverfish button (a Gas Guy in the room is fought first), (5,6), (6,6)'s key chest.
+            yield return Section("apartment south key", () => Exec(
+                "X0 H5,7 ] W30 X1 F1800 W20 X1 H5,6 W30 F W30 X1 H6,6 W30 F W30 I1088,976,d W60 T W30 `ap_south"));
+            // (6,7): the silverfish onto its button by pillar flips (`]`), the key block, the (7,7) checkpoint and the Watcher (7,6),
+            // then its health cicada.
+            yield return Section("apartment watcher", () => Exec(
+                "X0 H5,6 W10 H5,7 W10 H6,7 W20 ] W30 >1091,1138 R40 W30 V W20 H7,6 W120 i W60 `ap_watcher"));
+            // (8,7)'s card, and out to the Nexus.
+            yield return Section("apartment last card", () => Exec("H8,7 W20 I1376,1168,d W60 T W30 n0 W120 `ap_done"));
         }
     }
 }

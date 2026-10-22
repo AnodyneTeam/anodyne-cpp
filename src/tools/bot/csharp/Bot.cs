@@ -1,4 +1,4 @@
-using AnodyneSharp.Entities;
+﻿using AnodyneSharp.Entities;
 using AnodyneSharp.Input;
 using AnodyneSharp.MapData;
 using AnodyneSharp.Registry;
@@ -372,8 +372,9 @@ namespace AnodyneSharp.Recording
                 }
             }
             _hpSeen = hp;
-            if (why != null || (_allowDamage && _hpSeenAllow >= 0 && hp < _hpSeenAllow))
+            if ((why != null && why != _whyShown) || (_allowDamage && _hpSeenAllow >= 0 && hp < _hpSeenAllow))
             {
+                _whyShown = why; // (with damage allowed the run goes on: say it once, not every frame)
                 string near = "";
                 try
                 {
@@ -384,6 +385,7 @@ namespace AnodyneSharp.Recording
                 try { System.Console.Error.Write(BotNav.RoomText()); } catch { }
             }
             if (_allowDamage) { _hpSeenAllow = hp; return; }
+            _whyShown = null;
             if (why != null)
             {
                 System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame} doing [{Status}]");
@@ -398,6 +400,7 @@ namespace AnodyneSharp.Recording
         // run whose average over a window is over MaxAvgMs is a fatal error (a planner that blows up shows up at once, not as "it feels slow").
         private static readonly double SlowFrameMs = double.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SLOW_MS"), out double sm) ? sm : 40;
         private static readonly double MaxAvgMs = double.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_MAX_AVG_MS"), out double am) ? am : 12;
+        private static string _whyShown;
         private static double _winMs; private static int _winN; private static int _slowReports;
 
         public static Dictionary<Keys, KeyInput.InputState> NextFrame()

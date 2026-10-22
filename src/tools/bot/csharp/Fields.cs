@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace AnodyneSharp.Recording
 {
@@ -362,6 +362,46 @@ namespace AnodyneSharp.Recording
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
             yield return WalkTo(c.X, c.Y, tol: 1.5f, timeout: 120, diagonal: true);
+        }
+
+        /// <summary>
+        /// Any screen's platform: from a floor tile next to the one at tile (tx,ty) (behind it if we can, so we jump on along its way),
+        /// jump on and ride it until it stops. Getting off is the next step's business.
+        /// </summary>
+        public static IEnumerable<object> RideFrom(int tx, int ty)
+        {
+            var plat = PlatformAt(tx, ty);
+            if (plat == null)
+            {
+                throw new Exception($"platform: none near {tx},{ty}");
+            }
+            var pt = new Point((int)Math.Floor(Mid(plat).X / 16f), (int)Math.Floor(Mid(plat).Y / 16f));
+            var ahead = plat.facing switch { Facing.UP => new Point(0, -1), Facing.DOWN => new Point(0, 1), Facing.LEFT => new Point(-1, 0), _ => new Point(1, 0) };
+            var here = BotNav.TileOf(BotRunner.Player.Position);
+            var sides = new[] { new Point(-ahead.X, -ahead.Y), new Point(ahead.Y, ahead.X), new Point(-ahead.Y, -ahead.X), ahead };
+            Point? from = null;
+            foreach (var o in sides)
+            {
+                var q = new Point(pt.X + o.X, pt.Y + o.Y);
+                if (BotNav.Walkable(q) && (q == here || BotNav.FindPath(here, q) != null))
+                {
+                    from = q;
+                    break;
+                }
+            }
+            if (from == null)
+            {
+                throw new Exception($"platform: no floor next to {pt} to jump on from");
+            }
+            Trace($"ride the platform at {pt} (going {plat.facing}, active={Active(plat)}) from {from}");
+            var c = BotNav.CentreOf(from.Value);
+            yield return GoTo(c.X, c.Y);
+            yield return StepTo(from.Value.X, from.Value.Y);
+            var dx = pt.X - from.Value.X;
+            var dy = pt.Y - from.Value.Y;
+            var dir = dy < 0 ? KeyFunctions.Up : dy > 0 ? KeyFunctions.Down : dx < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+            yield return JumpOnto(pt.X, pt.Y, dir);
+            yield return Ride(pt.X, pt.Y);
         }
 
         public static IEnumerable<object> Platforms(int which)

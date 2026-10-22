@@ -500,6 +500,63 @@ namespace AnodyneSharp.Recording
         /// conveyor, '^' spikes, ',' puddle), each entity's letter on the tile under its centre and '@' for the player, then one line per entity
         /// with its exact hitbox, velocity and facing.
         /// </summary>
+        /// <summary>
+        /// Another screen of this map as text without going there: the tile grid as in RoomText, then the entities its presets would make
+        /// (type, tile, preset frame and type value, and whether it is still alive), lettered on their tiles.
+        /// </summary>
+        public static string ScreenText(Point grid)
+        {
+            var map = CurrentMap;
+            if (map == null)
+            {
+                return "SCREEN: no map";
+            }
+            var cells = new char[10, 10];
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 10; x++)
+                {
+                    var (al, ev) = map.GetTileClass(new Point(grid.X * 10 + x, grid.Y * 10 + y));
+                    cells[y, x] = ev switch
+                    {
+                        CollisionEventType.HOLE => 'h',
+                        CollisionEventType.CONVEYOR => '~',
+                        CollisionEventType.SPIKE => '^',
+                        CollisionEventType.PUDDLE => ',',
+                        _ => al == Touching.NONE ? '.' : '#',
+                    };
+                }
+            }
+            var lines = new List<string>();
+            char next = 'A';
+            foreach (var p in AnodyneSharp.Entities.EntityManager.GetGridEntities(GlobalState.CURRENT_MAP_NAME, grid))
+            {
+                var t = new Point((int)Math.Floor((p.Position.X + 8) / 16f), (int)Math.Floor((p.Position.Y + 8) / 16f));
+                char ch = next <= 'Z' ? next++ : '*';
+                int cx = t.X - grid.X * 10, cy = t.Y - grid.Y * 10;
+                if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
+                {
+                    cells[cy, cx] = ch;
+                }
+                lines.Add($"  {ch} {p.Type.Name} tile={t.X},{t.Y} f{p.Frame}" + (string.IsNullOrEmpty(p.TypeValue) ? "" : $" '{p.TypeValue}'") + (p.Alive ? "" : " DEAD"));
+            }
+            var sb = new System.Text.StringBuilder($"SCREEN {GlobalState.CURRENT_MAP_NAME} {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left)\n");
+            for (int y = 0; y < 10; y++)
+            {
+                sb.Append($"  {grid.Y * 10 + y,3} ");
+                for (int x = 0; x < 10; x++)
+                {
+                    sb.Append(cells[y, x]);
+                }
+                sb.Append('\n');
+            }
+            foreach (var l in lines)
+            {
+                sb.Append(l).Append('\n');
+            }
+            return sb.ToString();
+        }
+
         public static string RoomText()
         {
             var map = CurrentMap;
@@ -801,6 +858,12 @@ namespace AnodyneSharp.Recording
             return set;
         }
 
+        /// <summary>
+        /// A Silverfish we are herding (SilverfishOnButton): while it sits, its row and column (and the tiles round it) are where it sees
+        /// us and runs, so walks keep off them where they can and it only runs when we mean it to.
+        /// </summary>
+        public static Entity SpookFish;
+
         /// <summary>Extra path cost near stationary shooters (their bubbles always find a player walking past): 2 tiles = 12, 4 tiles = 5.</summary>
         public static Dictionary<Point, int> ShooterZones()
         {
@@ -854,6 +917,30 @@ namespace AnodyneSharp.Recording
                         int dist = Math.Max(Math.Abs(dx), Math.Abs(dy));
                         var t = new Point(c.X + dx, c.Y + dy);
                         zones[t] = Math.Max(zones.TryGetValue(t, out int old) ? old : 0, dist <= 2 ? 12 : 5);
+                    }
+                }
+            }
+            if (SpookFish != null && SpookFish.exists && SpookFish.velocity == Vector2.Zero)
+            {
+                var ft = TileOf(SpookFish.Position + new Vector2(8, 8));
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    for (int i = 1; i < 10; i++)
+                    {
+                        var t = new Point(ft.X + d.X * i, ft.Y + d.Y * i);
+                        if (!Walkable(t))
+                        {
+                            break;
+                        }
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int z) ? z : 0, 10);
+                    }
+                }
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        var t = new Point(ft.X + dx, ft.Y + dy);
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int z) ? z : 0, 10);
                     }
                 }
             }
