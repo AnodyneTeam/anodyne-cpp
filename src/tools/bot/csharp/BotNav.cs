@@ -476,6 +476,10 @@ namespace AnodyneSharp.Recording
         /// <summary>Firm floor to jump from or land on (not pit, water or spikes).</summary>
         private static bool LeapFloor(Point t)
         {
+            if (_gatesOpen.Contains(t))
+            {
+                return true;
+            }
             var (al, ev) = CurrentMap.GetTileClass(t);
             return al == Touching.NONE && ev != CollisionEventType.HOLE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.SPIKE;
         }
@@ -774,7 +778,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 string name = e.GetType().Name;
-                if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
+                if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name == "SteamPipe" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
                 }

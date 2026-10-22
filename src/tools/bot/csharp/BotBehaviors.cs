@@ -3429,7 +3429,8 @@ namespace AnodyneSharp.Recording
                     yield return RaftTo(wc.X - BotNav.HalfW, wc.Y - BotNav.HalfH);
                     yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
                     yield return Wait(10);
-                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
+                    // (not from a raft drifting down a river: the broom cannot steer it out of a Gas Guy's cloud)
+                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos)))
                     {
                         yield return Fight(3600, soft: true);
                     }
@@ -4530,7 +4531,7 @@ namespace AnodyneSharp.Recording
                     lastRideKey = rideKey;
                     // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
                     // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
-                    if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime")
+                    if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime" or "GasGuy")
                         .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
                         .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
@@ -5035,6 +5036,35 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// Hotel steam: touching a pipe's steam shoves us 50px/s the way it blows (into the pits beside the pipes). While walking through it,
+        /// lean against it: add the key against the blow (walking is 70px/s, so we still make way) unless we are walking with it anyway.
+        /// </summary>
+        internal static KeyFunctions[] SteamBrace(KeyFunctions[] held)
+        {
+            if (Player == null || !held.Any(k => k is KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
+            {
+                return held;
+            }
+            var pb = Player.Hitbox;
+            pb.Inflate(3, 3);
+            foreach (var pipe in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>())
+            {
+                if (!pipe.exists || pipe.Disabled || !(pipe.Hitbox.Intersects(pb) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(pb))))
+                {
+                    continue;
+                }
+                var with = pipe.facing switch { Facing.LEFT => KeyFunctions.Left, Facing.RIGHT => KeyFunctions.Right, Facing.UP => KeyFunctions.Up, _ => KeyFunctions.Down };
+                var against = pipe.facing switch { Facing.LEFT => KeyFunctions.Right, Facing.RIGHT => KeyFunctions.Left, Facing.UP => KeyFunctions.Down, _ => KeyFunctions.Up };
+                if (!held.Contains(with) && !held.Contains(against))
+                {
+                    return held.Append(against).ToArray();
+                }
+                return held;
+            }
+            return held;
+        }
+
+        /// <summary>
         /// A bullet Slime's shot (aimed at us, 40px/s, from its corner): hop over it, as only a player on the ground is hurt. A shot fired from
         /// broom's length (where the Slime policy stands) touches us the frame it spawns, so the hop goes off just before the Slime's shot timer
         /// runs out, sideways when there is floor there (the shot then flies through where we were). (Hopping shots from further off as they
@@ -5458,9 +5488,14 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
+                if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < 48))
+                {
+                    yield break; // not off a raft, nor into whatever dropped it (a Gas Guy's cloud): a heart is not worth more hits
+                }
                 BotRunner.Status = "collect heart";
                 var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
-                for (int i = 0; i < 240 && heart.exists; i++)
+                int hpAtStart = GlobalState.CUR_HEALTH;
+                for (int i = 0; i < 240 && heart.exists && GlobalState.CUR_HEALTH >= hpAtStart; i++)
                 {
                     var hp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
                     if (hp == null || hp.Count == 0)
@@ -7740,6 +7775,51 @@ namespace AnodyneSharp.Recording
         {
             float dx = tg.Center.X - pb.Center.X, dy = tg.Center.Y - pb.Center.Y;
             bool vert = Math.Abs(dy) >= Math.Abs(dx);
+            // The side we are on may be walled off (a plant in a corner): stand on a side whose tile we can get to, going round if need be.
+            var tt = BotNav.TileOf(new Vector2(tg.Center.X - 5, tg.Center.Y - 6));
+            var sides = new List<(Point t, bool v)>();
+            var mine = vert ? new Point(tt.X, tt.Y + (dy > 0 ? -1 : 1)) : new Point(tt.X + (dx > 0 ? -1 : 1), tt.Y);
+            sides.Add((mine, vert));
+            sides.Add((vert ? new Point(tt.X + (dx > 0 ? -1 : 1), tt.Y) : new Point(tt.X, tt.Y + (dy > 0 ? -1 : 1)), !vert));
+            sides.Add((vert ? new Point(tt.X + (dx > 0 ? 1 : -1), tt.Y) : new Point(tt.X, tt.Y + (dy > 0 ? 1 : -1)), !vert));
+            sides.Add((vert ? new Point(tt.X, tt.Y + (dy > 0 ? 1 : -1)) : new Point(tt.X + (dx > 0 ? 1 : -1), tt.Y), vert));
+            {
+                // our own side, but with a wall between (the plant's tile sits in a notch): walk round to it first
+                var here0 = BotNav.TileOf(Pos);
+                if (BotNav.Walkable(mine) && !BotNav.IsHole(mine) && here0 != mine)
+                {
+                    var r0 = BotNav.FindPath(here0, q => q == mine, mine);
+                    if (r0 != null && r0.Count >= 2)
+                    {
+                        var nc0 = BotNav.CentreOf(r0[0]);
+                        float ndx0 = nc0.X - Pos.X, ndy0 = nc0.Y - Pos.Y;
+                        return K(Math.Abs(ndx0) > 2f ? (ndx0 < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ndy0 < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                }
+            }
+            if (!BotNav.Walkable(mine) || BotNav.IsHole(mine))
+            {
+                var here = BotNav.TileOf(Pos);
+                foreach (var (st, sv) in sides.Skip(1))
+                {
+                    if (!BotNav.Walkable(st) || BotNav.IsHole(st))
+                    {
+                        continue;
+                    }
+                    if (here == st)
+                    {
+                        vert = sv;
+                        break;
+                    }
+                    var route = BotNav.FindPath(here, q => q == st, st);
+                    if (route != null && route.Count > 0)
+                    {
+                        var nc = BotNav.CentreOf(route[0]);
+                        float ndx = nc.X - Pos.X, ndy = nc.Y - Pos.Y;
+                        return K(Math.Abs(ndx) > 2f ? (ndx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ndy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                }
+            }
             var faceKey = vert ? (dy > 0 ? KeyFunctions.Down : KeyFunctions.Up) : (dx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
             var backKey = vert ? (dy > 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx > 0 ? KeyFunctions.Left : KeyFunctions.Right);
             int gap = vert ? (dy > 0 ? tg.Top - pb.Bottom : pb.Top - tg.Bottom) : (dx > 0 ? tg.Left - pb.Right : pb.Left - tg.Right);
@@ -8782,7 +8862,7 @@ namespace AnodyneSharp.Recording
                 {
                     var pl = target.Hitbox;
                     var pbp = Player.Hitbox;
-                    bool bulletsUp = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "BurstBullet");
+                    bool bulletsUp = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "BurstBullet" && e.CurAnimName == "move"); // (a burst one sits on its last frame a while)
                     float pdist = (new Vector2(pl.Center.X, pl.Center.Y) - new Vector2(pbp.Center.X, pbp.Center.Y)).Length();
                     if (noKill > 0 && noKill < 1200 && (bulletsUp || pdist < 50))
                     {
