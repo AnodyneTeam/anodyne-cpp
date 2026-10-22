@@ -1023,12 +1023,47 @@ namespace AnodyneSharp.Recording
             yield return K();
         }
 
+        /// <summary>The nearest walkable tile next to ours, or reached over spike tiles (null if none within 6 steps).</summary>
+        private static Point? SpikeExit()
+        {
+            var start = BotNav.TileOf(Pos);
+            var seen = new HashSet<Point> { start };
+            var q = new Queue<(Point t, int d)>();
+            q.Enqueue((start, 0));
+            while (q.Count > 0)
+            {
+                var (t, d) = q.Dequeue();
+                if (t != start && BotNav.Walkable(t))
+                {
+                    // the closest floor tile of this ring to where we actually stand (a step the other way crosses the hole's middle)
+                    var ring = q.Where(x => x.d == d && BotNav.Walkable(x.t)).Select(x => x.t).Append(t);
+                    var me = Pos + new Vector2(5, 6);
+                    return ring.OrderBy(x => (BotNav.CentreOf(x) + new Vector2(5, 6) - me).LengthSquared()).First();
+                }
+                if (d >= 6 || (t != start && !BotNav.IsSpike(t)) || BotNav.CurrentMap.GetTileClass(t).Item1 == AnodyneSharp.Entities.Touching.ANY)
+                {
+                    continue;
+                }
+                foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var n = new Point(t.X + o.X, t.Y + o.Y);
+                    if (seen.Add(n))
+                    {
+                        q.Enqueue((n, d + 1));
+                    }
+                }
+            }
+            return null;
+        }
+
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
             int shooterFights = 0, slimeFights = 0, annoyerFights = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
+            bool offSpikes = false; // walked off an unwalkable tile we found ourselves standing on (the planner never plans from one)
+            int gateWait = 0; // frames spent waiting for a shut gate on this screen to open (a kill only counts once the enemy is gone)
             // Beams only become known on arriving at their screen: a route that was planned to end inside one is re-planned to end beside it.
             HashSet<Point> goalLaneBan = null;
             var laneReplanned = new HashSet<Point>();
@@ -1142,11 +1177,49 @@ namespace AnodyneSharp.Recording
                         BotNav.Blocked.Clear();
                         goto replan;
                     }
+                    if (path == null && !offSpikes && !BotNav.Walkable(BotNav.TileOf(Pos)) && SpikeExit() is Point exit)
+                    {
+                        // Standing on a tile the planner may not walk (spikes, the lip of a hole: a fight dodged us there): every plan starts
+                        // from it, so first walk out the shortest way to floor.
+                        offSpikes = true;
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  no path from unwalkable tile {BotNav.TileOf(Pos)} ({BotNav.CurrentMap.GetTileClass(BotNav.TileOf(Pos))}): walking off it to {exit}");
+                        }
+                        var ec = BotNav.CentreOf(exit);
+                        for (int w = 0; w < 45 && !BotNav.Walkable(BotNav.TileOf(Pos)); w++)
+                        {
+                            // (a plain step at a time: a fall or a knock-back ends it, and the replan starts from wherever we are)
+                            float ex = ec.X - Pos.X, ey = ec.Y - Pos.Y;
+                            var keys = new List<KeyFunctions>();
+                            if (Math.Abs(ex) > 1.5f) { keys.Add(ex < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                            if (Math.Abs(ey) > 1.5f) { keys.Add(ey < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                            yield return keys.ToArray();
+                        }
+                        goto replan;
+                    }
+                    if (path == null && gateWait < 90 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Gate" && e.Solid
+                        && new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == Grid))
+                    {
+                        // A gate here may be about to open (an enemy just killed is still dying, a button just pressed): give it a moment.
+                        if (gateWait == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  no path yet at {Pos}: waiting a moment for a shut gate on {Grid}");
+                        }
+                        for (int w = 0; w < 15; w++, gateWait++)
+                        {
+                            yield return K();
+                        }
+                        goto replan;
+                    }
                     if (path == null)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}")));
+                            System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}{(e.Solid ? " shut" : " open")}")) + $" kills={GlobalState.ENEMIES_KILLED} goal={what} forced={forced}");
+                            var here = BotNav.TileOf(Pos);
+                            System.Console.Error.WriteLine("  walkable round us: " + string.Join(" ", new[] { new Point(0, -1), new Point(0, 1), new Point(-1, 0), new Point(1, 0), new Point(0, 0) }.Select(o => new Point(here.X + o.X, here.Y + o.Y)).Select(q => $"{q.X},{q.Y}={BotNav.Walkable(q)}/{BotNav.CurrentMap.GetTileClass(q)}"))
+                                + $" toGate={BotNav.FindPath(here, new Point(18, 14))?.Count} avoid={avoidStationary?.Count} hard={BotNav.HardAvoid?.Count} blocked={BotNav.Blocked.Count}");
                             yield return Exec($"&{Grid.X},{Grid.Y},{Grid.X},{Grid.Y}");
                         }
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -1438,9 +1511,11 @@ namespace AnodyneSharp.Recording
                         {
                             break;
                         }
-                        if (AutoFight && annoyerFights < 6 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 70))
+                        if (annoyerFights < 6 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer"
+                            && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < (AutoFight ? 70 : 48)))
                         {
                             // An awake Annoyer comes for us wherever we walk (and walking about only dances us into its swoop): the broom answers it.
+                            // (even with auto-fight off: one that is already on us is self-defence, and never a tool the route needs alive)
                             annoyerFights++;
                             BotRunner.Status = "clear Annoyer(s) on the way";
                             yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");

@@ -5382,7 +5382,7 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             pb.Inflate(1, 1);
             var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
-                && !IsEyeBoss(e) && e.Hitbox.Intersects(pb)).ToList();
+                && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant") && e.Hitbox.Intersects(pb)).ToList(); // (those two only hurt with their cuts / shots)
             if (on.Count == 0)
             {
                 _contactFrames = 0;
