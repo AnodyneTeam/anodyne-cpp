@@ -911,6 +911,106 @@ namespace AnodyneSharp.Recording
         /// <summary>On a dust raft over water (a fight there would drop the raft); walking the shore between two rafts is not.</summary>
         private static bool OnWater() => InRaft && OnConveyor(BotNav.TileOf(Pos));
 
+        /// <summary>Px a jump carries with one direction key held (measured ~29); with two (a diagonal) the speed is shared out, ~21 on each axis. An axis
+        /// with no key keeps its speed (none from a standstill).</summary>
+        private const float LeapReach = 29f, LeapReachDiag = 21f;
+
+        /// <summary>
+        /// A free jump from tile a to tile b (BotNav.IsLeap: stepping stones in a pit, diagonals included). Picks a take-off spot on a where the
+        /// box stands clear of every pit's core and from which a jump with the keys towards b comes down clear too (for a carry a few px short
+        /// or long), creeps there, stops, and jumps holding those keys until it lands.
+        /// </summary>
+        protected static IEnumerable<object> Leap(Point a, Point b)
+        {
+            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+            float reach = sx != 0 && sy != 0 ? LeapReachDiag : LeapReach;
+            var hb = Player.Hitbox;
+            var off = new Vector2(hb.X - Pos.X, hb.Y - Pos.Y);
+            Rectangle Box(float x, float y) => new((int)Math.Round(x), (int)Math.Round(y), hb.Width, hb.Height);
+            bool Lands(Rectangle r) => BotNav.TileOf(new Vector2(r.X, r.Y) - off) == b && StandsSafe(r);
+            Vector2? best = null;
+            float bestScore = float.MaxValue;
+            for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - hb.Height + 6; y++)
+            {
+                for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - hb.Width + 6; x++)
+                {
+                    if (!StandsSafe(Box(x, y)) || BotNav.TileOf(new Vector2(x, y) - off) != a)
+                    {
+                        continue;
+                    }
+                    bool ok = true;
+                    foreach (float carry in new[] { reach - 2, reach, reach + 2 })
+                    {
+                        ok &= Lands(Box(x + sx * carry, y + sy * carry));
+                    }
+                    if (!ok)
+                    {
+                        continue;
+                    }
+                    // the middle of the safe spots: far from both edges of the margin (a px off either way still works), near where we are
+                    float score = Math.Abs(x - hb.X) + Math.Abs(y - hb.Y);
+                    foreach (var (ex, ey) in new[] { (-2, 0), (2, 0), (0, -2), (0, 2) })
+                    {
+                        if (!StandsSafe(Box(x + ex, y + ey)) || !Lands(Box(x + ex + sx * reach, y + ey + sy * reach)))
+                        {
+                            score += 20;
+                        }
+                    }
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        best = new Vector2(x, y) - off;
+                    }
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  leap {a.X},{a.Y} -> {b.X},{b.Y} take-off {(best == null ? "none" : best.Value.ToString())} from {Pos}");
+            }
+            if (best == null)
+            {
+                yield break;
+            }
+            var to = best.Value;
+            BotRunner.Status = $"leap to {b.X},{b.Y}: creep to the take-off";
+            for (int w = 0; w < 40; w++)
+            {
+                float ddx = to.X - Pos.X, ddy = to.Y - Pos.Y;
+                if (Math.Abs(ddx) < 0.8f && Math.Abs(ddy) < 0.8f)
+                {
+                    break;
+                }
+                var keys = new List<KeyFunctions>();
+                if (Math.Abs(ddx) >= 0.8f)
+                {
+                    keys.Add(ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                }
+                if (Math.Abs(ddy) >= 0.8f)
+                {
+                    keys.Add(ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                }
+                yield return K(keys.ToArray());
+            }
+            yield return K(); // stand still: an axis without a key keeps whatever speed it had at take-off
+            var jumpKeys = new List<KeyFunctions> { KeyFunctions.Cancel };
+            if (sx != 0)
+            {
+                jumpKeys.Add(sx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+            }
+            if (sy != 0)
+            {
+                jumpKeys.Add(sy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+            }
+            BotRunner.Status = $"leap to {b.X},{b.Y}";
+            yield return K(jumpKeys.ToArray());
+            var air = jumpKeys.Skip(1).ToArray();
+            for (int j = 0; j < 60 && (j < 3 || Player.state == PlayerState.AIR); j++)
+            {
+                yield return K(air);
+            }
+            yield return K();
+        }
+
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
             int shooterFights = 0, slimeFights = 0, annoyerFights = 0;
@@ -1132,6 +1232,22 @@ namespace AnodyneSharp.Recording
                             goto replan;
                         }
                     }
+                    var leapFrom = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
+                    if (jumping && BotNav.IsLeap(leapFrom, tile))
+                    {
+                        if (BotNav.TileOf(Pos) != leapFrom)
+                        {
+                            stuck = true; // never got to the take-off tile (knocked off the route): plan again from where we are
+                            break;
+                        }
+                        yield return Leap(leapFrom, tile);
+                        if (BotNav.TileOf(Pos) != tile)
+                        {
+                            stuck = true; // came down somewhere else (or not at all): plan again from here
+                            break;
+                        }
+                        continue;
+                    }
                     if (jumping && BotNav.IsJumpable(tile))
                     {
                         int pj = pi;
@@ -1243,6 +1359,15 @@ namespace AnodyneSharp.Recording
                         }
                         pi = pj - 1;
                         continue;
+                    }
+                    if (GlobalState.inventory.GetCurrentMapKeys() > 0 && BotRunner.Entities().FirstOrDefault(e => e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate
+                            && BotNav.TileOf(e.Position + new Vector2(3, 2)) == tile) is Entity keyGate)
+                    {
+                        // A keyblock in the way and a key in hand: push into it from the tile before.
+                        var kfrom = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
+                        var kdir = tile.X > kfrom.X ? KeyFunctions.Right : tile.X < kfrom.X ? KeyFunctions.Left : tile.Y > kfrom.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                        var kc = BotNav.CentreOf(kfrom);
+                        yield return OpenKeyBlock(kc.X, kc.Y, kdir);
                     }
                     var c = BotNav.CentreOf(tile);
                     Vector2 last = Pos;

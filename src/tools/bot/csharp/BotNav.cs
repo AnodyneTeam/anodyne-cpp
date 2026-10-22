@@ -449,7 +449,69 @@ namespace AnodyneSharp.Recording
                     yield return n;
                 }
             }
+            if (_leaps && AllowJump && LeapFloor(c))
+            {
+                // Free jumps between islands of floor (stepping stones in a pit): a jump carries ~27px on each axis that has a key held, so
+                // any floor up to two tiles away on each axis, with only pit, water or spikes in between (no wall), is one step.
+                for (int dy = -2; dy <= 2; dy++)
+                {
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        if (Math.Abs(dx) + Math.Abs(dy) <= 1)
+                        {
+                            continue;
+                        }
+                        var n = new Point(c.X + dx, c.Y + dy);
+                        if (LeapFloor(n) && LeapClear(c, n))
+                        {
+                            yield return n;
+                        }
+                    }
+                }
+            }
         }
+
+        private static bool _leaps;
+
+        /// <summary>Firm floor to jump from or land on (not pit, water or spikes).</summary>
+        private static bool LeapFloor(Point t)
+        {
+            var (al, ev) = CurrentMap.GetTileClass(t);
+            return al == Touching.NONE && ev != CollisionEventType.HOLE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.SPIKE;
+        }
+
+        /// <summary>Nothing solid in the box between a and b, and something there that cannot be walked (else it is no jump, just a walk).</summary>
+        private static bool LeapClear(Point a, Point b)
+        {
+            bool gap = false, floor = false;
+            for (int y = Math.Min(a.Y, b.Y); y <= Math.Max(a.Y, b.Y); y++)
+            {
+                for (int x = Math.Min(a.X, b.X); x <= Math.Max(a.X, b.X); x++)
+                {
+                    var t = new Point(x, y);
+                    if (t == a || t == b)
+                    {
+                        continue;
+                    }
+                    if (CurrentMap.GetTileClass(t).Item1 != Touching.NONE)
+                    {
+                        return false;
+                    }
+                    if (LeapFloor(t))
+                    {
+                        floor = true;
+                    }
+                    else
+                    {
+                        gap = true;
+                    }
+                }
+            }
+            return gap && !floor;
+        }
+
+        /// <summary>Consecutive path tiles that are not neighbours and not a ledge drop: a free jump (see Steps).</summary>
+        public static bool IsLeap(Point a, Point b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) > 1 && !(Ledges().TryGetValue(a, out var l) && l == b);
 
         private static readonly Point[] StepDirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
 
@@ -1046,6 +1108,21 @@ namespace AnodyneSharp.Recording
                     _respectClosedGates = true;
                 }
                 _crossCracked = false;
+            }
+            if (p == null && !strict && AllowJump)
+            {
+                // Stepping stones: jump from island to island (cracked ones too: they hold for a second).
+                _leaps = true;
+                _crossCracked = true;
+                p = FindPathCore(a, isGoal, forced);
+                if (p == null)
+                {
+                    _respectClosedGates = false;
+                    p = FindPathCore(a, isGoal, forced);
+                    _respectClosedGates = true;
+                }
+                _crossCracked = false;
+                _leaps = false;
             }
             return p;
         }

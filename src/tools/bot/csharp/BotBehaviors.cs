@@ -28,6 +28,18 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 int n = tok.Length > 1 && int.TryParse(tok.Substring(1), out int v) ? v : 1;
+                if (tok.StartsWith("door") && int.TryParse(tok.Substring(4), out int pair))
+                {
+                    // door<n>: through the nearest reachable end of door pair n of this map
+                    yield return TakeDoor(pair);
+                    continue;
+                }
+                if (tok.StartsWith("lift") && int.TryParse(tok.Substring(4), out int floor))
+                {
+                    // lift<n>: ride this screen's elevator to floor n
+                    yield return RideElevator(floor);
+                    continue;
+                }
                 switch (tok[0])
                 {
                     case ')':
@@ -213,7 +225,10 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine("BLOCKED: " + string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}")));
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
-                    case '+': yield return OpenChests(); break;
+                    case '+':
+                        // + health-upgrade chests of the map; +k key chests of this screen; +K key chests anywhere on the map we can reach
+                        yield return tok == "+k" ? OpenChests(1, true) : tok == "+K" ? OpenChests(1, false) : OpenChests();
+                        break;
                     case 'b':
                     {
                         // b<x>,<y>: to world point x,y on this map, first pressing the buttons we can reach until a raft/jump route opens up
@@ -3816,18 +3831,122 @@ namespace AnodyneSharp.Recording
             yield return Wait(60);
         }
 
-        protected static IEnumerable<object> OpenChests()
+        /// <summary>
+        /// Goes through door pair `pair` (the door preset frame) from its nearest reachable end. A door is a tile you walk into from the side
+        /// it lets you out on (below for the usual DownDoor): stand there and push into it until the warp moves us.
+        /// </summary>
+        protected static IEnumerable<object> TakeDoor(int pair)
         {
+            var here = BotNav.TileOf(Pos);
+            var ends = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && pr.Frame == pair).ToList();
+            AnodyneSharp.Entities.EntityPreset best = null;
+            Point bestStand = default;
+            KeyFunctions bestPush = KeyFunctions.Up;
+            int bestLen = int.MaxValue;
+            bool jumpOk = GlobalState.inventory.CanJump;
+            foreach (var pr in ends)
+            {
+                var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
+                string kind = pr.Type.Name;
+                var (stand, push) = kind.StartsWith("Up") ? (new Point(dt.X, dt.Y - 1), KeyFunctions.Down)
+                    : kind.StartsWith("Left") ? (new Point(dt.X + 1, dt.Y), KeyFunctions.Left)
+                    : kind.StartsWith("Right") ? (new Point(dt.X - 1, dt.Y), KeyFunctions.Right)
+                    : (new Point(dt.X, dt.Y + 1), KeyFunctions.Up);
+                BotNav.AllowJump = jumpOk;
+                var p = BotNav.FindPath(here, q => q == stand, stand);
+                BotNav.AllowJump = false;
+                if (p != null && p.Count < bestLen)
+                {
+                    (best, bestStand, bestPush, bestLen) = (pr, stand, push, p.Count);
+                }
+            }
+            if (best == null)
+            {
+                throw new InvalidOperationException($"bot: no reachable end of door {pair} on {Map}");
+            }
+            BotRunner.Status = $"door {pair}";
+            var sc = BotNav.CentreOf(bestStand);
+            // in line with the door (its middle), then push into it
+            float x = bestPush is KeyFunctions.Up or KeyFunctions.Down ? best.Position.X + 3 : sc.X;
+            float y = bestPush is KeyFunctions.Left or KeyFunctions.Right ? best.Position.Y + 2 : sc.Y;
+            yield return GoTo(x, y);
+            yield return WalkTo(x, y);
+            var before = Pos;
+            string map = Map;
+            for (int i = 0; i < 90 && Map == map && (Pos - before).Length() < 40; i++)
+            {
+                yield return GlobalState.ScreenTransition || Talking ? K() : K(bestPush);
+            }
+            yield return Until(() => !GlobalState.ScreenTransition, 600, "door warp");
+            yield return Wait(30);
+        }
+
+        /// <summary>
+        /// Rides the elevator on this screen to floor `floor`. Standing below an elevator opens it; walking up into it opens its menu, which lists
+        /// the other elevators of its link group by frame (the floor is frame + 1) and then "leave". Picks the line for that floor.
+        /// </summary>
+        protected static IEnumerable<object> RideElevator(int floor)
+        {
+            var lift = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Interactive.Elevator && new Point((int)(e.Position.X + 16) / 160, (int)(e.Position.Y + 16) / 160) == Grid)
+                .OrderBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+            if (lift == null)
+            {
+                throw new InvalidOperationException($"bot: no elevator on screen {Grid} of {Map}");
+            }
+            var menu = lift.GetType().GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(lift);
+            var preset = menu?.GetType().GetField("parent_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(menu) as AnodyneSharp.Entities.EntityPreset;
+            if (preset == null)
+            {
+                throw new InvalidOperationException("bot: cannot read the elevator's menu");
+            }
+            var others = AnodyneSharp.Entities.EntityManager.GetLinkGroup(preset.LinkID).Where(e => e.LinkID != preset.LinkID).OrderBy(e => e.Frame).ToList();
+            int line = others.FindIndex(e => e.Frame + 1 == floor);
+            if (line < 0)
+            {
+                throw new InvalidOperationException($"bot: the elevator at {lift.Position} does not go to floor {floor} (it lists {string.Join(",", others.Select(e => e.Frame + 1))})");
+            }
+            BotRunner.Status = $"elevator to floor {floor}";
+            // under it, in the middle, then up into it until the menu takes over (the game stops the player while a substate runs)
+            float x = lift.Position.X + 11, y = lift.Position.Y + 36;
+            yield return GoTo(x, y);
+            yield return WalkTo(x, y);
+            var target = others[line].Position;
+            string map = Map;
+            for (int i = 0; i < 90 && !Talking; i++)
+            {
+                yield return K(KeyFunctions.Up);
+            }
+            yield return Wait(10);
+            for (int i = 0; i < line; i++)
+            {
+                yield return Tap(KeyFunctions.Down);
+                yield return Wait(6);
+            }
+            yield return Tap(KeyFunctions.Accept);
+            yield return Until(() => (Pos - target).Length() < 64, 300, $"arrive at the floor-{floor} elevator");
+            yield return Wait(60);
+        }
+
+        /// <summary>
+        /// Opens the unopened chests holding `frame` (2 health upgrade, 1 key) that we can get to, nearest first (only this screen's with
+        /// `screenOnly`), pressing reachable buttons first. A chest only reachable by jumping (pits, stepping stones) is walked to by the planner.
+        /// </summary>
+        protected static IEnumerable<object> OpenChests(int frame = 2, bool screenOnly = false)
+        {
+            var screen = Grid;
             for (int n = 0; n < 30; n++)
             {
                 var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated && pr.Frame == 2 && !_failedChests.Contains(pr.EntityID)).ToList();
+                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated && pr.Frame == frame && !_failedChests.Contains(pr.EntityID)
+                        && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen)).ToList();
                 BotNav.ResetDustCache();
                 bool jumpOk = GlobalState.inventory.CanJump;
                 var hereT = BotNav.TileOf(Pos);
                 // Buttons whose gates are still shut come first.
                 var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                    .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID))
+                    .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID)
+                        && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen))
                     .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
                     .Where(x => x.rp != null).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
                 if (btn != null)
@@ -3840,14 +3959,24 @@ namespace AnodyneSharp.Recording
                 }
                 (AnodyneSharp.Entities.EntityPreset pr, Point t)? best = null;
                 int bestLen = int.MaxValue;
+                bool bestLeap = false;
                 foreach (var pr in chests)
                 {
                     var t = BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17));
                     var rp = BotNav.RaftPath(hereT, OnConveyor(hereT), t, jumpOk);
+                    bool leapOnly = false;
+                    if (rp == null && jumpOk)
+                    {
+                        BotNav.AllowJump = true;
+                        rp = BotNav.FindPath(hereT, q => q == t, t);
+                        BotNav.AllowJump = false;
+                        leapOnly = rp != null;
+                    }
                     if (rp != null && rp.Count < bestLen)
                     {
                         bestLen = rp.Count;
                         best = (pr, t);
+                        bestLeap = leapOnly;
                     }
                 }
                 if (best == null)
@@ -3860,7 +3989,14 @@ namespace AnodyneSharp.Recording
                 }
                 var chest = best.Value.pr;
                 BotRunner.Status = $"to the chest at {chest.Position.X:0},{chest.Position.Y:0}";
-                yield return GoGlobal(chest.Position.X + 3, chest.Position.Y + 17);
+                if (bestLeap)
+                {
+                    yield return GoTo(chest.Position.X + 3, chest.Position.Y + 17);
+                }
+                else
+                {
+                    yield return GoGlobal(chest.Position.X + 3, chest.Position.Y + 17);
+                }
                 yield return InteractAt(chest.Position.X, chest.Position.Y, 'd');
                 yield return Wait(150);
                 yield return ReadDialogue();
