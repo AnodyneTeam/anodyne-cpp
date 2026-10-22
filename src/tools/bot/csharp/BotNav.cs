@@ -254,7 +254,28 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            return (traps.Count > 0 ? RaftPathCore(from, wet, goal, jump, traps) : null) ?? RaftPathCore(from, wet, goal, jump, null);
+            // And round what is chasing us (woken Hotel Dustmaids walk the water too): the tiles about them, while there is another way.
+            var chasers = new HashSet<Point>(traps);
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is true)
+                {
+                    var t = TileOf(new Vector2(e.Hitbox.Center.X - HalfW, e.Hitbox.Center.Y - HalfH));
+                    for (int ox = -1; ox <= 1; ox++)
+                    {
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            var n = new Point(t.X + ox, t.Y + oy);
+                            if (n != from && n != goal)
+                            {
+                                chasers.Add(n);
+                            }
+                        }
+                    }
+                }
+            }
+            return (chasers.Count > traps.Count ? RaftPathCore(from, wet, goal, jump, chasers) : null)
+                ?? (traps.Count > 0 ? RaftPathCore(from, wet, goal, jump, traps) : null) ?? RaftPathCore(from, wet, goal, jump, null);
         }
 
         private static List<Point> RaftPathCore(Point from, bool wet, Point goal, bool jump, HashSet<Point> avoid)
@@ -271,15 +292,31 @@ namespace AnodyneSharp.Recording
             AllowWater = false;
             // State: tile, on a raft, and "the raft we just got off is lying here on this screen" (usable for the next crossing).
             var prev = new Dictionary<(Point, bool, bool), (Point, bool, bool)>();
-            var q = new Queue<(Point, bool, bool)>();
+            var dist = new Dictionary<(Point, bool, bool), int>();
+            // Dijkstra: a step is 1, and getting off the raft short of the goal costs 6 more (riding on beats a walk past whatever is on the bank,
+            // and a raft left behind is a raft lost)
+            var q = new PriorityQueue<(Point, bool, bool), int>();
             var start = (from, wet, !wet && BotRunner.Player?.broom.dust != null); // a dust in the broom is a raft to hand
             prev[start] = start;
-            q.Enqueue(start);
+            dist[start] = 0;
+            q.Enqueue(start, 0);
+            var done = new HashSet<(Point, bool, bool)>();
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
             (Point, bool, bool)? found = null;
             while (q.Count > 0 && found == null)
             {
-                var (c, w, carry) = q.Dequeue();
+                var cur0 = q.Dequeue();
+                if (!done.Add(cur0))
+                {
+                    continue;
+                }
+                var (c, w, carry) = cur0;
+                if (c == goal && cur0 != start)
+                {
+                    found = cur0;
+                    break;
+                }
+                int dc = dist[cur0];
                 var cameFrom = prev[(c, w, carry)].Item1;
                 foreach (var n in Steps(cameFrom, c))
                 {
@@ -310,17 +347,14 @@ namespace AnodyneSharp.Recording
                     }
                     bool ncarry = nw ? false : (w ? true : (carry && !screenChanged));
                     var key = (n, nw, ncarry);
-                    if (prev.ContainsKey(key))
+                    int nd = dc + 1 + (w && !nw && n != goal ? 6 : 0);
+                    if (dist.TryGetValue(key, out int old) && old <= nd)
                     {
                         continue;
                     }
+                    dist[key] = nd;
                     prev[key] = (c, w, carry);
-                    if (n == goal)
-                    {
-                        found = key;
-                        break;
-                    }
-                    q.Enqueue(key);
+                    q.Enqueue(key, nd);
                 }
             }
             AllowJump = oldJ;

@@ -2611,6 +2611,12 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
+        private static KeyFunctions[] JumpPress(KeyFunctions dir)
+        {
+            _jumpPressFrame = BotRunner.Frame;
+            return K(KeyFunctions.Cancel, dir);
+        }
+
         private static bool WalkableAhead(KeyFunctions dir, int frames)
         {
             var v = DirVector(dir) * WalkPxPerFrame * frames;
@@ -4550,6 +4556,16 @@ namespace AnodyneSharp.Recording
                     if (Player.broom.dust == null)
                     {
                         yield return PickUpDust(outrun: true);
+                        // Picking it up may have woken things that chase dust (Hotel Dustmaids): launch from the nearest bank that the
+                        // route still floats on from, not back at the planned one past them.
+                        if (Player.broom.dust != null && NearestLaunch(goal, jump, s) is (Point, Point) launch && launch.Item1 != s)
+                        {
+                            RaftLog($"dust in hand at {BotNav.TileOf(Pos)}: launching from {launch.Item1} onto {launch.Item2} instead of {s}");
+                            s = launch.Item1;
+                            wt = launch.Item2;
+                            var lc = BotNav.CentreOf(s);
+                            yield return GoTo(lc.X - BotNav.HalfW, lc.Y - BotNav.HalfH);
+                        }
                     }
                     yield return StandFaceAccept(s.X, s.Y, FaceChar(new Point(wt.X - s.X, wt.Y - s.Y)));
                     yield return Wait(15);
@@ -4682,7 +4698,14 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
-                    var rideKeys = wet ? KeepOnWater(SafeMove(rideKey, null, 16f), rideKey) : SafeMove(rideKey, null, 16f);
+                    // Slow chasers (woken Dustmaids walk the water at 20px/s, homing): waiting for them to clear the way only lets them reach us.
+                    // While none is within arm's length, ride on at full speed (we are three times faster) and leave them behind.
+                    var pcr = Player.Hitbox.Center.ToVector2();
+                    var dangersNow = Dangers();
+                    bool onlySlowChasers = dangersNow.Count > 0 && dangersNow.All(d => d is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && !DormantDustmaid(d));
+                    bool chaserClose = dangersNow.Any(d => Vector2.Distance(d.Hitbox.Center.ToVector2(), pcr) < 20f);
+                    var moveKeys = onlySlowChasers && !chaserClose ? K(rideKey) : SafeMove(rideKey, null, 16f);
+                    var rideKeys = wet ? KeepOnWater(moveKeys, rideKey) : moveKeys;
                     if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
                         RaftLog($"  keys {string.Join("+", rideKeys)} (ride {rideKey}, stall {rideStall}, swings {raftSwings}) v={Player.velocity} touching={Player.touching} raft={Player.raft?.Position} state={Player.state}");
@@ -4698,6 +4721,48 @@ namespace AnodyneSharp.Recording
             {
                 yield return GoTo(gx, gy);
             }
+        }
+
+        /// <summary>
+        /// The closest (walking from here) dry tile beside water from which a raft route to `goal` exists, with that water tile; null if
+        /// none is nearer than `planned` (8 steps at most are searched).
+        /// </summary>
+        private static (Point, Point)? NearestLaunch(Point goal, bool jump, Point planned)
+        {
+            var start = BotNav.TileOf(Pos);
+            var seen = new HashSet<Point> { start };
+            var frontier = new List<Point> { start };
+            var dirs = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            var near = BotNav.NearEnemies(6); // (not past what is coming for us)
+            for (int depth = 0; depth <= 8 && frontier.Count > 0; depth++)
+            {
+                var next = new List<Point>();
+                foreach (var t in frontier)
+                {
+                    if (t == planned)
+                    {
+                        return null; // the planned bank is as near as any
+                    }
+                    foreach (var d in dirs)
+                    {
+                        var w = new Point(t.X + d.X, t.Y + d.Y);
+                        if (OnConveyor(w) && !OnConveyor(t) && BotNav.RaftPath(w, true, goal, jump) is List<Point> rp && rp.TakeWhile(OnConveyor).Count() >= 3)
+                        {
+                            return (t, w); // (a route that floats on from there: not one that steps straight back ashore)
+                        }
+                    }
+                    foreach (var d in dirs)
+                    {
+                        var n = new Point(t.X + d.X, t.Y + d.Y);
+                        if (seen.Add(n) && !OnConveyor(n) && BotNav.Walkable(n) && !near.Contains(n) && n.X / 10 == start.X / 10 && n.Y / 10 == start.Y / 10)
+                        {
+                            next.Add(n);
+                        }
+                    }
+                }
+                frontier = next;
+            }
+            return null;
         }
 
         /// <summary>
@@ -5238,6 +5303,81 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions? _hopDir;
         private static long _hopUntil;
+
+        private static int _contactFrames;
+
+        /// <summary>
+        /// Last line of defence for any script: stuck touching something that hurts (pinned by slow solid chasers, walked into a resting
+        /// one) costs a heart every 49 frames for as long as it lasts, whatever the script was after. After a few frames of contact, step
+        /// straight away from what we touch (a swing pressed this frame stays).
+        /// </summary>
+        internal static KeyFunctions[] ContactEscape(KeyFunctions[] held)
+        {
+            if (Player == null || Player.raft != null || !DodgeEnabled || Talking || GlobalState.ScreenTransition
+                || Environment.GetEnvironmentVariable("ANODYNE_NO_CONTACT_ESCAPE") != null)
+            {
+                _contactFrames = 0;
+                return held;
+            }
+            var pb = Player.Hitbox;
+            pb.Inflate(1, 1);
+            var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+                && !IsEyeBoss(e) && e.Hitbox.Intersects(pb)).ToList();
+            if (on.Count == 0)
+            {
+                _contactFrames = 0;
+                return held;
+            }
+            // (counted in the air too: hopping on the spot inside them is no way out, every landing is in them again)
+            if (++_contactFrames < 4 || Player.state != AnodyneSharp.Entities.PlayerState.GROUND)
+            {
+                return Player.state == AnodyneSharp.Entities.PlayerState.GROUND || _contactFrames < 4 ? held : held.Where(k => k != KeyFunctions.Cancel).ToArray();
+            }
+            var pc = Player.Hitbox.Center.ToVector2();
+            var away = on.Aggregate(Vector2.Zero, (acc, e) => acc + (pc - e.Hitbox.Center.ToVector2() is var d && d != Vector2.Zero ? Vector2.Normalize(d) : new Vector2(0, 1)));
+            if (away == Vector2.Zero)
+            {
+                away = new Vector2(0, 1);
+            }
+            away = Vector2.Normalize(away);
+            var keys = new List<KeyFunctions>();
+            var horiz = away.X < 0 ? KeyFunctions.Left : KeyFunctions.Right;
+            var vert = away.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down;
+            bool Ok(KeyFunctions k) => WalkableAhead(k, 4) && !OnConveyor(BotNav.TileOf(Pos + DirVector(k) * 6));
+            if (Math.Abs(away.X) > 0.38f && Ok(horiz))
+            {
+                keys.Add(horiz);
+            }
+            if (Math.Abs(away.Y) > 0.38f && Ok(vert))
+            {
+                keys.Add(vert);
+            }
+            if (keys.Count == 0)
+            {
+                // the way out is a wall: slide along it (the perpendicular with floor)
+                foreach (var k in Math.Abs(away.X) >= Math.Abs(away.Y) ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Left, KeyFunctions.Right })
+                {
+                    if (Ok(k))
+                    {
+                        keys.Add(k);
+                        break;
+                    }
+                }
+            }
+            if (keys.Count == 0)
+            {
+                return held;
+            }
+            if (held.Contains(KeyFunctions.Accept))
+            {
+                keys.Add(KeyFunctions.Accept);
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && _contactFrames % 30 == 4)
+            {
+                System.Console.Error.WriteLine($"  contact escape f{BotRunner.Frame}: touching {string.Join(",", on.Select(e => e.GetType().Name))} at {Player.Hitbox}: {string.Join("+", keys)}");
+            }
+            return keys.ToArray();
+        }
 
         internal static KeyFunctions[] BulletHop(KeyFunctions[] held)
         {
@@ -9036,6 +9176,7 @@ namespace AnodyneSharp.Recording
             Entity forced = null;
             Entity committed = null; // the target we are working on: switching to whichever is nearest every frame means never finishing an approach
             int forcedFrames = 0, aggroFrames = 0, relocFrames = 0, ambushFrames = 0;
+            int softPress = 0; // times a soft fight pressed a target it was about to give up on
             Point? reloc = null;
             List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
             int heldAge = 0;
@@ -9125,6 +9266,24 @@ namespace AnodyneSharp.Recording
                     && !(unreachable is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null)) // (a Gas Guy always comes to us)
                 {
                     committed = unreachable;
+                    // Out of reach, or only hard to pin down (a bullet Slime in a corridor keeps shooting us back out of reach)? If there is
+                    // floor right beside it, go for it hard a couple of times before leaving it.
+                    var ut = BotNav.TileOf(new Vector2(unreachable.Hitbox.Center.X - 5, unreachable.Hitbox.Center.Y - 6));
+                    if (softPress < 2 && BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - ut.X) + Math.Abs(t.Y - ut.Y) <= 1, ut) is List<Point> up && up.Count <= 12)
+                    {
+                        softPress++;
+                        aggroFrames = 240;
+                        noKill = 1;
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  soft fight: {unreachable.GetType().Name}@{unreachable.Hitbox.X},{unreachable.Hitbox.Y} is {up.Count} steps off: pressing it");
+                        }
+                    }
+                }
+                if (soft && noKill >= 220 && (committed ?? lastTarget) is Entity unreachable2 && !ignoredTargets.Contains(unreachable2)
+                    && !(unreachable2 is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null))
+                {
+                    committed = unreachable2;
                     // Nothing waiting-on-purpose (those reset the count) and nothing dying for this long: this one is out of reach.
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
@@ -10561,6 +10720,15 @@ namespace AnodyneSharp.Recording
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
                         {
                             System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
+                        }
+                        if (aggroFrames > 0 && target is AnodyneSharp.Entities.Enemy.Slime && GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
+                        {
+                            // Pressing a bullet Slime that keeps shooting us back: walk straight in and hop its bullets (in the air they pass under us).
+                            var shots = Dangers(target).Where(d => d is AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
+                            bool shotDue = shots.Count > 0 && WouldCollide(dir, shots, 20);
+                            BotRunner.Status = "fight: pressing the slime";
+                            yield return Player.state == AnodyneSharp.Entities.PlayerState.GROUND && shotDue && _jumpPressFrame != BotRunner.Frame - 1 ? JumpPress(dir) : K(dir);
+                            continue;
                         }
                         yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
                         continue;

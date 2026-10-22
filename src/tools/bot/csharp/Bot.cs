@@ -537,6 +537,7 @@ namespace AnodyneSharp.Recording
             held = BotScript.SwingGuard(held);
             held = BotScript.DoorGuard(held);
             held = BotScript.BulletHop(held);
+            held = BotScript.ContactEscape(held);
             held = BotScript.SteamBrace(held);
             if (Player != null && Player.reversed)
             {
