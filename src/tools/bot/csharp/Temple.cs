@@ -264,4 +264,24 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel2 (4,3) key", () => Exec("O1 X1 H4,3 W20 F W30 I768,496,d W60 T W30 `h2_key1"));
         }
     }
+
+    /// <summary>The Hotel's floor 3 (by the floor-4 elevator, which key 1 opens the way to) and on through door 27 into the east wing.</summary>
+    public class Hotel3 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel: floor 3 and into the east wing");
+            // Back to the entrance, (2,3)'s active platform down, (2,4)'s spring to the bottom and into (2,5) (its gates are open now).
+            yield return Section("hotel3 entrance to (2,5)", () => Exec("W30 O1 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 `h3_25"));
+            // Key 1 into (2,5)'s keyblock, the only way to the elevator from this side; ride it to floor 3 (the third of its floors).
+            yield return Section("hotel3 keyblock and elevator to floor 3", () => Exec("O1 X0 >355,914 W5 G355,914,kr W30 >392,918 W10 U40 W30 " +
+                "D1 W10 D1 W10 A W150 `h3_f3"));
+            // (3,11): its Gas Guy opens the gate to key 2.
+            yield return Section("hotel3 (3,11) gas guy and key 2", () => Exec("O1 X1 H3,11 W10 F W30 X0 I608,1776,d W60 T W30 `h3_key2"));
+            // Up (2,11)'s west pillar column (do not touch the pillar switch: the pillars are down as things stand), jump (2,10)'s hole,
+            // key 2 into its keyblock, (1,10)'s water down to door 27, which comes out in the east wing's (7,3).
+            yield return Section("hotel3 keyblock and door 27", () => Exec("O1 X0 D20 W10 >356,1778 W5 U60 W20 G356,1735 W5 eu W30 U10 G355,1682 W10 " +
+                "G339,1666 W5 G339,1666,kl W30 L40 W20 >235,1700 W5 D150 W30 >180,1890 W10 U30 W120 `h3_east"));
+        }
+    }
 }

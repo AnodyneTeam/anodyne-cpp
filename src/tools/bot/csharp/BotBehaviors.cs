@@ -4975,6 +4975,10 @@ namespace AnodyneSharp.Recording
         /// <summary>Whether a Dog is in its Attack state (its three dashes), or null when that cannot be read.</summary>
         private static bool? DogAttacking(Entity dog)
         {
+            if (Environment.GetEnvironmentVariable("ANODYNE_OLD_DOG") != null)
+            {
+                return null;
+            }
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
@@ -5142,8 +5146,15 @@ namespace AnodyneSharp.Recording
                 var pc = Player.Hitbox.Center;
                 IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name == "Annoyer" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
             }
-            return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e)).ToList();
+            return BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(EnemyAttribute), false) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)).ToList();
         }
+
+        /// <summary>
+        /// A Hotel Dustmaid that has not seen us carry dust: it stands still, a broom does nothing to it and touching it hurts. Not a target
+        /// (fighting one only ever walked into it).
+        /// </summary>
+        private static bool DormantDustmaid(Entity e) =>
+            e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is false;
 
         /// <summary>
         /// Two-button gate with a Mover: stand on one button, and make the Mover cross the other on its way to us. Lure the Mover to a spot
