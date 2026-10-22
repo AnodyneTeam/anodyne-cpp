@@ -181,6 +181,12 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   spike rows, a bullet) will be where it lands.
 - The new Slasher dodge runs in the Apartments only; Red Cave's narrow ledges do better with the older path-planned spot off both
   cut strips.
+- A Slasher lined up with us but out of broom reach is walked straight at (Slashers alone in the room only: with a TeleGuy or a Gas
+  Guy about that walk ran into them); in reach it is struck from where we stand.
+- Frog fights note each bullet's splash the frame it happens (the next volley's timing hangs on it), keep off the corner a volley
+  leaves from when dodging or waiting, and never step off a frog into flying bullets.
+- `DoorGuard`: a fight's own steps never walk onto a door or portal (a Crowd DownDoor beside a Dog warped the bot across the map).
+- A spike roller that has stopped across the way is jumped (rollers miss a player in the air) instead of walked into.
 - `X0` turns auto-fight off for the rest of a section: put `X1` back before a room whose fight should start on arrival (the Watcher).
 
 ## Status
