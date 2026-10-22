@@ -1189,8 +1189,9 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static Threat PredictLion(Entity d)
         {
-            var t = new Threat { Name = "Lion", Source = d, Margin = 3, Stationary = false };
-            var box = d.Hitbox;
+            var t = new Threat { Name = "Lion", Source = d, Margin = 3, Stationary = false, HurtsInAir = true }; // (it hurts a jumper too)
+            // (side-on 26x13, end-on 10x20, both from its position: it can turn any frame, so take both at once)
+            var box = new Rectangle((int)d.Position.X, (int)d.Position.Y, 26, 20);
             var st = FsmStateLeft(d);
             string state = st?.Item1 ?? "PaceState";
             int left = st?.Item2 ?? 0;
@@ -8842,7 +8843,8 @@ namespace AnodyneSharp.Recording
                 var others = threats.Where(t => t.Source != lion).ToList();
                 // Where it will be in a few frames (it paces at 43px/s): strike at that.
                 // (its box turns with it, 26x13 side-on and 10x20 end-on, and it turns to face us: count it as both at once)
-                var full = new Rectangle((int)lion.Position.X + 3, (int)lion.Position.Y + 4, 26, 20);
+                // (its hitbox sits at its position, whatever the sprite's draw offset)
+                var full = new Rectangle((int)lion.Position.X, (int)lion.Position.Y, 26, 20);
                 var bb = full;
                 bb.Offset((int)(lion.velocity.X * 6 / 60f), (int)(lion.velocity.Y * 6 / 60f));
                 // (standing still while it warns and spits, it is the easiest to hit, and a hit stops the fire: in close, go for it)
@@ -8880,7 +8882,7 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                 }
-                var lionBody = new Threat { Name = "Lion", Source = lion, Margin = 2 };
+                var lionBody = new Threat { Name = "Lion", Source = lion, Margin = 2, HurtsInAir = true };
                 for (int k = 0; k <= Horizon; k++)
                 {
                     lionBody.At[k] = full;
@@ -9054,7 +9056,7 @@ namespace AnodyneSharp.Recording
                 if (keys == null && Player.state == PlayerState.GROUND && i - jumpAt > 40 && !threats.Any(t => t.HurtsInAir && !SafeAtExactThreats(here, new List<Threat> { t }, 30)))
                 {
                     jumpAt = i;
-                    keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (and the pounce: a lion only hurts on the ground)
+                    keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (not the lion itself: it hurts in the air too)
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (keys == null || keys.Length == 0))
                 {
