@@ -773,8 +773,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 // (by its middle: some sit off the grid, most of their 16px over the next tile)
-                float po = Environment.GetEnvironmentVariable("XP") == null ? 8f : 0f;
-                var t = new Point((int)Math.Floor((pr.Position.X + po) / 16f), (int)Math.Floor((pr.Position.Y + po) / 16f));
+                var t = new Point((int)Math.Floor((pr.Position.X + 8f) / 16f), (int)Math.Floor((pr.Position.Y + 8f) / 16f));
                 _pads[t] = pr.Frame switch { 0 => new Point(0, -1), 1 => new Point(1, 0), 2 => new Point(0, 1), _ => new Point(-1, 0) };
             }
             return _pads;
@@ -1536,7 +1535,7 @@ namespace AnodyneSharp.Recording
             {
                 return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
             }
-            if (Environment.GetEnvironmentVariable("XK") == null && (_keyLocked.Contains(t) || _keyDenied.Contains(t)))
+            if (_keyLocked.Contains(t) || _keyDenied.Contains(t))
             {
                 return false;
             }
