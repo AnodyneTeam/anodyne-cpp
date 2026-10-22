@@ -256,8 +256,9 @@ namespace AnodyneSharp.Recording
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
                     case '+':
-                        // + health-upgrade chests of the map; +k key chests of this screen; +K key chests anywhere on the map we can reach
-                        yield return tok == "+k" ? OpenChests(1, true) : tok == "+K" ? OpenChests(1, false) : OpenChests();
+                        // + health-upgrade chests of the map; +s those of this screen only; +k key chests of this screen; +K key chests anywhere
+                        // on the map we can reach
+                        yield return tok == "+k" ? OpenChests(1, true) : tok == "+K" ? OpenChests(1, false) : tok == "+s" ? OpenChests(2, true) : OpenChests();
                         break;
                     case 'b':
                     {
@@ -672,6 +673,17 @@ namespace AnodyneSharp.Recording
                             bestLen = rp.Count;
                             best = stand;
                         }
+                    }
+                    // A long trip for a heart or two is more hits than it wins back, unless the hearts are owed (past the chip allowance).
+                    int missing = GlobalState.MAX_HEALTH - GlobalState.CUR_HEALTH;
+                    int budget = BotRunner.DebtMissing > BotRunner.ChipLeft || GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 ? 160 : 30 + 20 * missing;
+                    if (best is Vector2 far && bestLen > budget && bestLen <= 160)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: the checkpoint at {far} is {bestLen} tiles off, too far for {missing} heart(s): not now");
+                        }
+                        yield break;
                     }
                     if (best is Vector2 st && bestLen <= 160)
                     {
@@ -5757,6 +5769,11 @@ namespace AnodyneSharp.Recording
             var screen = Grid;
             yield return StepOffDoor(BotNav.TileOf(Pos));
             bool warped = false; // went back to the Nexus pad to look from there
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine("  chests: all " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest")).Select(pr => $"{pr.Position.X:0},{pr.Position.Y:0}/f{pr.Frame}/{(pr.Activated ? "open" : "shut")}")));
+            }
             for (int n = 0; n < 30; n++)
             {
                 var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
@@ -5819,6 +5836,10 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 var chest = best.Value.pr;
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  chests: to {chest.Position} ({bestLen} tiles) of {string.Join(" ", chests.Select(c => $"{c.Position.X:0},{c.Position.Y:0}"))}");
+                }
                 BotRunner.Status = $"to the chest at {chest.Position.X:0},{chest.Position.Y:0}";
                 if (bestLeap)
                 {
@@ -8770,7 +8791,8 @@ namespace AnodyneSharp.Recording
                 // (standing still while it warns and spits, it is the easiest to hit, and a hit stops the fire: in close, go for it)
                 float dist = (lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length();
                 // (a hit while it spits stops the fire; one while it only warns does not, and then it spits at us point-blank)
-                bool still = state == "ShootState" && dist < 48;
+                // (only from right beside it: walking in through the fan from further off takes a ball or two on the way)
+                bool still = state == "ShootState" && dist < (Environment.GetEnvironmentVariable("ANODYNE_LION_STILL") is string ls ? float.Parse(ls) : 20f);
                 bool spitting = state == "ShootWarningState" || state == "ShootState";
                 bool open = !lion._flickering && (state == "PaceState" && left >= 24 || state == "ChargeWalkState" && left >= 30 || still);
                 // Any lion in the broom's reach right now (this way, or one turn away): hit it, whatever the plan was (a hit costs us nothing,
@@ -14526,6 +14548,10 @@ namespace AnodyneSharp.Recording
             var cracked = new HashSet<Point>(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Holes.CrackedTile)
                 .Select(e => new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16)));
             bool Ok(Point t) => (screen.Contains(t) || t == goal) && BotNav.Walkable(t);
+            // A dash pad kicks us along its way while that key is down: a step with it goes faster than walking (so reaches a timed
+            // hazard sooner than walking would), and a jump off one carries further than a hop, so none is planned along it.
+            var pads = BotNav.DashPads();
+            bool Kicked(Point t, Point d) => pads.TryGetValue(t, out var pd) && pd == d;
             var seen = new HashSet<(Point, int)>();
             var layers = new List<(Point t, (Point, int)? first)>[maxSteps + 3];
             for (int i = 0; i < layers.Length; i++)
@@ -14568,16 +14594,17 @@ namespace AnodyneSharp.Recording
                         if (Ok(a) && !BotNav.IsJumpable(a))
                         {
                             bool ok = true;
+                            float pace = Kicked(t, d) || Kicked(a, d) ? 1.8f : 1f;
                             for (int k = 1; k <= SweepStep && ok; k++)
                             {
-                                ok = GroundClear(Vector2.Lerp(c, ac, (float)k / SweepStep), f0 + k);
+                                ok = GroundClear(Vector2.Lerp(c, ac, Math.Min(1f, k * pace / SweepStep)), f0 + k);
                             }
                             if (ok)
                             {
                                 Add(a, 1, 0);
                             }
                         }
-                        if (!GlobalState.inventory.CanJump || !GroundClear(c, f0) || !GroundClear(c, f0 + 1))
+                        if (!GlobalState.inventory.CanJump || !GroundClear(c, f0) || !GroundClear(c, f0 + 1) || Kicked(t, d))
                         {
                             continue;
                         }

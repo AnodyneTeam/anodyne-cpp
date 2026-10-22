@@ -359,7 +359,7 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("The Circus: keys and cards");
             yield return Section("circus key 1 past the acrobats", () => Exec("O1 X1 Qw Qn >979,1202 >1347,930 dust:ArthurDanger W240 +K W30 `cc_k1"));
-            yield return Section("circus flame pillar card", () => Exec("O1 X1 n0 W60 >707,1090 >723,930 heal >659,658 >627,706 >531,786 >531,1090 + W30 `cc_fp"));
+            yield return Section("circus flame pillar card", () => Exec("O1 X1 n0 W60 >707,1090 >723,930 heal >659,658 >627,706 >531,786 >531,1090 +s W30 `cc_fp"));
             yield return Section("circus west card", () => Exec("O1 X1 n0 >67,962 >83,658 + W30 `cc_west"));
             yield return Section("circus key 2", () => Exec("O1 X1 >1059,658 >1235,530 heal >1203,354 +k W30 `cc_k2"));
         }

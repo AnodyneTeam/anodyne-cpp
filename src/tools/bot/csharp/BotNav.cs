@@ -48,12 +48,15 @@ namespace AnodyneSharp.Recording
         // Gates are entities laid over the tile data: an opened one is passable even if the tile beneath says wall,
         // a closed one blocks even if the tile says floor. Refreshed at the start of every search.
         private static HashSet<Point> _gatesOpen = new(), _gatesClosed = new(), _edgeGates = new();
+        // (keyblocks we hold no key for: no route assumes they open on arrival, as a puzzle gate might)
+        private static HashSet<Point> _keyLocked = new();
 
         private static void RefreshGates()
         {
             _gatesOpen = new HashSet<Point>();
             _gatesClosed = new HashSet<Point>();
             _edgeGates = new HashSet<Point>();
+            _keyLocked = new HashSet<Point>();
             // A key block with a key in hand is a door we open on the way (the walker does, on reaching it): plan through it.
             bool haveKey = GlobalState.inventory.GetCurrentMapKeys() > 0;
             foreach (var e in BotRunner.Entities())
@@ -77,6 +80,10 @@ namespace AnodyneSharp.Recording
                     (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
                     continue;
                 }
+                if (e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
+                {
+                    _keyLocked.Add(t);
+                }
                 (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
@@ -93,6 +100,10 @@ namespace AnodyneSharp.Recording
                     _keyBlocks.Add(t);
                     (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
                     continue;
+                }
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
+                {
+                    _keyLocked.Add(t);
                 }
                 // A gate on the edge of another screen: entering that screen over the gate holds it open, so it is passable stepping in
                 // across the edge (Steps keeps it shut from inside its own screen).
@@ -761,7 +772,8 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                // (by its middle: some sit off the grid, most of their 16px over the next tile)
+                var t = new Point((int)Math.Floor((pr.Position.X + 8f) / 16f), (int)Math.Floor((pr.Position.Y + 8f) / 16f));
                 _pads[t] = pr.Frame switch { 0 => new Point(0, -1), 1 => new Point(1, 0), 2 => new Point(0, 1), _ => new Point(-1, 0) };
             }
             return _pads;
@@ -1522,6 +1534,10 @@ namespace AnodyneSharp.Recording
             if (_shooterTiles.Contains(t))
             {
                 return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
+            }
+            if (_keyLocked.Contains(t) || _keyDenied.Contains(t))
+            {
+                return false;
             }
             if (_gatesOpen.Contains(t))
             {

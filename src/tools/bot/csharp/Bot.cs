@@ -1315,7 +1315,9 @@ namespace AnodyneSharp.Recording
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge}");
+                    var dsF = typeof(Player).GetField("dash_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    var pads = string.Join(",", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && Vector2.Distance(e.Position, Pos) < 40).Select(e => $"{e.Position}:{e.opacity}"));
+                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge} dash={dsF?.GetValue(Player)} pc={Player.Center} pads={pads}");
                 }
                 yield return K(keys.ToArray());
             }
