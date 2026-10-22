@@ -4905,7 +4905,7 @@ namespace AnodyneSharp.Recording
                 }
                 bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
                 // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
-                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 6000;
+                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 1500;
                 if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
                     if (!lowHp)
@@ -14130,8 +14130,9 @@ namespace AnodyneSharp.Recording
                             var shots = all.Where(d => d is AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
                             // Anything else (another enemy's lobs, a body in the way) that the hop does not clear: leave that step to SafeMove.
                             var others = all.Where(d => d is not AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
-                            if (others.Count > 0 && WouldCollide(dir, others, 20))
+                            if (others.Count > 0 && WouldCollide(dir, others, 20) || WouldCollide(dir, new List<Entity> { target }, 12))
                             {
+                                // (nor walk into the Slime itself: it hops about, and touching it hurts)
                                 yield return SafeMove(dir, target);
                                 continue;
                             }
@@ -14749,7 +14750,47 @@ namespace AnodyneSharp.Recording
                     noPlan++;
                     var me = Player.Hitbox;
                     bool soon = tracks.Any(tr => !tr.Air && Enumerable.Range(0, 8).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
-                    if (soon && GlobalState.inventory.CanJump)
+                    bool burns = tracks.Any(tr => tr.Air && Enumerable.Range(0, 16).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
+                    Point? refuge = null;
+                    if (burns)
+                    {
+                        // (a flame coming up where we stand burns a jumper too: off this tile to one that stays clear a while)
+                        foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                        {
+                            var n = new Point(here.X + d.X, here.Y + d.Y);
+                            if (!BotNav.Walkable(n) || new Point(n.X / 10, n.Y / 10) != grid)
+                            {
+                                continue;
+                            }
+                            var nc = BotNav.CentreOf(n);
+                            bool clear = true;
+                            for (int f = 0; f <= 40 && clear; f++)
+                            {
+                                var at = Vector2.Lerp(Pos, nc, Math.Min(1f, f / 14f));
+                                var box = new Rectangle((int)at.X, (int)at.Y, me.Width, me.Height);
+                                clear = !tracks.Any(tr => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(box));
+                            }
+                            if (clear)
+                            {
+                                refuge = n;
+                                break;
+                            }
+                        }
+                    }
+                    if (refuge is Point rf)
+                    {
+                        BotRunner.Status = $"sweepers: off a flame's tile at {here} to {rf} (for {goal})";
+                        var rc = BotNav.CentreOf(rf);
+                        for (int w = 0; w < 20 && Vector2.Distance(rc, Pos) > 1.5f; w++, i++)
+                        {
+                            float rx = rc.X - Pos.X, ry = rc.Y - Pos.Y;
+                            var rk = new List<KeyFunctions>();
+                            if (Math.Abs(rx) > 1f) { rk.Add(rx < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                            if (Math.Abs(ry) > 1f) { rk.Add(ry < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                            yield return K(rk.ToArray());
+                        }
+                    }
+                    else if (soon && GlobalState.inventory.CanJump)
                     {
                         BotRunner.Status = $"sweepers: hop a bar on the spot at {here} (for {goal})";
                         if (_jumpPressFrame == BotRunner.Frame - 1)
