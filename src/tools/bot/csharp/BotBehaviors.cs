@@ -34,6 +34,30 @@ namespace AnodyneSharp.Recording
                     yield return TakeDoor(pair);
                     continue;
                 }
+                if (tok == "heal")
+                {
+                    yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
+                    continue;
+                }
+                if (tok.StartsWith("dust:"))
+                {
+                    // dust:<x>,<y>: carry a dust of this screen onto tile x,y; dust:<Type>: onto the thing of that type here (dust:ArthurDanger:
+                    // the Circus acrobat that falls onto a dust pillow)
+                    var arg = tok.Substring(5);
+                    Point target;
+                    if (arg.Contains(','))
+                    {
+                        var a = arg.Split(',');
+                        target = new Point(int.Parse(a[0]), int.Parse(a[1]));
+                    }
+                    else
+                    {
+                        var thing = BotRunner.Entities().First(e => e.exists && e.GetType().Name == arg);
+                        target = new Point((int)Math.Floor(thing.Hitbox.Center.X / 16f), (int)Math.Floor(thing.Hitbox.Center.Y / 16f));
+                    }
+                    yield return DustOnto(target);
+                    continue;
+                }
                 if (tok.StartsWith("via") && tok.Length > 3 && char.IsUpper(tok[3]))
                 {
                     // via<MAP>: to the Nexus (a dungeon's own pad first) and through the portal to MAP's pad
@@ -390,7 +414,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -546,6 +570,8 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Head-to-screen moves clear the screen's enemies on arrival (soft: gives up after a while).</summary>
         protected static bool AutoFight = true;
+        /// <summary>GoGlobal tops the hearts up at a checkpoint (see Heal) when down to 40% before going on.</summary>
+        protected static bool AutoHeal = Environment.GetEnvironmentVariable("ANODYNE_NO_HEAL") == null;
 
         private static int _lastHp;
         protected const int SwingCooldown = 18;
@@ -595,6 +621,85 @@ namespace AnodyneSharp.Recording
             yield return Wait(30);
             yield return ReadDialogue();
         }
+
+        private static bool _healing;
+
+        /// <summary>
+        /// Back to full health: pressing Accept on a checkpoint that is not the one we last saved at fills the hearts (and makes it the save
+        /// point), so with two on a map we can always heal at the other. Walks to the nearest such one we can get to; if there is none from
+        /// here, warps to the map's Nexus pad first (when warp) and looks again. True in _healOk if the hearts are full after.
+        /// </summary>
+        protected static IEnumerable<object> Heal(bool warp = true)
+        {
+            _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
+            if (_healOk || _healing)
+            {
+                yield break;
+            }
+            _healing = true;
+            BotRunner.Healing = true;
+            try
+            {
+                for (int attempt = 0; attempt < 2 && !_healOk; attempt++)
+                {
+                    var here = BotNav.TileOf(Pos);
+                    var active = GlobalState.checkpoint;
+                    bool jump = GlobalState.inventory.CanJump;
+                    Vector2? best = null;
+                    int bestLen = int.MaxValue;
+                    foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Where(pr => pr.Type == typeof(AnodyneSharp.Entities.Events.Checkpoint)))
+                    {
+                        var pos = pr.Position + new Vector2(4, 4);
+                        if (active != null && active.map == GlobalState.CURRENT_MAP_NAME && active.Position == pos)
+                        {
+                            continue; // the one we saved at last does not heal
+                        }
+                        var stand = new Vector2(pos.X - 1, pos.Y - 3);
+                        var rp = BotNav.RaftPath(here, OnConveyor(here), BotNav.TileOf(stand), jump);
+                        if (rp != null && rp.Count < bestLen)
+                        {
+                            bestLen = rp.Count;
+                            best = stand;
+                        }
+                    }
+                    if (best is Vector2 st && bestLen <= 160)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: to the checkpoint at {st} ({bestLen} tiles)");
+                        }
+                        BotRunner.Status = $"heal at the checkpoint {st}";
+                        yield return GoGlobal(st.X, st.Y);
+                        yield return WalkTo(st.X, st.Y, tol: 1.5f, timeout: 90);
+                        yield return Wait(10);
+                        yield return Tap(KeyFunctions.Accept);
+                        yield return Wait(30);
+                        yield return ReadDialogue();
+                        _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
+                    }
+                    else if (warp && attempt == 0 && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad"))
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: no checkpoint to heal at from {here}: back to the pad");
+                        }
+                        yield return MenuReturnToPad(0);
+                        yield return Wait(60);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                _healing = false;
+                BotRunner.Healing = false;
+            }
+        }
+
+        private static bool _healOk;
 
         protected static Point Grid => GlobalState.CurrentMapGrid;
 
@@ -763,7 +868,20 @@ namespace AnodyneSharp.Recording
         private static long _jumpPressFrame = -10;
         private static bool _jumpOnSpot;
 
-        private const float WalkPxPerFrame = 70f / 60f;
+        /// <summary>Walking speed in px per frame, times the dash pads' boost while it lasts (it holds as long as the key does: a walker that
+        /// sizes its steps by plain walking overshoots into what it meant to stop short of).</summary>
+        private static float WalkPxPerFrame => 70f / 60f * DashFactor();
+
+        private static readonly System.Reflection.FieldInfo DashStateField = typeof(Player).GetField("dash_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        private static float DashFactor()
+        {
+            if (Player == null || DashStateField?.GetValue(Player) is not Vector2 ds)
+            {
+                return 1f;
+            }
+            return Math.Max(1f, Math.Max(Math.Abs(ds.X), Math.Abs(ds.Y)));
+        }
 
         private static readonly System.Text.RegularExpressions.Regex ProjectileName =
             new("Laser|Goo|Bullet|Fire|Spit|Shot|Bolt|Slash|Burst|Spike|Wave", System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -870,7 +988,7 @@ namespace AnodyneSharp.Recording
         {
             // the steam jet's nozzle (OnOffLaser) is a harmless solid block that only matches the projectile names: its beam is the danger
             return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) && e.GetType().Name != "OnOffLaser" &&
-                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" or "SuburbKiller" or "Chaser" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
+                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" or "SuburbKiller" or "Chaser" or "FirePillar" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
         }
 
         private static Vector2 DirVector(KeyFunctions k) => k switch
@@ -1003,6 +1121,164 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
+        private static readonly Dictionary<Entity, (string anim, long since)> _pillarPhase = new();
+
+        /// <summary>A fire pillar's state (IdleState, EmergeState, FlameState, RecedeState) and frames until it moves on, from its state machine.</summary>
+        private static (string, int)? PillarStateLeft(Entity d) => FsmStateLeft(d);
+
+        /// <summary>
+        /// A Lion (the Circus, 4 hits, a second's flicker after each): it paces (0.8s legs at 43px/s, any way), or warns 0.8s and spits 18
+        /// fireballs at us over 3s (80px reach, a broom hit stops them), or backs off 1.4s, warns 0.6s and pounces 110px/s at where we stood.
+        /// Its state is read out of its state machine: when a leg ends it may set off any way (a box growing at its pace), while it shoots
+        /// keep 80px off, and its pounce sweeps the line to us.
+        /// </summary>
+        private static Threat PredictLion(Entity d)
+        {
+            var t = new Threat { Name = "Lion", Source = d, Margin = 3, Stationary = false };
+            var box = d.Hitbox;
+            var st = FsmStateLeft(d);
+            string state = st?.Item1 ?? "PaceState";
+            int left = st?.Item2 ?? 0;
+            string anim = d.CurAnimName ?? "";
+            var me = Player.Hitbox.Center.ToVector2();
+            Rectangle Grow(Rectangle r, int by) { r.Inflate(by, by); return r; }
+            for (int f = 0; f <= Horizon; f++)
+            {
+                var r = box;
+                switch (state)
+                {
+                    case "PaceState":
+                        r.Offset((int)(d.velocity.X * Math.Min(f, left) / 60f), (int)(d.velocity.Y * Math.Min(f, left) / 60f));
+                        if (f > left)
+                        {
+                            r = Grow(r, (int)(43f * (f - left) / 60f));
+                        }
+                        break;
+                    case "ShootWarningState":
+                    case "ShootState":
+                        // (fireballs fly 80px from its mouth, fanned up to 40 degrees off our way: anywhere that near is in the spray)
+                        if (state == "ShootState" || f >= left - 6)
+                        {
+                            r = Grow(r, 64);
+                        }
+                        break;
+                    case "ChargeWalkState":
+                    case "ChargeWarnState":
+                        if (anim.StartsWith("pounce"))
+                        {
+                            r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                            break;
+                        }
+                        int start = state == "ChargeWalkState" ? left + 36 : left;
+                        r.Offset((int)(d.velocity.X * Math.Min(f, start) / 60f), (int)(d.velocity.Y * Math.Min(f, start) / 60f));
+                        if (f >= start - 4)
+                        {
+                            // the pounce: along the line to us, 110px/s; a band round it, as we may still move before it sets off
+                            var dir = me - r.Center.ToVector2();
+                            if (dir != Vector2.Zero)
+                            {
+                                dir.Normalize();
+                            }
+                            float run = Math.Min(110f, 110f * (f - start + 4) / 60f);
+                            var r2 = r;
+                            r2.Offset((int)(dir.X * run), (int)(dir.Y * run));
+                            r = Rectangle.Union(r, r2);
+                            r = Grow(r, 8);
+                        }
+                        break;
+                }
+                t.At[f] = r;
+            }
+            return t;
+        }
+
+        private static (string, int)? FsmStateLeft(Entity d)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
+            var root = d.GetType().GetField("_state", F)?.GetValue(d);
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var tt = typeof(AnodyneSharp.FSM.TimerState);
+            if (top is not AnodyneSharp.FSM.TimerState || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            {
+                return null;
+            }
+            if (timers[0].GetType().GetField("current", FP)?.GetValue(timers[0]) is not float due)
+            {
+                return null;
+            }
+            return (top.GetType().Name, Math.Max(0, (int)Math.Ceiling((due - now) * 60f - 0.001f)));
+        }
+
+        /// <summary>
+        /// A fire pillar (the Circus): it bursts into flame on its tile for 1s (that burns a jumper too) every 2.33s: idle 0.74s, rising
+        /// 0.3s, flame 1s, sinking 0.3s. Where in that round it is we learn by watching its animation change; until we have seen one change,
+        /// an idle one may be rising already, so take it as burning from the moment a rise could have ended.
+        /// </summary>
+        private static Threat PredictFirePillar(Entity d)
+        {
+            const int Idle = 44, Rise = 18, Flame = 60, Sink = 18, Round = Idle + Rise + Flame + Sink;
+            string anim = d.CurAnimName ?? "idle";
+            long now = BotRunner.Frame;
+            bool known = _pillarPhase.TryGetValue(d, out var ph);
+            if (!known || ph.anim != anim)
+            {
+                // (a change seen just now starts the clock; the first sighting does not)
+                _pillarPhase[d] = (anim, known ? now : long.MinValue);
+                ph = _pillarPhase[d];
+            }
+            var t = new Threat { Name = "FirePillar", Source = d, Margin = 1, HurtsInAir = true, Stationary = false };
+            var box = d.Hitbox;
+            int flameStart;
+            if (PillarStateLeft(d) is var (stateName, left))
+            {
+                // read straight out of its state machine: which part of the round, and frames to the next
+                flameStart = stateName switch
+                {
+                    "FlameState" => left - Flame,
+                    "EmergeState" => left,
+                    "RecedeState" => left + Idle + Rise,
+                    _ => left + Rise,
+                };
+                ph = (anim, now);
+            }
+            else if (ph.since == long.MinValue)
+            {
+                flameStart = anim == "flame" ? 0 : anim == "emerge" ? 0 : anim == "recede" ? Sink + Idle : Rise; // (not knowing how far in: the worst)
+            }
+            else
+            {
+                int el = (int)(now - ph.since);
+                flameStart = anim switch
+                {
+                    "flame" => -el,
+                    "emerge" => Rise - el,
+                    "recede" => Sink + Idle + Rise - el,
+                    _ => Idle + Rise - el,
+                };
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIRE_TRACE") != null && BotRunner.Frame % 10 == 0)
+            {
+                System.Console.Error.WriteLine($"  fire f{now} {box} anim={anim} state={PillarStateLeft(d)} flameStart={flameStart} me={Player.Hitbox}");
+            }
+            bool unsureIdle = ph.since == long.MinValue && anim == "idle";
+            bool unsureFlame = ph.since == long.MinValue && anim == "flame";
+            for (int f = 0; f <= Horizon; f++)
+            {
+                int k = f - flameStart;
+                // (a few frames' slack each side: the timers run on the game's float clock, and stepping in on its last frame still burns)
+                int km = ((k + 3) % Round + Round) % Round;
+                bool burning = unsureIdle ? f >= flameStart - 3 : km < Flame + 7;
+                if (unsureFlame && f < Flame)
+                {
+                    burning = true;
+                }
+                t.At[f] = burning ? box : null;
+            }
+            return t;
+        }
+
         private static readonly System.Reflection.FieldInfo ChaserHorizontalField =
             typeof(AnodyneSharp.Entities.Enemy.Cell.Chaser).GetField("_isHorizontal", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
@@ -1158,6 +1434,16 @@ namespace AnodyneSharp.Recording
 
         private static List<Threat> PredictThreats(Entity except)
         {
+            if (!BotRunner.ProfOn)
+            {
+                return PredictThreatsCore(except);
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return PredictThreatsCore(except); } finally { BotRunner.Prof("PredictThreats", t0); }
+        }
+
+        private static List<Threat> PredictThreatsCore(Entity except)
+        {
             var result = new List<Threat>();
             var lanes = BotNav.LaneAxes();
             foreach (var d in Dangers(except))
@@ -1203,6 +1489,16 @@ namespace AnodyneSharp.Recording
                 if (name == "OnSightDashTrap" && d.velocity == Vector2.Zero)
                 {
                     result.AddRange(PredictSightTrap(d));
+                    continue;
+                }
+                if (d is AnodyneSharp.Entities.Enemy.Circus.Lion)
+                {
+                    result.Add(PredictLion(d));
+                    continue;
+                }
+                if (d is AnodyneSharp.Entities.Enemy.Circus.FirePillar)
+                {
+                    result.Add(PredictFirePillar(d));
                     continue;
                 }
                 if (d is AnodyneSharp.Entities.Enemy.Cell.Chaser)
@@ -1646,7 +1942,7 @@ namespace AnodyneSharp.Recording
             Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
             var buttonTiles = buttons.Select(b => TileAt(b.Hitbox)).ToList();
             var dustTiles = dustEs.Select(d => TileAt(d.Hitbox)).ToList();
-            bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.Walkable(t);
+            bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.WalkableNoPillars(t);
             bool Free(Point t) => Floor(t) && !buttonTiles.Contains(t) && !dustTiles.Contains(t);
             var here = BotNav.TileOf(Pos);
             Rectangle StandRect(Point t) => new(t.X * 16 + 1, t.Y * 16, 14, 16); // where we stand on a tile (a little wider than our hitbox)
@@ -1991,7 +2287,7 @@ namespace AnodyneSharp.Recording
                     .ToDictionary(e => TileAt(e.Hitbox), e => e.CurAnimName is "up" or "solidify");
                 var switches = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch).Select(e => TileAt(e.Hitbox)).ToHashSet();
                 bool Up(Point t, bool flipped) => pillars.TryGetValue(t, out bool up) && up != flipped;
-                bool Open(Point t, bool flipped) => OnScreen(t) && BotNav.Walkable(t) && !switches.Contains(t) && !Up(t, flipped);
+                bool Open(Point t, bool flipped) => OnScreen(t) && BotNav.WalkableNoPillars(t) && !switches.Contains(t) && !Up(t, flipped);
                 var prev = new Dictionary<(Point, bool), (Point, bool)>();
                 var q = new Queue<(Point, bool)>();
                 prev[(here, false)] = (here, false);
@@ -2053,6 +2349,165 @@ namespace AnodyneSharp.Recording
                 yield return Wait(50); // the pillars take ~0.9s to rise all the way
             }
             throw new Exception("pillar maze: gave up after 12 legs");
+        }
+
+        /// <summary>A jump from here (on the spot, or carried ~32px along k) comes down on floor: not spikes, a pit or water.</summary>
+        private static bool JumpLandsOnFloor(KeyFunctions? k)
+        {
+            var hb = Player.Hitbox;
+            int dx = k == KeyFunctions.Left ? -32 : k == KeyFunctions.Right ? 32 : 0, dy = k == KeyFunctions.Up ? -32 : k == KeyFunctions.Down ? 32 : 0;
+            return BotNav.BoxStands(new Rectangle(hb.X + dx, hb.Y + dy, hb.Width, hb.Height));
+        }
+
+        /// <summary>
+        /// Carries a dust of this screen onto tile `target`: the dust and the sides to pick it up from and to set it down from that make the
+        /// shortest walk, then pick up (a broom swing at it) and set down (another, facing the target).
+        /// </summary>
+        protected static IEnumerable<object> DustOnto(Point target)
+        {
+            var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                var here = BotNav.TileOf(Pos);
+                var grid = Grid;
+                bool OnScreen(Point t) => t.X / 10 == grid.X && t.Y / 10 == grid.Y;
+                if (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f)) == target))
+                {
+                    yield break; // there already
+                }
+                BotNav.AllowJump = GlobalState.inventory.CanJump;
+                (Point dt, Point pick, Point stand, int cost)? best = null;
+                foreach (var d in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust && Player.broom.dust != e))
+                {
+                    var dt = new Point((int)Math.Floor(d.Hitbox.Center.X / 16f), (int)Math.Floor(d.Hitbox.Center.Y / 16f));
+                    if (!OnScreen(dt))
+                    {
+                        continue;
+                    }
+                    foreach (var po in o4)
+                    {
+                        var pick = new Point(dt.X + po.X, dt.Y + po.Y);
+                        if (!OnScreen(pick) || !BotNav.Walkable(pick))
+                        {
+                            continue;
+                        }
+                        var toPick = pick == here ? new List<Point>() : BotNav.FindPath(here, pick);
+                        if (toPick == null)
+                        {
+                            continue;
+                        }
+                        foreach (var so in o4)
+                        {
+                            var stand = new Point(target.X + so.X, target.Y + so.Y);
+                            if (!OnScreen(stand) || !BotNav.Walkable(stand) || stand == dt)
+                            {
+                                continue;
+                            }
+                            var toStand = stand == pick ? new List<Point>() : BotNav.FindPath(pick, stand);
+                            if (toStand == null)
+                            {
+                                continue;
+                            }
+                            int cost = toPick.Count + toStand.Count;
+                            if (best == null || cost < best.Value.cost)
+                            {
+                                best = (dt, pick, stand, cost);
+                            }
+                        }
+                    }
+                }
+                BotNav.AllowJump = false;
+                if (best == null)
+                {
+                    throw new Exception($"dust onto {target}: no dust here we can carry there");
+                }
+                var (bdt, bpick, bstand, _) = best.Value;
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  dust onto {target}: pick up {bdt} from {bpick}, set down from {bstand}");
+                }
+                BotRunner.Status = $"dust onto {target}";
+                yield return StandFaceAccept(bpick.X, bpick.Y, FaceChar(new Point(bdt.X - bpick.X, bdt.Y - bpick.Y)));
+                yield return Wait(10);
+                if (Player.broom.dust == null)
+                {
+                    continue;
+                }
+                yield return StandFaceAccept(bstand.X, bstand.Y, FaceChar(new Point(target.X - bstand.X, target.Y - bstand.Y)));
+                yield return Wait(20);
+                if (Player.broom.dust == null)
+                {
+                    yield break;
+                }
+            }
+            throw new Exception($"dust onto {target}: gave up");
+        }
+
+        private static bool _pillarHitOk;
+
+        /// <summary>
+        /// Hits the nearest pillar switch of this screen we can walk up to (from a side whose tile no pillar comes up on), turning every
+        /// switch pillar over; _pillarHitOk tells whether it took.
+        /// </summary>
+        protected static IEnumerable<object> HitPillarSwitch(Point? only = null)
+        {
+            _pillarHitOk = false;
+            var here = BotNav.TileOf(Pos);
+            var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
+            BotNav.PillarFlip = true;
+            var upAfter = new HashSet<Point>(BotNav.PillarsUp());
+            BotNav.PillarFlip = false;
+            var talk = BotNav.InteractTiles();
+            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            (Point stand, Point sw, int len)? best = null;
+            foreach (var e in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
+            {
+                var sw = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                if (only != null && sw != only)
+                {
+                    continue;
+                }
+                foreach (var o in o4)
+                {
+                    var st = new Point(sw.X + o.X, sw.Y + o.Y);
+                    if (upAfter.Contains(st) || !BotNav.Walkable(st) || talk.Contains(st))
+                    {
+                        continue;
+                    }
+                    var way = st == here ? new List<Point>() : BotNav.FindPath(here, st);
+                    if (way != null && (best == null || way.Count < best.Value.len))
+                    {
+                        best = (st, sw, way.Count);
+                    }
+                }
+            }
+            BotNav.AllowJump = false;
+            if (best == null)
+            {
+                yield break;
+            }
+            var (stand, swt, _) = best.Value;
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  pillars: the way is behind switch pillars: hit the pillar switch {swt} from {stand}");
+            }
+            int was = GlobalState.PillarSwitchOn;
+            for (int attempt = 0; attempt < 4 && !_pillarHitOk; attempt++)
+            {
+                // (a dodge on the way, a fire pillar's flame, can leave us a tile off: walk back and swing again)
+                if (BotNav.TileOf(Pos) != stand)
+                {
+                    yield return GoToWhere(t => t == stand, $"pillar switch {swt.X},{swt.Y}");
+                }
+                yield return StandFaceAccept(stand.X, stand.Y, FaceChar(new Point(swt.X - stand.X, swt.Y - stand.Y)));
+                yield return Wait(10);
+                _pillarHitOk = GlobalState.PillarSwitchOn != was;
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  pillars: hit from {BotNav.TileOf(Pos)} facing {Player.facing}: switch {was} -> {GlobalState.PillarSwitchOn}");
+            }
+            yield return Wait(50); // the pillars take ~0.9s to come up or go down
         }
 
         /// <summary>
@@ -2243,7 +2698,7 @@ namespace AnodyneSharp.Recording
                         foreach (int k in new[] { 3, 4, 2, 5, 6, 7, 8, 9, 1 })
                         {
                             var s = new Point(p.X - d.X * k, p.Y - d.Y * k);
-                            if (OnScreen(s) && BotNav.Walkable(s) && !tried.Contains((p, s)) && s != p && CanReach(s))
+                            if (OnScreen(s) && BotNav.WalkableNoPillars(s) && !tried.Contains((p, s)) && s != p && CanReach(s))
                             {
                                 return s;
                             }
@@ -2253,7 +2708,7 @@ namespace AnodyneSharp.Recording
                     // Where we hit the pillar switch from (a free tile next to one, reachable).
                     var swTile = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch).Select(e => TileAt(e.Hitbox)).Cast<Point?>().FirstOrDefault();
                     Point? flipAt = swTile == null ? null : o4.Select(o => new Point(swTile.Value.X + o.X, swTile.Value.Y + o.Y))
-                        .Where(t => OnScreen(t) && BotNav.Walkable(t) && (t == here || (BotNav.FindPath(here, t) is { } way && way.All(OnScreen) && !way.Contains(swTile.Value)))).Cast<Point?>().FirstOrDefault();
+                        .Where(t => OnScreen(t) && BotNav.WalkableNoPillars(t) && (t == here || (BotNav.FindPath(here, t) is { } way && way.All(OnScreen) && !way.Contains(swTile.Value)))).Cast<Point?>().FirstOrDefault();
                     var prev = new Dictionary<(Point, bool), ((Point, bool) from, Point d, Point stand)>();
                     var q = new Queue<(Point, bool)>();
                     q.Enqueue((ft, false));
@@ -2858,6 +3313,16 @@ namespace AnodyneSharp.Recording
         /// <summary>Keys for the next frame of a plan to `goal` (hitbox top-left) that never meets a predicted danger; null if none (see SpaceTime).</summary>
         private static KeyFunctions[] SpaceTimeMove(Vector2 goal, List<Threat> threats, bool useCache = true, bool survive = false)
         {
+            if (!BotRunner.ProfOn)
+            {
+                return SpaceTimeMoveCore(goal, threats, useCache, survive);
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return SpaceTimeMoveCore(goal, threats, useCache, survive); } finally { BotRunner.Prof("SpaceTimeMove", t0); }
+        }
+
+        private static KeyFunctions[] SpaceTimeMoveCore(Vector2 goal, List<Threat> threats, bool useCache = true, bool survive = false)
+        {
             var st = new List<StThreat>(threats.Count);
             foreach (var t in threats)
             {
@@ -3134,6 +3599,16 @@ namespace AnodyneSharp.Recording
 
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
+            if (!BotRunner.ProfOn)
+            {
+                return SafeMoveCore(wanted, except, dist, stopForBlockers, look);
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return SafeMoveCore(wanted, except, dist, stopForBlockers, look); } finally { BotRunner.Prof("SafeMove", t0); }
+        }
+
+        protected static KeyFunctions[] SafeMoveCore(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
+        {
             Dodged = false;
             BlockedBy = null;
             SteamWait = false;
@@ -3154,6 +3629,23 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
+            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && DashStateField?.GetValue(Player) is Vector2 dsv)
+            {
+                // Running off a dash pad (it lasts while the key is held): the plans below think in walking pace, so if anything is in the
+                // way of the run let go for a frame (that ends it) and plan again at a walk.
+                var dv = new Vector2(Math.Sign(dsv.X), Math.Sign(dsv.Y)) * (70f / 60f) * DashFactor();
+                var pb0 = Player.Hitbox;
+                for (int f = 0; f <= 24; f++)
+                {
+                    var box = new Rectangle((int)(pb0.X + dv.X * f), (int)(pb0.Y + dv.Y * f), pb0.Width, pb0.Height);
+                    box.Inflate(2, 2);
+                    if (threats.Any(t => t.At[f] is Rectangle r && r.Intersects(box)))
+                    {
+                        Dodged = true;
+                        return K();
+                    }
+                }
+            }
             if (GlobalState.inventory.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && !Sinking && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
             {
                 // (Wading, sinking into water, there is no jumping; puddles are fine.) With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
@@ -3197,9 +3689,9 @@ namespace AnodyneSharp.Recording
                         // whole line, say): walk on and take off later, so the jump carries us over it.
                         return K(wanted);
                     }
-                    if (jumpOn && LandsInHit(wanted, landing))
+                    if (jumpOn && (LandsInHit(wanted, landing) || !JumpLandsOnFloor(wanted)))
                     {
-                        onSpot = !LandsInHit(null, landing);
+                        onSpot = !LandsInHit(null, landing) && JumpLandsOnFloor(null);
                         jumpOn = onSpot;
                     }
                     if (jumpOn)
@@ -3669,14 +4161,32 @@ namespace AnodyneSharp.Recording
             Point lastHere = new(-1, -1);
             List<Point> plan = null;
             var fruitless = new Dictionary<Point, int>(); // screen -> enemies left there after our last fight on it
+            var killFights = new Dictionary<Point, int>(); // kill gate -> fights had to open it
+            long healAt = -100000; // when this walk last went off to heal
+            int killTrips = 0; // trips round to the enemies of a kill gate on the far side
+            bool warped = false; // went back to the Nexus pad to plan from there
+            int flips = 0, buttonsPressed = 0;
             for (int hop = 0; hop < 80; hop++)
             {
                 BotNav.ResetDustCache();
                 var here = BotNav.TileOf(Pos);
+                if (here == goal && !HasRaft())
+                {
+                    yield break;
+                }
+                if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 || BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft) && !HasRaft() && !OnConveyor(here))
+                {
+                    // Low on hearts with fights ahead: top up at a checkpoint first (then plan again from wherever that leaves us).
+                    healAt = BotRunner.Frame;
+                    yield return Heal();
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
+                }
                 bool stalled = here == lastHere;
                 lastHere = here;
                 var gs = new Point(goal.X / 10, goal.Y / 10);
-                if (Grid == gs)
+                if (Grid == gs && BotNav.RaftPath(here, OnConveyor(here), goal, jump) is { } local && local.All(t => t.X / 10 == gs.X && t.Y / 10 == gs.Y))
                 {
                     yield return RaftTo(gx, gy);
                     yield break;
@@ -3696,10 +4206,149 @@ namespace AnodyneSharp.Recording
                     route = BotNav.RaftPath(here, OnConveyor(here), goal, jump);
                     plan = route == null ? null : new List<Point>(route.Prepend(here));
                 }
+                if (route == null && flips < 8)
+                {
+                    // Switch pillars in the way: a way that hits pillar switches (on this screen or others) to turn them over. Go to the first
+                    // switch on it, hit it, and plan again from there.
+                    BotNav.AllowJump = jump;
+                    var hit = BotNav.PillarRoute(here, goal);
+                    BotNav.AllowJump = false;
+                    if (hit is var (stand, sw))
+                    {
+                        flips++;
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  pillars: the way to {goal} needs the pillars turned over: hit the switch {sw} from {stand}");
+                        }
+                        if (here != stand)
+                        {
+                            var sc = BotNav.CentreOf(stand);
+                            yield return GoGlobal(sc.X, sc.Y);
+                        }
+                        yield return HitPillarSwitch(sw);
+                        if (_pillarHitOk)
+                        {
+                            plan = null;
+                            lastHere = new Point(-1, -1);
+                            continue;
+                        }
+                    }
+                    else if (BotNav.LastRouteGate is Point shut && BotNav.PuzzleGates().ContainsKey(shut) && buttonsPressed < 4)
+                    {
+                        // The way is through a shut puzzle gate: its screen's buttons open it. Go and stand on one we can get to (from
+                        // this side), then plan again.
+                        var gs2 = new Point(shut.X / 10, shut.Y / 10);
+                        BotNav.AllowJump = jump;
+                        // (one we can get to with the gates as they are, hitting pillar switches on the way if need be)
+                        bool CanGet(Point b)
+                        {
+                            BotNav.PillarRoute(here, b);
+                            return BotNav.LastRouteReached && BotNav.LastRouteRespected;
+                        }
+                        var button = BotNav.Buttons().Where(b => b.X / 10 == gs2.X && b.Y / 10 == gs2.Y && (b == here || CanGet(b)))
+                            .OrderBy(b => Math.Abs(b.X - here.X) + Math.Abs(b.Y - here.Y)).Select(b => (Point?)b).FirstOrDefault();
+                        BotNav.AllowJump = false;
+                        if (button is Point bt)
+                        {
+                            buttonsPressed++;
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  gates: the way to {goal} is through the shut puzzle gate {shut}: press the button {bt}");
+                            }
+                            var bc = BotNav.CentreOf(bt);
+                            yield return GoGlobal(bc.X, bc.Y);
+                            yield return WalkTo(bc.X, bc.Y, tol: 1.5f, timeout: 60);
+                            yield return Wait(30);
+                            plan = null;
+                            lastHere = new Point(-1, -1);
+                            continue;
+                        }
+                    }
+                    else if (BotNav.LastRouteGate is Point kgate && BotNav.KillGateFoes(kgate) is { Count: > 0 } foes && killTrips < 3)
+                    {
+                        // The way is through a gate that opens on kills, and its enemies are not on our side of it: go round to them
+                        // (the dead stay dead, so the gate is open when we come back), fight them, then plan again.
+                        var fs = new Point(kgate.X / 10, kgate.Y / 10);
+                        Point? near = null;
+                        int nearLen = int.MaxValue;
+                        foreach (var f in foes)
+                        {
+                            foreach (var o in new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                            {
+                                var t = new Point(f.X + o.X, f.Y + o.Y);
+                                if (t.X / 10 != fs.X || t.Y / 10 != fs.Y || !BotNav.Walkable(t))
+                                {
+                                    continue;
+                                }
+                                var rp = t == here ? new List<Point>() : BotNav.RaftPath(here, OnConveyor(here), t, jump);
+                                if (rp != null && rp.Count < nearLen)
+                                {
+                                    nearLen = rp.Count;
+                                    near = t;
+                                }
+                            }
+                        }
+                        if (near is Point nt)
+                        {
+                            killTrips++;
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  gates: the way to {goal} is through the kill gate {kgate}, whose enemies are elsewhere: to {nt} to fight them");
+                            }
+                            var nc = BotNav.CentreOf(nt);
+                            yield return GoGlobal(nc.X, nc.Y);
+                            if (Grid == fs)
+                            {
+                                yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == fs);
+                            }
+                            plan = null;
+                            lastHere = new Point(-1, -1);
+                            continue;
+                        }
+                    }
+                }
+                if (route == null && !warped && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad")
+                    && !Map.Equals("NEXUS"))
+                {
+                    // Nowhere to go from here (a one-way leap or drop brought us into a dead end): back to the map's Nexus pad, as a player
+                    // would through the menu, and plan again from there.
+                    warped = true;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  no route from {here} to {goal}: back to the Nexus pad to try from there");
+                    }
+                    yield return MenuReturnToPad(0);
+                    yield return Wait(60);
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
+                }
                 if (route == null)
                 {
                     DumpTiles(here, goal);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  no route: first shut gate on the way {BotNav.LastRouteGate?.ToString() ?? "none"}, puzzle gates {string.Join(" ", BotNav.PuzzleGates().Keys)}");
+                    }
                     throw new InvalidOperationException($"bot: no route from {here} to {goal} on {Map}");
+                }
+                if (route.FirstOrDefault(BotNav.IsShutKillGate) is var kg && BotNav.IsShutKillGate(kg) && route.TakeWhile(t => t != kg).All(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y))
+                {
+                    // The way out is a gate of this screen that opens on kills: fight for it first.
+                    if (killFights.TryGetValue(kg, out int tries) && tries >= 2)
+                    {
+                        throw new InvalidOperationException($"bot: the kill gate {kg} on the way to {goal} stays shut after {tries} fights on {Map}");
+                    }
+                    killFights[kg] = tries + 1;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  gates: the way to {goal} is through the kill gate {kg}: fighting the {Enemies().Count} enemies here first");
+                    }
+                    yield return Fight(3600);
+                    yield return Wait(20);
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
                 }
                 // Waypoint: the first tile on land that lies on another screen (or the end of the water run that leads there).
                 Point way = route[route.Count - 1];
@@ -3713,7 +4362,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 BotRunner.Status = $"on to {way.X},{way.Y}";
-                RaftLog($"hop {hop}: from {here} to {way} (route {route.Count}) pos {Pos} grid {Grid} trans {GlobalState.ScreenTransition}");
+                RaftLog($"hop {hop}: from {here} to {way} (route {route.Count}) pos {Pos} grid {Grid} trans {GlobalState.ScreenTransition} via {string.Join(">", route.Take(40).Select(t => $"{t.X},{t.Y}"))}");
                 var wc = BotNav.CentreOf(way);
                 if (stalled && new Point(way.X / 10, way.Y / 10) != Grid)
                 {
@@ -3733,7 +4382,7 @@ namespace AnodyneSharp.Recording
                     yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
                     yield return Wait(10);
                     // (not from a raft drifting down a river: the broom cannot steer it out of a Gas Guy's cloud)
-                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos))
+                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos)) && BotNav.TileOf(Pos) != goal
                         && !(fruitless.TryGetValue(Grid, out int left) && left == Enemies().Count))
                     {
                         // (once per screen while it gets us nowhere: a fight that killed nothing here is not started again on every hop)
@@ -7194,6 +7843,187 @@ namespace AnodyneSharp.Recording
             throw new InvalidOperationException($"bot: Watcher fight timed out at {Pos}");
         }
 
+        /// <summary>
+        /// Lions (the Circus): strike one while it paces (or backs off before a pounce) from beside it, where it is not about to walk into
+        /// us, then keep off while it flickers, spits fire or pounces (see PredictLion), and go in again. Other enemies are left to the
+        /// fight that called this.
+        /// </summary>
+        protected static IEnumerable<object> LionFight(Func<Entity, bool> only, int timeoutFrames = 5400)
+        {
+            int lastSwing = -100, jumpAt = -100;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var pb = Player.Hitbox;
+                var here = new Vector2(pb.X, pb.Y);
+                var lion = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e)))
+                    .OrderBy(e => (e.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length()).FirstOrDefault();
+                if (lion == null)
+                {
+                    yield break;
+                }
+                BotRunner.NotStuck(); // the fight has its own timeout
+                var st = FsmStateLeft(lion);
+                string state = st?.Item1 ?? "";
+                int left = st?.Item2 ?? 0;
+                var threats = PredictThreats(null);
+                var others = threats.Where(t => t.Source != lion).ToList();
+                // Where it will be in a few frames (it paces at 43px/s): strike at that.
+                // (its box turns with it, 26x13 side-on and 10x20 end-on, and it turns to face us: count it as both at once)
+                var full = new Rectangle((int)lion.Position.X + 3, (int)lion.Position.Y + 4, 26, 20);
+                var bb = full;
+                bb.Offset((int)(lion.velocity.X * 6 / 60f), (int)(lion.velocity.Y * 6 / 60f));
+                // (standing still while it warns and spits, it is the easiest to hit, and a hit stops the fire: in close, go for it)
+                float dist = (lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length();
+                // (a hit while it spits stops the fire; one while it only warns does not, and then it spits at us point-blank)
+                bool still = state == "ShootState" && dist < 96;
+                bool spitting = state == "ShootWarningState" || state == "ShootState";
+                bool open = !lion._flickering && (state == "PaceState" && left >= 24 || state == "ChargeWalkState" && left >= 30 || still);
+                var lionBody = new Threat { Name = "Lion", Source = lion, Margin = 2 };
+                for (int k = 0; k <= Horizon; k++)
+                {
+                    lionBody.At[k] = full;
+                }
+                Vector2 goal = here;
+                Facing face = Player.facing;
+                if (open)
+                {
+                    // Beside it, a few px off its box, facing it: the nearest such spot we can stand on that nothing else threatens.
+                    const int gap = 5;
+                    var spots = new List<(Vector2 p, Facing f)>
+                    {
+                        (new Vector2(bb.Left - pb.Width - gap, bb.Center.Y - pb.Height / 2), Facing.RIGHT),
+                        (new Vector2(bb.Right + gap, bb.Center.Y - pb.Height / 2), Facing.LEFT),
+                        (new Vector2(bb.Center.X - pb.Width / 2, bb.Top - pb.Height - gap), Facing.DOWN),
+                        (new Vector2(bb.Center.X - pb.Width / 2, bb.Bottom + gap), Facing.UP),
+                    };
+                    var best = spots.Where(sp => StandsSafe(new Rectangle((int)sp.p.X, (int)sp.p.Y, pb.Width, pb.Height)) && SafeAtExactThreats(sp.p, others, 20))
+                        .OrderBy(sp => (sp.p - here).Length()).Select(sp => ((Vector2, Facing)?)sp).FirstOrDefault();
+                    if (best is var (bp, bf))
+                    {
+                        goal = bp;
+                        face = bf;
+                    }
+                    else
+                    {
+                        open = false;
+                    }
+                }
+                if (!open)
+                {
+                    // Keep off: the floor spot near us that stays clear of everything longest (and is not in a corner with it). While it
+                    // spits, its fire fans out at most 40 degrees off the way it faces (one of four, at us): stand off the diagonal, out
+                    // of every fan (its fireballs in flight are dodged as they are).
+                    var lc = lion.Hitbox.Center.ToVector2();
+                    bool OutOfFan(Vector2 c)
+                    {
+                        var v = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lc;
+                        if (v.Length() > 100f)
+                        {
+                            return true;
+                        }
+                        float ang = MathF.Atan2(Math.Min(Math.Abs(v.X), Math.Abs(v.Y)), Math.Max(Math.Abs(v.X), Math.Abs(v.Y))) * 180f / MathF.PI;
+                        return ang >= 41f && v.Length() > 28f;
+                    }
+                    if (spitting)
+                    {
+                        threats = others.Append(lionBody).ToList();
+                    }
+                    float bestScore = float.MinValue;
+                    var room = new Vector2(Grid.X * 160, Grid.Y * 160);
+                    for (int gx = 4; gx < 160 - pb.Width; gx += 8)
+                    {
+                        for (int gy = 4; gy < 160 - pb.Height; gy += 8)
+                        {
+                            var c = room + new Vector2(gx, gy);
+                            if ((c - here).Length() > 72 || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 40) || spitting && !OutOfFan(c))
+                            {
+                                continue;
+                            }
+                            float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
+                            // (while it spits, near enough to be in for the strike the moment it can be hit)
+                            float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                goal = c;
+                            }
+                        }
+                    }
+                }
+                bool atGoal = Math.Abs(here.X - goal.X) <= 3f && Math.Abs(here.Y - goal.Y) <= 3f;
+                BotRunner.Status = $"Lion: {state} {left}{(lion._flickering ? " flickering" : "")} {(open ? "strike" : "keep off")} goal {goal - new Vector2(Grid.X * 160, Grid.Y * 160)}{(atGoal ? " (there)" : "")}";
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0)
+                {
+                    System.Console.Error.WriteLine($"  lion f{i} {BotRunner.Status} lion={lion.Hitbox} {lion.CurAnimName} me={pb} face={Player.facing}");
+                }
+                if (open && atGoal)
+                {
+                    if (Player.facing != face)
+                    {
+                        yield return K(face switch { Facing.UP => KeyFunctions.Up, Facing.LEFT => KeyFunctions.Left, Facing.RIGHT => KeyFunctions.Right, _ => KeyFunctions.Down });
+                        continue;
+                    }
+                    if (i - lastSwing > 16 && !(Player.broom != null && Player.broom.exists))
+                    {
+                        lastSwing = i;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    yield return K();
+                    continue;
+                }
+                if (open && still && state == "ShootState" && (goal - here).Length() < 24)
+                {
+                    // Into its fire: straight at it, swinging as we go (the broom puts out what flies at us), until the hit that stops it.
+                    var dk = new List<KeyFunctions>();
+                    float dx = goal.X - here.X, dy = goal.Y - here.Y;
+                    if (dx > 1) { dk.Add(KeyFunctions.Right); } else if (dx < -1) { dk.Add(KeyFunctions.Left); }
+                    if (dy > 1) { dk.Add(KeyFunctions.Down); } else if (dy < -1) { dk.Add(KeyFunctions.Up); }
+                    var toLion = lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2();
+                    var faceLion = Math.Abs(toLion.X) > Math.Abs(toLion.Y) ? (toLion.X > 0 ? Facing.RIGHT : Facing.LEFT) : (toLion.Y > 0 ? Facing.DOWN : Facing.UP);
+                    if (Player.facing == faceLion && i - lastSwing > 16 && !(Player.broom != null && Player.broom.exists))
+                    {
+                        lastSwing = i;
+                        dk.Add(KeyFunctions.Accept);
+                    }
+                    yield return K(dk.ToArray());
+                    continue;
+                }
+                if (open && (goal - here).Length() < 28 && SafeAtExactThreats(here, others, 10))
+                {
+                    // The last few px straight in (the planner keeps a margin off the lion we mean to stand beside).
+                    var dk = new List<KeyFunctions>();
+                    float dx = goal.X - here.X, dy = goal.Y - here.Y;
+                    if (dx > 1) { dk.Add(KeyFunctions.Right); } else if (dx < -1) { dk.Add(KeyFunctions.Left); }
+                    if (dy > 1) { dk.Add(KeyFunctions.Down); } else if (dy < -1) { dk.Add(KeyFunctions.Up); }
+                    yield return K(dk.ToArray());
+                    continue;
+                }
+                if (atGoal && SafeAtExactThreats(here, threats, 20))
+                {
+                    yield return K();
+                    continue;
+                }
+                var keys = SpaceTimeMove(goal, open ? others.Append(still ? lionBody : threats.First(t => t.Source == lion)).ToList() : threats, useCache: false);
+                if (keys == null)
+                {
+                    keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                }
+                if (keys == null && Player.state == PlayerState.GROUND && i - jumpAt > 40 && !threats.Any(t => t.HurtsInAir && !SafeAtExactThreats(here, new List<Threat> { t }, 30)))
+                {
+                    jumpAt = i;
+                    keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (and the pounce: a lion only hurts on the ground)
+                }
+                yield return keys ?? K();
+            }
+            throw new InvalidOperationException($"bot: Lion fight timed out at {Pos}");
+        }
+
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -7429,8 +8259,17 @@ namespace AnodyneSharp.Recording
         /// <summary>The nearest living shooter within `radius` px of the player, or null.</summary>
         protected static Entity SlimeNear(float radius)
         {
+            HashSet<Point> mine = null;
+            bool OurSide(Entity e)
+            {
+                // (one behind a wall cannot touch us, and a fight with it goes nowhere)
+                mine ??= FloodRegion(BotNav.TileOf(Pos), 200);
+                var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
+                return new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(t.X + o.X, t.Y + o.Y)));
+            }
             return Enemies().Where(e => e.GetType().Name == "Slime")
                 .Where(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < radius)
+                .Where(OurSide)
                 .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
         }
 
@@ -9597,6 +10436,14 @@ namespace AnodyneSharp.Recording
                 yield return RedBossFight();
                 yield break;
             }
+            if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e))))
+            {
+                yield return LionFight(only);
+                if (Enemies().Count(e => only == null || only(e)) == 0)
+                {
+                    yield break;
+                }
+            }
             if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Apartment.SplitBoss))
             {
                 yield return WatcherFight();
@@ -10070,6 +10917,19 @@ namespace AnodyneSharp.Recording
                     if (!reachableHere && only == null && target.GetType().Name == "Slime")
                     {
                         var theirs = FloodRegion(tTile, 900);
+                        BotNav.AllowJump = GlobalState.inventory.CanJump;
+                        bool canGoRound = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
+                        BotNav.AllowJump = false;
+                        if (!canGoRound && soft)
+                        {
+                            // (walled off from here and no way round from this side of the screen: a fight on the way is not worth a detour
+                            // we cannot make; the route goes on)
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  fight: the {target.GetType().Name} is walled off and there is no way round: leaving it");
+                            }
+                            yield break;
+                        }
                         BotRunner.Status = $"go round to {target.GetType().Name}";
                         int farEnough = theirs.Any(t => Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= 3) ? 3 : 2; // a small pocket has nothing farther than 2 tiles from it
                         var sideLanes = BotNav.LaneTiles(); // never end the walk standing in a beam
@@ -11267,16 +12127,16 @@ namespace AnodyneSharp.Recording
                     laneAvoid.Remove(BotNav.TileOf(Pos));
                     laneAvoid.Remove(tt);
                     BotNav.Avoid = laneAvoid;
-                    var path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt, strict: true);
+                    var path = BotNav.FindPathTo(BotNav.TileOf(Pos), tt, strict: true);
                     if (path == null)
                     {
                         BotNav.Avoid = berthF;
-                        path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt, strict: true);
+                        path = BotNav.FindPathTo(BotNav.TileOf(Pos), tt, strict: true);
                     }
                     BotNav.Avoid = null;
                     if (path == null)
                     {
-                        path = BotNav.FindPath(BotNav.TileOf(Pos), t => t == tt, tt);
+                        path = BotNav.FindPathTo(BotNav.TileOf(Pos), tt);
                     }
                     if (path != null && path.Count > 0)
                     {
@@ -11496,6 +12356,7 @@ namespace AnodyneSharp.Recording
                 return code;
             }
             _chaserPlanTrace = "";
+            _laterJumps.Clear(); // (a plan that found its way returns with jumps still pending)
             var layer = new List<(Point t, int mask, int[] when, int[] dir, (Point, int)? first)>
             {
                 (from, 0, new int[n], new int[n], null)

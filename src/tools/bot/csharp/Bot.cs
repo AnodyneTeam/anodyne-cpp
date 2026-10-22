@@ -29,6 +29,12 @@ namespace AnodyneSharp.Recording
         public static bool NoAutoPlug;
         /// <summary>Hearts to be won back after a hit (-1 = no debt); see RecoverFrames.</summary>
         public static int DebtBaseline = -1;
+        /// <summary>Set while the bot walks to a checkpoint to heal: the hearts owed are on their way back.</summary>
+        public static bool Healing;
+        /// <summary>Frames since the oldest hit not yet won back (-1 when none is owed).</summary>
+        public static long DebtAge => DebtBaseline >= 0 ? _botFrame - _debtSince : -1;
+        /// <summary>Hearts owed (0 when none).</summary>
+        public static int DebtMissing => DebtBaseline >= 0 ? Math.Max(0, Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - GlobalState.CUR_HEALTH) : 0;
         /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2); reset at the start of each part.</summary>
         public static int ChipLeft = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_CHIP"), out int cl) ? cl : 2;
         public static readonly int ChipPerPart = ChipLeft;
@@ -350,9 +356,9 @@ namespace AnodyneSharp.Recording
             }
             if (DebtBaseline >= 0 && why == null)
             {
-                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy || Healing)
                 {
-                    _debtSince++; // the game is paused for text: no time passes in which a heart could be won back
+                    _debtSince++; // the game is paused for text (no time passes in which a heart could be won back), or we are off to a checkpoint for them
                 }
                 if (hp >= Math.Min(DebtBaseline, GlobalState.MAX_HEALTH))
                 {
@@ -406,8 +412,22 @@ namespace AnodyneSharp.Recording
         private static string _whyShown;
         private static double _winMs; private static int _winN; private static int _slowReports;
 
+        private static readonly Dictionary<string, (double ms, int n)> _prof = new();
+
+        /// <summary>Adds the time since t0 (a Stopwatch timestamp) to this frame's tally for name (shown with a slow frame).</summary>
+        /// <summary>ANODYNE_PROF=1: time the planners per frame and show the tally with each slow frame.</summary>
+        public static readonly bool ProfOn = Environment.GetEnvironmentVariable("ANODYNE_PROF") != null;
+
+        public static void Prof(string name, long t0)
+        {
+            double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            _prof.TryGetValue(name, out var v);
+            _prof[name] = (v.ms + ms, v.n + 1);
+        }
+
         public static Dictionary<Keys, KeyInput.InputState> NextFrame()
         {
+            _prof.Clear();
             var sw = System.Diagnostics.Stopwatch.StartNew();
             AnodyneSharp.Recording.SpaceTime.CallsThisFrame = 0;
             AnodyneSharp.Recording.SpaceTime.NodesThisFrame = 0;
@@ -416,7 +436,8 @@ namespace AnodyneSharp.Recording
             _winMs += ms;
             if (ms > SlowFrameMs && _slowReports++ < 40)
             {
-                System.Console.Error.WriteLine($"SLOW BOT FRAME {ms:0.0}ms at f{_botFrame} ({Status}): spacetime calls {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}, nodes {AnodyneSharp.Recording.SpaceTime.NodesThisFrame}");
+                System.Console.Error.WriteLine($"SLOW BOT FRAME {ms:0.0}ms at f{_botFrame} ({Status}): spacetime calls {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}, nodes {AnodyneSharp.Recording.SpaceTime.NodesThisFrame}; "
+                    + string.Join(" ", _prof.OrderByDescending(kv => kv.Value.ms).Select(kv => $"{kv.Key} {kv.Value.ms:0.0}ms/{kv.Value.n}")));
             }
             if (++_winN >= 300)
             {
@@ -1024,6 +1045,182 @@ namespace AnodyneSharp.Recording
             yield return K();
         }
 
+        /// <summary>
+        /// A long jump off a row of dash pads from a to b (straight): back up to before the pads, run along them holding their way (the
+        /// speed lasts while the key is held, in the air too) and jump with our middle at a's far edge.
+        /// </summary>
+        protected static IEnumerable<object> DashLeap(Point a, Point b)
+        {
+            var d = new Point(Math.Sign(b.X - a.X), Math.Sign(b.Y - a.Y));
+            var key = d.X > 0 ? KeyFunctions.Right : d.X < 0 ? KeyFunctions.Left : d.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up;
+            // the run-up: the tile before the first pad of the row (or the first pad, against a wall)
+            // (the take-off tile need not be the last pad: a fire pillar's tile may lie between, so back past the whole row)
+            var start = a;
+            bool padSeen = BotNav.DashPads().ContainsKey(a);
+            for (int k = 1; k <= 4; k++)
+            {
+                var t = new Point(a.X - d.X * k, a.Y - d.Y * k);
+                if (!BotNav.Walkable(t))
+                {
+                    break;
+                }
+                start = t;
+                bool pad = BotNav.DashPads().ContainsKey(t);
+                if (!pad && padSeen)
+                {
+                    break;
+                }
+                padSeen |= pad;
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  dash leap {a.X},{a.Y} -> {b.X},{b.Y}: run up from {start} ({BotNav.PadsBehind(a, d)} pads)");
+            }
+            var sc = BotNav.CentreOf(start);
+            BotRunner.Status = $"dash leap to {b.X},{b.Y}: back to the run-up {start}";
+            bool BackClear()
+            {
+                // the walk back (at walking pace) meets nothing on the ground
+                var threats = PredictThreats(null);
+                var from0 = Player.Hitbox;
+                int n = (int)(Vector2.Distance(sc, Pos) / WalkPxPerFrame) + 4;
+                for (int f = 0; f <= n && f < 90; f++)
+                {
+                    float u = Math.Min(1f, (float)f / n);
+                    var box = new Rectangle((int)(from0.X + (sc.X - Pos.X) * u), (int)(from0.Y + (sc.Y - Pos.Y) * u), from0.Width, from0.Height);
+                    box.Inflate(2, 2);
+                    if (threats.Any(t => t.At[Math.Min(f, t.At.Length - 1)] is Rectangle r && r.Intersects(box)))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            bool HereThreatened()
+            {
+                var threats = PredictThreats(null);
+                var box = Player.Hitbox;
+                return threats.Any(t => Enumerable.Range(0, 24).Any(f => t.At[f] is Rectangle r && r.Intersects(box)));
+            }
+            for (int w = 0; w < 300 && Vector2.Distance(sc, Pos) > 1f && !BackClear() && !HereThreatened(); w++)
+            {
+                BotRunner.Status = $"dash leap to {b.X},{b.Y}: wait to back up to {start}";
+                yield return K();
+            }
+            for (int w = 0; w < 120 && Vector2.Distance(sc, Pos) > 1f; w++)
+            {
+                float ddx = sc.X - Pos.X, ddy = sc.Y - Pos.Y;
+                var keys = new List<KeyFunctions>();
+                if (Math.Abs(ddx) >= 0.8f)
+                {
+                    keys.Add(ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                }
+                if (Math.Abs(ddy) >= 0.8f)
+                {
+                    keys.Add(ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                }
+                yield return K(keys.ToArray());
+            }
+            for (int w = 0; w < 65; w++)
+            {
+                yield return K(); // (a pad we stood on rests for a second before it pushes again)
+            }
+            // Wait for a run and jump that nothing meets: on the ground anything that hurts, in the air what hurts a jumper (a fire pillar
+            // burning where we come down, say). The run is ~1.5x walking speed, the jump ~28 frames.
+            var from = Player.Hitbox;
+            var landBox = new Rectangle(b.X * 16 + 3, b.Y * 16 + 2, from.Width, from.Height);
+            float runPx = Math.Abs((a.X - start.X) * 16 + (a.Y - start.Y) * 16) + 5;
+            int runFrames = (int)(runPx / (WalkPxPerFrame * 1.5f)) + 2, total = runFrames + 30;
+            bool Clear()
+            {
+                var threats = PredictThreats(null);
+                for (int f = 0; f <= total && f < 90; f++)
+                {
+                    float u = Math.Min(1f, (float)f / total);
+                    var box = new Rectangle((int)(from.X + (landBox.X - from.X) * u), (int)(from.Y + (landBox.Y - from.Y) * u), from.Width, from.Height);
+                    box.Inflate(2, 2);
+                    bool air = f > runFrames && f < total - 1;
+                    // (the run seldom keeps the modelled pace: lining up, the pads' kick; so each spot must stay clear a while either side)
+                    for (int k = Math.Max(0, f - 8); k <= Math.Min(Horizon, f + 16); k++)
+                    {
+                        if (threats.Any(t => (!air || t.HurtsInAir) && t.At[k] is Rectangle r && r.Intersects(box)))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            // Taking off from the pad itself (no run-up: spikes or a wall behind it): it pushes the moment it is ready again, and that push
+            // is lost unless its key is down that very frame. Stand at its back edge and press on just as it re-arms (each second).
+            var padUnder = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && BotNav.TileOf(e.Position + new Vector2(3, 2)) == BotNav.TileOf(Pos));
+            if (padUnder != null && BotNav.DashPads().TryGetValue(BotNav.TileOf(Pos), out var padDir) && padDir == d)
+            {
+                var pt = BotNav.TileOf(Pos);
+                var rear = BotNav.CentreOf(pt) - new Vector2(d.X, d.Y) * 4f;
+                for (int w = 0; w < 30 && Vector2.Distance(rear, Pos) > 0.8f; w++)
+                {
+                    float rx = rear.X - Pos.X, ry = rear.Y - Pos.Y;
+                    var rk = new List<KeyFunctions>();
+                    if (Math.Abs(rx) > 0.8f) { rk.Add(rx < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                    if (Math.Abs(ry) > 0.8f) { rk.Add(ry < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                    yield return K(rk.ToArray());
+                }
+                var dtField = typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                for (int w = 0; w < 600; w++)
+                {
+                    int armIn = padUnder.opacity >= 1f ? 0 : (int)((1f - (dtField?.GetValue(padUnder) is float dt ? dt : 0f)) * 60f);
+                    if (armIn <= 2 && Clear())
+                    {
+                        break;
+                    }
+                    BotRunner.Status = $"dash leap to {b.X},{b.Y}: on the pad, wait for it to re-arm ({armIn}) and a clear run";
+                    yield return K();
+                }
+            }
+            for (int w = 0; w < 400 && !Clear(); w++)
+            {
+                BotRunner.Status = $"dash leap to {b.X},{b.Y}: wait for a clear run";
+                yield return K();
+            }
+            BotRunner.Status = $"dash leap to {b.X},{b.Y}: run";
+            bool vertical = d.Y != 0;
+            float edge = vertical ? (d.Y < 0 ? a.Y * 16 + 3 : a.Y * 16 + 13) : (d.X < 0 ? a.X * 16 + 3 : a.X * 16 + 13);
+            float lineup = vertical ? a.X * 16 + 8 : a.Y * 16 + 8;
+            bool jumped = false;
+            for (int w = 0; w < 120; w++)
+            {
+                var c = Player.Hitbox.Center;
+                float along = vertical ? c.Y : c.X, across = vertical ? c.X : c.Y;
+                var keys = new List<KeyFunctions> { key };
+                if (Math.Abs(across - lineup) > 1.5f)
+                {
+                    keys.Add(vertical ? (across < lineup ? KeyFunctions.Right : KeyFunctions.Left) : (across < lineup ? KeyFunctions.Down : KeyFunctions.Up));
+                }
+                if (!jumped && Player.state == PlayerState.GROUND && (vertical ? d.Y : d.X) * (along - edge) >= 0)
+                {
+                    jumped = true;
+                    keys.Add(KeyFunctions.Cancel);
+                    yield return K(keys.ToArray());
+                    continue;
+                }
+                if (jumped && Player.state == PlayerState.GROUND)
+                {
+                    break;
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge}");
+                }
+                yield return K(keys.ToArray());
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  dash leap {a.X},{a.Y} -> {b.X},{b.Y}: {(jumped ? "jumped" : "never took off")}, down at {BotNav.TileOf(Pos)} {Pos}");
+            }
+            yield return K();
+        }
+
         /// <summary>The nearest walkable tile next to ours, or reached over spike tiles (null if none within 6 steps).</summary>
         private static Point? SpikeExit()
         {
@@ -1118,6 +1315,23 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 bool jumping = false;
+                if (path != null && GlobalState.inventory.CanJump && BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true) == null)
+                {
+                    // The walk is only there through a shut gate (taken as opening on arrival): a way round with jumps that needs no gate
+                    // to open (off dash pads, over pits) is the real one.
+                    BotNav.AllowJump = true;
+                    var round = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true);
+                    BotNav.AllowJump = false;
+                    if (System.Environment.GetEnvironmentVariable("ANODYNE_GATE_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  strict-jump probe from {BotNav.TileOf(Pos)}: {(round == null ? "none" : string.Join(">", round.Select(t => $"{t.X},{t.Y}")))}");
+                    }
+                    if (round != null)
+                    {
+                        path = round;
+                        jumping = true;
+                    }
+                }
                 if (path == null)
                 {
                     // Spikes and narrow rivers: with the boots they are jumped over.
@@ -1323,6 +1537,11 @@ namespace AnodyneSharp.Recording
                 {
                     string via = string.Join(">", path.Take(14).Select(p => $"{p.X},{p.Y}"));
                     System.Console.Error.WriteLine($"  path to {what}: {path.Count} tiles from {BotNav.TileOf(Pos)} via {via}");
+                    if (Environment.GetEnvironmentVariable("ANODYNE_GATE_TRACE") != null && path.Count > 0)
+                    {
+                        var probe = new[] { new Point(81, 61), new Point(88, 61), new Point(88, 63), new Point(88, 65), new Point(87, 65), new Point(86, 65), new Point(82, 65), new Point(81, 65), new Point(80, 65), new Point(79, 65) };
+                        System.Console.Error.WriteLine("  probe: " + string.Join(" ", probe.Select(q => $"{q.X},{q.Y}={BotNav.Walkable(q)}")) + $" jump={BotNav.AllowJump} leap86={BotNav.DashLeapTiles(new Point(86, 65), new Point(-1, 0))} strict={BotNav.FindPath(BotNav.TileOf(Pos), t => t == path[path.Count - 1], null, strict: true)?.Count}");
+                    }
                 }
                 bool stuck = false;
                 var gridAtStart = Grid;
@@ -1349,7 +1568,7 @@ namespace AnodyneSharp.Recording
                         }
                         goto replan;
                     }
-                    if (!InRaft && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
+                    if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
                         && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser))
                     {
                         // Chasers about: the plain walk would line up with one and meet it in a corridor. Time this screen's stretch of
@@ -1403,7 +1622,7 @@ namespace AnodyneSharp.Recording
                             stuck = true; // never got to the take-off tile (knocked off the route): plan again from where we are
                             break;
                         }
-                        yield return Leap(leapFrom, tile);
+                        yield return BotNav.IsDashLeap(leapFrom, tile) ? DashLeap(leapFrom, tile) : Leap(leapFrom, tile);
                         if (BotNav.TileOf(Pos) != tile)
                         {
                             stuck = true; // came down somewhere else (or not at all): plan again from here
