@@ -1151,6 +1151,15 @@ namespace AnodyneSharp.Recording
                     result.Add(PredictRotatorBullet(d));
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Hotel.Burst_Plant.BurstBullet)
+                {
+                    // (a Hotel plant's: lobbed along a straight line, it only hurts while within 4px of the ground)
+                    if (PredictLob(d, "BurstBullet", 4f) is Threat lb)
+                    {
+                        result.Add(lb);
+                    }
+                    continue;
+                }
                 if (d is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)
                 {
                     if (PredictFrogBullet(d) is Threat fb)
@@ -2489,6 +2498,45 @@ namespace AnodyneSharp.Recording
         /// A Crowd frog's bullet is lobbed (height 16) and only hurts while it is low (offset.Y &lt;= 8: the first and last ~15% of its
         /// flight); once it lands it splashes standing still and is harmless. Null once it has landed.
         /// </summary>
+        /// <summary>
+        /// A lobbed shot (a Parabola_Thing named "parabola" lifts its sprite while it flies in a straight line at its velocity): where it
+        /// will be at the frames it is low enough to hurt (its height at most `hurtBelow` px). Null once it has landed (popping).
+        /// </summary>
+        private static Threat PredictLob(Entity d, string name, float hurtBelow)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            if (d.velocity == Vector2.Zero)
+            {
+                return null;
+            }
+            var para = d.GetType().GetField("parabola", F)?.GetValue(d);
+            var pt = typeof(AnodyneSharp.Entities.Parabola_Thing);
+            if (para == null || pt.GetField("t", F)?.GetValue(para) is not float t0 || pt.GetField("period", F)?.GetValue(para) is not float period
+                || pt.GetField("height", F)?.GetValue(para) is not float height || pt.GetField("start", F)?.GetValue(para) is not float start)
+            {
+                return null;
+            }
+            var th = new Threat { Name = name, Margin = 1, Source = d };
+            for (int f = 0; f <= Horizon; f++)
+            {
+                float t = t0 + f / 60f;
+                if (t > period + 1 / 60f)
+                {
+                    break;
+                }
+                float hp = period / 2;
+                float lift = start + Math.Clamp(t, 0, period) * (period - Math.Clamp(t, 0, period)) / (hp * hp) * height;
+                if (lift > hurtBelow)
+                {
+                    continue; // high in the air: passes over us
+                }
+                var r = d.Hitbox;
+                r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                th.At[f] = r;
+            }
+            return th;
+        }
+
         private static Threat PredictFrogBullet(Entity d)
         {
             if (d.velocity == Vector2.Zero)
@@ -2609,6 +2657,18 @@ namespace AnodyneSharp.Recording
                 }
             }
             return false;
+        }
+
+        /// <summary>Would a few frames' walk in `dir` touch `e` where it is heading (inflated by 2)?</summary>
+        private static bool StepTouches(KeyFunctions dir, Entity e, int frames = 4)
+        {
+            var v = DirVector(dir) * WalkPxPerFrame * frames;
+            var pb = Player.Hitbox;
+            pb.Offset((int)Math.Round(v.X), (int)Math.Round(v.Y));
+            var tb = e.Hitbox;
+            tb.Offset((int)Math.Round(e.velocity.X * frames / 60f), (int)Math.Round(e.velocity.Y * frames / 60f));
+            tb.Inflate(2, 2);
+            return pb.Intersects(tb);
         }
 
         private static KeyFunctions[] JumpPress(KeyFunctions dir)
@@ -5429,6 +5489,15 @@ namespace AnodyneSharp.Recording
                 ? new[] { KeyFunctions.Up, KeyFunctions.Down, line.X > 0 ? KeyFunctions.Right : KeyFunctions.Left, line.X > 0 ? KeyFunctions.Left : KeyFunctions.Right }
                 : new[] { KeyFunctions.Left, KeyFunctions.Right, line.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up, line.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down };
             const float air = 0.46f; // (the jump's length, s)
+            // Where the enemy bodies will be as we come down (hopping a shot into its own Slime is a sure hit for a maybe one).
+            var bodies = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+                && !IsEyeBoss(e)).Select(e =>
+                {
+                    var r = e.Hitbox;
+                    r.Offset((int)Math.Round(e.velocity.X * air), (int)Math.Round(e.velocity.Y * air));
+                    r.Inflate(3, 3);
+                    return r;
+                }).ToList();
             foreach (var k in keys)
             {
                 var d = DirVector(k);
@@ -5438,7 +5507,8 @@ namespace AnodyneSharp.Recording
                 land.Offset((int)Math.Round(move.X), (int)Math.Round(move.Y));
                 land.Inflate(3, 3); // (no hole tile at all under the landing: the jump's length is not exact, and the fight walks on as we land)
                 if (new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
-                    .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t)))
+                    .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t))
+                    && !bodies.Any(r => r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height))))
                 {
                     _hopDir = k;
                     _hopUntil = BotRunner.Frame + 40;
@@ -7234,6 +7304,29 @@ namespace AnodyneSharp.Recording
                         }
                         return r;
                     }).ToList();
+                // A land shot bursts into 4 splashes (20px/s, a 36px lob of 1-1.4s): low down (the start and the end, and their 10-frame pop)
+                // one slows us to 0.3 for 100 frames, and the eye's next shots (aimed where we stand) then come down on us.
+                foreach (var sp in boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
+                {
+                    const System.Reflection.BindingFlags SF = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                    var para = sp.GetType().GetField("parabola", SF)?.GetValue(sp);
+                    var ptt = typeof(AnodyneSharp.Entities.Parabola_Thing);
+                    if (para == null || ptt.GetField("t", SF)?.GetValue(para) is not float st0 || ptt.GetField("period", SF)?.GetValue(para) is not float sper
+                        || ptt.GetField("height", SF)?.GetValue(para) is not float sh)
+                    {
+                        continue;
+                    }
+                    var r = new Rectangle[Ahead + 1];
+                    var sb = sp.Hitbox;
+                    for (int t = 0; t <= Ahead; t++)
+                    {
+                        float tt = st0 + t / 60f;
+                        float sc = Math.Clamp(tt / sper, 0f, 1f);
+                        bool low = tt <= sper + 12 / 60f && sh * 4 * sc * (1 - sc) < 9 + 2;
+                        r[t] = low ? new Rectangle(sb.X + (int)Math.Round(sp.velocity.X * t / 60f) - 1, sb.Y + (int)Math.Round(sp.velocity.Y * t / 60f) - 1, sb.Width + 2, sb.Height + 2) : Rectangle.Empty;
+                    }
+                    paths.Add(r);
+                }
                 if (!water && boss.Solid)
                 {
                     // On land the eye itself hurts to touch: its walk (or charge) is one more thing to keep out of the way of.
@@ -7281,6 +7374,39 @@ namespace AnodyneSharp.Recording
                     return true;
                 }
                 bool rooted = Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK;
+                // Frames until a shot (or the eye, or a splash) first touches us walking `dk` (at our real speed: a splash slows us), stopping
+                // where the floor ends instead of walking into a wall, spikes, a hole or the water.
+                float spd = WalkPxPerFrame * (Player.slowTicks > 0 ? Player.slowMul : 1f);
+                bool afloatHere = HasRaft() && OnConveyor(BotNav.TileOf(Pos));
+                int TouchAlong(KeyFunctions[] dk)
+                {
+                    var d = Vector2.Zero;
+                    foreach (var k in dk)
+                    {
+                        d += DirVector(k);
+                    }
+                    if (d.X != 0 && d.Y != 0)
+                    {
+                        d *= 0.7071f;
+                    }
+                    var at = me;
+                    for (int t = 1; t <= Ahead; t++)
+                    {
+                        var nx = at + d * spd;
+                        bool floor = new[] { new Vector2(nx.X, nx.Y), new Vector2(nx.X + pb.Width - 1, nx.Y), new Vector2(nx.X, nx.Y + pb.Height - 1), new Vector2(nx.X + pb.Width - 1, nx.Y + pb.Height - 1) }
+                            .Select(BotNav.TileOf).All(tile => afloatHere ? OnConveyor(tile) : !OnConveyor(tile) && BotNav.Walkable(tile) && !BotNav.IsHole(tile));
+                        if (floor)
+                        {
+                            at = nx;
+                        }
+                        var sb = new Rectangle((int)at.X - 1, (int)at.Y - 1, pb.Width + 2, pb.Height + 2);
+                        if (paths.Any(r => r[t].Intersects(sb)))
+                        {
+                            return t;
+                        }
+                    }
+                    return int.MaxValue;
+                }
                 if (paths.Count > 0 && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !rooted)
                 {
                     int FirstTouch(Func<int, Rectangle> self, int upTo)
@@ -7338,38 +7464,12 @@ namespace AnodyneSharp.Recording
                             }
                         }
                         // Step round it: the way (or diagonal) that keeps clear of every shot for the next second, on floor we may stand on.
-                        bool afloatNow = HasRaft() && OnConveyor(BotNav.TileOf(Pos));
                         KeyFunctions[] bestKeys = null;
                         int bestT = touch;
                         foreach (var dk in new[] { new[] { KeyFunctions.Up }, new[] { KeyFunctions.Down }, new[] { KeyFunctions.Left }, new[] { KeyFunctions.Right },
                             new[] { KeyFunctions.Up, KeyFunctions.Left }, new[] { KeyFunctions.Up, KeyFunctions.Right }, new[] { KeyFunctions.Down, KeyFunctions.Left }, new[] { KeyFunctions.Down, KeyFunctions.Right } })
                         {
-                            var d = Vector2.Zero;
-                            foreach (var k in dk)
-                            {
-                                d += DirVector(k);
-                            }
-                            if (d.X != 0 && d.Y != 0)
-                            {
-                                d *= 0.7071f;
-                            }
-                            var at = me;
-                            bool ok = true;
-                            for (int t = 1; t <= 20 && ok; t++)
-                            {
-                                at += d * WalkPxPerFrame;
-                                var tile = BotNav.TileOf(at);
-                                if (afloatNow ? !OnConveyor(tile) : (OnConveyor(tile) || !BotNav.Walkable(tile) || BotNav.IsHole(tile)))
-                                {
-                                    ok = false;
-                                }
-                            }
-                            if (!ok)
-                            {
-                                continue;
-                            }
-                            var dd = d;
-                            int hitT = FirstTouch(t => new Rectangle((int)(me.X + dd.X * WalkPxPerFrame * Math.Min(t, 20)) - 1, (int)(me.Y + dd.Y * WalkPxPerFrame * Math.Min(t, 20)) - 1, pb.Width + 2, pb.Height + 2), Ahead);
+                            int hitT = TouchAlong(dk);
                             if (hitT > bestT)
                             {
                                 bestT = hitT;
@@ -7584,7 +7684,8 @@ namespace AnodyneSharp.Recording
                         var step = path != null && path.Count > 0 ? BotNav.CentreOf(path[0]) : gc;
                         float sx = step.X - me.X, sy = step.Y - me.Y;
                         var key = Math.Abs(sx) > 1.5f ? (sx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (sy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                        var mk = SafeMove(key, water ? boss : null, 16f);
+                        // (on land the shots, splashes and the eye are all in `paths`: walk on unless that walks into one sooner than standing)
+                        var mk = water ? SafeMove(key, boss, 16f) : (TouchAlong(new[] { key }) is int wt && (wt > 30 || wt >= TouchAlong(Array.Empty<KeyFunctions>())) ? K(key) : K());
                         yield return HasRaft() && OnConveyor(BotNav.TileOf(Pos)) ? KeepOnWater(mk, key) : mk;
                         continue;
                     }
@@ -9176,7 +9277,10 @@ namespace AnodyneSharp.Recording
             Entity forced = null;
             Entity committed = null; // the target we are working on: switching to whichever is nearest every frame means never finishing an approach
             int forcedFrames = 0, aggroFrames = 0, relocFrames = 0, ambushFrames = 0;
-            int softPress = 0; // times a soft fight pressed a target it was about to give up on
+            var crossfireCleared = new HashSet<Entity>(); // Slimes we already switched away from to clear a shooter first
+            int softPress = 0;
+            Entity pressed = null; // the one the soft press charges (not whichever Slime wanders beside us meanwhile) // times a soft fight pressed a target it was about to give up on
+            int lastPressPath = -1;
             Point? reloc = null;
             List<Point> heldPlan = null; // the standoff route being followed (re-searching every frame flips between clearance margins)
             int heldAge = 0;
@@ -9214,7 +9318,10 @@ namespace AnodyneSharp.Recording
                         BotRunner.Status = "fight: wade ashore first";
                         var nextC = BotNav.CentreOf(ashore[0]);
                         float ax = nextC.X - Pos.X, ay = nextC.Y - Pos.Y;
-                        yield return K(Math.Abs(ax) > 2f ? (ax < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ay < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        var ashoreKey = Math.Abs(ax) > 2f ? (ax < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ay < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        // (round a bullet on the way if that still moves us; standing in the water is never the answer)
+                        var ashoreKeys = SafeMove(ashoreKey, null, 12f);
+                        yield return ashoreKeys.Any(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right) ? ashoreKeys : K(ashoreKey);
                         continue;
                     }
                 }
@@ -9266,13 +9373,35 @@ namespace AnodyneSharp.Recording
                     && !(unreachable is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null)) // (a Gas Guy always comes to us)
                 {
                     committed = unreachable;
+                    // Pressing a bullet Slime under a rooted shooter's crossfire collects both their hits: clear the shooter first (if it
+                    // can be reached) and come back to the Slime once it is the only one shooting.
+                    if (unreachable is AnodyneSharp.Entities.Enemy.Slime && !crossfireCleared.Contains(unreachable)
+                        && enemies.Where(e => e != unreachable && e.GetType().Name is "Burst_Plant" or "Frog" && !ignoredTargets.Contains(e))
+                                  .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - Pos).LengthSquared())
+                                  .FirstOrDefault(e => BotNav.FindPath(BotNav.TileOf(Pos), t => BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)) is var et && Math.Abs(t.X - et.X) + Math.Abs(t.Y - et.Y) <= 2) != null) is Entity shooter)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  soft fight: {unreachable.GetType().Name}@{unreachable.Hitbox.X},{unreachable.Hitbox.Y} is hard to pin down under fire: clearing {shooter.GetType().Name}@{shooter.Hitbox.X},{shooter.Hitbox.Y} first");
+                        }
+                        crossfireCleared.Add(unreachable);
+                        committed = shooter;
+                        noKill = 1;
+                        yield return K();
+                        continue;
+                    }
                     // Out of reach, or only hard to pin down (a bullet Slime in a corridor keeps shooting us back out of reach)? If there is
                     // floor right beside it, go for it hard a couple of times before leaving it.
                     var ut = BotNav.TileOf(new Vector2(unreachable.Hitbox.Center.X - 5, unreachable.Hitbox.Center.Y - 6));
-                    if (softPress < 2 && BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - ut.X) + Math.Abs(t.Y - ut.Y) <= 1, ut) is List<Point> up && up.Count <= 12)
+                    var up = BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - ut.X) + Math.Abs(t.Y - ut.Y) <= 1, ut);
+                    lastPressPath = up?.Count ?? -1;
+                    if ((softPress < 2 || (softPress < 6 && KillGateShut())) && up != null && up.Count <= 12)
                     {
+                        // (a shut kill gate needs it dead: more goes before giving up. Charging in only when it is the last one about.)
                         softPress++;
-                        aggroFrames = 240;
+                        pressed = unreachable;
+                        // (with others about the charge still steps round their shots and bodies: see the far branch)
+                        aggroFrames = GlobalState.CUR_HEALTH >= (enemies.Count == 1 ? 5 : 4) ? 240 : 0;
                         noKill = 1;
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
@@ -9287,7 +9416,7 @@ namespace AnodyneSharp.Recording
                     // Nothing waiting-on-purpose (those reset the count) and nothing dying for this long: this one is out of reach.
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
-                        System.Console.Error.WriteLine($"  soft fight: giving up on the unreachable {committed.GetType().Name}@{committed.Hitbox.X},{committed.Hitbox.Y}");
+                        System.Console.Error.WriteLine($"  soft fight: giving up on the unreachable {committed.GetType().Name}@{committed.Hitbox.X},{committed.Hitbox.Y} (pressed {softPress}, kill gate shut {KillGateShut()}, path {lastPressPath})");
                     }
                     ignoredTargets.Add(committed);
                     committed = null;
@@ -9341,6 +9470,7 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         aggroFrames = 240;
+                        pressed = committed ?? lastTarget;
                     }
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
@@ -10721,10 +10851,18 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
                         }
-                        if (aggroFrames > 0 && target is AnodyneSharp.Entities.Enemy.Slime && GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
+                        if (aggroFrames > 0 && target == pressed && target is AnodyneSharp.Entities.Enemy.Slime && GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
                         {
                             // Pressing a bullet Slime that keeps shooting us back: walk straight in and hop its bullets (in the air they pass under us).
-                            var shots = Dangers(target).Where(d => d is AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
+                            var all = Dangers(target);
+                            var shots = all.Where(d => d is AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
+                            // Anything else (another enemy's lobs, a body in the way) that the hop does not clear: leave that step to SafeMove.
+                            var others = all.Where(d => d is not AnodyneSharp.Entities.Enemy.Slime.Bullet).ToList();
+                            if (others.Count > 0 && WouldCollide(dir, others, 20))
+                            {
+                                yield return SafeMove(dir, target);
+                                continue;
+                            }
                             bool shotDue = shots.Count > 0 && WouldCollide(dir, shots, 20);
                             BotRunner.Status = "fight: pressing the slime";
                             yield return Player.state == AnodyneSharp.Entities.PlayerState.GROUND && shotDue && _jumpPressFrame != BotRunner.Frame - 1 ? JumpPress(dir) : K(dir);
@@ -10796,6 +10934,11 @@ namespace AnodyneSharp.Recording
                 {
                     lastSwing = swing;
                     yield return K(dir, KeyFunctions.Accept);
+                }
+                else if (target is AnodyneSharp.Entities.Enemy.Slime && StepTouches(dir, target))
+                {
+                    // (a Slime hurts on touch: the fallback charge lines up and waits for its swing rather than walking into it)
+                    yield return K();
                 }
                 else
                 {
