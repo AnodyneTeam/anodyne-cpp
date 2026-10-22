@@ -5382,7 +5382,7 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             pb.Inflate(1, 1);
             var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
-                && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant") && e.Hitbox.Intersects(pb)).ToList(); // (those two only hurt with their cuts / shots)
+                && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant" or "Mover") && e.Hitbox.Intersects(pb)).ToList(); // (those only hurt with their cuts / shots, or only push)
             if (on.Count == 0)
             {
                 _contactFrames = 0;
@@ -9343,7 +9343,8 @@ namespace AnodyneSharp.Recording
                 {
                     planHold--;
                 }
-                var enemies = Enemies();
+                // (a Mover never dies to the broom, only in steam or water: never a target to fight)
+                var enemies = Enemies().Where(e => e is not AnodyneSharp.Entities.Enemy.Redcave.Mover).ToList();
                 if (ignoredTargets.Count > 0)
                 {
                     enemies = enemies.Where(e => !ignoredTargets.Contains(e)).ToList();

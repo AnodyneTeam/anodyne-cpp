@@ -1573,6 +1573,12 @@ namespace AnodyneSharp.Recording
                             dir = dy < 0 ? KeyFunctions.Up : KeyFunctions.Down; // crossing a steam jet: straight over it, the sidestep afterwards
                         }
                         var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true, look: path.Skip(pi).Take(4).Select(BotNav.CentreOf).ToList());
+                        if (BlockedBy is AnodyneSharp.Entities.Enemy.Redcave.Mover && !OnConveyor(BotNav.TileOf(Pos + DirVector(dir) * 8)))
+                        {
+                            // A Mover's touch only shoves us (it cannot be fought): walk on by it.
+                            yield return K(dir);
+                            continue;
+                        }
                         if (BlockedBy != null && blockerHandled < 6)
                         {
                             // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
