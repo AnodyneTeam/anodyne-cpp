@@ -121,6 +121,32 @@ static class Program
             Console.WriteLine($"  (as the bot runs it: 700 nodes -> {a7}, survive -> {sv}; jumps {(airOk != null ? "on" : "off")})");
             Console.WriteLine($"  margin {(m < 0 ? "as recorded" : m.ToString())}: action {a} ({sw.Elapsed.TotalMilliseconds:0.0} ms, {SpaceTime.Nodes} nodes)");
         }
+        if (Environment.GetEnvironmentVariable("PT_JUMPS") != null && airOk != null)
+        {
+            // each jump from the start: where (if anywhere) it fails
+            var th0 = threats.ConvertAll(t => t.t);
+            for (int j = 0; j < SpaceTime.Jumps.Length; j++)
+            {
+                var (jx, jy) = SpaceTime.Jumps[j];
+                float x = player.X, y = player.Y;
+                string why = "ok";
+                for (int f = 1; f <= 28 && why == "ok"; f++)
+                {
+                    if (f <= SpaceTime.JumpHold[j]) { x += jx * SpaceTime.Walk * 0.83f; y += jy * SpaceTime.Walk * 0.83f; }
+                    var mine = new Rectangle((int)x, (int)y, player.Width, player.Height);
+                    bool landing = f >= 26;
+                    if (!airOk(mine)) { why = $"f{f} wall {mine}"; break; }
+                    if (landing && !room.Walkable(mine)) { why = $"f{f} lands off floor {mine}"; break; }
+                    for (int q = 0; q < th0.Count; q++)
+                    {
+                        var t = th0[q];
+                        if (!landing && !t.HurtsInAir) { continue; }
+                        if (t.At[Math.Min(f, horizon)] is Rectangle r) { r.Inflate(t.Margin, t.Margin); if (mine.Intersects(r)) { why = $"f{f} hits {threats[q].name} {r} me {mine}"; break; } }
+                    }
+                }
+                Console.WriteLine($"  jump {j} ({jx},{jy}) hold {SpaceTime.JumpHold[j]}: {why} -> lands {x:0},{y:0}");
+            }
+        }
         // Is the player already inside a danger (so nothing can save them)?
         for (int f = 1; f <= 6; f++)
         {

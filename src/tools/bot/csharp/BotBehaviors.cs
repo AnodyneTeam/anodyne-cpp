@@ -8478,6 +8478,11 @@ namespace AnodyneSharp.Recording
         private static object IterLocal(object it, string name) =>
             it?.GetType().GetFields(AnyInst).FirstOrDefault(f => f.Name.StartsWith("<" + name + ">"))?.GetValue(it);
 
+        private static readonly System.Reflection.FieldInfo FlickerTimerField = typeof(Entity).GetField("_flickerTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>Frames until e stops blinking after a hit (0 if it is not blinking).</summary>
+        private static int FlickerLeft(Entity e) => e._flickering && FlickerTimerField?.GetValue(e) is float ft ? (int)Math.Ceiling(ft * 60f) : 0;
+
         /// <summary>On screen, or blinking after a hit (a flickering sprite turns visible on and off every few frames; it is still there).</summary>
         private static bool Shown(Entity e) => e.visible || e._flickering;
 
@@ -8554,6 +8559,8 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100;
             var room = Grid;
             bool trace = Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null;
+            List<Point> ring = null; // the floor round the room, in the order the pair walk it
+            int wetFor = 0; // frames our middle has been in a puddle
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -8572,21 +8579,48 @@ namespace AnodyneSharp.Recording
                 int hp = (int)CfHealthField.GetValue(boss);
                 var tl = (Vector2)CfTopLeftField.GetValue(boss);
                 var center = tl + new Vector2(64, 64);
+                if (ring == null)
+                {
+                    ring = new List<Point>();
+                    for (int ty = (int)tl.Y / 16; ty < (int)tl.Y / 16 + 8; ty++)
+                    {
+                        for (int tx = (int)tl.X / 16; tx < (int)tl.X / 16 + 8; tx++)
+                        {
+                            var t = new Point(tx, ty);
+                            if ((BotNav.Walkable(t) || BotNav.IsConveyor(t)) && !BotNav.IsHole(t))
+                            {
+                                ring.Add(t);
+                            }
+                        }
+                    }
+                    if (trace)
+                    {
+                        foreach (var t in ring.Where(t => !BotNav.Walkable(t)))
+                        {
+                            System.Console.Error.WriteLine($"  circus ring tile {t} not walkable: gate={BotNav.IsGateTile(t)} blocked={BotNav.Blocked.Contains(t)} class={BotNav.CurrentMap.GetTileClass(t)} ents={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.Hitbox.Intersects(new Rectangle(t.X * 16, t.Y * 16, 16, 16))).Select(e => $"{e.GetType().Name}@{e.Position}"))}");
+                        }
+                    }
+                    // (screen y points down: their way round is the one of falling angle about the middle)
+                    ring = ring.OrderByDescending(t => Math.Atan2(t.Y * 16 + 8 - center.Y, t.X * 16 + 8 - center.X)).ToList();
+                }
                 var arthur = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Arthur)CfArthurField.GetValue(boss);
                 var javiera = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Javiera)CfJavieraField.GetValue(boss);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
-                if (hp <= 0 || state == "Dying")
+                var wt0 = BotNav.TileOf(Pos);
+                wetFor = Player.state == PlayerState.GROUND && Player.raft == null && BotNav.IsConveyor(wt0) ? wetFor + 1 : 0;
+                if (wetFor > 90)
                 {
-                    // (it stands there through its last words and still hurts to touch: off it if we are pressed up against it)
-                    BotRunner.Status = "Circus Folks: down";
-                    var still = new Threat { Name = "CircusFolks", Source = boss, Margin = 2, HurtsInAir = true };
-                    for (int f = 0; f <= Horizon; f++)
+                    // Stuck in a puddle (knocked in, or a landing a pixel short; wading across is fine: it takes 3s to sink): we sink.
+                    // Go with its current if it has one, else to the nearest dry ring tile.
+                    var cdir = BotNav.FlowDir(wt0);
+                    BotRunner.Status = "Circus Folks: out of the water";
+                    if (cdir == Touching.NONE)
                     {
-                        still.At[f] = Shown(boss) ? boss.Hitbox : null;
+                        var dry = BotNav.CentreOf(ring.Where(t => !BotNav.IsConveyor(t)).OrderBy(t => (BotNav.CentreOf(t) - Pos).LengthSquared()).First()) - Pos;
+                        cdir = Math.Abs(dry.X) >= Math.Abs(dry.Y) ? (dry.X < 0 ? Touching.LEFT : Touching.RIGHT) : (dry.Y < 0 ? Touching.UP : Touching.DOWN);
                     }
-                    var ts = new List<Threat> { still };
-                    yield return SafeAtExactThreats(here, ts, 10) ? K() : SpaceTimeMove(here, ts, useCache: false, survive: true) ?? K();
+                    yield return K(cdir switch { Touching.LEFT => KeyFunctions.Left, Touching.RIGHT => KeyFunctions.Right, Touching.UP => KeyFunctions.Up, _ => KeyFunctions.Down });
                     continue;
                 }
                 if (state == "Intro")
@@ -8680,10 +8714,11 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 bool arthurOpen = arthurAt != null && !arthur._flickering && arthur.hurts;
-                if (arthurOpen)
+                if (arthurAt != null && arthur.hurts)
                 {
-                    var t = new Threat { Name = "Arthur", Source = arthur, Margin = 1 };
-                    for (int f = arthurLands; f <= Horizon; f++)
+                    // (blinking after a hit he is harmless, until the blinking stops)
+                    var t = new Threat { Name = "Arthur", Source = arthur, Margin = 3 };
+                    for (int f = Math.Max(arthurLands, FlickerLeft(arthur)); f <= Horizon; f++)
                     {
                         t.At[f] = arthurAt;
                     }
@@ -8720,11 +8755,9 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    if (!javiera._flickering)
-                    {
-                        jav = new Threat { Name = "Javiera", Source = javiera, At = at.Select(r => (Rectangle?)r).ToArray(), Margin = 2 };
-                        threats.Add(jav);
-                    }
+                    int harmless = FlickerLeft(javiera);
+                    jav = new Threat { Name = "Javiera", Source = javiera, At = at.Select((r, f) => f < harmless ? null : (Rectangle?)r).ToArray(), Margin = 2 };
+                    threats.Add(jav);
                 }
                 Rectangle? backAt = null; // where the pair will stand up again
                 if (!Shown(boss) && state == "Throw" && javiera.exists && arthurAt is Rectangle ab3)
@@ -8758,6 +8791,19 @@ namespace AnodyneSharp.Recording
                     threats.Add(new Threat { Name = "CircusFolksFlame", Source = sw, At = at.Select(r => (Rectangle?)r).ToArray(), Margin = 2 });
                 }
 
+                if (hp <= 0 || state == "Dying")
+                {
+                    // Beaten (its health can hit 0 mid-throw, with Arthur, Javiera and the shockwaves still about): no more swings,
+                    // just keep clear of all of it; it stands there through its last words and still hurts to touch.
+                    BotRunner.Status = "Circus Folks: down";
+                    if (trace && i % 10 == 0)
+                    {
+                        System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} down: {state} hp{hp} visible={boss.visible} me={pb} | " + string.Join(" ", threats.Select(t => $"{t.Name}{t.At[0]}")));
+                    }
+                    yield return SafeAtExactThreats(here, threats, 10) ? K() : SpaceTimeMove(here, threats, useCache: false, survive: true) ?? K();
+                    continue;
+                }
+
                 // ---- swing at whatever comes into the broom's reach ----
                 if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
                 {
@@ -8782,8 +8828,10 @@ namespace AnodyneSharp.Recording
                     foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                     {
                         var bx = BroomBoxAt(Player.Position, lf);
-                        // (a moving one: as it comes in within the next few frames; one standing still: turn to it first)
-                        if (targets.Any(t => (lf == Player.facing || t.Still) && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(bx))))
+                        // (a moving one: as it comes in within the next few frames, or a frame or two later from another side: a turn
+                        // costs a frame; one standing still: turn to it first)
+                        if (targets.Any(t => lf == Player.facing || t.Still ? Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(bx))
+                            : Enumerable.Range(2, 5).Any(k => t.At[k] is Rectangle r && r.Intersects(bx))))
                         {
                             reach = lf;
                             break;
@@ -8857,29 +8905,56 @@ namespace AnodyneSharp.Recording
                 }
                 Vector2 KeepAway()
                 {
-                    // Round the ring from the pair: the floor tile furthest from where their walk will have brought them (or where they
-                    // will stand up again after a throw), going round either way.
-                    var from = body?.At[Math.Min(30, Horizon)] ?? backAt ?? boss.Hitbox;
-                    var start = BotNav.TileOf(new Vector2(from.Center.X - BotNav.HalfW, from.Center.Y - BotNav.HalfH));
-                    var dist = new Dictionary<Point, int> { [start] = 0 };
-                    var q = new Queue<Point>();
-                    q.Enqueue(start);
-                    while (q.Count > 0)
+                    // The pair always walk the ring the same way round (anticlockwise on screen), faster than we can: the place to be is
+                    // behind them (they walk away from us), not in front (they catch us up). Ring positions are counted in px along it.
+                    int n = ring.Count;
+                    float len = n * 16f;
+                    float S(Vector2 p) => ring.Select((t, k) => (d: (BotNav.CentreOf(t) + new Vector2(BotNav.HalfW, BotNav.HalfH) - p).LengthSquared(), k)).OrderBy(x => x.d).First().k * 16f;
+                    Vector2 At(float sp)
                     {
-                        var t = q.Dequeue();
-                        foreach (var (dx, dy) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                        // (never a puddle: standing in one sinks us; the next dry tile on, the way they walk)
+                        int k = (int)Math.Round(sp / 16f);
+                        for (int i = 0; i < n && BotNav.IsConveyor(ring[(k % n + n) % n]); i++)
                         {
-                            var n = new Point(t.X + dx, t.Y + dy);
-                            if (n.X * 16 >= tl.X && n.X * 16 < tl.X + 128 && n.Y * 16 >= tl.Y && n.Y * 16 < tl.Y + 128 && !dist.ContainsKey(n) && (BotNav.Walkable(n) || BotNav.IsConveyor(n)) && !BotNav.IsHole(n))
-                            {
-                                dist[n] = dist[t] + 1;
-                                q.Enqueue(n);
-                            }
+                            k++;
                         }
+                        return BotNav.CentreOf(ring[(k % n + n) % n]);
                     }
-                    var me = BotNav.TileOf(here);
-                    var far = dist.Where(kv => BotNav.Walkable(kv.Key)).OrderByDescending(kv => kv.Value).ThenBy(kv => Math.Abs(kv.Key.X - me.X) + Math.Abs(kv.Key.Y - me.Y)).Select(kv => (Point?)kv.Key).FirstOrDefault();
-                    return far is Point ft ? BotNav.CentreOf(ft) : here;
+                    float sP = S(pb.Center.ToVector2());
+                    Rectangle? src = null;
+                    int walkLeft = 0;
+                    if (body != null && state == "Walk")
+                    {
+                        src = boss.Hitbox;
+                        walkLeft = IterLocal(it, "walkTimer") is float w ? Math.Max(0, (int)((3f - w) * 60f)) : 180;
+                    }
+                    else if (body != null && state == "Jump")
+                    {
+                        src = body.At[Horizon];
+                        walkLeft = 180;
+                    }
+                    else if (backAt != null)
+                    {
+                        src = backAt;
+                        walkLeft = 180;
+                    }
+                    else if (body != null)
+                    {
+                        src = boss.Hitbox;
+                    }
+                    if (src is not Rectangle sb)
+                    {
+                        return here;
+                    }
+                    float sB = S(sb.Center.ToVector2());
+                    float ahead = ((sP - sB) % len + len) % len; // how far in front of them, the way they walk
+                    if (ahead > len / 2)
+                    {
+                        // behind them: stay put, unless we are so close that the next step of theirs is still within reach
+                        return len - ahead >= 40 ? At(sP) : At(sB - 56);
+                    }
+                    // in front: keep going round ahead of them (they gain 20px a second on us while they walk)
+                    return ahead - walkLeft * (1.5f - SpaceTime.Walk) > 48 ? At(sP + 32) : At(sP + 96);
                 }
                 if (arthurAt is Rectangle aa && (arthurOpen || (javiera.stateLogic != null && !javiera._flickering)))
                 {
@@ -8907,7 +8982,10 @@ namespace AnodyneSharp.Recording
                             var jb = javRun[k];
                             var mp = new Vector2(jb.Center.X - pb.Width / 2, jb.Center.Y - pb.Height / 2);
                             var mv = javRun[k].Location.ToVector2() - javRun[k - 1].Location.ToVector2();
-                            if (mv == Vector2.Zero || (mp - here).Length() / SpaceTime.Walk * 1.3f + 8 > k
+                            // (on a straight stretch: she must be coming at us head-on for the last 16 frames, not round a corner)
+                            var mv0 = k >= 17 ? javRun[k - 15].Location.ToVector2() - javRun[k - 16].Location.ToVector2() : Vector2.Zero;
+                            bool straight = mv != Vector2.Zero && Math.Sign(mv.X) == Math.Sign(mv0.X) && Math.Sign(mv.Y) == Math.Sign(mv0.Y);
+                            if (!straight || (mp - here).Length() / SpaceTime.Walk * 1.3f + 8 > k
                                 || !StandsSafe(new Rectangle((int)mp.X, (int)mp.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(mp, others, 20))
                             {
                                 continue;
@@ -8960,7 +9038,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (trace && (keys == null || keys.Length == 0 || traceAll))
                 {
-                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
+                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerDashField?.GetValue(Player)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
                 }
                 yield return keys ?? K();
             }

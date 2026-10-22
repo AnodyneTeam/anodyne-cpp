@@ -166,13 +166,16 @@ namespace AnodyneSharp.Recording
                     {
                         var (jx, jy) = Jumps[j];
                         float x = nx, y = ny;
+                        // (a dash carries on through a jump the way it goes, for as long as its key stays held: it flies further)
+                        float jsx = jx != 0 && dxs[idx] * jx > 0 ? Math.Abs(dxs[idx]) : 0.83f;
+                        float jsy = jy != 0 && dys[idx] * jy > 0 ? Math.Abs(dys[idx]) : 0.83f;
                         bool ok = true;
                         for (int f = 1; f <= airFrames && ok; f++)
                         {
                             if (f <= JumpHold[j])
                             {
-                                x += jx * Walk * 0.83f;
-                                y += jy * Walk * 0.83f;
+                                x += jx * Walk * jsx;
+                                y += jy * Walk * jsy;
                             }
                             var mine = new Rectangle((int)x, (int)y, start.Width, start.Height);
                             bool landing = f >= airFrames - 2;
