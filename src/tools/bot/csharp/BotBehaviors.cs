@@ -3838,6 +3838,64 @@ namespace AnodyneSharp.Recording
             yield return Wait(10);
         }
 
+        /// <summary>
+        /// Stand on `spot` facing `face` for `frames`, except while a frog bullet is about to come down on us there: then step out of its
+        /// way (space-time planner) and back once it is clear. Not across a pit (`overPit`: a spot we jumped to is only left by the planner
+        /// when it must be).
+        /// </summary>
+        private static IEnumerable<object> FrogHold(Vector2 spot, KeyFunctions face, int frames, bool overPit)
+        {
+            for (int f = 0; f < frames; f++)
+            {
+                if (Player.state != AnodyneSharp.Entities.PlayerState.GROUND)
+                {
+                    yield return K();
+                    continue;
+                }
+                var threats = PredictThreats(null).Where(t => t.Name == "FrogBullet").ToList();
+                int HitIn(Vector2 at, int upTo)
+                {
+                    var box = new Rectangle((int)at.X, (int)at.Y, Player.Hitbox.Width, Player.Hitbox.Height);
+                    for (int t = 1; t <= upTo && t <= Horizon; t++)
+                    {
+                        foreach (var th in threats)
+                        {
+                            if (th.At[t] is Rectangle r)
+                            {
+                                r.Inflate(th.Margin, th.Margin);
+                                if (r.Intersects(box))
+                                {
+                                    return t;
+                                }
+                            }
+                        }
+                    }
+                    return int.MaxValue;
+                }
+                var here = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+                var spotBox = spot + (here - Pos);
+                if (HitIn(here, 24) <= 24 && SpaceTimeMove(here, threats, useCache: false, survive: true) is KeyFunctions[] dodge && dodge.Length > 0)
+                {
+                    BotRunner.Status = "frog rush: out from under its volley";
+                    yield return dodge;
+                    continue;
+                }
+                if ((Pos - spot).Length() > 1.5f && !overPit && HitIn(spotBox, 30) > 30)
+                {
+                    var off = spot - Pos;
+                    yield return K(Math.Abs(off.X) > Math.Abs(off.Y) ? (off.X > 0 ? KeyFunctions.Right : KeyFunctions.Left) : (off.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up));
+                    continue;
+                }
+                yield return Player.facing != FacingOf(face) && (Pos - spot).Length() <= 1.5f ? K(face) : K();
+            }
+            // (the swing goes from the spot: get there if the dodge took us off it)
+            for (int f = 0; f < 30 && (Pos - spot).Length() > 1.5f && !overPit; f++)
+            {
+                var off = spot - Pos;
+                yield return K(Math.Abs(off.X) > Math.Abs(off.Y) ? (off.X > 0 ? KeyFunctions.Right : KeyFunctions.Left) : (off.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up));
+            }
+        }
+
         protected static IEnumerable<object> FrogRush(float x, float y, KeyFunctions dir, bool jump)
         {
             var d = DirVector(dir);
@@ -3881,12 +3939,15 @@ namespace AnodyneSharp.Recording
                         yield return K(dir);
                     }
                 }
+                var strikeAt = Pos;
                 for (int swing = 0; swing < 3 && frog.exists; swing++)
                 {
                     BotRunner.Status = $"frog rush: swing {swing + 1}";
                     yield return K(dir);
                     yield return K(KeyFunctions.Accept);
-                    yield return Wait(swing < 2 ? 62 : 20);
+                    // Its volley (fired as we came into reach, aimed where we were) comes down along our run: keep out from under it until
+                    // the next swing, then be back on the spot.
+                    yield return FrogHold(strikeAt, dir, swing < 2 ? 62 : 20, jump);
                 }
                 if (!frog.exists || frog.CurAnimName == "die")
                 {
