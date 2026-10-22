@@ -4805,7 +4805,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         internal static KeyFunctions[] DoorGuard(KeyFunctions[] held)
         {
-            if (Player == null || SwingTargetFrame < BotRunner.Frame - 1)
+            if (Player == null || SwingTargetFrame < BotRunner.Frame - 1 || Environment.GetEnvironmentVariable("ANODYNE_NO_DOORGUARD") != null)
             {
                 return held;
             }
@@ -8216,12 +8216,44 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    if ((target.Position - Pos).Length() > 20 && !slNear.Contains(slHere))
+                    // (already in broom reach, lined up with it: strike from here; walking on to a tile beside it dithered on a tile's edge
+                    // 21px out, never swinging, while two stacked Slashers cut us every round)
+                    var tb = target.Hitbox;
+                    var mb = Player.Hitbox;
+                    int gapX = Math.Max(tb.Left - mb.Right, mb.Left - tb.Right), gapY = Math.Max(tb.Top - mb.Bottom, mb.Top - tb.Bottom);
+                    bool inReach = (gapX <= 10 && gapY <= -4) || (gapY <= 10 && gapX <= -4);
+                    var toSlS = slCen - (Pos + new Vector2(5, 6));
+                    KeyFunctions? straightIn = Math.Abs(toSlS.Y) < 6 ? (toSlS.X > 0 ? KeyFunctions.Right : KeyFunctions.Left)
+                        : Math.Abs(toSlS.X) < 6 ? (toSlS.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up) : null;
+                    if (!inReach && straightIn is KeyFunctions sIn && WalkableAhead(sIn, 4) && enemies.All(e => e.GetType().Name == "Slasher"))
+                    {
+                        // lined up but out of reach: straight in (a tile "beside it" can still be 20px short of the broom). Only with
+                        // Slashers alone: with a TeleGuy or a Gas Guy about the way straight in ran into them.
+                        BotRunner.Status = "fight/slasher: straight in";
+                        yield return K(sIn);
+                        continue;
+                    }
+                    if (!inReach && (target.Position - Pos).Length() > 20 && !slNear.Contains(slHere))
                     {
                         var approach = BotNav.FindPath(slHere, t => slNear.Contains(t), slHere);
+                        // (a way round that starts by backing off from a Slasher close by and in a straight line is no way in: the
+                        // strike below walks straight at it. Stepping back and forth between the two never closed in.)
+                        if (approach != null && approach.Count > 0)
+                        {
+                            var stepTo = BotNav.CentreOf(approach[0]) - Pos;
+                            var toSl = slCen - (Pos + new Vector2(5, 6));
+                            if (Vector2.Dot(stepTo, toSl) < 0 && toSl.Length() < 48 && (Math.Abs(toSl.X) < 6 || Math.Abs(toSl.Y) < 6))
+                            {
+                                approach = null;
+                            }
+                        }
                         if (approach != null && approach.Count > 0)
                         {
                             BotRunner.Status = "fight/slasher: round to it";
+                            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"  slround f{i} me={mb} sl={tb} gap={gapX},{gapY}");
+                            }
                             var ncA = BotNav.CentreOf(approach[0]) + new Vector2(5, 6);
                             var meA = Pos + new Vector2(5, 6);
                             float apx = ncA.X - meA.X, apy = ncA.Y - meA.Y;
