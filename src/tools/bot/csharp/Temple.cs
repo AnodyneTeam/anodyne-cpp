@@ -284,4 +284,56 @@ namespace AnodyneSharp.Recording
                 "G339,1666 W5 G339,1666,kl W30 L40 W20 >235,1700 W5 D150 W30 >180,1890 W10 U30 W120 `h3_east"));
         }
     }
+
+    /// <summary>
+    /// The Hotel's east wing (goal-level only: screens, chests, doors, lifts; the planner does the walking, leaping, wading and rafting):
+    /// key 3, door 30 to (9,5), round by (9,6)-(9,8) to (8,8), whose slime opens the boss gates' kill half, and the spring into the
+    /// floor-1 elevator pocket.
+    /// </summary>
+    public class Hotel4 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel: the east wing round to the boss gates");
+            // (7,3) to (7,2) and (8,0); (8,1)'s cracked stepping stones; (8,2)'s key chest.
+            yield return Section("hotel4 (8,2) key", () => Exec("O1 X1 H8,1 W30 H8,2 W30 +k W30 `h4_82k"));
+            // Door 30 to (9,5), its keyblock into (9,6) (steam pipes blow at the pits), the button behind the steam.
+            yield return Section("hotel4 door 30 to (9,6)", () => Exec("O1 X1 H9,0 W20 door30 W10 H9,6 W30 `h4_96"));
+            yield return Section("hotel4 (9,6) steam button", () => Exec("O1 X1 >1523,1090 W60 `h4_96b"));
+            // (8,6) raft, (9,7) two burst plants (its gate wants both), (9,8) the dog, (8,8) the slime: the boss gates' kill half opens for good.
+            yield return Section("hotel4 (8,6) to (8,8)", () => Exec("O1 X1 H8,6 W10 F W30 H9,7 W30 F6000 W30 H9,8 W30 F6000 W30 H8,8 W30 F W30 `h4_88s"));
+            // The spring pad drops us into the floor-1 elevator's pocket, above the boss.
+            yield return Section("hotel4 spring into the pocket", () => Exec("O1 X1 >1347,1394 W30 `h4_pocket"));
+        }
+    }
+
+    /// <summary>
+    /// The way round to the (8,8) button, the boss gates' other half: lift to floor 3, door 27, back over (8,1)-(8,2) and door 30 to (9,5);
+    /// raft (8,5)'s dust west over the lake to (7,7) (leaving its Dustmaids standing), (7,6)'s three kills and key, (7,8)'s keyblock, and
+    /// past the frog to the button.
+    /// </summary>
+    public class Hotel5 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel: round to the (8,8) button");
+            yield return Section("hotel5 lift and doors back to (9,5)", () => Exec("O1 X1 lift3 W30 door27 W30 H8,1 W30 H8,2 W30 H9,0 W20 door30 W30 `h5_95"));
+            yield return Section("hotel5 raft to (7,7)", () => Exec("O1 X1 H7,7 W30 `h5_77"));
+            yield return Section("hotel5 (7,6) key", () => Exec("O1 X1 H7,6 F6000 +k W30 `h5_76k"));
+            yield return Section("hotel5 keyblock to (7,8)", () => Exec("O1 X1 H7,8 W30 `h5_78"));
+            yield return Section("hotel5 the (8,8) button", () => Exec("O1 X1 P1331,1298 W60 `h5_button"));
+        }
+    }
+
+    /// <summary>The Hotel's boss: drop into the pocket and through both gate pairs; the eye in its pool (from a dust raft), then on land below.</summary>
+    public class Hotel6 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel: the Eye boss");
+            // TODO: g6 per phase: its bullets still land a few times a fight
+            yield return Section("hotel6 eye boss, water phase", () => Exec("O1 X1 g6 H8,9 W30 F20000 W60"));
+            yield return Section("hotel6 eye boss, land phase", () => Exec("O1 X1 g6 H8,10 W30 F20000 W60 `h6_done"));
+        }
+    }
 }

@@ -2570,9 +2570,41 @@ namespace AnodyneSharp.Recording
                 var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
                 foreach (var th in threats)
                 {
-                    if (th.At[f] is Rectangle r && mine.Intersects(r)) // (exact: a margin here turned a clean jump over a dash trap's line into hopping on the spot)
+                    if (th.At[f] is Rectangle r)
                     {
+                        if (th.Stationary)
+                        {
+                            r.Inflate(2, 2); // (a resting slime may shuffle a pixel, and the air drifts us a pixel off the straight line)
+                        }
+                        if (!mine.Intersects(r)) // (moving ones exact: a margin here turned a clean jump over a dash trap's line into hopping on the spot)
+                        {
+                            continue;
+                        }
                         return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>True if drifting `dir` (null = straight down where we are) for the rest of a jump (up to 16 frames) could come down touching a danger.</summary>
+        private static bool AirDriftHits(KeyFunctions? dir, List<Threat> threats)
+        {
+            var pb = Player.Hitbox;
+            var v = dir is KeyFunctions d ? DirVector(d) * WalkPxPerFrame * 0.83f : Vector2.Zero;
+            for (int f = 1; f <= Math.Min(16, Horizon); f++)
+            {
+                var p = new Vector2(pb.X, pb.Y) + v * f;
+                var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                foreach (var th in threats)
+                {
+                    if (th.At[f] is Rectangle r)
+                    {
+                        r.Inflate(th.Stationary ? 2 : 1, th.Stationary ? 2 : 1);
+                        if (mine.Intersects(r))
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -2686,7 +2718,14 @@ namespace AnodyneSharp.Recording
                 return _stCache < 0 ? null : StActions[_stCache];
             }
             var swPlan = System.Diagnostics.Stopwatch.StartNew();
-            var fastWalk0 = FastWalkable();
+            // Standing half in the water (knocked or dodged to the edge of a pool): no step from here is "walkable", so every plan would be
+            // to stand and take it. Let the plan wade for this search: a few frames of water beat the hit.
+            bool oldWade = BotNav.Wade;
+            if (Player.raft == null && !CornersWalkable(Player.Hitbox))
+            {
+                BotNav.Wade = true;
+            }
+            var fastWalk0 = FastWalkable(); // (looks tiles up lazily, during the searches: Wade stays set until they are done)
             // A dodge (survive) plan stays on this screen: backing out through the edge into the previous one hands the fight to a screen
             // transition (and the enemies there); there is nearly always room to sidestep up or down instead.
             var gridNow = Grid;
@@ -2704,6 +2743,7 @@ namespace AnodyneSharp.Recording
                 }
                 a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 400, survive: survive);
             }
+            BotNav.Wade = oldWade;
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_RANGE") is string rng && Environment.GetEnvironmentVariable("ANODYNE_ST_DUMP") is string rdir)
             {
                 var parts = rng.Split('-');
@@ -2931,11 +2971,28 @@ namespace AnodyneSharp.Recording
                 if (Player.state == AnodyneSharp.Entities.PlayerState.AIR)
                 {
                     Dodged = true;
-                    return _jumpOnSpot ? K() : K(wanted);
+                    if (_jumpOnSpot)
+                    {
+                        return K();
+                    }
+                    // Steering in the air decides where we come down: not into something resting there (the wanted key may have changed since take-off).
+                    var landOn = threats.Where(t => !t.HurtsInAir).ToList();
+                    if (AirDriftHits(wanted, landOn))
+                    {
+                        if (!AirDriftHits(null, landOn))
+                        {
+                            return K();
+                        }
+                        var clear = new[] { KeyFunctions.Up, KeyFunctions.Down, KeyFunctions.Left, KeyFunctions.Right }.Where(k => k != wanted && !AirDriftHits(k, landOn)).ToList();
+                        return clear.Count > 0 ? K(clear[0]) : K();
+                    }
+                    return K(wanted);
                 }
                 _jumpOnSpot = false;
                 var moving = threats.Where(t => !t.Stationary && !t.HurtsInAir).ToList();
                 var airHurt = threats.Where(t => t.HurtsInAir).ToList();
+                // (where we come down counts every danger, the still ones too: a jump over a bullet that lands on a resting slime is no dodge)
+                var landing = threats.Where(t => !t.HurtsInAir).ToList();
                 if (moving.Count > 0 && (airHurt.Count == 0 || (PlanHitFrame(wanted, 0, wanted, 30, airHurt) == int.MaxValue && PlanHitFrameStanding(30, wanted, 0, airHurt) == int.MaxValue)))
                 {
                     int hitStill = PlanHitFrameStanding(0, KeyFunctions.Right, 0, moving);
@@ -2944,15 +3001,15 @@ namespace AnodyneSharp.Recording
                     // (a jump is ~28 frames: one that comes down into the next bullet of a shooter's lane is no dodge, so look at the landing too;
                     // jumping on the spot may land clear where the jump on the way does not)
                     bool jumpOn = first <= 22, onSpot = false;
-                    if (jumpOn && hitStill == int.MaxValue && hitWalk > 1 && LandsInHit(wanted, moving))
+                    if (jumpOn && hitStill == int.MaxValue && hitWalk > 1 && LandsInHit(wanted, landing))
                     {
                         // Standing is safe and the hit is a few steps off, but a jump from here would come down in it (a dash trap's
                         // whole line, say): walk on and take off later, so the jump carries us over it.
                         return K(wanted);
                     }
-                    if (jumpOn && LandsInHit(wanted, moving))
+                    if (jumpOn && LandsInHit(wanted, landing))
                     {
-                        onSpot = !LandsInHit(null, moving);
+                        onSpot = !LandsInHit(null, landing);
                         jumpOn = onSpot;
                     }
                     if (jumpOn)
@@ -2988,6 +3045,10 @@ namespace AnodyneSharp.Recording
             }
             // Frames of walking after the wait: only as far as the step we are taking (the next waypoint), not past it.
             int Run = Math.Clamp((int)Math.Ceiling(dist / WalkPxPerFrame) + 3, 6, 40);
+            if (Environment.GetEnvironmentVariable("ANODYNE_SAFE_TRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  safe f{BotRunner.Frame} {wanted} at {Player.Hitbox}: hit@{PlanHitFrame(wanted, 0, wanted, Run, threats)} run={Run} threats: " + string.Join(" ", threats.Where(t => t.At[0] != null).Select(t => $"{t.Name}{t.At[0]}m{t.Margin}{(t.Stationary ? "s" : "")}")));
+            }
             if (PlanHitFrame(wanted, 0, wanted, Run, threats) == int.MaxValue)
             {
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
@@ -3018,6 +3079,10 @@ namespace AnodyneSharp.Recording
                 if (_dodgeStreak > 300)
                 {
                     _dodgeStreak = 0;
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && _dodgeStreak % 20 == 1)
+                {
+                    System.Console.Error.WriteLine($"  dodge: waited too long (streak {_dodgeStreak}), going {wanted} anyway at {Player.Hitbox}");
                 }
                 return K(wanted);
             }
@@ -5243,6 +5308,35 @@ namespace AnodyneSharp.Recording
             return null;
         }
 
+        /// <summary>
+        /// A Dog's Attack state read out: frames until its next dash starts, the dash it is on (0-2) and the two points the later dashes
+        /// head for (rolled when the attack began). Null when it is not attacking or that cannot be read.
+        /// </summary>
+        private static (int next, int phase, Vector2[] targets)? DogAttackPlan(Entity dog)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
+            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var top = (abs?.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top == null || top.GetType().Name != "AttackState")
+            {
+                return null;
+            }
+            var tt = typeof(AnodyneSharp.FSM.TimerState);
+            if (top.GetType().GetField("attackPositions", FP)?.GetValue(top) is not Vector2[] targets || top.GetType().GetField("attackPhase", FP)?.GetValue(top) is not int phase
+                || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            {
+                return null;
+            }
+            var first = timers[0];
+            if (first.GetType().GetField("current", FP)?.GetValue(first) is not float due)
+            {
+                return null;
+            }
+            return ((int)Math.Ceiling((due - now) * 60f - 0.001f), phase, targets);
+        }
+
         /// <summary>Whether a Dog is in its Attack state (its three dashes), or null when that cannot be read.</summary>
         private static bool? DogAttacking(Entity dog)
         {
@@ -5413,9 +5507,9 @@ namespace AnodyneSharp.Recording
             }
             if (IgnoredEnemies.Count > 0 && BotRunner.Player != null)
             {
-                // One given up on as out of reach that has come to us (an Annoyer leaving its perch) is a target again.
+                // One given up on as out of reach that has come to us (an Annoyer leaving its perch, a Gas Guy drifting over the water at us) is a target again.
                 var pc = Player.Hitbox.Center;
-                IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name == "Annoyer" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
+                IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name is "Annoyer" or "GasGuy" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
             }
             // (the Hotel boss's death marker is an invisible "enemy" at 0,0 that only keeps the gates shut: the boss itself is the target)
             return BotRunner.Entities().Where(e => e.exists && (e.GetType().IsDefined(typeof(EnemyAttribute), false) || IsEyeBoss(e)) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)
@@ -7402,6 +7496,87 @@ namespace AnodyneSharp.Recording
             return null;
         }
 
+        /// <summary>
+        /// One frame against a Gas Guy, or null to fight it the ordinary way. It sets its position towards ours at 12px/s on each
+        /// axis (whatever is in between) and a broom hit throws it far back: stand on dry floor facing it, swing as it comes into the
+        /// broom, and step off its line when it would touch us first. Its clouds only swap the d-pad for a while (the runner mirrors that).
+        /// </summary>
+        private static KeyFunctions[] GasGuyKeys(Entity g)
+        {
+            var pb = Player.Hitbox;
+            var here = BotNav.TileOf(Pos);
+            if (OnConveyor(here))
+            {
+                return null; // wading: get ashore first (the fight does that)
+            }
+            Rectangle At(int f, Vector2 me)
+            {
+                float step = 12f * f / 60f;
+                float ox = Math.Clamp(me.X - g.Position.X, -step, step) + g.velocity.X * f / 60f;
+                float oy = Math.Clamp(me.Y - g.Position.Y, -step, step) + g.velocity.Y * f / 60f;
+                var r = g.Hitbox;
+                r.Offset((int)Math.Round(ox), (int)Math.Round(oy));
+                return r;
+            }
+            var gc = g.Hitbox.Center;
+            float dx = gc.X - pb.Center.X, dy = gc.Y - pb.Center.Y;
+            var face = Math.Abs(dx) >= Math.Abs(dy) ? (dx < 0 ? Facing.LEFT : Facing.RIGHT) : (dy < 0 ? Facing.UP : Facing.DOWN);
+            bool rooted = Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK || (Player.broom != null && Player.broom.exists);
+            if (!rooted && !g._flickering)
+            {
+                var broom = BroomBoxAt(Pos, face);
+                for (int f = 2; f <= 8; f++)
+                {
+                    if (broom.Intersects(At(f, Pos)))
+                    {
+                        return K(KeyOf(face), KeyFunctions.Accept);
+                    }
+                }
+            }
+            // Would it touch us within the next few frames (the swing above did not answer it)?
+            bool Touches(Vector2 me, Vector2 v, int frames)
+            {
+                for (int f = 1; f <= frames; f++)
+                {
+                    var p = me + v * f;
+                    var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                    var r = At(f, p);
+                    r.Inflate(2, 2);
+                    if (mine.Intersects(r))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (!rooted && Touches(Pos, Vector2.Zero, 14))
+            {
+                KeyFunctions? best = null;
+                float bestD = -1;
+                foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
+                {
+                    var v = DirVector(k) * WalkPxPerFrame;
+                    if (!WalkableAhead(k, 10) || OnConveyor(BotNav.TileOf(Pos + v * 10)) || Touches(Pos, v, 14))
+                    {
+                        continue;
+                    }
+                    var end = Pos + v * 14;
+                    float d = Vector2.Distance(end + new Vector2(5, 6), At(14, end).Center.ToVector2());
+                    if (d > bestD)
+                    {
+                        bestD = d;
+                        best = k;
+                    }
+                }
+                return best is KeyFunctions bk ? K(bk) : null;
+            }
+            if (!rooted && Player.facing != face && Math.Abs(dx) + Math.Abs(dy) > 28 && WalkableAhead(KeyOf(face), 2) && !OnConveyor(BotNav.TileOf(Pos + DirVector(KeyOf(face)) * 4)))
+            {
+                return K(KeyOf(face)); // turn to it (a 1px step) while it is still coming
+            }
+            return K();
+        }
+
         private static KeyFunctions KeyOf(Facing f) => f switch { Facing.UP => KeyFunctions.Up, Facing.DOWN => KeyFunctions.Down, Facing.LEFT => KeyFunctions.Left, _ => KeyFunctions.Right };
 
         private static HashSet<Point> FloodRegion(Point start, int limit)
@@ -8517,18 +8692,40 @@ namespace AnodyneSharp.Recording
             var hb0 = dog.Hitbox;
             float[] speeds = { 66f, 84f, 84f };
             float[] dxs = { -44f, 36f, -44f };
+            // Read out of its Attack state when possible: the dash targets it rolled and when the next dash starts (exact, not the averages).
+            var att = DogAttackPlan(dog);
+            // A super dog (the Hotel's) rolls nothing: each of its five dashes heads for a point just past wherever we are as it starts
+            // (25px beyond us, on our side of it), faster each time. Taken as where we stand now.
+            bool super = dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is true;
+            float[] superSpeeds = { 66f, 84f, 84f, 96f, 102f };
             var pos = start;
             var vel = dog.velocity;
             var cache = new List<Rectangle?>();
+            int phaseNow = att?.phase ?? -1;
             for (int f = 0; f <= Horizon; f++)
             {
                 int t = e + f;
-                if (f > 0 && t % 60 == 0)
+                bool turn = att != null ? f > 0 && f >= att.Value.next && (f - att.Value.next) % 60 == 0 : f > 0 && t % 60 == 0;
+                if (turn)
                 {
-                    int phase = t / 60; // 1.. (phase 0 started the attack)
-                    if (phase <= 2)
+                    int phase = att != null ? ++phaseNow : t / 60; // 1.. (phase 0 started the attack)
+                    if (super)
                     {
-                        var target = new Vector2(tPos.X + dxs[phase], tPos.Y - 8);
+                        if (phase <= 4)
+                        {
+                            var me = Player.Position;
+                            var target = me.X > pos.X ? me + new Vector2(25, 8) : me - new Vector2(28, 8);
+                            var dir = target - pos;
+                            vel = dir.Length() < 0.5f ? Vector2.Zero : Vector2.Normalize(dir) * superSpeeds[phase];
+                        }
+                        else
+                        {
+                            vel = Vector2.Zero;
+                        }
+                    }
+                    else if (phase <= 2)
+                    {
+                        var target = att != null ? att.Value.targets[phase - 1] : new Vector2(tPos.X + dxs[phase], tPos.Y - 8);
                         var dir = target - pos;
                         vel = dir.Length() < 0.5f ? Vector2.Zero : Vector2.Normalize(dir) * speeds[phase];
                     }
@@ -8539,13 +8736,116 @@ namespace AnodyneSharp.Recording
                 }
                 if (f > 0)
                 {
-                    pos += vel / 60f;
+                    // (its X slows by 20px/s each second between dashes, and walls stop it: it runs the map like we do)
+                    vel.X = vel.X < 0 ? Math.Min(vel.X + 20f / 60f, 0f) : Math.Max(vel.X - 20f / 60f, 0f);
+                    var nx = new Vector2(pos.X + vel.X / 60f, pos.Y);
+                    if (DogBoxClear(hb0, nx - start))
+                    {
+                        pos = nx;
+                    }
+                    var ny = new Vector2(pos.X, pos.Y + vel.Y / 60f);
+                    if (DogBoxClear(hb0, ny - start))
+                    {
+                        pos = ny;
+                    }
                 }
                 var r = hb0;
                 r.Offset((int)(pos.X - start.X), (int)(pos.Y - start.Y));
                 cache.Add(r);
             }
             return f => cache[Math.Min(f, cache.Count - 1)];
+        }
+
+        /// <summary>
+        /// Against a dashing super dog: it re-aims at us for every dash (25px past us) and runs faster than we walk, so neither running
+        /// ahead of a dash nor ending it beside the dog will do. Try every way of moving (and standing) until this dash ends: keep clear of
+        /// its predicted run (walls stop it) and finish as far from where it stops as possible. Null when not a super dog dashing.
+        /// </summary>
+        private static KeyFunctions[] DogSidestep(Entity dog, Func<int, Rectangle?> path)
+        {
+            if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is not true || dog.velocity.Length() < 30f)
+            {
+                return null;
+            }
+            int n = Math.Clamp(DogAttackPlan(dog)?.next ?? 40, 6, 50);
+            var pb = Player.Hitbox;
+            KeyFunctions[] best = null;
+            bool oldWade = BotNav.Wade;
+            BotNav.Wade = Player.raft == null; // (a step through the edge of a pool beats the dog: the water only costs us if we stay in it)
+            try
+            {
+            float bestScore = float.MinValue;
+            foreach (var ks in StActions)
+            {
+                var v = ks.Aggregate(Vector2.Zero, (acc, k) => acc + DirVector(k));
+                if (v != Vector2.Zero)
+                {
+                    v = Vector2.Normalize(v) * WalkPxPerFrame;
+                }
+                var p = new Vector2(pb.X, pb.Y);
+                int hitAt = int.MaxValue;
+                bool wet = false;
+                for (int f = 1; f <= n; f++)
+                {
+                    var np = p + (Player.raft == null && OnConveyor(BotNav.TileOf(p)) ? v * 0.5f : v); // (wading is half speed)
+                    var nr = new Rectangle((int)np.X, (int)np.Y, pb.Width, pb.Height);
+                    if (CornersWalkable(nr))
+                    {
+                        p = np;
+                    }
+                    var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                    if (path(f) is Rectangle dr)
+                    {
+                        dr.Inflate(3, 3);
+                        if (mine.Intersects(dr))
+                        {
+                            hitAt = f;
+                            break;
+                        }
+                    }
+                }
+                float score;
+                if (hitAt != int.MaxValue)
+                {
+                    score = -10000 + hitAt;
+                }
+                else
+                {
+                    var end = path(n) ?? dog.Hitbox;
+                    wet = OnConveyor(BotNav.TileOf(p));
+                    score = Vector2.Distance(p + new Vector2(5, 6), end.Center.ToVector2()) - (ks.Length == 0 ? 0 : 2) - (wet ? 24 : 0); // (standing wins a tie; ending in the water is worse)
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_DOG_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"    dog opt [{string.Join("+", ks)}] n={n} hit={hitAt} end={p} score={score:0}");
+                }
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = ks;
+                }
+            }
+            }
+            finally
+            {
+                BotNav.Wade = oldWade;
+            }
+            return best == null ? null : K(best);
+        }
+
+        /// <summary>Is the dog's hitbox, moved by `off`, clear of walls?</summary>
+        private static bool DogBoxClear(Rectangle hb, Vector2 off)
+        {
+            float l = hb.X + off.X, t = hb.Y + off.Y;
+            foreach (var (x, y) in new[] { (l, t), (l + hb.Width - 0.01f, t), (l, t + hb.Height - 0.01f), (l + hb.Width - 0.01f, t + hb.Height - 0.01f) })
+            {
+                var tile = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+                if (BotNav.IsBeamWall(tile))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// <summary>The direction (towards a beam lane that is at most 4 shoves away over open floor) in which to push a Shieldy, or null.</summary>
@@ -8762,7 +9062,8 @@ namespace AnodyneSharp.Recording
                     // Knocked (or walked) onto another screen: that room's enemies are not this fight's business.
                     yield break;
                 }
-                if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos)))
+                if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos))
+                    && !Enemies().Any(e => e.velocity.Length() > 50f && Vector2.Distance(e.Hitbox.Center.ToVector2(), Player.Hitbox.Center.ToVector2()) < 56f)) // (a dash coming: dodge first, the water can wait a moment)
                 {
                     // Wading (knocked in, or put back at a screen entrance that is water after drowning): we sink in 3s, so ashore first.
                     var wadeFrom = BotNav.TileOf(Pos);
@@ -8820,7 +9121,8 @@ namespace AnodyneSharp.Recording
                 {
                     aggroFrames--;
                 }
-                if (soft && noKill >= 220 && (committed ?? lastTarget) is Entity unreachable && !ignoredTargets.Contains(unreachable))
+                if (soft && noKill >= 220 && (committed ?? lastTarget) is Entity unreachable && !ignoredTargets.Contains(unreachable)
+                    && !(unreachable is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null)) // (a Gas Guy always comes to us)
                 {
                     committed = unreachable;
                     // Nothing waiting-on-purpose (those reset the count) and nothing dying for this long: this one is out of reach.
@@ -9483,7 +9785,7 @@ namespace AnodyneSharp.Recording
                         // Its attack is over when it leaves the Attack state (then it barks a second before the next one, which is the time
                         // to hit it: guessing the end from the dash speed lost most of that second). 190 frames when that cannot be read.
                         var dogInAttack = DogAttacking(target);
-                        if (dogInAttack == false || (dogInAttack == null && dogAttackFrame > 190) || dogAttackFrame > 260)
+                        if (dogInAttack == false || (dogInAttack == null && dogAttackFrame > 190) || dogAttackFrame > 400)
                         {
                             dogDashing = false;
                         }
@@ -9498,13 +9800,23 @@ namespace AnodyneSharp.Recording
                         }
                         BotRunner.Status = "fight/dog: out of the way of its dashes";
                         var pbd = Player.Hitbox;
+                        if (DogSidestep(target, path) is KeyFunctions[] side)
+                        {
+                            // (a super dog re-aims at us for every dash: running ahead of one only corners us for the next; off its line is the dodge)
+                            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"  dog side f{i} P={pbd} dog={dg} v={target.velocity} keys={string.Join("+", side)}");
+                            }
+                            yield return side;
+                            continue;
+                        }
                         // (and of anything else about: a frog's bullets coming down)
                         var dogAll = PredictThreats(target).Where(t => t.Source != target && t.Name != "Dog").Append(dogThreat).ToList();
                         var away = SpaceTimeMove(new Vector2(pbd.X, pbd.Y), dogAll, useCache: false, survive: true)
                             ?? SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                         {
-                            System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))}");
+                            System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))} pred={dogThreat.At[10]}/{dogThreat.At[20]}/{dogThreat.At[30]} att={DogAttackPlan(target)?.next}/{DogAttackPlan(target)?.phase} T={string.Join(";", DogAttackPlan(target)?.targets ?? new Vector2[0])} pos={target.Position}");
                         }
                         yield return away == null || away.Length == 0 ? K() : K(away);
                         continue;
@@ -10120,6 +10432,18 @@ namespace AnodyneSharp.Recording
                 {
                     noProgress++;
                 }
+                if (target is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null && GasGuyKeys(target) is KeyFunctions[] gasKeys)
+                {
+                    // It drifts straight at us through walls and over water: it always comes, so never chase it, wait for it on the floor.
+                    BotRunner.Status = "fight/gas guy: let it come";
+                    BotRunner.NotStuck(); // standing still on purpose
+                    if (noKill > 0 && noKill < 3000)
+                    {
+                        noKill = 1;
+                    }
+                    yield return gasKeys;
+                    continue;
+                }
                 if (target.GetType().Name == "Annoyer" && (distSq < 75 * 75 || AnnoyerAwake(target)))
                 {
                     // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
@@ -10255,13 +10579,13 @@ namespace AnodyneSharp.Recording
                         lastSwing = swing;
                         yield return K(face, KeyFunctions.Accept);
                     }
-                    else if (Math.Abs(across) > 6 && Math.Abs(along) < 40)
-                    {
-                        yield return K(horiz ? (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right));
-                    }
                     else
                     {
-                        yield return K(face);
+                        // Closing in on foot only over floor (one hovering over water would have us wade after it, and back out, and in, until
+                        // something else catches us at the edge), and round what else is about: if it cannot be reached from here, wait for it to come.
+                        var stepA = Math.Abs(across) > 6 && Math.Abs(along) < 40 ? (horiz ? (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right)) : face;
+                        bool dryAhead = Player.raft != null || (WalkableAhead(stepA, 6) && !OnConveyor(BotNav.TileOf(Pos + DirVector(stepA) * 8)));
+                        yield return dryAhead ? SafeMove(stepA, target) : K();
                     }
                     continue;
                 }

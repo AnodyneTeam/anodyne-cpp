@@ -244,6 +244,9 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        /// <summary>Frames kept for /tmp/bot/fail_ring.txt (ANODYNE_RING: more to see a hit that came long before the failure).</summary>
+        private static readonly int RingSize = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_RING"), out int rs) ? rs : 240;
+
         private static void RingRecord(KeyFunctions[] held)
         {
             try
@@ -263,7 +266,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 _ring.Enqueue(sb.ToString());
-                if (_ring.Count > 240)
+                if (_ring.Count > RingSize)
                 {
                     _ring.Dequeue();
                 }
@@ -1636,7 +1639,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1664,6 +1667,9 @@ namespace AnodyneSharp.Recording
             "hotel" => new Hotel(),
             "hotel2" => new Hotel2(),
             "hotel3" => new Hotel3(),
+            "hotel4" => new Hotel4(),
+            "hotel5" => new Hotel5(),
+            "hotel6" => new Hotel6(),
             _ => throw new ArgumentException(name)
         };
 

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Xna.Framework;
 using System;
+using System.Linq;
 
 namespace AnodyneSharp.Recording
 {
@@ -348,7 +349,41 @@ namespace AnodyneSharp.Recording
         /// A slime drifts at under 10px/s and hurts on contact (its goo is harmless): line up on the broom's axis, stop with a gap and swing
         /// from there; back off if it drifts into reach.
         /// </summary>
-        public static PKey[] Slime(PCtx c, PolicyMem m)
+        public static PKey[] Slime(PCtx c, PolicyMem m) => OffOthers(c, SlimeKeys(c, m));
+
+        /// <summary>
+        /// Drops the steps of a plan for one enemy that would walk us into another (dealing with one Slime in a tight room is no
+        /// reason to brush the one resting beside it). Facing and swinging stay.
+        /// </summary>
+        private static PKey[] OffOthers(PCtx c, PKey[] keys)
+        {
+            if (keys == null || c.Others.Count == 0)
+            {
+                return keys;
+            }
+            return keys.Where(k =>
+            {
+                if (k == PKey.Accept)
+                {
+                    return true;
+                }
+                float v = 70f / 60f * 4;
+                var r = c.P;
+                r.Offset(k == PKey.Left ? (int)-v : k == PKey.Right ? (int)v : 0, k == PKey.Up ? (int)-v : k == PKey.Down ? (int)v : 0);
+                foreach (var o in c.Others)
+                {
+                    var oi = o;
+                    oi.Inflate(1, 1);
+                    if (r.Intersects(oi) && !c.P.Intersects(oi))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }).ToArray();
+        }
+
+        private static PKey[] SlimeKeys(PCtx c, PolicyMem m)
         {
             var sb = c.T;
             if (c.Fast)
