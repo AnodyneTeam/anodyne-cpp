@@ -41,6 +41,9 @@ namespace AnodyneSharp.Recording
         public static int Plan(Rectangle start, Vector2 goal, IReadOnlyList<StThreat> threats, Func<Rectangle, bool> walkable, int horizon,
             float tol = 3f, int block = 3, int maxNodes = 2500, float weight = 2.5f, bool survive = false, Func<Rectangle, bool> airOk = null, int airFrames = 28)
         {
+            // Starting on something we cannot walk onto (a dust pile shoved under us, the edge of a pool): every step "hits" it, and we
+            // would stand still in whatever comes. The first few frames may cross what we already stand on (the game lets us walk off it).
+            bool stuckIn = !walkable(start);
             var xs = new List<float> { start.X };
             var ys = new List<float> { start.Y };
             var ts = new List<int> { 0 };
@@ -88,7 +91,7 @@ namespace AnodyneSharp.Recording
                         x += ax * sp;
                         y += ay * sp;
                         var mine = new Rectangle((int)x, (int)y, start.Width, start.Height);
-                        if ((ax != 0 || ay != 0) && !walkable(mine))
+                        if ((ax != 0 || ay != 0) && !walkable(mine) && !(stuckIn && nt + f <= 8))
                         {
                             ok = false;
                             break;
@@ -177,7 +180,37 @@ namespace AnodyneSharp.Recording
             {
                 return first[bestLate];
             }
-            return ts[deepest] >= 2 * block ? first[deepest] : -1; // out of budget: follow the plan that survived the longest
+            if (ts[deepest] >= 2 * block)
+            {
+                return first[deepest]; // out of budget: follow the plan that survived the longest
+            }
+            // Nothing survives a block: we may already stand inside a danger's safety margin (pressed up against it), where every move
+            // "hits" at once and we would freeze there. Then plan again on the bare boxes: any way out beats standing in it.
+            bool squeezed = false;
+            foreach (var th in threats)
+            {
+                for (int f = 0; f <= Math.Min(block, horizon) && !squeezed && th.Margin > 0; f++)
+                {
+                    if (th.At[f] is Rectangle r0)
+                    {
+                        r0.Inflate(th.Margin, th.Margin);
+                        squeezed = r0.Intersects(start);
+                    }
+                }
+            }
+            if (squeezed)
+            {
+                var bare = new List<StThreat>();
+                foreach (var th in threats)
+                {
+                    bare.Add(new StThreat { At = th.At, Margin = 0, Stationary = th.Stationary, HurtsInAir = th.HurtsInAir });
+                }
+                int calls = CallsThisFrame;
+                int a = Plan(start, goal, bare, walkable, horizon, tol, block, maxNodes, weight, survive, airOk, airFrames);
+                CallsThisFrame = calls + 1;
+                return a;
+            }
+            return -1;
         }
     }
 }

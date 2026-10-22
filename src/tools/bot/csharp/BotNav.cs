@@ -71,7 +71,13 @@ namespace AnodyneSharp.Recording
                     set.Add(new Point(t.X + 1, t.Y));
                     continue;
                 }
-                (e.Solid && !(haveKey && e is AnodyneSharp.Entities.Gadget.SmallKeyGate) ? _gatesClosed : _gatesOpen).Add(t);
+                if (haveKey && e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
+                {
+                    _keyBlocks.Add(t);
+                    (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
+                    continue;
+                }
+                (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
             var grid = GlobalState.CurrentMapGrid;
@@ -84,7 +90,8 @@ namespace AnodyneSharp.Recording
                 var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
                 if (haveKey && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
                 {
-                    _gatesOpen.Add(t);
+                    _keyBlocks.Add(t);
+                    (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
                     continue;
                 }
                 // A gate on the edge of another screen: entering that screen over the gate holds it open, so it is passable stepping in
@@ -374,10 +381,53 @@ namespace AnodyneSharp.Recording
         {
             if (!BotRunner.ProfOn)
             {
-                return RaftPathCore0(from, wet, goal, jump);
+                return KeyLimited(() => RaftPathCore0(from, wet, goal, jump));
             }
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            try { return RaftPathCore0(from, wet, goal, jump); } finally { BotRunner.Prof("RaftPath", t0); }
+            try { return KeyLimited(() => RaftPathCore0(from, wet, goal, jump)); } finally { BotRunner.Prof("RaftPath", t0); }
+        }
+
+        // Key blocks a search may not plan through this time (see KeyLimited), and every key block it counted as open.
+        private static readonly HashSet<Point> _keyDenied = new(), _keyBlocks = new();
+        private static int _keyDepth;
+
+        /// <summary>
+        /// A key opens one key block, but the searches take every block as open while a key is in hand: a route through two on one key
+        /// gets as far as the second and stops. Run the search; while its route crosses more blocks than we hold keys, shut the blocks past
+        /// the ones the keys pay for and search again.
+        /// </summary>
+        private static List<Point> KeyLimited(Func<List<Point>> search)
+        {
+            bool outer = _keyDepth++ == 0;
+            try
+            {
+                for (int tries = 0; ; tries++)
+                {
+                    var path = search();
+                    if (path == null || tries >= 4)
+                    {
+                        return path;
+                    }
+                    int keys = GlobalState.inventory.GetCurrentMapKeys();
+                    var crossed = path.Where(t => _keyBlocks.Contains(t)).Distinct().ToList();
+                    if (crossed.Count <= keys)
+                    {
+                        return path;
+                    }
+                    foreach (var t in crossed.Skip(keys))
+                    {
+                        _keyDenied.Add(t);
+                    }
+                }
+            }
+            finally
+            {
+                _keyDepth--;
+                if (outer)
+                {
+                    _keyDenied.Clear();
+                }
+            }
         }
 
         public static List<Point> RaftPathCore0(Point from, bool wet, Point goal, bool jump)
@@ -1755,10 +1805,10 @@ namespace AnodyneSharp.Recording
         {
             if (!BotRunner.ProfOn)
             {
-                return FindPathCore0(a, isGoal, forced, strict);
+                return KeyLimited(() => FindPathCore0(a, isGoal, forced, strict));
             }
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            try { return FindPathCore0(a, isGoal, forced, strict); } finally { BotRunner.Prof($"FindPath@{line}", t0); }
+            try { return KeyLimited(() => FindPathCore0(a, isGoal, forced, strict)); } finally { BotRunner.Prof($"FindPath@{line}", t0); }
         }
 
         public static List<Point> FindPathCore0(Point a, Func<Point, bool> isGoal, Point? forced = null, bool strict = false)

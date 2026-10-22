@@ -1172,12 +1172,7 @@ namespace AnodyneSharp.Recording
                         break;
                     case "ShootWarningState":
                     case "ShootState":
-                        // (fireballs fly 80px from its mouth, fanned up to 40 degrees off our way: anywhere that near is in the spray)
-                        if (state == "ShootState" || f >= left - 6)
-                        {
-                            r = Grow(r, 64);
-                        }
-                        break;
+                        break; // (it stands still; its fire is LionFire's)
                     case "ChargeWalkState":
                     case "ChargeWarnState":
                         if (anim.StartsWith("pounce"))
@@ -1206,6 +1201,71 @@ namespace AnodyneSharp.Recording
                 t.At[f] = r;
             }
             return t;
+        }
+
+        private static readonly System.Reflection.FieldInfo LionShotsField =
+            typeof(AnodyneSharp.Entities.Enemy.Circus.Lion).GetField("_shotsFired", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// The fire a Lion is about to spit (what is already flying is predicted shot by shot): every 10 frames a fireball leaves its mouth at
+        /// 88px/s, up to 39 degrees off its facing (27 when it faces up or down), and dies 80px out; it faces us (by the longer axis) all
+        /// the while. So a cone from its mouth our way, as four boxes of growing width along it, from its first shot to its last one's end.
+        /// </summary>
+        private static List<Threat> LionFire(Entity d)
+        {
+            var list = new List<Threat>();
+            var st = FsmStateLeft(d);
+            if (st == null || st.Value.Item1 is not ("ShootWarningState" or "ShootState"))
+            {
+                return list;
+            }
+            int left = st.Value.Item2;
+            int shots = LionShotsField?.GetValue(d) is int n ? n : 0;
+            int firstShot = st.Value.Item1 == "ShootState" ? left : left + 10;
+            int lastShot = firstShot + (18 - shots - 1) * 10;
+            var dir = Player.Position - d.Position;
+            Facing fc = Math.Abs(dir.X) > Math.Abs(dir.Y) ? (dir.X > 0 ? Facing.RIGHT : Facing.LEFT) : (dir.Y > 0 ? Facing.DOWN : Facing.UP);
+            var p = d.Position;
+            Vector2 mouth = fc switch
+            {
+                Facing.UP => new Vector2(p.X + 8, p.Y - 2),
+                Facing.DOWN => new Vector2(p.X + 8, p.Y + d.height + 2),
+                Facing.RIGHT => new Vector2(p.X + 30, p.Y + 2),
+                _ => new Vector2(p.X, p.Y + 2),
+            };
+            var ax = Entity.FacingDirection(fc);
+            float spread = fc is Facing.UP or Facing.DOWN ? 0.5f : 0.82f;
+            const float speed = 88f / 60f;
+            for (int b = 0; b < 4; b++)
+            {
+                float a0 = b * 20f, a1 = b * 20f + 20f;
+                float lat = spread * a1 * 0.9f + 1f; // (the along-axis speed is a bit under 88 when it flies wide)
+                // the band's box: a0..a1 out from the mouth (plus the ball's 8px), lat each side
+                float x0, y0, x1, y1;
+                if (ax.X != 0)
+                {
+                    x0 = ax.X > 0 ? mouth.X + a0 : mouth.X - a1;
+                    x1 = ax.X > 0 ? mouth.X + a1 + 8 : mouth.X - a0 + 8;
+                    y0 = mouth.Y - lat;
+                    y1 = mouth.Y + lat + 8;
+                }
+                else
+                {
+                    y0 = ax.Y > 0 ? mouth.Y + a0 : mouth.Y - a1;
+                    y1 = ax.Y > 0 ? mouth.Y + a1 + 8 : mouth.Y - a0 + 8;
+                    x0 = mouth.X - lat;
+                    x1 = mouth.X + lat + 8;
+                }
+                var box = new Rectangle((int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0));
+                int from = firstShot + (int)(a0 / speed), to = lastShot + (int)(a1 / speed) + 1;
+                var t = new Threat { Name = "Lion fire", Source = d, Margin = 1, HurtsInAir = true, Stationary = false };
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    t.At[f] = f >= from && f <= to ? box : null;
+                }
+                list.Add(t);
+            }
+            return list;
         }
 
         private static (string, int)? FsmStateLeft(Entity d)
@@ -1528,6 +1588,31 @@ namespace AnodyneSharp.Recording
             try { return PredictThreatsCore(except); } finally { BotRunner.Prof("PredictThreats", t0); }
         }
 
+        /// <summary>Enemies whose touch spares a player in the air (their Collided checks PlayerState.AIR, or only hurts on GROUND).</summary>
+        private static readonly HashSet<string> AirSafeEnemies = new()
+        {
+            "Dash_Trap", "SplitBoss", "Copy", "Slime", "Dog", "Frog", "Rotator", "FallingSpikeRoller", "BouncySpikeRoller", "BaseSpikeRoller",
+            "WallBoss", "Four_Shooter", "Arthur",
+        };
+
+        /// <summary>Does touching d hurt a jumper too? Every enemy (and its shots) does unless its own code spares the air (see AirSafeEnemies).</summary>
+        private static bool HurtsJumpers(Entity d)
+        {
+            var ty = d.GetType();
+            if (ty.Namespace == null || !ty.Namespace.StartsWith("AnodyneSharp.Entities.Enemy"))
+            {
+                return false;
+            }
+            for (var k = ty; k != null; k = k.DeclaringType)
+            {
+                if (AirSafeEnemies.Contains(k.Name))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         private static List<Threat> PredictThreatsCore(Entity except)
         {
             var result = new List<Threat>();
@@ -1580,6 +1665,7 @@ namespace AnodyneSharp.Recording
                 if (d is AnodyneSharp.Entities.Enemy.Circus.Lion)
                 {
                     result.Add(PredictLion(d));
+                    result.AddRange(LionFire(d));
                     continue;
                 }
                 if (d is AnodyneSharp.Entities.Enemy.Crowd.Dog && DogAttackPlan(d) != null)
@@ -1674,6 +1760,13 @@ namespace AnodyneSharp.Recording
                     t.At[f] = r;
                 }
                 result.Add(t);
+            }
+            foreach (var t in result)
+            {
+                if (!t.HurtsInAir && t.Source != null && HurtsJumpers(t.Source))
+                {
+                    t.HurtsInAir = true;
+                }
             }
             return result;
         }
@@ -5775,7 +5868,7 @@ namespace AnodyneSharp.Recording
                 if (path == null)
                 {
                     DumpTiles(here, goal);
-                    throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map}");
+                    throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map} (keys {GlobalState.inventory.GetCurrentMapKeys()})");
                 }
                 int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
                 if (wi < 0)
@@ -8113,9 +8206,37 @@ namespace AnodyneSharp.Recording
                 // (standing still while it warns and spits, it is the easiest to hit, and a hit stops the fire: in close, go for it)
                 float dist = (lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length();
                 // (a hit while it spits stops the fire; one while it only warns does not, and then it spits at us point-blank)
-                bool still = state == "ShootState" && dist < 96;
+                bool still = state == "ShootState" && dist < 48;
                 bool spitting = state == "ShootWarningState" || state == "ShootState";
                 bool open = !lion._flickering && (state == "PaceState" && left >= 24 || state == "ChargeWalkState" && left >= 30 || still);
+                // Any lion in the broom's reach right now (this way, or one turn away): hit it, whatever the plan was (a hit costs us nothing,
+                // and four end it). Facing the wrong way: turn this frame, swing the next.
+                if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
+                {
+                    Facing? reachFace = null;
+                    foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
+                    {
+                        var bx = BroomBoxAt(Player.Position, lf);
+                        if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && !e._flickering && e.Hitbox.Intersects(bx)))
+                        {
+                            reachFace = lf;
+                            break;
+                        }
+                    }
+                    if (reachFace is Facing rf)
+                    {
+                        if (rf == Player.facing)
+                        {
+                            lastSwing = i;
+                            BotRunner.Status = "Lion: in reach, swing";
+                            yield return K(KeyFunctions.Accept);
+                            continue;
+                        }
+                        BotRunner.Status = "Lion: in reach, turn";
+                        yield return K(rf switch { Facing.UP => KeyFunctions.Up, Facing.LEFT => KeyFunctions.Left, Facing.RIGHT => KeyFunctions.Right, _ => KeyFunctions.Down });
+                        continue;
+                    }
+                }
                 var lionBody = new Threat { Name = "Lion", Source = lion, Margin = 2 };
                 for (int k = 0; k <= Horizon; k++)
                 {
@@ -8164,7 +8285,7 @@ namespace AnodyneSharp.Recording
                     }
                     if (spitting)
                     {
-                        threats = others.Append(lionBody).ToList();
+                        threats = others.Append(lionBody).Concat(threats.Where(t => t.Source == lion && t.Name == "Lion fire")).ToList();
                     }
                     float bestScore = float.MinValue;
                     var room = new Vector2(Grid.X * 160, Grid.Y * 160);
@@ -8180,6 +8301,17 @@ namespace AnodyneSharp.Recording
                             float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
                             // (while it spits, near enough to be in for the strike the moment it can be hit)
                             float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
+                            // (and in the open: in a corner or against a wall there is nowhere to sidestep its pounce, or its fire, to)
+                            int open8 = 0;
+                            foreach (var (ox, oy) in new[] { (16, 0), (-16, 0), (0, 16), (0, -16), (16, 16), (-16, 16), (16, -16), (-16, -16), (32, 0), (-32, 0), (0, 32), (0, -32) })
+                            {
+                                var oc = new Rectangle((int)c.X + ox, (int)c.Y + oy, pb.Width, pb.Height);
+                                if (oc.Left >= room.X && oc.Right <= room.X + 160 && oc.Top >= room.Y && oc.Bottom <= room.Y + 160 && StandsSafe(oc))
+                                {
+                                    open8++;
+                                }
+                            }
+                            score += 4f * open8;
                             if (score > bestScore)
                             {
                                 bestScore = score;
@@ -8251,6 +8383,10 @@ namespace AnodyneSharp.Recording
                 {
                     jumpAt = i;
                     keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (and the pounce: a lion only hurts on the ground)
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (keys == null || keys.Length == 0))
+                {
+                    System.Console.Error.WriteLine($"  lion f{i} no move: me={pb} walk={FastWalkable()(pb)} threats: {string.Join(" ", threats.Select(t => $"{t.Name}{t.At[0]}{t.At[10]}"))}");
                 }
                 yield return keys ?? K();
             }
