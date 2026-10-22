@@ -1650,13 +1650,29 @@ namespace AnodyneSharp.Recording
         /// A super Annoyer fires every 2.3s (while active) at where we stand, 30px/s; a shot's opacity falls 0.06 a second from 1, so
         /// the freshest one in its pool dates the last shot. The next one: from where it is, at us as we stand now.
         /// </summary>
-        /// <summary>Would walking on `way` (or standing) meet a spike roller within the given frames?</summary>
-        private static bool RollerContactSoon(KeyFunctions way, int within)
+        /// <summary>Would a box standing here be hurt by ground spikes (only a spike tile's 5x6 core hurts, see Map)?</summary>
+        private static bool SpikeCoreUnder(Rectangle r)
+        {
+            for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+            {
+                for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+                {
+                    if (BotNav.IsSpike(new Point(tx, ty)) && new Rectangle(tx * 16 + 6, ty * 16 + 6, 5, 6).Intersects(r))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>The spike roller that walking on `way` (or standing) meets within the given frames, if any.</summary>
+        private static Entity RollerContactSoon(KeyFunctions way, int within)
         {
             var rollers = PredictThreats(null).Where(t => t.Source is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller).ToList();
             if (rollers.Count == 0)
             {
-                return false;
+                return null;
             }
             var d = DirVector(way);
             var hb = Player.Hitbox;
@@ -1672,13 +1688,13 @@ namespace AnodyneSharp.Recording
                             r.Inflate(1, 1);
                             if (r.Intersects(box))
                             {
-                                return true;
+                                return t.Source;
                             }
                         }
                     }
                 }
             }
-            return false;
+            return null;
         }
 
         /// <summary>The centre of the nearest Annoyer fireball in flight that reaches us within the given frames (null if none).</summary>
@@ -6409,11 +6425,41 @@ namespace AnodyneSharp.Recording
                     // While none is within arm's length, ride on at full speed (we are three times faster) and leave them behind.
                     // A spike roller sweeping the water (Circus (5,7): it spans the whole room, there is no going round it): hop it as it
                     // comes. A jumper is safe from it and the raft keeps under us in the air.
-                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && RollerContactSoon(rideKey, 8))
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && RollerContactSoon(rideKey, 8) is Entity roller)
                     {
-                        RaftLog($"hop the spike roller at {Pos}");
-                        yield return K(rideKey, KeyFunctions.Cancel);
-                        continue;
+                        // (through it, against its roll: across its path at its own pace the jump comes down before it has gone by)
+                        // (or along the ride, or on the spot: whichever comes down off the floor spikes, short of a wall and clear of the roller)
+                        var rv = roller.velocity;
+                        var against = Math.Abs(rv.X) >= Math.Abs(rv.Y) ? (rv.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (rv.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        var rollerThreats = PredictThreats(null).Where(t => t.Source == roller).ToList();
+                        bool NoWall(Rectangle b) => new[] { new Point(b.Left, b.Top), new Point(b.Right - 1, b.Top), new Point(b.Left, b.Bottom - 1), new Point(b.Right - 1, b.Bottom - 1) }
+                            .All(c => BotNav.CurrentMap.GetTileClass(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))).Item1 == Touching.NONE);
+                        KeyFunctions? hopKey = null;
+                        bool found = false;
+                        foreach (var cand in new KeyFunctions?[] { against, rideKey, null })
+                        {
+                            var dv = cand is KeyFunctions ck ? DirVector(ck) : Vector2.Zero;
+                            var land = Player.Hitbox;
+                            land.Offset((int)(dv.X * 29), (int)(dv.Y * 29));
+                            var landWide = land;
+                            landWide.Inflate(4, 4); // (the drift is ~27-31px, with the current's push on top)
+                            if (!SpikeCoreUnder(landWide) && NoWall(land) && !rollerThreats.Any(t => Enumerable.Range(25, 6).Any(f => t.At[Math.Min(f, Horizon)] is Rectangle r && r.Intersects(land))))
+                            {
+                                hopKey = cand;
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found)
+                        {
+                            RaftLog($"hop the spike roller at {Pos} going {hopKey?.ToString() ?? "nowhere"}");
+                            yield return hopKey is KeyFunctions hk0 ? K(hk0, KeyFunctions.Cancel) : K(KeyFunctions.Cancel);
+                            for (int a = 0; a < 40 && Player.state != PlayerState.GROUND; a++)
+                            {
+                                yield return hopKey is KeyFunctions hk1 ? K(hk1) : K();
+                            }
+                            continue;
+                        }
                     }
                     var pcr = Player.Hitbox.Center.ToVector2();
                     var dangersNow = Dangers();

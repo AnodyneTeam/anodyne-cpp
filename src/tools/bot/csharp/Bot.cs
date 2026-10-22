@@ -820,8 +820,21 @@ namespace AnodyneSharp.Recording
                 return held;
             }
             var hb = Player.Hitbox;
-            bool OnSpikes(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
-                .Any(c => BotNav.IsSpike(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            // (a spike tile only hurts in its 5x6 core, see Map: brushing its edge, as a route round it does, is fine)
+            bool OnSpikes(Rectangle r)
+            {
+                for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+                {
+                    for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+                    {
+                        if (BotNav.IsSpike(new Point(tx, ty)) && new Rectangle(tx * 16 + 6, ty * 16 + 6, 5, 6).Intersects(r))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
             bool Floor(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
                 .All(c => BotNav.Walkable(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
             var next = hb;
