@@ -1783,78 +1783,6 @@ namespace AnodyneSharp.Recording
         private static readonly System.Reflection.FieldInfo TimerNowField = typeof(AnodyneSharp.FSM.TimerState).GetField("current", NonPub);
         private static readonly System.Reflection.FieldInfo TimerListField = typeof(AnodyneSharp.FSM.TimerState).GetField("timers", NonPub);
 
-        private static readonly System.Reflection.FieldInfo SlimeStateField = typeof(AnodyneSharp.Entities.Enemy.Slime).GetField("state", NonPub);
-        private static readonly System.Reflection.FieldInfo SlimeBulletsField = typeof(AnodyneSharp.Entities.Enemy.Slime).GetField("bullets", NonPub);
-
-        /// <summary>Frames until the named timer of a state machine's active timer state fires (null if it is not running).</summary>
-        private static int? FsmTimerDue(object fsm, string timer)
-        {
-            var top = (FsmActiveChildren?.GetValue(fsm) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-            if (top is not AnodyneSharp.FSM.TimerState || TimerNowField?.GetValue(top) is not float now || TimerListField?.GetValue(top) is not System.Collections.IList timers)
-            {
-                return null;
-            }
-            foreach (var t in timers)
-            {
-                var tt = t.GetType();
-                if (tt.GetField("name")?.GetValue(t) as string == timer && tt.GetField("current")?.GetValue(t) is float due)
-                {
-                    return Math.Max(0, (int)Math.Round((due - now) * 60f));
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// A bullet Slime close by about to fire (every 1.8s, at where we stand, from on top of itself, so close up there is no walking
-        /// out of it): the keys of a hop across its line, which it passes under (its bullets miss a jumper). Null if none is due.
-        /// </summary>
-        private static KeyFunctions? SlimeShotHop(int within, float range)
-        {
-            var me = Player.Hitbox;
-            foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>())
-            {
-                if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null && BotRunner.Frame % 10 == 0)
-                {
-                    var fs = SlimeStateField?.GetValue(sl);
-                    var top = fs == null ? null : (FsmActiveChildren?.GetValue(fs) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-                    System.Console.Error.WriteLine($"  slimefire f{BotRunner.Frame} {sl.Position} bullets={SlimeBulletsField?.GetValue(sl) != null} fsm={fs?.GetType().Name} top={top?.GetType().Name} due={(fs == null ? null : FsmTimerDue(fs, "ShootTimer"))}");
-                }
-                if (!sl.exists || SlimeBulletsField?.GetValue(sl) == null || (sl.Position - Player.Position).Length() > range
-                    || SlimeStateField?.GetValue(sl) is not object fsm || FsmTimerDue(fsm, "ShootTimer") is not int next || next > within)
-                {
-                    continue;
-                }
-                var d = Player.Position - sl.Position;
-                if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null)
-                {
-                    System.Console.Error.WriteLine($"  slimefire due f{BotRunner.Frame} next={next} d={d}");
-                }
-                if (d.Length() < 0.01f)
-                {
-                    continue;
-                }
-                d = Vector2.Normalize(d);
-                // across its line, the more sideways way first; never towards the Slime (its body hurts on landing)
-                var cands = Math.Abs(d.X) >= Math.Abs(d.Y)
-                    ? new[] { KeyFunctions.Up, KeyFunctions.Down, d.X > 0 ? KeyFunctions.Right : KeyFunctions.Left }
-                    : new[] { KeyFunctions.Left, KeyFunctions.Right, d.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up };
-                var bodies = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Slime).Select(e => e.Hitbox).ToList();
-                foreach (var k in cands)
-                {
-                    var v = DirVector(k) * BotNav.LeapReach;
-                    var land = new Rectangle(me.X + (int)v.X, me.Y + (int)v.Y, me.Width, me.Height);
-                    var wide = land;
-                    wide.Inflate(2, 2);
-                    if (BotNav.BoxStands(land) && !bodies.Any(b => b.Intersects(wide)))
-                    {
-                        return k;
-                    }
-                }
-            }
-            return null;
-        }
-
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
             var balls = an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
@@ -4361,9 +4289,6 @@ namespace AnodyneSharp.Recording
             try { return SafeMoveCore(wanted, except, dist, stopForBlockers, look); } finally { BotRunner.Prof("SafeMove", t0); }
         }
 
-        private static KeyFunctions? _slimeHopKey;
-        private static long _slimeHopAt = -1000;
-
         protected static KeyFunctions[] SafeMoveCore(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
@@ -4372,21 +4297,6 @@ namespace AnodyneSharp.Recording
             if (!DodgeEnabled)
             {
                 return K(wanted);
-            }
-            // A hop across a bullet Slime's shot (see SlimeShotHop): hold its way while in the air, then walk on.
-            if (Player.state == PlayerState.AIR && _slimeHopKey is KeyFunctions held && BotRunner.Frame - _slimeHopAt < 40)
-            {
-                Dodged = true;
-                return K(held);
-            }
-            if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && !Sinking && _jumpPressFrame != BotRunner.Frame - 1 && SlimeShotHop(2, 56) is KeyFunctions hk)
-            {
-                _slimeHopKey = hk;
-                _slimeHopAt = BotRunner.Frame;
-                _jumpPressFrame = BotRunner.Frame;
-                Dodged = true;
-                BotRunner.Status = "hop a bullet Slime's shot";
-                return K(KeyFunctions.Cancel, hk);
             }
             var dangers = Dangers(except);
             if (dangers.Count == 0)
@@ -7163,7 +7073,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         internal static KeyFunctions[] SwingGuard(KeyFunctions[] held)
         {
-            if (Player == null || !held.Contains(KeyFunctions.Accept) || SwingTargetFrame < BotRunner.Frame - 1 || SwingTarget is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
+            if (Player == null || !held.Contains(KeyFunctions.Accept))
             {
                 return held;
             }
@@ -7175,6 +7085,28 @@ namespace AnodyneSharp.Recording
                 Facing.LEFT => new Rectangle(pb.X - 26, pb.Y - 8, 26, pb.Height + 16),
                 _ => new Rectangle(pb.Right, pb.Y - 8, 26, pb.Height + 16),
             };
+            // A bullet Slime close by about to fire that the swing would not reach: a broom out stops us dead in the air, so the hop over
+            // its shot (BulletHop) would go nowhere. Hold the swing.
+            if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump)
+            {
+                foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>())
+                {
+                    if (!sl.exists || sl.Hitbox.Intersects(reach) || !sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+                    {
+                        continue;
+                    }
+                    var sb = sl.Hitbox;
+                    int gap = Math.Max(Math.Max(sb.Left - pb.Right, pb.Left - sb.Right), Math.Max(sb.Top - pb.Bottom, pb.Top - sb.Bottom));
+                    if (gap < 30 && SlimeShotIn(sl) is float due && due <= 18f / 60f)
+                    {
+                        return held.Where(k => k != KeyFunctions.Accept).ToArray();
+                    }
+                }
+            }
+            if (SwingTargetFrame < BotRunner.Frame - 1 || SwingTarget is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy)
+            {
+                return held;
+            }
             foreach (var e in BotRunner.Entities())
             {
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.TeleGuy && !TeleGuyActive(e) && e.Hitbox.Intersects(reach))
@@ -7384,7 +7316,12 @@ namespace AnodyneSharp.Recording
                 if (gap < 30 && SlimeShotIn(sl) is float due && due <= 1.5f / 60f)
                 {
                     BotRunner.Status = "hop the slime's next shot";
-                    if (HopAcross(Player.Position - sl.Position) is KeyFunctions[] hop)
+                    var hop = HopAcross(Player.Position - sl.Position);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame}: hop {(hop == null ? "none (no safe landing)" : string.Join("+", hop))} held {string.Join("+", held)} vel {Player.velocity}");
+                    }
+                    if (hop != null)
                     {
                         return hop;
                     }
@@ -7395,8 +7332,7 @@ namespace AnodyneSharp.Recording
 
         /// <summary>
         /// A jump across a shot's line (it moves too slowly to pass under a jump in place): sideways to `line` where we land on floor, else
-        /// back along it, else forward. A jump keeps the speed we had along any axis no key is held on, so the landing counts that too (a hop
-        /// "in place" while walking drifts on into a hole). Null when no landing is safe.
+        /// back along it, else forward. Null when no landing is safe.
         /// </summary>
         private static KeyFunctions[] HopAcross(Vector2 line)
         {
@@ -7414,14 +7350,14 @@ namespace AnodyneSharp.Recording
                     r.Inflate(3, 3);
                     return r;
                 }).ToList();
-            foreach (var k in keys)
+            // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
+            foreach (var (k, margin) in keys.Select(k => (k, 3)).Concat(keys.Select(k => (k, 0))))
             {
                 var d = DirVector(k);
-                var drift = Player.velocity * air;
-                var move = d.X != 0 ? new Vector2(d.X * 24f, drift.Y) : new Vector2(drift.X, d.Y * 24f);
+                var move = d * 24f; // (in the air an axis with no key held stops dead: Player.Set_init_vel, and we hold only this one)
                 var land = Player.Hitbox;
                 land.Offset((int)Math.Round(move.X), (int)Math.Round(move.Y));
-                land.Inflate(3, 3); // (no hole tile at all under the landing: the jump's length is not exact, and the fight walks on as we land)
+                land.Inflate(margin, margin); // (no hole tile at all under the landing: the jump's length is not exact, and the fight walks on as we land)
                 if (new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
                     .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t))
                     && !bodies.Any(r => r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height))))
@@ -7490,9 +7426,21 @@ namespace AnodyneSharp.Recording
             }
             var active = abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
             var move = active?.Cast<object>().FirstOrDefault() as AnodyneSharp.FSM.TimerState;
+            long frame = BotRunner.Frame;
             if (move == null)
             {
-                return null;
+                // Hurt (the blink, ~16 frames): its clock is stopped, and a shot that fell due meanwhile goes off the moment it is back
+                // on its feet. Right after we hit one up close, that is point blank.
+                if (!_slimeClock.TryGetValue(slime, out var c))
+                {
+                    return null;
+                }
+                if (c.hurt < 0)
+                {
+                    c.hurt = frame;
+                    _slimeClock[slime] = c;
+                }
+                return Math.Max(0, Math.Max(c.due, c.hurt + 16) - frame) / 60f;
             }
             var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValue(move);
             foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValue(move))
@@ -7500,11 +7448,19 @@ namespace AnodyneSharp.Recording
                 var tt = t.GetType();
                 if ((string)tt.GetField("name").GetValue(t) == "ShootTimer")
                 {
-                    return (float)tt.GetField("current").GetValue(t) - now;
+                    float left = (float)tt.GetField("current").GetValue(t) - now;
+                    if (_slimeClock.Count > 64)
+                    {
+                        _slimeClock.Clear();
+                    }
+                    _slimeClock[slime] = (frame + (long)Math.Round(left * 60f), -1);
+                    return left;
                 }
             }
             return null;
         }
+
+        private static readonly Dictionary<Entity, (long due, long hurt)> _slimeClock = new();
 
         /// <summary>
         /// Where to take off (Pos along `dir`) to jump a stopped spike roller lying across the way: right up to it, landing (~28px on) clear
@@ -13910,24 +13866,6 @@ namespace AnodyneSharp.Recording
                     yield return gasKeys;
                     continue;
                 }
-                // A bullet Slime beside us about to fire: hop across its line as it does (its shot passes under a jumper).
-                if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && SlimeShotHop(2, 56) is KeyFunctions hopKey)
-                {
-                    BotRunner.Status = "fight: hop a bullet Slime's shot";
-                    _slimeHopKey = hopKey;
-                    _slimeHopAt = BotRunner.Frame;
-                    if (_jumpPressFrame == BotRunner.Frame - 1)
-                    {
-                        yield return K();
-                    }
-                    _jumpPressFrame = BotRunner.Frame;
-                    yield return K(KeyFunctions.Cancel, hopKey);
-                    for (int w = 0; w < 40 && Player.state == PlayerState.AIR; w++)
-                    {
-                        yield return K(hopKey);
-                    }
-                    continue;
-                }
                 // A super Annoyer's fireball on its way in (fired from the ring it circles us on, ~20px off: no time to walk clear of it):
                 // bat it away, the broom puts it out. Turn to it first (a swing pressed with the turn goes the old way).
                 // (one about to fire from right beside us comes out a frame or two from our box: the broom must be out already)
@@ -14474,6 +14412,30 @@ namespace AnodyneSharp.Recording
                         tr[f] = burning ? box : null;
                     }
                     list.Add((tr, true));
+                    continue;
+                }
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Slime sl)
+                {
+                    // a bullet Slime's shots in flight: straight on at their speed until a wall (they hurt only on the ground)
+                    foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                    {
+                        var bt = new Rectangle?[frames + 1];
+                        var bp = b.Position;
+                        var bv = b.velocity / 60f;
+                        int life = (int)Math.Ceiling((b.opacity - 0.3f) / 0.39f * 60f);
+                        for (int f = 0; f <= frames && f <= life; f++)
+                        {
+                            var br = new Rectangle((int)bp.X, (int)bp.Y, 8, 8);
+                            if (!WallFree(br))
+                            {
+                                break;
+                            }
+                            br.Inflate(2, 2);
+                            bt[f] = br;
+                            bp += bv;
+                        }
+                        list.Add((bt, false));
+                    }
                     continue;
                 }
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap)
