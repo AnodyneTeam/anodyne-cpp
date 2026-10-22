@@ -1624,6 +1624,51 @@ namespace AnodyneSharp.Recording
             return true;
         }
 
+        /// <summary>
+        /// A super Annoyer fires every 2.3s (while active) at where we stand, 30px/s; a shot's opacity falls 0.06 a second from 1, so
+        /// the freshest one in its pool dates the last shot. The next one: from where it is, at us as we stand now.
+        /// </summary>
+        private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
+        {
+            var balls = an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
+            if (balls.Count == 0)
+            {
+                return null; // a plain one: no shots
+            }
+            if (an.Hitbox.Center.ToVector2() is var ac && (ac - Player.Hitbox.Center.ToVector2()).Length() > 90)
+            {
+                return null; // asleep or far: its shot (if any) is seen in flight in time
+            }
+            // (pool slots never fired sit at opacity 1, gone: not shots)
+            var shot = balls.Where(b => b.exists || b.opacity < 1f).ToList();
+            float age = shot.Count > 0 ? (1f - shot.Max(b => b.opacity)) / 0.06f * 60f : 999f;
+            int next = Math.Max(0, (int)(138 - age));
+            if (next > Horizon)
+            {
+                return null;
+            }
+            var from = an.Position;
+            var to = Player.Position;
+            var dir = to - from;
+            if (dir.Length() < 0.01f)
+            {
+                return null;
+            }
+            dir = Vector2.Normalize(dir) * 0.5f;
+            if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  annfire f{BotRunner.Frame} an={an.Position} next={next} age={age:0} ops={string.Join(",", balls.Select(b => $"{b.opacity:0.00}{(b.exists ? "" : "x")}"))}");
+            }
+            var t = new Threat { Name = "Annoyer next fireball", Source = an, Margin = 3, HurtsInAir = true };
+            // (the moment is a guess to a few frames: it starts a little early and its first stretch is drawn fat)
+            for (int f = Math.Max(0, next - 4); f <= Horizon; f++)
+            {
+                var p = from + dir * Math.Max(0, f - next);
+                t.At[f] = new Rectangle((int)p.X, (int)p.Y, 8, 8);
+            }
+            return t;
+        }
+
         private static List<Threat> PredictThreatsCore(Entity except)
         {
             var result = new List<Threat>();
@@ -1771,6 +1816,14 @@ namespace AnodyneSharp.Recording
                     t.At[f] = r;
                 }
                 result.Add(t);
+            }
+            // A super Annoyer's next fireball (the one it is circling us with, the fight's target, too: its shots are what hurts)
+            foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
+            {
+                if (an.exists && AnnoyerNextFire(an) is Threat nf)
+                {
+                    result.Add(nf);
+                }
             }
             foreach (var t in result)
             {

@@ -337,4 +337,18 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel6 eye boss, land phase", () => Exec("O1 X1 g6 H8,10 W30 F20000 W60 `h6_done"));
         }
     }
+
+    /// <summary>After the Hotel: out to the Nexus, then the cards on the way (Cliff, Space, the Cell) and on to the Circus door.</summary>
+    public class CardsToCircus : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Cards: Hotel card, Cliff, Space, the Cell");
+            yield return Section("cards hotel card and out to the Nexus", () => Exec("O1 X1 W30 H8,11 W30 + W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200 `cp_nexus"));
+            yield return Section("cards cliff", () => Exec("O1 X1 viaCROWD W30 oCLIFF@1520,640 W30 + W30 `cp_cliff"));
+            yield return Section("cards space", () => Exec("O1 X1 oSPACE W60 + W30 `cp_space"));
+            yield return Section("cards cell", () => Exec("O1 X1 viaREDCAVE W30 oCELL W60 + W30 `cp_cell"));
+            yield return Section("cards into the circus", () => Exec("O1 X1 viaREDCAVE W30 oCELL W60 oCIRCUS@1193,6 W30 `cp_circusin"));
+        }
+    }
 }
