@@ -2635,12 +2635,41 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
-        /// <summary>True if drifting `dir` (null = straight down where we are) for the rest of a jump (up to 16 frames) could come down touching a danger.</summary>
+        private static readonly System.Reflection.FieldInfo JumpAnimField =
+            typeof(AnodyneSharp.Entities.Player).GetField("jump_anim", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>Frames until we land from the jump we are in (read off the jump's parabola clock), or null when it cannot be read.</summary>
+        private static int? AirFramesLeft()
+        {
+            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || JumpAnimField?.GetValue(Player) is not object anim)
+            {
+                return null;
+            }
+            foreach (var f in anim.GetType().GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                if (f.GetValue(anim) is AnodyneSharp.Entities.Parabola_Thing pt && ParabolaTField?.GetValue(pt) is float t && ParabolaPeriodField?.GetValue(pt) is float period)
+                {
+                    return Math.Max(0, (int)Math.Ceiling((period - t) * 60f));
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// True if drifting `dir` (null = straight down where we are) for the rest of a jump could come down touching a danger. Only the
+        /// landing counts (the air is safe from all of these): crossing a dash trap's line mid-air is the point of the jump.
+        /// </summary>
         private static bool AirDriftHits(KeyFunctions? dir, List<Threat> threats)
         {
             var pb = Player.Hitbox;
             var v = dir is KeyFunctions d ? DirVector(d) * WalkPxPerFrame * 0.83f : Vector2.Zero;
-            for (int f = 1; f <= Math.Min(16, Horizon); f++)
+            int from = 1, to = Math.Min(16, Horizon);
+            if (AirFramesLeft() is int left)
+            {
+                from = Math.Max(1, left);
+                to = Math.Min(left + 4, Horizon);
+            }
+            for (int f = from; f <= to; f++)
             {
                 var p = new Vector2(pb.X, pb.Y) + v * f;
                 var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
@@ -2965,6 +2994,45 @@ namespace AnodyneSharp.Recording
                 }
             }
             return list;
+        }
+
+        /// <summary>
+        /// One frame of a Slasher's drift after a player at `to` (20px/s on each axis), as the game moves it: walls stop it (its 16px body
+        /// does not fit a corridor it is a pixel off) and it keeps on its screen. A Slasher held at a corridor's mouth cannot follow us in.
+        /// </summary>
+        private static void SlasherDrift(Entity sl, ref Vector2 p, Vector2 to)
+        {
+            var off = new Vector2(sl.Hitbox.X, sl.Hitbox.Y) - sl.Position;
+            bool Fits(Vector2 at)
+            {
+                var r = new Rectangle((int)Math.Floor(at.X + off.X), (int)Math.Floor(at.Y + off.Y), sl.Hitbox.Width, sl.Hitbox.Height);
+                if (!new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160).Contains(r))
+                {
+                    return false;
+                }
+                for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
+                {
+                    for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
+                    {
+                        if (BotNav.IsBeamWall(new Point(tx, ty)))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            const float step = 20f / 60f;
+            var nx = new Vector2(p.X + Math.Clamp(to.X - p.X, -step, step), p.Y);
+            if (Fits(nx))
+            {
+                p = nx;
+            }
+            var ny = new Vector2(p.X, p.Y + Math.Clamp(to.Y - p.Y, -step, step));
+            if (Fits(ny))
+            {
+                p = ny;
+            }
         }
 
         /// <summary>Frames until this Slasher cuts (-1: it is cutting or resting): 84 of float, then 30 of wind-up.</summary>
@@ -5390,6 +5458,35 @@ namespace AnodyneSharp.Recording
                 var d = DirVector(k) * 3f;
                 var next = new Rectangle(pb.X + (int)d.X, pb.Y + (int)d.Y, pb.Width, pb.Height);
                 return !doors.Any(e => e.Hitbox.Intersects(next) && !e.Hitbox.Intersects(pb));
+            }).ToArray();
+        }
+
+        /// <summary>The screen the running fight is on, and the last frame the fight's loop ran.</summary>
+        internal static Point FightGrid;
+        internal static long FightFrame = -1;
+
+        /// <summary>
+        /// A fight is won on its own screen: a gated room only counts kills made in it, and stepping out (a dodge, a step back at the
+        /// doorway we came in by) resets it and leaves the enemies to start over. While a fight runs and we are on its screen, drop any
+        /// d-pad key that would carry us over the screen's edge.
+        /// </summary>
+        internal static KeyFunctions[] FightEdgeGuard(KeyFunctions[] held)
+        {
+            if (Player == null || FightFrame < BotRunner.Frame - 1 || Grid != FightGrid || GlobalState.ScreenTransition)
+            {
+                return held;
+            }
+            var pb = Player.Hitbox;
+            var room = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+            return held.Where(k =>
+            {
+                if (k is not (KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
+                {
+                    return true;
+                }
+                var d = DirVector(k) * 3f;
+                var next = new Rectangle(pb.X + (int)d.X, pb.Y + (int)d.Y, pb.Width, pb.Height);
+                return room.Contains(next);
             }).ToArray();
         }
 
@@ -7864,11 +7961,13 @@ namespace AnodyneSharp.Recording
                 foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
                 {
                     var v = DirVector(k) * WalkPxPerFrame;
-                    if (!WalkableAhead(k, 10) || OnConveyor(BotNav.TileOf(Pos + v * 10)) || Touches(Pos, v, 14))
+                    var end = Pos + v * 14;
+                    // (not off the screen: that leaves the fight, and the Gas Guy, behind a gate that wants it dead)
+                    bool onScreen = end.X >= Grid.X * 160 + 1 && end.X + pb.Width <= Grid.X * 160 + 159 && end.Y >= Grid.Y * 160 + 1 && end.Y + pb.Height <= Grid.Y * 160 + 159;
+                    if (!onScreen || !WalkableAhead(k, 10) || OnConveyor(BotNav.TileOf(Pos + v * 10)) || Touches(Pos, v, 14))
                     {
                         continue;
                     }
-                    var end = Pos + v * 14;
                     float d = Vector2.Distance(end + new Vector2(5, 6), At(14, end).Center.ToVector2());
                     if (d > bestD)
                     {
@@ -7876,11 +7975,28 @@ namespace AnodyneSharp.Recording
                         best = k;
                     }
                 }
+                if (Environment.GetEnvironmentVariable("ANODYNE_GAS_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  gas f{BotRunner.Frame} step away {best} P={Pos} grid={Grid} gas={g.Hitbox}");
+                }
                 return best is KeyFunctions bk ? K(bk) : null;
             }
             if (!rooted && Player.facing != face && Math.Abs(dx) + Math.Abs(dy) > 28 && WalkableAhead(KeyOf(face), 2) && !OnConveyor(BotNav.TileOf(Pos + DirVector(KeyOf(face)) * 4)))
             {
                 return K(KeyOf(face)); // turn to it (a 1px step) while it is still coming
+            }
+            // Thrown far back by a hit, it takes seconds to drift back at 12px/s (three hits to kill, and a fight has a time limit): walk
+            // after it over dry floor on this screen (we are six times faster) and wait again where it would reach the broom soon.
+            if (!rooted && Math.Abs(dx) + Math.Abs(dy) > 44)
+            {
+                var k = KeyOf(face);
+                var v = DirVector(k) * WalkPxPerFrame;
+                var end = Pos + v * 14;
+                bool onScreen = end.X >= Grid.X * 160 + 1 && end.X + pb.Width <= Grid.X * 160 + 159 && end.Y >= Grid.Y * 160 + 1 && end.Y + pb.Height <= Grid.Y * 160 + 159;
+                if (onScreen && WalkableAhead(k, 10) && !OnConveyor(BotNav.TileOf(Pos + v * 10)) && !Touches(Pos, v, 14))
+                {
+                    return K(k);
+                }
             }
             return K();
         }
@@ -9385,10 +9501,14 @@ namespace AnodyneSharp.Recording
                         }
                         yield return GoScreenTo(startGrid.X, startGrid.Y);
                         lastCount = -1;
+                        unstick = 0;
+                        stillFrames = 0;
                         continue;
                     }
                     yield break;
                 }
+                FightGrid = startGrid;
+                FightFrame = BotRunner.Frame;
                 if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos))
                     && !Enemies().Any(e => e.velocity.Length() > 50f && Vector2.Distance(e.Hitbox.Center.ToVector2(), Player.Hitbox.Center.ToVector2()) < 56f)) // (a dash coming: dodge first, the water can wait a moment)
                 {
@@ -9838,6 +9958,7 @@ namespace AnodyneSharp.Recording
                     // All of them at once (one floats while another winds up): plan round every coming cut whenever one is near.
                     var slThreats = SlasherThreats();
                     var meTL = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+                    Func<KeyFunctions, bool> slStepClear = null; // (a step on the way in that walks into a coming or standing cut is no step)
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         System.Console.Error.WriteLine($"  slasher f{BotRunner.Frame} me={Player.Hitbox} safe={SafeAtExactThreats(meTL, slThreats, 45)} " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").Select(e => $"S{e.Hitbox}{e.CurAnimName}{e.facing}")) + " | " + string.Join(" ", slThreats.Select(t => t.Name + (Array.FindIndex(t.At, r => r != null)) + t.At.FirstOrDefault(r => r != null))));
@@ -9875,8 +9996,9 @@ namespace AnodyneSharp.Recording
                             for (int k = 1; k <= 66; k++)
                             {
                                 var nq = q + (k <= walk ? v : v2);
-                                if (CornersWalkable(new Rectangle((int)(nq.X + hbOff.X), (int)(nq.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height))
-                                    && BotNav.TileOf(nq + hbOff).X / 10 == Grid.X && BotNav.TileOf(nq + hbOff).Y / 10 == Grid.Y)
+                                var nr = new Rectangle((int)(nq.X + hbOff.X), (int)(nq.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height);
+                                // (the whole of us stays on the screen: the fight never walks off it, see FightEdgeGuard)
+                                if (CornersWalkable(nr) && new Rectangle(Grid.X * 160 + 3, Grid.Y * 160 + 3, 154, 154).Contains(nr))
                                 {
                                     q = nq;
                                 }
@@ -9903,8 +10025,7 @@ namespace AnodyneSharp.Recording
                                 {
                                     if (k < winding[w].left)
                                     {
-                                        AnodyneSharp.Utilities.MathUtilities.MoveTo(ref sp[w].X, q.X, 20);
-                                        AnodyneSharp.Utilities.MathUtilities.MoveTo(ref sp[w].Y, q.Y, 20);
+                                        SlasherDrift(winding[w].e, ref sp[w], q);
                                     }
                                     else if (k == Math.Max(1, winding[w].left))
                                     {
@@ -9933,6 +10054,26 @@ namespace AnodyneSharp.Recording
                         // strips below costs fewer hits there; TODO: one way that does well in both)
                         if ((winding.Count > 0 || cutsNow.Count > 0) && Map == "APARTMENT")
                         {
+                            slStepClear = k => Sim(new[] { k }, 12).clear;
+                            // How much floor is round a spot (walkable tiles of the 5x5 block on it, on this screen): Slashers track us and cut
+                            // along a line, and the cut is only dodged off that line, so a dodge that ends in a corridor or a corner is the next hit.
+                            float Open(Vector2 pos)
+                            {
+                                var t0 = BotNav.TileOf(pos + hbOff + new Vector2(5, 6));
+                                int n = 0;
+                                for (int ox = -2; ox <= 2; ox++)
+                                {
+                                    for (int oy = -2; oy <= 2; oy++)
+                                    {
+                                        var t1 = new Point(t0.X + ox, t0.Y + oy);
+                                        if (t1.X / 10 == Grid.X && t1.Y / 10 == Grid.Y && BotNav.Walkable(t1))
+                                        {
+                                            n++;
+                                        }
+                                    }
+                                }
+                                return n;
+                            }
                             bool stayOk = Sim(StActions[0]).clear;
                             // (the one we are after: towards it while it still floats a while, else away)
                             bool strikeable = SlasherCutIn(target) > 64;
@@ -9948,16 +10089,16 @@ namespace AnodyneSharp.Recording
                                         var (clear, q, hitAt) = Sim(runDir, walk);
                                         var qc = q + vcOff;
                                         // (no clear way: the one that is hit latest, where it may still turn out clear as things move)
-                                        float score = clear ? 1000f - walk - 0.5f * (target.Center - qc).Length() : hitAt * 8f + slList.Min(e => (e.Center - qc).Length()) * 0.2f;
+                                        float score = clear ? 1000f - walk - 0.5f * (target.Center - qc).Length() + 3f * Open(q) : hitAt * 8f + slList.Min(e => (e.Center - qc).Length()) * 0.2f + Open(q);
                                         score += _slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f;
                                         if (score > bestScore)
                                         {
                                             bestScore = score;
                                             best = runDir;
                                         }
-                                        if (clear)
+                                        if (clear && Open(q) >= 15)
                                         {
-                                            break;
+                                            break; // (the shortest clear walk that way, unless it ends somewhere cramped: then a longer one may get out)
                                         }
                                     }
                                 }
@@ -9979,7 +10120,7 @@ namespace AnodyneSharp.Recording
                                                 {
                                                     continue;
                                                 }
-                                                float score = 900f - walk - 0.5f * (target.Center - (q + vcOff)).Length() + (_slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f);
+                                                float score = 900f - walk - 0.5f * (target.Center - (q + vcOff)).Length() + 3f * Open(q) + (_slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f);
                                                 if (score > bestScore)
                                                 {
                                                     bestScore = score;
@@ -10096,7 +10237,7 @@ namespace AnodyneSharp.Recording
                         // lined up but out of reach: straight in (a tile "beside it" can still be 20px short of the broom). Only with
                         // Slashers alone: with a TeleGuy or a Gas Guy about the way straight in ran into them.
                         BotRunner.Status = "fight/slasher: straight in";
-                        yield return K(sIn);
+                        yield return slStepClear == null || slStepClear(sIn) ? K(sIn) : K();
                         continue;
                     }
                     if (!inReach && (target.Position - Pos).Length() > 20 && !slNear.Contains(slHere))
@@ -10123,7 +10264,8 @@ namespace AnodyneSharp.Recording
                             var ncA = BotNav.CentreOf(approach[0]) + new Vector2(5, 6);
                             var meA = Pos + new Vector2(5, 6);
                             float apx = ncA.X - meA.X, apy = ncA.Y - meA.Y;
-                            yield return K(Math.Abs(apx) > 2f ? (apx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (apy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                            var apKey = Math.Abs(apx) > 2f ? (apx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (apy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                            yield return slStepClear == null || slStepClear(apKey) ? K(apKey) : K();
                             continue;
                         }
                     }
@@ -10808,7 +10950,12 @@ namespace AnodyneSharp.Recording
                 {
                     // It drifts straight at us through walls and over water: it always comes, so never chase it, wait for it on the floor.
                     BotRunner.Status = "fight/gas guy: let it come";
+                    if (Environment.GetEnvironmentVariable("ANODYNE_GAS_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  gas f{BotRunner.Frame} keys={string.Join("+", gasKeys)} P={Pos} hb={Player.Hitbox} face={Player.facing} rev={Player.reversed} grid={Grid} gas={target.Hitbox}");
+                    }
                     BotRunner.NotStuck(); // standing still on purpose
+                    stillFrames = 0;
                     if (noKill > 0 && noKill < 3000)
                     {
                         noKill = 1;

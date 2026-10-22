@@ -536,6 +536,7 @@ namespace AnodyneSharp.Recording
             held = BotScript.SpikeGuard(held);
             held = BotScript.SwingGuard(held);
             held = BotScript.DoorGuard(held);
+            held = BotScript.FightEdgeGuard(held);
             held = BotScript.BulletHop(held);
             held = BotScript.ContactEscape(held);
             held = BotScript.SteamBrace(held);

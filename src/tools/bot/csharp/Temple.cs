@@ -130,8 +130,9 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("The Apartments (Broom Widen from Red Cave first)");
             yield return Section("apartment to red cave", () => Exec("W30 O1 X1 n0 W60 >588,896 U20 W10 A W60 T W200 >596,852 W30 oREDCAVE@551,883 W90 `ap_rc"));
-            // (3,6): a 2-hole pit taken with a running jump; the Widen chest is on (4,6)
-            yield return Section("apartment widen", () => Exec("O1 X0 H3,6 >528,1027 W5 er545 W20 H4,6 I768,976,d W60 T W30 `ap_widen"));
+            // (3,6): a 2-hole pit taken with a running jump; the Widen chest is on (4,6), between two Slashers: fight them (walking past
+            // with auto-fight off only collected their cuts), with the usual Red Cave Slasher budget
+            yield return Section("apartment widen", () => Exec("O1 X0 H3,6 >528,1027 W5 er545 W20 g3 X1 H4,6 F X0 g0 I768,976,d W60 T W30 `ap_widen"));
             yield return Section("apartment entrance", () => Exec("W30 O1 X1 n0 W60 D30 W90 U4 W60 n0 W120 >828,1168 U20 W10 A W60 T W200 O1 X0 H2,2 H2,1 H2,0 H3,0 W20 oAPARTMENT W90 `ap_in"));
             // Widen equipped; the platform ride to (2,4); its pillar switch hit twice (1s apart) with the wide broom; up into (2,3).
             // (2,3): the fish facing left first runs right along row 34 to the couch (col 26); scared from below it runs up col 26 onto
