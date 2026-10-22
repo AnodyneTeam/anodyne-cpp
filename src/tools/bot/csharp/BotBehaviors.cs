@@ -3957,6 +3957,11 @@ namespace AnodyneSharp.Recording
                 BotRunner.Status = "frog rush: back off";
                 if (jump)
                 {
+                    // (a swing roots us: a jump pressed in it is lost, and the steps after it walk into the pit)
+                    for (int i = 0; i < 24 && Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK; i++)
+                    {
+                        yield return K();
+                    }
                     yield return K(KeyFunctions.Cancel, back);
                 }
                 for (int i = 0; i < 40 && (i < 3 || Player.state == AnodyneSharp.Entities.PlayerState.AIR || (!jump && i < 30)); i++)
@@ -9139,8 +9144,9 @@ namespace AnodyneSharp.Recording
         /// <summary>Is the dog's hitbox, moved by `off`, clear of walls?</summary>
         private static bool DogBoxClear(Rectangle hb, Vector2 off)
         {
-            float l = hb.X + off.X, t = hb.Y + off.Y;
-            foreach (var (x, y) in new[] { (l, t), (l + hb.Width - 0.01f, t), (l, t + hb.Height - 0.01f), (l + hb.Width - 0.01f, t + hb.Height - 0.01f) })
+            // (1px in from each side: the hitbox is the dog's float position rounded down, so one hugging a wall below it reads as in it)
+            float l = hb.X + off.X + 1, t = hb.Y + off.Y + 1;
+            foreach (var (x, y) in new[] { (l, t), (l + hb.Width - 2.01f, t), (l, t + hb.Height - 2.01f), (l + hb.Width - 2.01f, t + hb.Height - 2.01f) })
             {
                 var tile = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
                 if (BotNav.IsBeamWall(tile))
