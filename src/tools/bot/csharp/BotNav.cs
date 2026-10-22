@@ -800,6 +800,10 @@ namespace AnodyneSharp.Recording
                     return false;
                 }
                 var dm = Math.Abs(dx) > Math.Abs(dy) ? new Point(Math.Sign(dx), 0) : new Point(0, Math.Sign(dy));
+                if (Math.Min(Math.Abs(dx), Math.Abs(dy)) == 2 && PadsBehind(a, dm) < 2)
+                {
+                    return false;
+                }
                 return DashLeapTiles(a, dm) >= Math.Max(Math.Abs(dx), Math.Abs(dy));
             }
             if (Math.Abs(dx + dy) < 3)
@@ -882,7 +886,9 @@ namespace AnodyneSharp.Recording
                     // Or a tile to one side at the far end: in the air the side key drifts us ~27px across (a walk's worth) while the
                     // dash carries us along, so a landing one row or column over is in reach too.
                     // (two over too: lined up on the lane's side edge before take-off, the drift just carries us there)
-                    foreach (var l in new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X), new Point(2 * d.Y, 2 * d.X), new Point(-2 * d.Y, -2 * d.X) })
+                    // (two over only off a double dash: the side drift costs a single dash its last tile, seen falling short (15,48)->(18,46))
+                    foreach (var l in PadsBehind(c, d) >= 2 ? new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X), new Point(2 * d.Y, 2 * d.X), new Point(-2 * d.Y, -2 * d.X) }
+                        : new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X) })
                     {
                         bool gap = false;
                         var l1 = new Point(Math.Sign(l.X), Math.Sign(l.Y));

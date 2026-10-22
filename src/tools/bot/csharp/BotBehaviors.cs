@@ -1628,6 +1628,71 @@ namespace AnodyneSharp.Recording
         /// A super Annoyer fires every 2.3s (while active) at where we stand, 30px/s; a shot's opacity falls 0.06 a second from 1, so
         /// the freshest one in its pool dates the last shot. The next one: from where it is, at us as we stand now.
         /// </summary>
+        /// <summary>The centre of the nearest Annoyer fireball in flight that reaches us within the given frames (null if none).</summary>
+        private static Vector2? IncomingAnnoyerFireball(int within)
+        {
+            var me = Player.Hitbox;
+            me.Inflate(2, 2);
+            foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
+            {
+                foreach (var b in an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>())
+                {
+                    if (!b.exists || b.velocity == Vector2.Zero)
+                    {
+                        continue;
+                    }
+                    for (int f = 0; f <= within; f++)
+                    {
+                        var p = b.Position + b.velocity * (f / 60f);
+                        if (me.Intersects(new Rectangle((int)p.X, (int)p.Y, b.width, b.height)))
+                        {
+                            return b.Hitbox.Center.ToVector2();
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The centre of a super Annoyer within `near` px whose next shot is due within the given frames (null if none).</summary>
+        private static Vector2? AnnoyerAboutToFire(int within, float near)
+        {
+            var pc = Player.Hitbox.Center.ToVector2();
+            foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
+            {
+                var ac = an.Hitbox.Center.ToVector2();
+                if (an.exists && (ac - pc).Length() < near && AnnoyerFireDue(an) is int due && due <= within)
+                {
+                    return ac;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Frames until a super Annoyer's next shot: its Active state's one timer is the fire timer (knocked back, the timer waits, and
+        /// so do its shots). Null for a plain one, or when it cannot be read.
+        /// </summary>
+        private static int? AnnoyerFireDue(AnodyneSharp.Entities.Enemy.Annoyer an)
+        {
+            if (!an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().Any())
+            {
+                return null;
+            }
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
+            var root = typeof(AnodyneSharp.Entities.Enemy.Annoyer).GetField("_state", F)?.GetValue(an);
+            var tt = typeof(AnodyneSharp.FSM.TimerState);
+            var top = (tt.BaseType?.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top == null || top.GetType().Name != "ActiveState" || tt.GetField("current", F)?.GetValue(top) is not float now
+                || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0
+                || timers[0].GetType().GetField("current", FP)?.GetValue(timers[0]) is not float due)
+            {
+                return null;
+            }
+            return Math.Max(0, (int)Math.Round((due - now) * 60f));
+        }
+
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
             var balls = an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
@@ -1639,10 +1704,10 @@ namespace AnodyneSharp.Recording
             {
                 return null; // asleep or far: its shot (if any) is seen in flight in time
             }
-            // (pool slots never fired sit at opacity 1, gone: not shots)
-            var shot = balls.Where(b => b.exists || b.opacity < 1f).ToList();
-            float age = shot.Count > 0 ? (1f - shot.Max(b => b.opacity)) / 0.06f * 60f : 999f;
-            int next = Math.Max(0, (int)(138 - age));
+            if (AnnoyerFireDue(an) is not int next)
+            {
+                return null;
+            }
             if (next > Horizon)
             {
                 return null;
@@ -1657,7 +1722,7 @@ namespace AnodyneSharp.Recording
             dir = Vector2.Normalize(dir) * 0.5f;
             if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null)
             {
-                System.Console.Error.WriteLine($"  annfire f{BotRunner.Frame} an={an.Position} next={next} age={age:0} ops={string.Join(",", balls.Select(b => $"{b.opacity:0.00}{(b.exists ? "" : "x")}"))}");
+                System.Console.Error.WriteLine($"  annfire f{BotRunner.Frame} an={an.Position} next={next}");
             }
             var t = new Threat { Name = "Annoyer next fireball", Source = an, Margin = 3, HurtsInAir = true };
             // (the moment is a guess to a few frames: it starts a little early and its first stretch is drawn fat)
@@ -13518,6 +13583,22 @@ namespace AnodyneSharp.Recording
                     yield return gasKeys;
                     continue;
                 }
+                // A super Annoyer's fireball on its way in (fired from the ring it circles us on, ~20px off: no time to walk clear of it):
+                // bat it away, the broom puts it out. Turn to it first (a swing pressed with the turn goes the old way).
+                // (one about to fire from right beside us comes out a frame or two from our box: the broom must be out already)
+                if ((IncomingAnnoyerFireball(24) ?? AnnoyerAboutToFire(6, 34)) is Vector2 inc && !(Player.broom != null && Player.broom.exists))
+                {
+                    var pc0 = Player.Hitbox.Center.ToVector2();
+                    var tow = Math.Abs(inc.X - pc0.X) >= Math.Abs(inc.Y - pc0.Y) ? (inc.X < pc0.X ? Facing.LEFT : Facing.RIGHT) : (inc.Y < pc0.Y ? Facing.UP : Facing.DOWN);
+                    BotRunner.Status = "fight: bat an Annoyer fireball away";
+                    if (Player.facing != tow)
+                    {
+                        yield return K(tow switch { Facing.LEFT => KeyFunctions.Left, Facing.RIGHT => KeyFunctions.Right, Facing.UP => KeyFunctions.Up, _ => KeyFunctions.Down });
+                        continue;
+                    }
+                    yield return K(KeyFunctions.Accept);
+                    continue;
+                }
                 if (target.GetType().Name == "Annoyer" && (distSq < 75 * 75 || AnnoyerAwake(target)))
                 {
                     // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
@@ -13587,6 +13668,14 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine($"  annoyers policy f{i}: keys=[{string.Join("+", annKeys)}] P={Player.Hitbox} face={Player.facing} T={annCtx.T} others={annCtx.Others.Count} hold={pmem.HoldFace}/{pmem.HoldUntil} swing={pmem.Swing}/{pmem.LastSwing}");
                     }
                     yield return PolicyFrame(annKeys, target);
+                    continue;
+                }
+                // On the way to (or stuck short of) it: a shot or another enemy about to reach where we stand comes first. (Not up close:
+                // there the close fight's own dodging knows the target's moves, this would step into them.)
+                if (DodgeEnabled && distSq > 48 * 48 && StandSafe(target) is var guard && guard.Length > 0)
+                {
+                    BotRunner.Status = $"fight {target.GetType().Name}: out of a shot's way";
+                    yield return guard;
                     continue;
                 }
                 // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.
