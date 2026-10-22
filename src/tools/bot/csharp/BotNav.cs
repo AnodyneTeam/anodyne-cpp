@@ -446,6 +446,19 @@ namespace AnodyneSharp.Recording
                     _crossCracked = false;
                 }
             }
+            if (p == null && jump && !_leaps)
+            {
+                // Stepping stones: jump from island to island when there is no other way.
+                _leaps = true;
+                try
+                {
+                    p = RaftPathCore1(from, wet, goal, jump);
+                }
+                finally
+                {
+                    _leaps = false;
+                }
+            }
             return p;
         }
 
@@ -1023,29 +1036,66 @@ namespace AnodyneSharp.Recording
             {
                 return known;
             }
-            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
-            float reach = sx != 0 && sy != 0 ? LeapReachDiag : LeapReach;
             const int w = 10, h = 12;
             bool ok = false;
-            for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - h + 6 && !ok; y++)
+            foreach (int m in LeapSideFrames(a, b))
             {
-                for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - w + 6 && !ok; x++)
+                for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - h + 6 && !ok; y++)
                 {
-                    var s = new Rectangle(x, y, w, h);
-                    if (new Point((x + w / 2) / 16, (y + h / 2) / 16) != a || !BoxStands(s))
+                    for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - w + 6 && !ok; x++)
                     {
-                        continue;
+                        var s = new Rectangle(x, y, w, h);
+                        if (new Point((x + w / 2) / 16, (y + h / 2) / 16) != a || !BoxStands(s))
+                        {
+                            continue;
+                        }
+                        ok = true;
+                        foreach (float slack in new[] { -2f, 0f, 2f })
+                        {
+                            var c = LeapCarry(a, b, m, slack);
+                            var l = new Rectangle((int)Math.Round(x + c.X), (int)Math.Round(y + c.Y), w, h);
+                            ok &= new Point((l.X + w / 2) / 16, (l.Y + h / 2) / 16) == b && BoxStands(l);
+                        }
                     }
-                    ok = true;
-                    foreach (float carry in new[] { reach - 2, reach, reach + 2 })
-                    {
-                        var l = new Rectangle((int)Math.Round(x + sx * carry), (int)Math.Round(y + sy * carry), w, h);
-                        ok &= new Point((l.X + w / 2) / 16, (l.Y + h / 2) / 16) == b && BoxStands(l);
-                    }
+                }
+                if (ok)
+                {
+                    break;
                 }
             }
             _leapFits[(a, b)] = ok;
             return ok;
+        }
+
+        /// <summary>Why a free jump from a to b is or is not a search step (for the debug log).</summary>
+        public static string LeapWhy(Point a, Point b) => $"{a.X},{a.Y}>{b.X},{b.Y}: floor {LeapFloor(a)}/{LeapFloor(b)} clear {LeapClear(a, b)} fits {LeapFits(a, b)} walk {Walkable(b)}";
+
+        /// <summary>A jump's air time in frames, as LeapReach is walked in it.</summary>
+        public const int LeapFrames = 30;
+
+        /// <summary>
+        /// For a jump from a to b, how many frames the side key is held along with the main one (the air speed stops dead on an axis whose
+        /// key is let go): all of them for a straight or a true diagonal (LeapFrames), and for a lopsided one, like two across and one down,
+        /// a choice of shorter holds.
+        /// </summary>
+        public static int[] LeapSideFrames(Point a, Point b)
+        {
+            int dx = Math.Abs(b.X - a.X), dy = Math.Abs(b.Y - a.Y);
+            return dx == 0 || dy == 0 || dx == dy ? new[] { LeapFrames } : new[] { LeapFrames, 16, 12, 20, 8, 24 };
+        }
+
+        /// <summary>Where a jump from a towards b carries us, holding the side key for m frames (slack: px more or less on the main axis).</summary>
+        public static Vector2 LeapCarry(Point a, Point b, int m, float slack)
+        {
+            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+            if (sx == 0 || sy == 0 || m >= LeapFrames)
+            {
+                float reach = (sx != 0 && sy != 0 ? LeapReachDiag : LeapReach) + slack;
+                return new Vector2(sx * reach, sy * reach);
+            }
+            float side = LeapReachDiag * m / LeapFrames;
+            float main = LeapReachDiag * m / LeapFrames + LeapReach * (LeapFrames - m) / LeapFrames + slack;
+            return Math.Abs(b.X - a.X) > Math.Abs(b.Y - a.Y) ? new Vector2(sx * main, sy * side) : new Vector2(sx * side, sy * main);
         }
 
         /// <summary>Consecutive path tiles that are not neighbours and not a ledge drop: a free jump (see Steps).</summary>
@@ -2084,6 +2134,7 @@ namespace AnodyneSharp.Recording
             bool rafts = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type == typeof(AnodyneSharp.Entities.Dust));
             try
             {
+                _leaps = AllowJump; // (stepping stones too: this search only picks the switch, the walk finds its own way after)
                 foreach (int pass in new[] { 0, 1, 2 })
                 {
                     bool respect = pass == 0;
@@ -2156,6 +2207,7 @@ namespace AnodyneSharp.Recording
             finally
             {
                 PillarFlip = false;
+                _leaps = false;
                 _respectClosedGates = true;
                 _noKillBars = false;
             }

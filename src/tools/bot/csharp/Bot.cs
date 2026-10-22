@@ -996,6 +996,22 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
+        /// <summary>Does this screen's stretch of the route (from step pi) cross the line a bouncing dash trap sweeps? Then it is walked to its clock.</summary>
+        private static bool RouteCrossesLane(Entity trap, List<Point> path, int pi)
+        {
+            var r = trap.Hitbox;
+            var scr = Grid;
+            var lane = trap.velocity.X != 0 ? new Rectangle(scr.X * 160, r.Top - 2, 160, r.Height + 4) : new Rectangle(r.Left - 2, scr.Y * 160, r.Width + 4, 160);
+            for (int k = Math.Max(0, pi); k < path.Count && path[k].X / 10 == scr.X && path[k].Y / 10 == scr.Y; k++)
+            {
+                if (lane.Intersects(new Rectangle(path[k].X * 16 + 3, path[k].Y * 16 + 2, 10, 12)))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         protected static IEnumerable<object> Leap(Point a, Point b)
         {
             var spring = BotNav.SpringBetween(a, b);
@@ -1003,7 +1019,6 @@ namespace AnodyneSharp.Recording
             var finalTile = b;
             b = landOn;
             int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
-            float reach = sx != 0 && sy != 0 ? BotNav.LeapReachDiag : BotNav.LeapReach;
             var hb = Player.Hitbox;
             var off = new Vector2(hb.X - Pos.X, hb.Y - Pos.Y);
             Rectangle Box(float x, float y) => new((int)Math.Round(x), (int)Math.Round(y), hb.Width, hb.Height);
@@ -1011,37 +1026,48 @@ namespace AnodyneSharp.Recording
                 : BotNav.TileOf(new Vector2(r.X, r.Y) - off) == b && StandsSafe(r);
             Vector2? best = null;
             float bestScore = float.MaxValue;
-            for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - hb.Height + 6; y++)
+            int sideFrames = BotNav.LeapFrames; // (a lopsided jump lets the side key go after this many frames)
+            foreach (int m in BotNav.LeapSideFrames(a, b))
             {
-                for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - hb.Width + 6; x++)
+                var c0 = BotNav.LeapCarry(a, b, m, 0);
+                for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - hb.Height + 6; y++)
                 {
-                    if (!StandsSafe(Box(x, y)) || BotNav.TileOf(new Vector2(x, y) - off) != a)
+                    for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - hb.Width + 6; x++)
                     {
-                        continue;
-                    }
-                    bool ok = true;
-                    foreach (float carry in new[] { reach - 2, reach, reach + 2 })
-                    {
-                        ok &= Lands(Box(x + sx * carry, y + sy * carry));
-                    }
-                    if (!ok)
-                    {
-                        continue;
-                    }
-                    // the middle of the safe spots: far from both edges of the margin (a px off either way still works), near where we are
-                    float score = Math.Abs(x - hb.X) + Math.Abs(y - hb.Y);
-                    foreach (var (ex, ey) in new[] { (-2, 0), (2, 0), (0, -2), (0, 2) })
-                    {
-                        if (!StandsSafe(Box(x + ex, y + ey)) || !Lands(Box(x + ex + sx * reach, y + ey + sy * reach)))
+                        if (!StandsSafe(Box(x, y)) || BotNav.TileOf(new Vector2(x, y) - off) != a)
                         {
-                            score += 20;
+                            continue;
+                        }
+                        bool ok = true;
+                        foreach (float slack in new[] { -2f, 0f, 2f })
+                        {
+                            var c = BotNav.LeapCarry(a, b, m, slack);
+                            ok &= Lands(Box(x + c.X, y + c.Y));
+                        }
+                        if (!ok)
+                        {
+                            continue;
+                        }
+                        // the middle of the safe spots: far from both edges of the margin (a px off either way still works), near where we are
+                        float score = Math.Abs(x - hb.X) + Math.Abs(y - hb.Y);
+                        foreach (var (ex, ey) in new[] { (-2, 0), (2, 0), (0, -2), (0, 2) })
+                        {
+                            if (!StandsSafe(Box(x + ex, y + ey)) || !Lands(Box(x + ex + c0.X, y + ey + c0.Y)))
+                            {
+                                score += 20;
+                            }
+                        }
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            best = new Vector2(x, y) - off;
+                            sideFrames = m;
                         }
                     }
-                    if (score < bestScore)
-                    {
-                        bestScore = score;
-                        best = new Vector2(x, y) - off;
-                    }
+                }
+                if (best != null)
+                {
+                    break;
                 }
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -1085,9 +1111,12 @@ namespace AnodyneSharp.Recording
             BotRunner.Status = $"leap to {b.X},{b.Y}";
             yield return K(jumpKeys.ToArray());
             var air = jumpKeys.Skip(1).ToArray();
+            // (a lopsided jump: the side key goes after sideFrames, and the main one carries us on alone)
+            bool xMain = Math.Abs(b.X - a.X) > Math.Abs(b.Y - a.Y);
+            var mainOnly = air.Where(k => xMain ? k is KeyFunctions.Left or KeyFunctions.Right : k is KeyFunctions.Up or KeyFunctions.Down).ToArray();
             for (int j = 0; j < 60 && (j < 3 || Player.state == PlayerState.AIR); j++)
             {
-                yield return K(air);
+                yield return K(j + 1 >= sideFrames && sideFrames < BotNav.LeapFrames ? mainOnly : air);
             }
             for (int j = 0; j < 90 && spring != null && (j < 4 || Player.state == PlayerState.AUTO_JUMP); j++)
             {
@@ -1664,7 +1693,7 @@ namespace AnodyneSharp.Recording
                         goto replan;
                     }
                     if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
-                        && (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller) || RouteRunsByPillars(path, pi)))
+                        && (BotRunner.Entities().Any(e => e.exists && (e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller || e is AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap && RouteCrossesLane(e, path, pi))) || RouteRunsByPillars(path, pi)))
                     {
                         // Spike rollers sweeping the room (bars that span it and turn only at walls): time this screen's stretch of the
                         // route against them, jumping each bar as it passes, then plan on from wherever that leaves us.

@@ -1111,6 +1111,22 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>No wall tile under any part of r (pits and water do not count).</summary>
+        /// <summary>Does r overlap a hole tile (what a hole-shy mover such as a dash trap turns at)?</summary>
+        private static bool HoleUnder(Rectangle r)
+        {
+            for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+            {
+                for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+                {
+                    if (BotNav.IsHole(new Point(tx, ty)))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         private static bool WallFree(Rectangle r)
         {
             for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
@@ -4861,6 +4877,7 @@ namespace AnodyneSharp.Recording
             int killTrips = 0; // trips round to the enemies of a kill gate on the far side
             bool warped = false; // went back to the Nexus pad to plan from there
             int flips = 0, buttonsPressed = 0;
+            var lookedAt = new HashSet<Point>(); // screens gone to for a look at a shut gate with no button
             for (int hop = 0; hop < 80; hop++)
             {
                 BotNav.ResetDustCache();
@@ -4908,6 +4925,10 @@ namespace AnodyneSharp.Recording
                     BotNav.AllowJump = jump;
                     var hit = BotNav.PillarRoute(here, goal);
                     BotNav.AllowJump = false;
+                    if (hit == null && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  pillars: no switch to hit from {here} to {goal} (reached {BotNav.LastRouteReached}, respected {BotNav.LastRouteRespected}, gate {BotNav.LastRouteGate}, flip {BotNav.PillarFlip})");
+                    }
                     if (hit is var (stand, sw))
                     {
                         flips++;
@@ -4957,6 +4978,47 @@ namespace AnodyneSharp.Recording
                             plan = null;
                             lastHere = new Point(-1, -1);
                             continue;
+                        }
+                        if (gs2 != Grid && !lookedAt.Contains(gs2))
+                        {
+                            // No button for it to be seen from here: what opens it (an event, a fight) shows only on its own screen, and the
+                            // gates there as they really are. Go and look: the nearest tile on that screen we can get to, then plan again.
+                            lookedAt.Add(gs2);
+                            BotNav.AllowJump = jump;
+                            Point? look = null;
+                            int lookLen = int.MaxValue;
+                            for (int ty = gs2.Y * 10; ty < gs2.Y * 10 + 10; ty++)
+                            {
+                                for (int tx = gs2.X * 10; tx < gs2.X * 10 + 10; tx++)
+                                {
+                                    var t = new Point(tx, ty);
+                                    int d = Math.Abs(t.X - shut.X) + Math.Abs(t.Y - shut.Y);
+                                    if (d >= lookLen || !BotNav.Walkable(t) || t == shut)
+                                    {
+                                        continue;
+                                    }
+                                    BotNav.PillarRoute(here, t);
+                                    if (BotNav.LastRouteReached && BotNav.LastRouteRespected)
+                                    {
+                                        look = t;
+                                        lookLen = d;
+                                    }
+                                }
+                            }
+                            BotNav.AllowJump = false;
+                            if (look is Point lt)
+                            {
+                                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                                {
+                                    System.Console.Error.WriteLine($"  gates: the way to {goal} is through the shut gate {shut} on {gs2}, with no button: go and look from {lt}");
+                                }
+                                var lc = BotNav.CentreOf(lt);
+                                yield return GoGlobal(lc.X, lc.Y);
+                                yield return Wait(30);
+                                plan = null;
+                                lastHere = new Point(-1, -1);
+                                continue;
+                            }
                         }
                     }
                     else if (BotNav.LastRouteGate is Point kgate && BotNav.KillGateFoes(kgate) is { Count: > 0 } foes && killTrips < 3)
@@ -5011,6 +5073,16 @@ namespace AnodyneSharp.Recording
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
                         System.Console.Error.WriteLine($"  no route from {here} to {goal}: back to the Nexus pad to try from there");
+                        for (int dy = -2; dy <= 2; dy++)
+                        {
+                            for (int dx = -2; dx <= 2; dx++)
+                            {
+                                if (Math.Abs(dx) + Math.Abs(dy) > 1)
+                                {
+                                    System.Console.Error.WriteLine("    jump " + BotNav.LeapWhy(here, new Point(here.X + dx, here.Y + dy)));
+                                }
+                            }
+                        }
                     }
                     yield return MenuReturnToPad(0);
                     yield return Wait(60);
@@ -14273,6 +14345,31 @@ namespace AnodyneSharp.Recording
                     list.Add((tr, true));
                     continue;
                 }
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap)
+                {
+                    // a bouncing dash trap: 80px/s along its line, turning at walls, holes and the screen's edge; it hurts only on the ground
+                    var dt = new Rectangle?[frames + 1];
+                    var pos = new Vector2(e.Hitbox.X, e.Hitbox.Y);
+                    var dv = e.velocity / 60f;
+                    var scr = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+                    for (int f = 0; f <= frames; f++)
+                    {
+                        var rr = new Rectangle((int)Math.Round(pos.X), (int)Math.Round(pos.Y), e.Hitbox.Width, e.Hitbox.Height);
+                        rr.Inflate(3, 3); // (float motion and a frame's lag at each turn; fast, so a wider berth)
+                        dt[f] = rr;
+                        var nb = new Rectangle((int)Math.Floor(pos.X + dv.X), (int)Math.Floor(pos.Y + dv.Y), e.Hitbox.Width, e.Hitbox.Height);
+                        if (!WallFree(nb) || HoleUnder(nb) || !scr.Contains(nb))
+                        {
+                            dv = -dv;
+                        }
+                        else
+                        {
+                            pos += dv;
+                        }
+                    }
+                    list.Add((dt, false));
+                    continue;
+                }
                 if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller)
                 {
                     continue;
@@ -14435,6 +14532,7 @@ namespace AnodyneSharp.Recording
         {
             _sweepWalkOk = false;
             var grid = Grid;
+            int noPlan = 0;
             for (int i = 0; i < timeoutFrames;)
             {
                 if (Talking || GlobalState.ScreenTransition || Player.state == PlayerState.AIR)
@@ -14462,7 +14560,40 @@ namespace AnodyneSharp.Recording
                     i++;
                     continue;
                 }
-                var plan = PlanPastSweepers(here, goal, SweeperTracks(SweepStep * (SweepSteps + 3)));
+                var tracks = SweeperTracks(SweepStep * (SweepSteps + 3));
+                var plan = PlanPastSweepers(here, goal, tracks);
+                if (plan == null && noPlan < 120)
+                {
+                    // No timed way from here just now (a bar about to reach us, say): don't hand over to the plain walk, which walks into it.
+                    // Hop on the spot when a ground bar is on us within a few frames, else stand, and plan again.
+                    noPlan++;
+                    var me = Player.Hitbox;
+                    bool soon = tracks.Any(tr => !tr.Air && Enumerable.Range(0, 8).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
+                    if (soon && GlobalState.inventory.CanJump)
+                    {
+                        BotRunner.Status = $"sweepers: hop a bar on the spot at {here} (for {goal})";
+                        if (_jumpPressFrame == BotRunner.Frame - 1)
+                        {
+                            yield return K();
+                            i++;
+                        }
+                        _jumpPressFrame = BotRunner.Frame;
+                        yield return K(KeyFunctions.Cancel);
+                        i++;
+                        for (int w = 0; w < 40 && Player.state == PlayerState.AIR; w++, i++)
+                        {
+                            yield return K();
+                        }
+                    }
+                    else
+                    {
+                        BotRunner.Status = $"sweepers: no way yet from {here} (for {goal}): wait";
+                        yield return K();
+                        i++;
+                    }
+                    continue;
+                }
+                noPlan = 0;
                 if (plan == null)
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
