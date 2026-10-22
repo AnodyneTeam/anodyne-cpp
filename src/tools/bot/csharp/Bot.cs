@@ -1569,6 +1569,27 @@ namespace AnodyneSharp.Recording
                         goto replan;
                     }
                     if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
+                        && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller))
+                    {
+                        // Spike rollers sweeping the room (bars that span it and turn only at walls): time this screen's stretch of the
+                        // route against them, jumping each bar as it passes, then plan on from wherever that leaves us.
+                        var scr = Grid;
+                        int gi = pi;
+                        while (gi < path.Count - 1 && path[gi].X / 10 == scr.X && path[gi].Y / 10 == scr.Y)
+                        {
+                            gi++;
+                        }
+                        if (BotNav.TileOf(Pos) != path[gi])
+                        {
+                            yield return SweeperWalk(path[gi]);
+                            if (!_sweepWalkOk)
+                            {
+                                chaserGaveUp.Add(scr);
+                            }
+                            goto replan;
+                        }
+                    }
+                    if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
                         && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser))
                     {
                         // Chasers about: the plain walk would line up with one and meet it in a corridor. Time this screen's stretch of

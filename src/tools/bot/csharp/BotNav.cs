@@ -123,11 +123,24 @@ namespace AnodyneSharp.Recording
             var presets = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME);
             foreach (var pr in presets)
             {
-                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.Gate) || !pr.Alive || pr.Frame % 10 >= 5)
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.Gate) || !pr.Alive)
                 {
                     continue;
                 }
                 var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                int needKills = pr.Frame % 5 + 1;
+                if (pr.Frame % 10 >= 5)
+                {
+                    // A puzzle gate opens on kills too where the puzzle is someone waiting for the room to be cleared: Javiera, on the
+                    // high wire, crosses over (and counts as solved) once two of the room's enemies are dead.
+                    var scr = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
+                    if (pr.Frame % 5 != 0 || !presets.Any(q => q.Alive && q.Type == typeof(AnodyneSharp.Entities.Interactive.Npc.Circus.JavieraDanger)
+                        && scr.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16))))
+                    {
+                        continue;
+                    }
+                    needKills = 2;
+                }
                 if (!_gatesClosed.Contains(t) && !_edgeGates.Contains(t))
                 {
                     continue;
@@ -142,7 +155,7 @@ namespace AnodyneSharp.Recording
                 // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
                 int killed = here ? GlobalState.ENEMIES_KILLED : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                     && screen.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)));
-                int need = pr.Frame % 5 + 1 - killed;
+                int need = needKills - killed;
                 var entries = new HashSet<Point>();
                 foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
                 {
@@ -178,7 +191,8 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>True when stepping from c onto n would walk into a shut kill gate that cannot be opened from c's side.</summary>
-        public static bool KillGateBarred(Point c, Point n) => !_respectClosedGates && !_noKillBars && _killGateEntries.TryGetValue(n, out var ok) && !ok.Contains(c);
+        public static bool KillGateBarred(Point c, Point n) => !_respectClosedGates && !_noKillBars && _killGateEntries.TryGetValue(n, out var ok) && !ok.Contains(c)
+            && c.X / 10 == n.X / 10 && c.Y / 10 == n.Y / 10; // (coming in over it from the next screen holds it open)
 
         /// <summary>Set for PillarRoute's last pass: every shut gate counts as open whatever side its enemies are on (to learn which gate is in the way).</summary>
         private static bool _noKillBars;
