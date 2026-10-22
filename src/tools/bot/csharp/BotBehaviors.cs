@@ -537,11 +537,18 @@ namespace AnodyneSharp.Recording
             return GoScreenTo(tx, ty);
         }
 
+        static Point? _cameFrom; // the screen we were on before the last GoScreenTo
+
         protected static IEnumerable<object> GoScreenTo(int tx, int ty)
         {
+            var from = Grid;
             yield return GoToWhere(t => t.X * 16 >= tx * 160 && t.X * 16 < tx * 160 + 160 && t.Y * 16 >= ty * 160 && t.Y * 16 < ty * 160 + 160,
                 $"screen {tx},{ty}");
             yield return Until(() => !GlobalState.ScreenTransition && Grid == new Point(tx, ty), 600, $"arrive on screen {tx},{ty}");
+            if (from != new Point(tx, ty))
+            {
+                _cameFrom = from;
+            }
             if (!(AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0))
             {
                 yield return Wait(10); // let the scroll settle; with enemies about there is no time to stand around: straight into the fight
@@ -1433,10 +1440,23 @@ namespace AnodyneSharp.Recording
         /// puzzle to count and steps out of the rats' way. When nothing works because the rats die too soon, it first moves the dust so they
         /// live (a loop of their own) and plans again from there.
         /// </summary>
-        protected static IEnumerable<object> RatOnButton(int limit, int stage = 0)
+        protected static IEnumerable<object> RatOnButton(int limit, int stage = 0, int retries = 0)
         {
             var rats = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Rat).ToList();
             var buttons = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button).ToList();
+            if (rats.Count == 0 && buttons.Count == 2 && retries < 3 && _cameFrom.HasValue)
+            {
+                // The rat ran into a dash trap (or the broom): step back out and in again, which brings the screen's rats back.
+                var g = Grid;
+                var back = _cameFrom.Value;
+                System.Console.Error.WriteLine($"  rat on button: the rats are dead; out to screen {back.X},{back.Y} and back in to bring them back (retry {retries + 1})");
+                yield return GoScreenTo(back.X, back.Y);
+                yield return Wait(20);
+                yield return GoScreenTo(g.X, g.Y);
+                yield return Wait(20);
+                yield return RatOnButton(limit, 0, retries + 1);
+                yield break;
+            }
             if (rats.Count == 0 || buttons.Count != 2)
             {
                 throw new Exception($"rat on button: needs rats and two buttons here ({rats.Count} rats, {buttons.Count} buttons)");
@@ -1683,12 +1703,12 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 System.Console.Error.WriteLine($"  rat on button: {moves.Count} dust moves, the best for the rats' lives {bestLive:P0}" + (keep == null ? "" : $" ({dustTiles[keep.Value.di]} -> {keep.Value.to})"));
-                if (keep != null && bestLive >= 0.5f)
+                if (keep != null && bestLive >= (retries < 3 && _cameFrom.HasValue ? 0.25f : 0.5f)) // a long shot is fine while a fresh try is left
                 {
                     var k = keep.Value;
                     System.Console.Error.WriteLine($"  rat on button: nothing works yet (best {best:P0}); first the dust {dustTiles[k.di]} -> {k.to} (from {k.stand}) keeps the rats alive ({bestLive:P0})");
                     yield return MoveDust(dustTiles[k.di], k.pick, k.to, k.stand, 0);
-                    yield return RatOnButton(limit, 1);
+                    yield return RatOnButton(limit, 1, retries);
                     yield break;
                 }
             }
@@ -2636,6 +2656,114 @@ namespace AnodyneSharp.Recording
 
         /// <summary>The last SafeMove held still only to let a steam jet go down (a wait of up to a whole cycle, ~5s: not "stuck").</summary>
         protected static bool SteamWait;
+
+        private static readonly Dictionary<Entity, (string anim, int since)> _slasherPhase = new();
+        private static KeyFunctions[] _slasherRun;
+
+        /// <summary>
+        /// Every Slasher's coming cut, for the space-time planner: it floats 84 frames, winds up 30 (drifting after us at 20px/s) and cuts
+        /// where it then is, facing us: a long 36x10 strip beyond its body when we are 36px or more from it, else a wide strip across its
+        /// front; the cut lasts ~15 frames. Its body is harmless. Its facing can still turn and it still drifts, so each cut is taken
+        /// for both axes towards us, long and wide, grown by the drift still to come. Late in a float the wind-up is near: predicted too.
+        /// </summary>
+        private static List<Threat> SlasherThreats()
+        {
+            var list = new List<Threat>();
+            int now = (int)BotRunner.Frame;
+            var pc = Player.VisualCenter;
+            foreach (var sl in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").ToList())
+            {
+                string anim = sl.CurAnimName ?? "";
+                string kind = anim.StartsWith("float") ? "float" : anim.StartsWith("warning") ? "warning" : "attack";
+                if (!_slasherPhase.TryGetValue(sl, out var ph) || ph.anim != kind)
+                {
+                    ph = (kind, now);
+                    _slasherPhase[sl] = ph;
+                }
+                foreach (var sub in sl.SubEntities().Where(e => e.exists && e.visible && e.GetType().Name.EndsWith("Slash")))
+                {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && now - ph.since <= 1)
+                    {
+                        System.Console.Error.WriteLine($"  slashcheck f{now} actual={sub.Hitbox} predicted={SlasherCutRect(sl.Position, Player.Position, Player.VisualCenter)} sl={sl.Position} me={Player.Position} {sl.facing}");
+                    }
+                    var th = new Threat { Name = "Slasher cut", Source = sl, Margin = 2, Stationary = true };
+                    for (int k = 0; k <= 16; k++)
+                    {
+                        th.At[k] = sub.Hitbox;
+                    }
+                    list.Add(th);
+                }
+                int left = kind == "warning" ? 30 - (now - ph.since) : kind == "float" ? 84 - (now - ph.since) + 30 : -1;
+                if (left < 0 || left > Horizon)
+                {
+                    continue;
+                }
+                left = Math.Max(left, 0);
+                var toUs = pc - sl.Center;
+                // where it will be: it drifts straight at us (20px/s on each axis) until the cut
+                float drift = 20f * left / 60f;
+                var p = sl.Position + new Vector2(Math.Sign(toUs.X) * Math.Min(drift, Math.Abs(toUs.X)), Math.Sign(toUs.Y) * Math.Min(drift, Math.Abs(toUs.Y)));
+                int grow = 3 + left / 20;
+                var facings = new List<Facing> { sl.facing };
+                facings.Add(Math.Abs(toUs.X) >= Math.Abs(toUs.Y) ? (toUs.Y < 0 ? Facing.UP : Facing.DOWN) : (toUs.X < 0 ? Facing.LEFT : Facing.RIGHT));
+                facings.Add(Math.Abs(toUs.X) >= Math.Abs(toUs.Y) ? (toUs.X < 0 ? Facing.LEFT : Facing.RIGHT) : (toUs.Y < 0 ? Facing.UP : Facing.DOWN));
+                var rects = new List<Rectangle>();
+                foreach (var f in facings.Distinct())
+                {
+                    switch (f)
+                    {
+                        case Facing.UP: rects.Add(new Rectangle((int)p.X + 3, (int)p.Y - 36, 10, 36)); rects.Add(new Rectangle((int)p.X - 10, (int)p.Y - 4, 36, 10)); break;
+                        case Facing.DOWN: rects.Add(new Rectangle((int)p.X + 3, (int)p.Y + 16, 10, 36)); rects.Add(new Rectangle((int)p.X - 10, (int)p.Y + 10, 36, 10)); break;
+                        case Facing.LEFT: rects.Add(new Rectangle((int)p.X - 36, (int)p.Y + 3, 36, 10)); rects.Add(new Rectangle((int)p.X - 5, (int)p.Y - 10, 10, 36)); break;
+                        default: rects.Add(new Rectangle((int)p.X + 16, (int)p.Y + 3, 36, 10)); rects.Add(new Rectangle((int)p.X + 11, (int)p.Y - 10, 10, 36)); break;
+                    }
+                }
+                foreach (var r0 in rects)
+                {
+                    var r = r0;
+                    r.Inflate(grow, grow);
+                    var th = new Threat { Name = "Slasher coming cut", Source = sl, Margin = 1, Stationary = true };
+                    for (int k = Math.Max(0, left - 3); k <= Math.Min(Horizon, left + 16); k++)
+                    {
+                        th.At[k] = r;
+                    }
+                    list.Add(th);
+                }
+            }
+            return list;
+        }
+
+        /// <summary>Frames until this Slasher cuts (-1: it is cutting or resting): 84 of float, then 30 of wind-up.</summary>
+        private static int SlasherCutIn(Entity sl)
+        {
+            if (!_slasherPhase.TryGetValue(sl, out var ph))
+            {
+                return -1;
+            }
+            int now = (int)BotRunner.Frame;
+            return ph.anim == "warning" ? Math.Max(0, 30 - (now - ph.since)) : ph.anim == "float" ? 84 - (now - ph.since) + 30 : -1;
+        }
+
+        /// <summary>The cut a Slasher at `sp` makes at a player at `pp` (Position) / `pvc` (visual centre): it faces us on the dominant axis;
+        /// a long strip beyond it when we are 36px or more from its centre, else a wide one across its front.</summary>
+        private static Rectangle SlasherCutRect(Vector2 sp, Vector2 pp, Vector2 pvc)
+        {
+            var d = pp - sp;
+            var f = Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X > 0 ? Facing.RIGHT : Facing.LEFT) : (d.Y > 0 ? Facing.DOWN : Facing.UP);
+            bool wide = (sp + new Vector2(8, 8) - pvc).LengthSquared() < 36 * 36;
+            int x = (int)sp.X, y = (int)sp.Y;
+            return (f, wide) switch
+            {
+                (Facing.UP, false) => new Rectangle(x + 3, y - 36, 10, 36),
+                (Facing.DOWN, false) => new Rectangle(x + 3, y + 16, 10, 36),
+                (Facing.LEFT, false) => new Rectangle(x - 36, y + 3, 36, 10),
+                (Facing.RIGHT, false) => new Rectangle(x + 16, y + 3, 36, 10),
+                (Facing.UP, true) => new Rectangle(x - 10, y - 4, 36, 10),
+                (Facing.DOWN, true) => new Rectangle(x - 10, y + 10, 36, 10),
+                (Facing.LEFT, true) => new Rectangle(x - 5, y - 10, 10, 36),
+                _ => new Rectangle(x + 11, y - 10, 10, 36),
+            };
+        }
 
         /// <summary>How long into a Slasher's 1.4s float (84 frames, then a 30-frame wind-up) the bot keeps striking before it gets clear of the coming cut: 70 lands the third hit (0.5s apart) in one float.</summary>
         private static readonly int SlasherStrikeFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SLASHER_STRIKE"), out int ssf) ? ssf : 70;
@@ -7639,6 +7767,109 @@ namespace AnodyneSharp.Recording
                 }
                 if (target.GetType().Name == "Slasher")
                 {
+                    // All of them at once (one floats while another winds up): plan round every coming cut whenever one is near.
+                    var slThreats = SlasherThreats();
+                    var meTL = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  slasher f{BotRunner.Frame} me={Player.Hitbox} safe={SafeAtExactThreats(meTL, slThreats, 45)} " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").Select(e => $"S{e.Hitbox}{e.CurAnimName}{e.facing}")) + " | " + string.Join(" ", slThreats.Select(t => t.Name + (Array.FindIndex(t.At, r => r != null)) + t.At.FirstOrDefault(r => r != null))));
+                    }
+                    {
+                        // Our walk one way (held: re-planning every frame dithers while it drifts on top of us) and each winding-up Slasher's
+                        // drift after us, frame by frame; its cut is made from where it and we are then, so it is checked exactly.
+                        var slList = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").ToList();
+                        var cutsNow = slThreats.Where(t => t.Name == "Slasher cut").ToList();
+                        var vcOff = Player.VisualCenter - Player.Position;
+                        var hbOff = new Vector2(Player.Hitbox.X, Player.Hitbox.Y) - Player.Position;
+                        var winding = slList.Select(e => (e, left: SlasherCutIn(e))).Where(w => w.left >= 0 && w.left <= 64).ToList();
+                        (bool clear, Vector2 end, int hitAt) Sim(KeyFunctions[] runDir, int walk = 66)
+                        {
+                            var v = Vector2.Zero;
+                            foreach (var kf in runDir)
+                            {
+                                v += DirVector(kf);
+                            }
+                            v = v == Vector2.Zero ? v : Vector2.Normalize(v) * WalkPxPerFrame;
+                            var q = Player.Position;
+                            var sp = winding.Select(w => w.e.Position).ToArray();
+                            var cut = new Rectangle?[winding.Count];
+                            for (int k = 1; k <= 66; k++)
+                            {
+                                var nq = q + (k <= walk ? v : Vector2.Zero);
+                                if (CornersWalkable(new Rectangle((int)(nq.X + hbOff.X), (int)(nq.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height))
+                                    && BotNav.TileOf(nq + hbOff).X / 10 == Grid.X && BotNav.TileOf(nq + hbOff).Y / 10 == Grid.Y)
+                                {
+                                    q = nq;
+                                }
+                                var me2 = new Rectangle((int)(q.X + hbOff.X), (int)(q.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height);
+                                for (int w = 0; w < winding.Count; w++)
+                                {
+                                    if (k < winding[w].left)
+                                    {
+                                        AnodyneSharp.Utilities.MathUtilities.MoveTo(ref sp[w].X, q.X, 20);
+                                        AnodyneSharp.Utilities.MathUtilities.MoveTo(ref sp[w].Y, q.Y, 20);
+                                    }
+                                    else if (k == Math.Max(1, winding[w].left))
+                                    {
+                                        cut[w] = SlasherCutRect(sp[w], q, q + vcOff);
+                                    }
+                                    if (cut[w] is Rectangle cr && k <= winding[w].left + 16)
+                                    {
+                                        cr.Inflate(2, 2);
+                                        if (cr.Intersects(me2))
+                                        {
+                                            return (false, q, k);
+                                        }
+                                    }
+                                }
+                                foreach (var t in cutsNow)
+                                {
+                                    if (k <= 16 && t.At[k] is Rectangle r && r.Intersects(me2))
+                                    {
+                                        return (false, q, k);
+                                    }
+                                }
+                            }
+                            return (true, q, 99);
+                        }
+                        if (winding.Count > 0 || cutsNow.Count > 0)
+                        {
+                            bool stayOk = Sim(StActions[0]).clear;
+                            // (the one we are after: towards it while it still floats a while, else away)
+                            bool strikeable = SlasherCutIn(target) > 64;
+                            if (!stayOk)
+                            {
+                                // the shortest dodge that works (walk that way for a while, then stand): it keeps us close for the next strike
+                                KeyFunctions[] best = null;
+                                float bestScore = float.MinValue;
+                                foreach (var runDir in StActions.Skip(1))
+                                {
+                                    foreach (int walk in new[] { 10, 18, 28, 40, 66 })
+                                    {
+                                        var (clear, q, hitAt) = Sim(runDir, walk);
+                                        var qc = q + vcOff;
+                                        // (no clear way: the one that is hit latest, where it may still turn out clear as things move)
+                                        float score = clear ? 1000f - walk - 0.5f * (target.Center - qc).Length() : hitAt * 8f + slList.Min(e => (e.Center - qc).Length()) * 0.2f;
+                                        score += _slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f;
+                                        if (score > bestScore)
+                                        {
+                                            bestScore = score;
+                                            best = runDir;
+                                        }
+                                        if (clear)
+                                        {
+                                            break;
+                                        }
+                                    }
+                                }
+                                _slasherRun = best;
+                                BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
+                                yield return K(best);
+                                continue;
+                            }
+                        }
+                    }
+                    _slasherRun = null;
                     string anim = target.CurAnimName ?? "";
                     bool cutting = anim.StartsWith("attack") && target.SubEntities().Any(sub => sub.exists);
                     bool floating = anim.StartsWith("float");

@@ -182,9 +182,9 @@ namespace AnodyneSharp.Recording
             yield return Section("apartment key 3", () => Exec(
                 ">1283,210 W10 (82,14 W10 G1379,226 G1379,242 W10 X1 H8,2 W30 F1800 W30 X1 H8,3 W30 ] W30 I1312,496,d W60 T W30 `ap_key3"));
             // (7,3): the slashers, then a running jump into the water (too far to wade) to the dust raft and across to the button;
-            // (6,3), (6,4)'s key block.
+            // (6,3), (6,4)'s key block. TODO: the slashers still cost up to 3 hearts (budgeted).
             yield return Section("apartment water", () => Exec(
-                "X1 H7,3 W30 F1800 W30 H7,3 W30 >1139,578 W10 er G1187,578 G1187,546 G1142,546 W10 G1123,546 W30 X0 W2 H6,3 W30 " +
+                "g3 X1 H7,3 W30 F1800 W30 H7,3 W30 >1139,578 W10 er G1187,578 G1187,546 G1142,546 W10 G1123,546 W30 X0 W2 H6,3 W30 " +
                 "X1 H6,4 W30 F1800 W30 `ap_water"));
             // (7,2): its key block, then the down door to (2,2): its two buttons by the two propelled platforms, and back up.
             yield return Section("apartment twin platforms", () => Exec(
@@ -194,12 +194,13 @@ namespace AnodyneSharp.Recording
             yield return Section("apartment maze", () => Exec(
                 "X1 H6,2 W30 F1800 W30 X0 H5,2 [ W30 X0 H5,3 W20 _803,610 W20 X1 H4,3 W30 F1800 W20 H4,2 W20 >771,338 U40 W120 `ap_maze"));
             // (5,7) silverfish button (a Gas Guy in the room is fought first), (5,6), (6,6)'s key chest.
+            // TODO: (5,6)'s dash traps and (6,6)'s slasher can still cost 2 hearts (budgeted).
             yield return Section("apartment south key", () => Exec(
-                "X0 H5,7 ] W30 X1 F1800 W20 X1 H5,6 W30 F W30 X1 H6,6 W30 F W30 I1088,976,d W60 T W30 `ap_south"));
+                "g2 X0 H5,7 ] W30 X1 F1800 W20 X1 H5,6 W30 F W30 X1 H6,6 W30 F W30 I1088,976,d W60 T W30 `ap_south"));
             // (6,7): the silverfish onto its button by pillar flips (`]`), the key block, the (7,7) checkpoint and the Watcher (7,6),
             // then its health cicada.
             yield return Section("apartment watcher", () => Exec(
-                "X0 H5,6 W10 H5,7 W10 H6,7 W20 ] W30 >1091,1138 R40 W30 V W20 H7,6 W120 i W60 `ap_watcher"));
+                "X0 H5,6 W10 H5,7 W10 H6,7 W20 ] W30 >1091,1138 R40 W30 V W20 X1 H7,6 W120 i W60 `ap_watcher"));
             // (8,7)'s card, and out to the Nexus.
             yield return Section("apartment last card", () => Exec("H8,7 W20 I1376,1168,d W60 T W30 n0 W120 `ap_done"));
         }
