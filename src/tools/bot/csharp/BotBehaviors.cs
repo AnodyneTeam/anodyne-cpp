@@ -4851,6 +4851,96 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// A bullet Slime's shot (aimed at us, 40px/s, from its corner): hop over it, as only a player on the ground is hurt. A shot fired from
+        /// broom's length (where the Slime policy stands) touches us the frame it spawns, so the hop goes off just before the Slime's shot timer
+        /// runs out, sideways when there is floor there (the shot then flies through where we were). (Hopping shots from further off as they
+        /// arrive did worse: the landings came down on the Slimes or other shots.) ANODYNE_NO_BULLETHOP turns it off.
+        /// </summary>
+        private static KeyFunctions? _hopDir;
+        private static long _hopUntil;
+
+        internal static KeyFunctions[] BulletHop(KeyFunctions[] held)
+        {
+            if (Player != null && Player.state == AnodyneSharp.Entities.PlayerState.AIR && _hopDir is KeyFunctions hd && BotRunner.Frame <= _hopUntil)
+            {
+                return new[] { hd }; // (keep going across the shot's line all the way)
+            }
+            if (Player == null || Player.state != AnodyneSharp.Entities.PlayerState.GROUND || Environment.GetEnvironmentVariable("ANODYNE_NO_BULLETHOP") != null)
+            {
+                return held;
+            }
+            var pb = Player.Hitbox;
+            pb.Inflate(1, 1);
+            foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
+            {
+                var shots = sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().ToList();
+                if (shots.Count == 0)
+                {
+                    continue; // (a plain Slime)
+                }
+                var sb = sl.Hitbox;
+                int gap = Math.Max(Math.Max(sb.Left - pb.Right, pb.Left - sb.Right), Math.Max(sb.Top - pb.Bottom, pb.Top - sb.Bottom));
+                if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && gap < 40) { System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame} sl={sl.Position} due={SlimeShotIn(sl)} gap={gap} me={Player.Position} st={Player.state}"); }
+                if (gap < 30 && SlimeShotIn(sl) is float due && due <= 1.5f / 60f)
+                {
+                    BotRunner.Status = "hop the slime's next shot";
+                    return HopAcross(Player.Position - sl.Position);
+                }
+            }
+            return held;
+        }
+
+        /// <summary>
+        /// A jump across a shot's line (it moves too slowly to pass under a jump in place): sideways to `line` onto floor when either side has
+        /// some, else in place.
+        /// </summary>
+        private static KeyFunctions[] HopAcross(Vector2 line)
+        {
+            foreach (var k in Math.Abs(line.X) > Math.Abs(line.Y) ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Left, KeyFunctions.Right })
+            {
+                var land = Player.Hitbox;
+                var d = DirVector(k) * 28f;
+                land.Offset((int)d.X, (int)d.Y);
+                if (StandsSafe(land))
+                {
+                    _hopDir = k;
+                    _hopUntil = BotRunner.Frame + 40;
+                    return new[] { KeyFunctions.Cancel, k };
+                }
+            }
+            _hopDir = null;
+            return new[] { KeyFunctions.Cancel };
+        }
+
+        /// <summary>Seconds until a bullet Slime's next shot (its Move state's ShootTimer), or null when it is not moving (hurt, dying).</summary>
+        private static float? SlimeShotIn(Entity slime)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var root = slime.GetType().GetField("state", F)?.GetValue(slime);
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            if (root == null || abs == null)
+            {
+                return null;
+            }
+            var active = abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var move = active?.Cast<object>().FirstOrDefault() as AnodyneSharp.FSM.TimerState;
+            if (move == null)
+            {
+                return null;
+            }
+            var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValue(move);
+            foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValue(move))
+            {
+                var tt = t.GetType();
+                if ((string)tt.GetField("name").GetValue(t) == "ShootTimer")
+                {
+                    return (float)tt.GetField("current").GetValue(t) - now;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Where to take off (Pos along `dir`) to jump a stopped spike roller lying across the way: right up to it, landing (~28px on) clear
         /// past it on floor. Null when it is too thick along that way or there is no floor beyond.
         /// </summary>

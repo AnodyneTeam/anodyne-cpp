@@ -533,6 +533,7 @@ namespace AnodyneSharp.Recording
             held = BotScript.SpikeGuard(held);
             held = BotScript.SwingGuard(held);
             held = BotScript.DoorGuard(held);
+            held = BotScript.BulletHop(held);
             if (Player != null && Player.reversed)
             {
                 // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go

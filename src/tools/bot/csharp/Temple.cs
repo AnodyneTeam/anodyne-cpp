@@ -222,6 +222,20 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel nexus to the crowd pad", () => Exec("W30 O1 X1 >396,930 D30 W90 n0 W120 >906,900 U20 W10 A W60 T W200 `ho_crowd"));
             yield return Section("hotel cliff top", () => Exec("O1 X1 >1528,662 U30 W90 D20 W20 H8,1 >1405,214 R40 W90 `ho_space"));
             yield return Section("hotel space", () => Exec("O1 X1 H5,2 P870,392 W60 H5,0 >876,24 U40 W120 `ho_in"));
+            // Roof west to the (0,0) door, which drops into (2,2).
+            yield return Section("hotel roof to (2,2)", () => Exec("O1 X1 H1,0 H0,0 W10 >56,120 U30 W90 `ho_22"));
+            // (2,3): jump the holes to the dust, carry it down onto the (28,36) LEFT platform and ride it west. Going into (1,3) over its
+            // gate holds the gate open.
+            yield return Section("hotel (2,3) dust platform to (1,3)", () => Exec("O1 X0 H2,3 W10 G386,514 W5 er414 W20 J28,32,u W10 " +
+                "G450,530 W5 ed530 W20 J28,35,d W20 (28,36 W10 G340,562 W5 L40 W30 `ho_13"));
+            // (1,3)'s slimes open its south gates; (1,4)'s west column leads down to the (1,5) button, which opens (1,5)'s east gate.
+            yield return Section("hotel (1,3) slimes and the (1,5) button", () => Exec("O1 X1 F W90 X0 >180,850 W30 `ho_15"));
+            // Back up and through (1,3)'s other gate onto (1,4)'s button (opens the gate to (2,4)), then drop over the holes to (1,5).
+            yield return Section("hotel (1,4) button and drop", () => Exec("O1 X1 >276,658 W20 >307,750 W5 G292,750 W5 ed W40 `ho_14"));
+            // (1,5): hop down past the frogs and over the hole to the open east gate, into (2,5)'s west column.
+            yield return Section("hotel (1,5) frogs to (2,5)", () => Exec("O1 X0 >245,866 W5 ed W40 G245,915 W5 er W40 >310,915 W5 R40 W30 `ho_25"));
+            // (2,5): the checkpoint, the button that opens the gates from (2,4), and the Hotel's Nexus pad.
+            yield return Section("hotel nexus pad", () => Exec("O1 X0 >356,886 W20 >338,818 W40 >441,872 W60 `ho_pad"));
         }
     }
 }
