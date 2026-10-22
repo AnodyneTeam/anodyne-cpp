@@ -1582,6 +1582,18 @@ namespace AnodyneSharp.Recording
                     result.Add(PredictLion(d));
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Crowd.Dog && DogAttackPlan(d) != null)
+                {
+                    // dashing: its three dashes are known from its Attack state (see DogPath); it only hurts on the ground
+                    var dp = DogPath(d, 0, Player.Position);
+                    var dt = new Threat { Name = "Dog", Source = d, Margin = 4 };
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        dt.At[f] = dp(f);
+                    }
+                    result.Add(dt);
+                    continue;
+                }
                 if (d is AnodyneSharp.Entities.Enemy.Circus.Contort or AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall)
                 {
                     result.Add(PredictBouncer(d));
@@ -10556,7 +10568,7 @@ namespace AnodyneSharp.Recording
         /// ahead of a dash nor ending it beside the dog will do. Try every way of moving (and standing) until this dash ends: keep clear of
         /// its predicted run (walls stop it) and finish as far from where it stops as possible. Null when not a super dog dashing.
         /// </summary>
-        private static KeyFunctions[] DogSidestep(Entity dog, Func<int, Rectangle?> path)
+        private static KeyFunctions[] DogSidestep(Entity dog, Func<int, Rectangle?> path, List<Threat> others = null)
         {
             if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is not true || dog.velocity.Length() < 30f)
             {
@@ -10567,9 +10579,9 @@ namespace AnodyneSharp.Recording
             KeyFunctions[] best = null;
             bool oldWade = BotNav.Wade;
             BotNav.Wade = Player.raft == null; // (a step through the edge of a pool beats the dog: the water only costs us if we stay in it)
+            float bestScore = float.MinValue;
             try
             {
-            float bestScore = float.MinValue;
             foreach (var ks in StActions)
             {
                 var v = ks.Aggregate(Vector2.Zero, (acc, k) => acc + DirVector(k));
@@ -10598,6 +10610,11 @@ namespace AnodyneSharp.Recording
                             break;
                         }
                     }
+                    if (others != null && others.Any(t => t.At[Math.Min(f, Horizon)] is Rectangle orr && new Rectangle(orr.X - t.Margin, orr.Y - t.Margin, orr.Width + 2 * t.Margin, orr.Height + 2 * t.Margin).Intersects(mine)))
+                    {
+                        hitAt = f; // (the other dog, or anything else about)
+                        break;
+                    }
                 }
                 float score;
                 if (hitAt != int.MaxValue)
@@ -10624,6 +10641,10 @@ namespace AnodyneSharp.Recording
             finally
             {
                 BotNav.Wade = oldWade;
+            }
+            if (bestScore < -5000)
+            {
+                return null; // no walk keeps clear: let the space-time planner (which can jump: a dog only hurts on the ground) find one
             }
             return best == null ? null : K(best);
         }
@@ -11743,6 +11764,11 @@ namespace AnodyneSharp.Recording
                             dogDashing = false;
                         }
                     }
+                    if (dogDashing && Player.state == PlayerState.AIR && BotRunner.Frame <= _airSteerUntil)
+                    {
+                        yield return _airSteer is KeyFunctions dsk ? K(dsk) : K(); // (a jump of ours over its dash: drift the way it was planned)
+                        continue;
+                    }
                     if (dogDashing)
                     {
                         var path = DogPath(target, dogAttackFrame, dogTPos);
@@ -11753,7 +11779,7 @@ namespace AnodyneSharp.Recording
                         }
                         BotRunner.Status = "fight/dog: out of the way of its dashes";
                         var pbd = Player.Hitbox;
-                        if (DogSidestep(target, path) is KeyFunctions[] side)
+                        if (DogSidestep(target, path, PredictThreats(target).Where(t => t.Source != target).ToList()) is KeyFunctions[] side)
                         {
                             // (a super dog re-aims at us for every dash: running ahead of one only corners us for the next; off its line is the dodge)
                             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
@@ -11764,12 +11790,24 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                         // (and of anything else about: a frog's bullets coming down)
-                        var dogAll = PredictThreats(target).Where(t => t.Source != target && t.Name != "Dog").Append(dogThreat).ToList();
+                        var dogAll = PredictThreats(target).Where(t => t.Source != target).Append(dogThreat).ToList(); // (another dog stays: its own dashes are predicted)
                         var away = SpaceTimeMove(new Vector2(pbd.X, pbd.Y), dogAll, useCache: false, survive: true)
                             ?? SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                         {
                             System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))} pred={dogThreat.At[10]}/{dogThreat.At[20]}/{dogThreat.At[30]} att={DogAttackPlan(target)?.next}/{DogAttackPlan(target)?.phase} T={string.Join(";", DogAttackPlan(target)?.targets ?? new Vector2[0])} pos={target.Position}");
+                        }
+                        if (away == null && GlobalState.inventory.CanJump && Player.state == PlayerState.GROUND && _jumpPressFrame != BotRunner.Frame - 1
+                            && dogThreat.At.Take(20).Any(r => r is Rectangle dr2 && new Rectangle(dr2.X - 4, dr2.Y - 4, dr2.Width + 8, dr2.Height + 8).Intersects(pbd)))
+                        {
+                            // no way clear on foot or landing: it only hurts on the ground, so be off it as it comes (away from it)
+                            var dc = dg.Center.ToVector2() - pbd.Center.ToVector2();
+                            var offK = Math.Abs(dc.X) >= Math.Abs(dc.Y) ? (dc.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dc.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                            _jumpPressFrame = BotRunner.Frame;
+                            _airSteer = JumpLandsOnFloor(offK) ? offK : null;
+                            _airSteerUntil = BotRunner.Frame + 30;
+                            yield return _airSteer is KeyFunctions ok2 ? K(KeyFunctions.Cancel, ok2) : K(KeyFunctions.Cancel);
+                            continue;
                         }
                         yield return away == null || away.Length == 0 ? K() : K(away);
                         continue;
@@ -11787,6 +11825,18 @@ namespace AnodyneSharp.Recording
                         var wantFacing = faceKey == KeyFunctions.Up ? Facing.UP : faceKey == KeyFunctions.Down ? Facing.DOWN : faceKey == KeyFunctions.Left ? Facing.LEFT : Facing.RIGHT;
                         dogSwingWait++;
                         BotRunner.Status = "fight/dog: standoff";
+                        // (anything else coming, the other dog of the room say: out of its way first; the planner may jump it)
+                        var sOthers = PredictThreats(target).Where(t => t.Source != target).ToList();
+                        if (sOthers.Count > 0 && !SafeAtExactThreats(new Vector2(pbs.X, pbs.Y), sOthers, 24))
+                        {
+                            var sAway = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), sOthers, useCache: false, survive: true);
+                            if (sAway != null)
+                            {
+                                BotRunner.Status = "fight/dog: standoff, out of the other's way";
+                                yield return sAway.Length == 0 ? K() : K(sAway);
+                                continue;
+                            }
+                        }
                         if (sgap < 3)
                         {
                             yield return K(backKey);

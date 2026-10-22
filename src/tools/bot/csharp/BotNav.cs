@@ -731,11 +731,18 @@ namespace AnodyneSharp.Recording
             return DashLeapTiles(a, d) >= Math.Abs(dx + dy);
         }
 
-        /// <summary>The spring a jump from a to b bounces off (a spring right below a whose landing is b), if any.</summary>
+        /// <summary>The spring a jump from a to b bounces off (a spring next to a whose landing is b), if any.</summary>
         public static Point? SpringBetween(Point a, Point b)
         {
-            var below = new Point(a.X, a.Y + 1);
-            return Springs().TryGetValue(below, out var land) && land == b ? below : null;
+            foreach (var d in StepDirs)
+            {
+                var s = new Point(a.X + d.X, a.Y + d.Y);
+                if (Springs().TryGetValue(s, out var land) && land == b)
+                {
+                    return s;
+                }
+            }
+            return null;
         }
 
         /// <summary>The tiles a search may step to from c (reached from prev): the four neighbours, or a ledge's landing (entered going down, that is the only way on).</summary>
@@ -762,9 +769,15 @@ namespace AnodyneSharp.Recording
                     yield return n;
                 }
             }
-            if (AllowJump && Springs().TryGetValue(new Point(c.X, c.Y + 1), out var bounce) && LeapFloor(c))
+            if (AllowJump && LeapFloor(c))
             {
-                yield return bounce; // jump down onto the spring below: it throws us on down
+                foreach (var d in StepDirs)
+                {
+                    if (Springs().TryGetValue(new Point(c.X + d.X, c.Y + d.Y), out var bounce))
+                    {
+                        yield return bounce; // jump onto the spring next to us (from any side): landing on it throws us on down
+                    }
+                }
             }
             if (AllowJump && LeapFloor(c) && DashPads().Count > 0)
             {
