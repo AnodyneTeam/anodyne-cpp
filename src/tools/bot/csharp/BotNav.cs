@@ -773,7 +773,8 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 // (by its middle: some sit off the grid, most of their 16px over the next tile)
-                var t = new Point((int)Math.Floor((pr.Position.X + 8f) / 16f), (int)Math.Floor((pr.Position.Y + 8f) / 16f));
+                float po = Environment.GetEnvironmentVariable("XP") == null ? 8f : 0f;
+                var t = new Point((int)Math.Floor((pr.Position.X + po) / 16f), (int)Math.Floor((pr.Position.Y + po) / 16f));
                 _pads[t] = pr.Frame switch { 0 => new Point(0, -1), 1 => new Point(1, 0), 2 => new Point(0, 1), _ => new Point(-1, 0) };
             }
             return _pads;
@@ -1535,7 +1536,7 @@ namespace AnodyneSharp.Recording
             {
                 return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
             }
-            if (_keyLocked.Contains(t) || _keyDenied.Contains(t))
+            if (Environment.GetEnvironmentVariable("XK") == null && (_keyLocked.Contains(t) || _keyDenied.Contains(t)))
             {
                 return false;
             }
@@ -2174,6 +2175,10 @@ namespace AnodyneSharp.Recording
                             }
                             chain.Add(start);
                             chain.Reverse();
+                            if (Environment.GetEnvironmentVariable("ANODYNE_PILLAR_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"  pillar route pass {pass}: " + string.Join(">", chain.Select(x => $"{x.Item1.X},{x.Item1.Y}{(x.Item2 ? "*" : "")}")));
+                            }
                             for (int i = 1; i < chain.Count; i++)
                             {
                                 if (chain[i].Item2 != chain[i - 1].Item2)

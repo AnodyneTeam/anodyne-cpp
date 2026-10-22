@@ -362,6 +362,9 @@ namespace AnodyneSharp.Recording
             yield return Section("circus flame pillar card", () => Exec("O1 X1 n0 W60 >707,1090 >723,930 heal >659,658 >627,706 >531,786 >531,1090 +s W30 `cc_fp"));
             yield return Section("circus west card", () => Exec("O1 X1 n0 >67,962 >83,658 + W30 `cc_west"));
             yield return Section("circus key 2", () => Exec("O1 X1 >1059,658 >1235,530 heal >1203,354 +k W30 `cc_k2"));
+            // (key 3, past the (45,40) keyblock: the boss's way needs it for the (45,30) one; then back to the entrance, so the next part
+            // does not start out of a reload beside enemies that came back)
+            yield return Section("circus key 3", () => Exec("O1 X1 +K W30 >707,1364 W30 `cc_k3"));
         }
     }
 
@@ -371,6 +374,7 @@ namespace AnodyneSharp.Recording
         public override IEnumerable<object> Run()
         {
             yield return Say("The Circus: the boss");
+            // (key 3 is in the north-west chest past the (45,40) keyblock; the boss's way needs it for the (45,30) one)
             yield return Section("circus boss button", () => Exec("O1 X1 >659,338 W60 >707,338 W30 `cc_pre"));
             yield return Section("circus boss", () => Exec("O1 X1 F W60 i W30 `cc_boss"));
             yield return Section("circus A&J card", () => Exec("O1 X1 door32 W30 + W30 `cc_aj"));

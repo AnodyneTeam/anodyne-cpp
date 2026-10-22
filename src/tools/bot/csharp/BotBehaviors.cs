@@ -5087,6 +5087,23 @@ namespace AnodyneSharp.Recording
                         }
                     }
                 }
+                if (route == null && AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !(fruitless.TryGetValue(Grid, out int leftHere) && leftHere == Enemies().Count)
+                    && Enumerable.Range(0, 100).Select(k => new Point(Grid.X * 10 + k % 10, Grid.Y * 10 + k / 10)).FirstOrDefault(BotNav.IsShutKillGate) is var shutKg
+                    && BotNav.IsShutKillGate(shutKg))
+                {
+                    // Shut in by a gate of this screen that opens on kills (a room whose enemies came back with a reload): clear the room,
+                    // then plan again.
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  no route from {here} to {goal}: the kill gate {shutKg} of this screen is shut, fighting the {Enemies().Count} enemies here");
+                    }
+                    var fg = Grid;
+                    yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == fg);
+                    fruitless[fg] = Enemies().Count;
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
+                }
                 if (route == null && !warped && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad")
                     && !Map.Equals("NEXUS"))
                 {
@@ -7345,6 +7362,46 @@ namespace AnodyneSharp.Recording
                     if (hop != null)
                     {
                         return hop;
+                    }
+                }
+                // A shot already in flight that our walk (or our standing) meets within a few frames: hop across its line (they only hurt
+                // on the ground) rather than step into it.
+                var walk = Vector2.Zero;
+                foreach (var k in held)
+                {
+                    walk += k switch { KeyFunctions.Left => new Vector2(-1, 0), KeyFunctions.Right => new Vector2(1, 0), KeyFunctions.Up => new Vector2(0, -1), KeyFunctions.Down => new Vector2(0, 1), _ => Vector2.Zero };
+                }
+                walk *= WalkPxPerFrame;
+                foreach (var b in shots.Where(b => b.exists && b.velocity != Vector2.Zero))
+                {
+                    var bv = b.velocity / 60f;
+                    bool MeetsStanding() => Enumerable.Range(1, 8).Any(g => new Rectangle((int)(b.Position.X + bv.X * g), (int)(b.Position.Y + bv.Y * g), 8, 8).Intersects(pb));
+                    for (int f = 1; f <= 6; f++)
+                    {
+                        var br = new Rectangle((int)(b.Position.X + bv.X * f), (int)(b.Position.Y + bv.Y * f), 8, 8);
+                        var me = pb;
+                        me.Offset((int)Math.Round(walk.X * f), (int)Math.Round(walk.Y * f));
+                        if (!br.Intersects(me))
+                        {
+                            continue;
+                        }
+                        var hop = HopAcross(b.velocity);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null)
+                        {
+                            System.Console.Error.WriteLine($"  shothop f{BotRunner.Frame}: shot {b.Position} v {b.velocity} meets us in {f}: hop {(hop == null ? "none" : string.Join("+", hop))}");
+                        }
+                        if (hop != null)
+                        {
+                            BotRunner.Status = "hop a slime shot in flight";
+                            return hop;
+                        }
+                        if (walk != Vector2.Zero && !MeetsStanding())
+                        {
+                            // (no landing clear of it, but it passes us if we stop where we are)
+                            BotRunner.Status = "stop short of a slime shot in flight";
+                            return held.Where(k => k is not (KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down)).ToArray();
+                        }
+                        break;
                     }
                 }
             }
