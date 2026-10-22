@@ -351,4 +351,42 @@ namespace AnodyneSharp.Recording
             yield return Section("cards into the circus", () => Exec("O1 X1 viaREDCAVE W30 oCELL W60 oCIRCUS@1193,6 W30 `cp_circusin"));
         }
     }
+
+    /// <summary>The Circus, first half: keys 1 and 2 and the Flame Pillar and west cards.</summary>
+    public class Circus : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Circus: keys and cards");
+            yield return Section("circus key 1 past the acrobats", () => Exec("O1 X1 Qw Qn >979,1202 >1347,930 dust:ArthurDanger W240 +K W30 `cc_k1"));
+            yield return Section("circus flame pillar card", () => Exec("O1 X1 n0 W60 >707,1090 >723,930 heal >659,658 >627,706 >531,786 >531,1090 + W30 `cc_fp"));
+            yield return Section("circus west card", () => Exec("O1 X1 n0 >67,962 >83,658 + W30 `cc_west"));
+            yield return Section("circus key 2", () => Exec("O1 X1 >1059,658 >1235,530 heal >1203,354 +k W30 `cc_k2"));
+        }
+    }
+
+    /// <summary>The Circus boss (Arthur and Javiera's act), the health upgrade and their card.</summary>
+    public class Circus2 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Circus: the boss");
+            yield return Section("circus boss button", () => Exec("O1 X1 >659,338 W60 >707,338 W30 `cc_pre"));
+            yield return Section("circus boss", () => Exec("O1 X1 F W60 i W30 `cc_boss"));
+            yield return Section("circus A&J card", () => Exec("O1 X1 door32 W30 + W30 `cc_aj"));
+        }
+    }
+
+    /// <summary>The Circus, last half: the rat puzzle, key 4, the top key gate and the Lion card.</summary>
+    public class Circus3 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Circus: rat puzzle and the Lion card");
+            yield return Section("circus rat puzzle", () => Exec("O1 X1 >232,1032 >328,1032 [3600 W30 `cc_rat"));
+            yield return Section("circus key 4", () => Exec("O1 X1 +K W30 `cc_k4"));
+            yield return Section("circus top key gate", () => Exec("O1 X1 >664,56 >616,56 W30 `cc_kg"));
+            yield return Section("circus lion card", () => Exec("O1 X1 >504,24 W30 >552,200 >580,270 F >552,340 F >606,440 + W30 `cc_lion"));
+        }
+    }
 }

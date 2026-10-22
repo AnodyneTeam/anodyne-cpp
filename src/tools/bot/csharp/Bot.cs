@@ -834,7 +834,26 @@ namespace AnodyneSharp.Recording
             land.Offset((int)(dx * 27), (int)(dy * 27));
             if (OnSpikes(land) || !Floor(land))
             {
-                return held;
+                // No clear floor past them: walking on just costs a heart. Keep only the way(s) that stay off them (a chase or a dodge
+                // will find another).
+                var keep = held.ToList();
+                var nx = hb;
+                nx.Offset((int)(dx * 2), 0);
+                if (dx != 0 && OnSpikes(nx))
+                {
+                    keep.Remove(dx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
+                }
+                var ny = hb;
+                ny.Offset(0, (int)(dy * 2));
+                if (dy != 0 && OnSpikes(ny))
+                {
+                    keep.Remove(dy > 0 ? KeyFunctions.Down : KeyFunctions.Up);
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && keep.Count != held.Length)
+                {
+                    System.Console.Error.WriteLine($"  spike guard f{BotRunner.Frame}: no floor past the spikes ahead at {hb}: not stepping on ({BotRunner.Status})");
+                }
+                return keep.ToArray();
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
@@ -2169,7 +2188,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards", "circus", "circus2", "circus3" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -2201,6 +2220,9 @@ namespace AnodyneSharp.Recording
             "hotel5" => new Hotel5(),
             "hotel6" => new Hotel6(),
             "cards" => new CardsToCircus(),
+            "circus" => new Circus(),
+            "circus2" => new Circus2(),
+            "circus3" => new Circus3(),
             _ => throw new ArgumentException(name)
         };
 

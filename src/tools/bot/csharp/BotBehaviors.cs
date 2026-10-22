@@ -1589,7 +1589,29 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        private static long _threatsFrame = -1;
+        private static Entity _threatsExcept;
+        private static List<Threat> _threatsCached;
+
         private static List<Threat> PredictThreats(Entity except)
+        {
+            // (asked for again and again in one frame by the fight, its guards and dodges: the world has not moved, so neither have they.
+            // A copy of the list: callers add their own to it.)
+            if (_threatsFrame == BotRunner.Frame && _threatsExcept == except && _threatsCached != null && Player != null && _threatsPlayer == Player.Position)
+            {
+                return new List<Threat>(_threatsCached);
+            }
+            var fresh = PredictThreatsUncached(except);
+            _threatsFrame = BotRunner.Frame;
+            _threatsExcept = except;
+            _threatsPlayer = Player?.Position ?? Vector2.Zero;
+            _threatsCached = fresh;
+            return new List<Threat>(fresh);
+        }
+
+        private static Vector2 _threatsPlayer;
+
+        private static List<Threat> PredictThreatsUncached(Entity except)
         {
             if (!BotRunner.ProfOn)
             {
@@ -1628,6 +1650,37 @@ namespace AnodyneSharp.Recording
         /// A super Annoyer fires every 2.3s (while active) at where we stand, 30px/s; a shot's opacity falls 0.06 a second from 1, so
         /// the freshest one in its pool dates the last shot. The next one: from where it is, at us as we stand now.
         /// </summary>
+        /// <summary>Would walking on `way` (or standing) meet a spike roller within the given frames?</summary>
+        private static bool RollerContactSoon(KeyFunctions way, int within)
+        {
+            var rollers = PredictThreats(null).Where(t => t.Source is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller).ToList();
+            if (rollers.Count == 0)
+            {
+                return false;
+            }
+            var d = DirVector(way);
+            var hb = Player.Hitbox;
+            foreach (var step in new[] { 0f, WalkPxPerFrame })
+            {
+                for (int f = 1; f <= within; f++)
+                {
+                    var box = new Rectangle((int)(hb.X + d.X * step * f), (int)(hb.Y + d.Y * step * f), hb.Width, hb.Height);
+                    foreach (var t in rollers)
+                    {
+                        if (t.At[Math.Min(f, Horizon)] is Rectangle r)
+                        {
+                            r.Inflate(1, 1);
+                            if (r.Intersects(box))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
         /// <summary>The centre of the nearest Annoyer fireball in flight that reaches us within the given frames (null if none).</summary>
         private static Vector2? IncomingAnnoyerFireball(int within)
         {
@@ -1679,19 +1732,22 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
-            var root = typeof(AnodyneSharp.Entities.Enemy.Annoyer).GetField("_state", F)?.GetValue(an);
-            var tt = typeof(AnodyneSharp.FSM.TimerState);
-            var top = (tt.BaseType?.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-            if (top == null || top.GetType().Name != "ActiveState" || tt.GetField("current", F)?.GetValue(top) is not float now
-                || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0
-                || timers[0].GetType().GetField("current", FP)?.GetValue(timers[0]) is not float due)
+            var root = AnnStateField?.GetValue(an);
+            var top = (FsmActiveChildren?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top == null || top.GetType().Name != "ActiveState" || TimerNowField?.GetValue(top) is not float now
+                || TimerListField?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0
+                || timers[0].GetType().GetField("current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(timers[0]) is not float due)
             {
                 return null;
             }
             return Math.Max(0, (int)Math.Round((due - now) * 60f));
         }
+
+        private const System.Reflection.BindingFlags NonPub = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        private static readonly System.Reflection.FieldInfo AnnStateField = typeof(AnodyneSharp.Entities.Enemy.Annoyer).GetField("_state", NonPub);
+        private static readonly System.Reflection.FieldInfo FsmActiveChildren = typeof(AnodyneSharp.FSM.TimerState).BaseType?.GetField("activeChildren", NonPub);
+        private static readonly System.Reflection.FieldInfo TimerNowField = typeof(AnodyneSharp.FSM.TimerState).GetField("current", NonPub);
+        private static readonly System.Reflection.FieldInfo TimerListField = typeof(AnodyneSharp.FSM.TimerState).GetField("timers", NonPub);
 
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
@@ -6351,6 +6407,14 @@ namespace AnodyneSharp.Recording
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
                     // Slow chasers (woken Dustmaids walk the water at 20px/s, homing): waiting for them to clear the way only lets them reach us.
                     // While none is within arm's length, ride on at full speed (we are three times faster) and leave them behind.
+                    // A spike roller sweeping the water (Circus (5,7): it spans the whole room, there is no going round it): hop it as it
+                    // comes. A jumper is safe from it and the raft keeps under us in the air.
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && RollerContactSoon(rideKey, 8))
+                    {
+                        RaftLog($"hop the spike roller at {Pos}");
+                        yield return K(rideKey, KeyFunctions.Cancel);
+                        continue;
+                    }
                     var pcr = Player.Hitbox.Center.ToVector2();
                     var dangersNow = Dangers();
                     bool onlySlowChasers = dangersNow.Count > 0 && dangersNow.All(d => d is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && !DormantDustmaid(d));
@@ -9745,7 +9809,7 @@ namespace AnodyneSharp.Recording
             Facing = Player.facing switch { Facing.UP => PFacing.Up, Facing.DOWN => PFacing.Down, Facing.LEFT => PFacing.Left, _ => PFacing.Right },
             Swinging = Player.broom != null && Player.broom.exists,
             T = target.Hitbox,
-            TV = target.velocity,
+            TV = SeenVelocity(target),
             Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
             Walk = CornersWalkable,
             Hazard = LaneHazard(),
@@ -9777,6 +9841,38 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>A policy's keys as a frame: a plain step goes through the danger-aware SafeMove, anything else (swings, standing) is sent as is.</summary>
+        private static readonly Dictionary<Entity, (long frame, Vector2 pos, Vector2 v)> _seenMove = new();
+
+        /// <summary>
+        /// How an enemy is really moving (px/s), from where it was last frame: its velocity field keeps its speed while a wall holds it
+        /// (a Slime knocked into a wall read 100px/s down for half a second, standing still), and plans led by that walk into it.
+        /// </summary>
+        private static Vector2 SeenVelocity(Entity e)
+        {
+            long now = BotRunner.Frame;
+            if (_seenMove.TryGetValue(e, out var was))
+            {
+                if (was.frame == now)
+                {
+                    return was.v;
+                }
+                if (was.frame == now - 1)
+                {
+                    var v = (e.Position - was.pos) * 60f;
+                    // (a velocity that agrees with the move is the truer one: it is not rounded by a frame's step)
+                    var use = (e.velocity - v).Length() < 20f ? e.velocity : v;
+                    _seenMove[e] = (now, e.Position, use);
+                    return use;
+                }
+            }
+            if (_seenMove.Count > 256)
+            {
+                _seenMove.Clear();
+            }
+            _seenMove[e] = (now, e.Position, e.velocity);
+            return e.velocity;
+        }
+
         private static KeyFunctions[] PolicyFrame(PKey[] keys, Entity target)
         {
             if (keys.Length == 0)
