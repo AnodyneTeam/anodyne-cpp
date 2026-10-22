@@ -176,6 +176,11 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   While Slashers wind up, the fight simulates each one's drift towards us and its exact cut box (long cut when we are 36px or
   more from its centre, otherwise wide) for 8 directions and a few walk lengths, and runs the way that stays clear, or else the one
   hit latest. Two hits a room are still common, so the Apartments' water and south key sections are budgeted (`g3`, `g2`).
+- Spikes: any walk about to step from the floor onto ground spikes (a fight's chase, a dodge) jumps them instead when the far side
+  ~27px on is clear floor (`SpikeGuard`). A planned jump over spikes or a pit waits until no threat (a Shieldy patrolling between
+  spike rows, a bullet) will be where it lands.
+- The new Slasher dodge runs in the Apartments only; Red Cave's narrow ledges do better with the older path-planned spot off both
+  cut strips.
 - `X0` turns auto-fight off for the rest of a section: put `X1` back before a room whose fight should start on arrival (the Watcher).
 
 ## Status

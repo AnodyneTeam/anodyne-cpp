@@ -530,6 +530,7 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
+            held = BotScript.SpikeGuard(held);
             if (Player != null && Player.reversed)
             {
                 // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go
@@ -770,6 +771,46 @@ namespace AnodyneSharp.Recording
         {
             BotRunner.Status = status;
             yield break;
+        }
+
+        /// <summary>
+        /// Any walk (a fight's chase, a dodge) about to step off the floor onto ground spikes jumps them instead, if the far side is
+        /// clear floor ~27px on.
+        /// </summary>
+        internal static KeyFunctions[] SpikeGuard(KeyFunctions[] held)
+        {
+            if (Player == null || Player.state != PlayerState.GROUND || !GlobalState.inventory.CanJump || held.Contains(KeyFunctions.Cancel) || GlobalState.ScreenTransition || Environment.GetEnvironmentVariable("ANODYNE_NO_SPIKEGUARD") != null)
+            {
+                return held;
+            }
+            float dx = (held.Contains(KeyFunctions.Right) ? 1 : 0) - (held.Contains(KeyFunctions.Left) ? 1 : 0);
+            float dy = (held.Contains(KeyFunctions.Down) ? 1 : 0) - (held.Contains(KeyFunctions.Up) ? 1 : 0);
+            if (dx == 0 && dy == 0)
+            {
+                return held;
+            }
+            var hb = Player.Hitbox;
+            bool OnSpikes(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
+                .Any(c => BotNav.IsSpike(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            bool Floor(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
+                .All(c => BotNav.Walkable(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            var next = hb;
+            next.Offset((int)(dx * 2), (int)(dy * 2));
+            if (OnSpikes(hb) || !OnSpikes(next))
+            {
+                return held;
+            }
+            var land = hb;
+            land.Offset((int)(dx * 27), (int)(dy * 27));
+            if (OnSpikes(land) || !Floor(land))
+            {
+                return held;
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  spike guard f{BotRunner.Frame}: jump the spikes ahead at {hb} ({BotRunner.Status})");
+            }
+            return held.Append(KeyFunctions.Cancel).ToArray();
         }
 
         /// <summary>
@@ -1117,8 +1158,7 @@ namespace AnodyneSharp.Recording
                         }
                         if (BotNav.IsHole(tile))
                         {
-                            // A pit: the jump only carries ~27px, so take off from the edge of the tile before it (centre 3px short of the pit),
-                            // and not into a fireball or a bullet coming down where we land.
+                            // A pit: the jump only carries ~27px, so take off from the edge of the tile before it (centre 3px short of the pit).
                             var dv = jk == KeyFunctions.Right ? new Vector2(1, 0) : jk == KeyFunctions.Left ? new Vector2(-1, 0) : jk == KeyFunctions.Down ? new Vector2(0, 1) : new Vector2(0, -1);
                             var edge = BotNav.CentreOf(from) + dv * 5f;
                             for (int w = 0; w < 30 && ((edge - Pos) * dv).Length() > 0.8f && Vector2.Dot(edge - Pos, dv) > 0; w++)
@@ -1126,6 +1166,9 @@ namespace AnodyneSharp.Recording
                                 BotRunner.Status = "jump the pit: run-up";
                                 yield return K(jk);
                             }
+                        }
+                        {
+                            // Pits and spikes alike: not into a fireball, a bullet or a patrolling enemy (Fields Shieldies between spike rows) where we land.
                             var landC = BotNav.CentreOf(land);
                             for (int w = 0; w < 300; w++)
                             {
@@ -1134,15 +1177,22 @@ namespace AnodyneSharp.Recording
                                 bool landSafe = true;
                                 foreach (var t in th)
                                 {
-                                    for (int k = 20; k <= 50 && landSafe; k++)
+                                    for (int k = 15; k <= 50 && landSafe; k++)
                                     {
                                         if (t.At[k] is Rectangle r)
                                         {
-                                            var me2 = new Rectangle((int)(landC.X - pbx.Width / 2f), (int)(landC.Y - pbx.Height / 2f), pbx.Width, pbx.Height);
-                                            r.Inflate(2, 2);
-                                            landSafe = !me2.Intersects(r);
+                                            // CentreOf is where our box's corner goes to centre it on the tile; we may also come down short of that (the jump carries ~27px).
+                                            var me2 = new Rectangle((int)landC.X, (int)landC.Y, pbx.Width, pbx.Height);
+                                            var jv = jk == KeyFunctions.Right ? new Vector2(27, 0) : jk == KeyFunctions.Left ? new Vector2(-27, 0) : jk == KeyFunctions.Down ? new Vector2(0, 27) : new Vector2(0, -27);
+                                            var me3 = new Rectangle((int)(Pos.X + jv.X), (int)(Pos.Y + jv.Y), pbx.Width, pbx.Height);
+                                            r.Inflate(3, 3);
+                                            landSafe = !me2.Intersects(r) && !me3.Intersects(r);
                                         }
                                     }
+                                }
+                                if (w == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                                {
+                                    System.Console.Error.WriteLine($"    landing {landC} safe={landSafe} threats: " + string.Join(" ", th.Select(t => $"{t.Name}{(t.At[20] is Rectangle q ? q.ToString() : "-")}")));
                                 }
                                 if (landSafe)
                                 {
@@ -1299,7 +1349,8 @@ namespace AnodyneSharp.Recording
                             }
                             else if (GlobalState.inventory.HasBroom)
                             {
-                                yield return Fight(1200, soft: true, only: e => e == blocker);
+                                // An Annoyer close by swoops while we deal with the blocker: it is fought too.
+                                yield return Fight(1200, soft: true, only: e => e == blocker || (e.GetType().Name == "Annoyer" && Vector2.Distance(e.Center, Player.Center) < 64));
                             }
                             goto replan;
                         }

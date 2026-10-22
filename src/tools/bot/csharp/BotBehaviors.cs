@@ -7832,7 +7832,9 @@ namespace AnodyneSharp.Recording
                             }
                             return (true, q, 99);
                         }
-                        if (winding.Count > 0 || cutsNow.Count > 0)
+                        // (Apartments only: in Red Cave's narrow ledges a straight run is rarely clear, and the path-planned spot off both
+                        // strips below costs fewer hits there; TODO: one way that does well in both)
+                        if ((winding.Count > 0 || cutsNow.Count > 0) && Map == "APARTMENT")
                         {
                             bool stayOk = Sim(StActions[0]).clear;
                             // (the one we are after: towards it while it still floats a while, else away)
@@ -7862,10 +7864,14 @@ namespace AnodyneSharp.Recording
                                         }
                                     }
                                 }
-                                _slasherRun = best;
-                                BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
-                                yield return K(best);
-                                continue;
+                                // No straight walk gets clear (a corridor, a corner): the path-planned spot off both strips below does better.
+                                if (bestScore >= 500)
+                                {
+                                    _slasherRun = best;
+                                    BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)})";
+                                    yield return K(best);
+                                    continue;
+                                }
                             }
                         }
                     }
