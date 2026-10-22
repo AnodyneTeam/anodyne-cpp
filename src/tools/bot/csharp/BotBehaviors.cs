@@ -34,6 +34,12 @@ namespace AnodyneSharp.Recording
                     yield return TakeDoor(pair);
                     continue;
                 }
+                if (tok.StartsWith("via") && tok.Length > 3 && char.IsUpper(tok[3]))
+                {
+                    // via<MAP>: to the Nexus (a dungeon's own pad first) and through the portal to MAP's pad
+                    yield return ViaNexus(tok.Substring(3));
+                    continue;
+                }
                 if (tok.StartsWith("lift") && int.TryParse(tok.Substring(4), out int floor))
                 {
                     // lift<n>: ride this screen's elevator to floor n
@@ -384,7 +390,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -689,6 +695,29 @@ namespace AnodyneSharp.Recording
             yield return ReadDialogue();
         }
 
+        /// <summary>
+        /// Opens a big card gate (enough cards in hand): its sentinel is a 10px strip over the middle of its 32px width, so stand centred
+        /// on the gate against it (below or above), face it and press; the gate then crumbles in a short cutscene.
+        /// </summary>
+        protected static IEnumerable<object> OpenCardGate(Entity gate, bool fromBelow)
+        {
+            BotRunner.Status = $"open the card gate at {gate.Position.X:0},{gate.Position.Y:0}";
+            float sx = gate.Position.X + 11, sy = fromBelow ? gate.Position.Y + 17 : gate.Position.Y - 13;
+            yield return GoTo(sx, sy);
+            yield return WalkTo(sx, sy, tol: 1.5f, timeout: 120);
+            yield return Hold(8, fromBelow ? KeyFunctions.Up : KeyFunctions.Down);
+            for (int i = 0; i < 600 && gate.exists; i++)
+            {
+                if (Talking)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                yield return i % 60 == 0 && gate.Solid ? new[] { KeyFunctions.Accept } : K();
+            }
+            yield return Wait(20);
+        }
+
         /// <summary>Walks onto (x,y) and stands there until some gate on the screen opens (e.g. a second button pressed by an enemy).</summary>
         protected static IEnumerable<object> StandUntilGateOpens(float x, float y, int timeoutFrames = 3000, Vector2? exact = null)
         {
@@ -841,7 +870,7 @@ namespace AnodyneSharp.Recording
         {
             // the steam jet's nozzle (OnOffLaser) is a harmless solid block that only matches the projectile names: its beam is the danger
             return BotRunner.Entities().Where(e => e.exists && e != except && !(e is Player) && e.width > 0 && e.height > 0 && !(IsSteamBeam(e) && !SteamDangerous(e)) && e.GetType().Name != "OnOffLaser" &&
-                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" or "SuburbKiller" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
+                (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || ProjectileName.IsMatch(e.GetType().Name) || e.GetType().Name is "Four_Shooter" or "BounceDashTrap" or "OnSightDashTrap" or "SuburbKiller" or "Chaser" || (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr && (sr.CollisionOn || sr.visible)))).ToList();
         }
 
         private static Vector2 DirVector(KeyFunctions k) => k switch
@@ -974,6 +1003,9 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>A Shieldy walks 30px/s in a straight line and turns round when it touches a wall: replay that.</summary>
+        private static readonly System.Reflection.FieldInfo ChaserHorizontalField =
+            typeof(AnodyneSharp.Entities.Enemy.Cell.Chaser).GetField("_isHorizontal", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
         private static Threat PredictPatroller(Entity e)
         {
             var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero, Margin = e.velocity == Vector2.Zero ? 0 : 2 };
@@ -1171,6 +1203,30 @@ namespace AnodyneSharp.Recording
                 if (name == "OnSightDashTrap" && d.velocity == Vector2.Zero)
                 {
                     result.AddRange(PredictSightTrap(d));
+                    continue;
+                }
+                if (d is AnodyneSharp.Entities.Enemy.Cell.Chaser)
+                {
+                    // The Cell's Chaser (6 damage, never dies, hurts a jumper too): it paces its row or column, turning at walls, once it
+                    // has seen us line up with it (at 15px/s, faster after each broom swing); until then it may set off along it any moment.
+                    if (d.velocity == Vector2.Zero)
+                    {
+                        // (only along its own axis: a horizontal one paces its row, a vertical one its column)
+                        bool horiz = ChaserHorizontalField?.GetValue(d) is true;
+                        foreach (var ct in PredictSightTrap(d, 15f).Where((t, i) => horiz ? i == 0 : i == 1)) // (it yields its row band, then its column band)
+                        {
+                            ct.Name = "Chaser";
+                            ct.HurtsInAir = true;
+                            result.Add(ct);
+                        }
+                    }
+                    else
+                    {
+                        var ct = PredictPatroller(d);
+                        ct.HurtsInAir = true;
+                        ct.Margin = 3;
+                        result.Add(ct);
+                    }
                     continue;
                 }
                 if (d is AnodyneSharp.Entities.Enemy.Apartment.Rat)
@@ -2375,7 +2431,7 @@ namespace AnodyneSharp.Recording
         /// An idle dash trap charges the moment the player lines up with it across or along (and only a player in the air is safe):
         /// its row and its column, out to the walls, are where it can be in a moment. Two threats, standing for the whole horizon.
         /// </summary>
-        private static IEnumerable<Threat> PredictSightTrap(Entity d)
+        private static IEnumerable<Threat> PredictSightTrap(Entity d, float speed = 80f)
         {
             var r = d.Hitbox;
             var t0 = BotNav.TileOf(new Vector2(r.Center.X, r.Center.Y) - new Vector2(BotNav.HalfW, BotNav.HalfH));
@@ -2404,7 +2460,7 @@ namespace AnodyneSharp.Recording
                 var t = new Threat { Name = "OnSightDashTrap", Margin = 1, Source = d, Stationary = false };
                 for (int f = 0; f <= Horizon; f++)
                 {
-                    int reach = (int)(80f * f / 60f);
+                    int reach = (int)(speed * f / 60f);
                     var b = band == row
                         ? new Rectangle(Math.Max(row.Left, r.Left - reach), r.Top, Math.Min(row.Right, r.Right + reach) - Math.Max(row.Left, r.Left - reach), r.Height)
                         : new Rectangle(r.Left, Math.Max(col.Top, r.Top - reach), r.Width, Math.Min(col.Bottom, r.Bottom + reach) - Math.Max(col.Top, r.Top - reach));
@@ -3572,6 +3628,27 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Walks screen by screen along the most permissive route (rafts, jumps) to the tile containing (gx,gy).</summary>
+        /// <summary>
+        /// Just come out of a door and still standing on it: the planner steers round door tiles, so no route starts there. Steps off onto
+        /// the floor beside it (towards `toward` if we can).
+        /// </summary>
+        protected static IEnumerable<object> StepOffDoor(Point toward)
+        {
+            var start = BotNav.TileOf(Pos);
+            if (!AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type != null
+                && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && BotNav.TileOf(pr.Position + new Vector2(8, 8)) == start))
+            {
+                yield break;
+            }
+            var off = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Select(o => new Point(start.X + o.X, start.Y + o.Y))
+                .Where(BotNav.Walkable).OrderBy(t => Math.Abs(t.X - toward.X) + Math.Abs(t.Y - toward.Y)).ToList();
+            if (off.Count > 0)
+            {
+                var oc = BotNav.CentreOf(off[0]);
+                yield return WalkTo(oc.X, oc.Y, tol: 1.5f, timeout: 60);
+            }
+        }
+
         protected static IEnumerable<object> GoGlobal(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
@@ -3588,8 +3665,10 @@ namespace AnodyneSharp.Recording
                     yield return WalkTo(oc.X, oc.Y, tol: 1.5f, timeout: 120);
                 }
             }
+            yield return StepOffDoor(goal);
             Point lastHere = new(-1, -1);
             List<Point> plan = null;
+            var fruitless = new Dictionary<Point, int>(); // screen -> enemies left there after our last fight on it
             for (int hop = 0; hop < 80; hop++)
             {
                 BotNav.ResetDustCache();
@@ -3654,9 +3733,13 @@ namespace AnodyneSharp.Recording
                     yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
                     yield return Wait(10);
                     // (not from a raft drifting down a river: the broom cannot steer it out of a Gas Guy's cloud)
-                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos)))
+                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos))
+                        && !(fruitless.TryGetValue(Grid, out int left) && left == Enemies().Count))
                     {
+                        // (once per screen while it gets us nowhere: a fight that killed nothing here is not started again on every hop)
+                        var fg = Grid;
                         yield return Fight(3600, soft: true);
+                        fruitless[fg] = Enemies().Count;
                     }
                 }
             }
@@ -4097,6 +4180,17 @@ namespace AnodyneSharp.Recording
             }
             // UpDoor / DownDoor / LeftDoor / RightDoor: the way we walk into it
             var into = door.Type.Name.StartsWith("Down") ? KeyFunctions.Down : door.Type.Name.StartsWith("Left") ? KeyFunctions.Left : door.Type.Name.StartsWith("Right") ? KeyFunctions.Right : KeyFunctions.Up;
+            {
+                // A directional door lets us out on its facing side, and that is often the only side with floor: when the tile we would
+                // stand on is a wall, come at it from the other side.
+                var dt = BotNav.TileOf(door.Position + new Vector2(3, 2));
+                var from = into == KeyFunctions.Up ? new Point(dt.X, dt.Y + 1) : into == KeyFunctions.Down ? new Point(dt.X, dt.Y - 1) : into == KeyFunctions.Left ? new Point(dt.X + 1, dt.Y) : new Point(dt.X - 1, dt.Y);
+                var other = new Point(2 * dt.X - from.X, 2 * dt.Y - from.Y);
+                if (!BotNav.Walkable(from) && BotNav.Walkable(other))
+                {
+                    into = into == KeyFunctions.Up ? KeyFunctions.Down : into == KeyFunctions.Down ? KeyFunctions.Up : into == KeyFunctions.Left ? KeyFunctions.Right : KeyFunctions.Left;
+                }
+            }
             // the door tile itself is not floor: go to the tile in front of it (the side we come from)
             var back = into == KeyFunctions.Up ? new Vector2(0, 22) : into == KeyFunctions.Down ? new Vector2(0, -22) : into == KeyFunctions.Left ? new Vector2(22, 0) : new Vector2(-22, 0);
             yield return GoGlobal(door.Position.X + back.X, door.Position.Y + back.Y);
@@ -4228,6 +4322,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> OpenChests(int frame = 2, bool screenOnly = false)
         {
             var screen = Grid;
+            yield return StepOffDoor(BotNav.TileOf(Pos));
             for (int n = 0; n < 30; n++)
             {
                 var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
@@ -4355,6 +4450,59 @@ namespace AnodyneSharp.Recording
             System.Console.Error.WriteLine($"equipped broom: {GlobalState.inventory.EquippedBroom}");
             yield return Tap(KeyFunctions.Pause);
             yield return Wait(20);
+        }
+
+        /// <summary>
+        /// Travels to `map` by the Nexus: out of this map through its Nexus pad (the pause menu's warp puts us on it, or at a dungeon's
+        /// entrance, from where the planner walks to the pad), then the Nexus portal whose door leads to `map`, entered from below.
+        /// </summary>
+        protected static IEnumerable<object> ViaNexus(string map)
+        {
+            if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+            {
+                yield return MenuReturnToPad(0);
+                if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+                {
+                    var pad = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "NexusPad");
+                    if (pad == null)
+                    {
+                        throw new InvalidOperationException($"bot: no Nexus pad on {GlobalState.CURRENT_MAP_NAME}");
+                    }
+                    BotRunner.Status = $"to the Nexus pad at {pad.Position.X:0},{pad.Position.Y:0}";
+                    yield return GoGlobal(pad.Position.X + 11, pad.Position.Y + 9);
+                    yield return Wait(10);
+                    yield return Tap(KeyFunctions.Accept);
+                    yield return Wait(200);
+                }
+            }
+            if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+            {
+                throw new InvalidOperationException($"bot: could not get back to the Nexus from {GlobalState.CURRENT_MAP_NAME}");
+            }
+            var door = AnodyneSharp.Entities.EntityManager.GetMapEntities("NEXUS")
+                .FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "NexusDoor"
+                    && string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, map, StringComparison.OrdinalIgnoreCase));
+            if (door == null)
+            {
+                throw new InvalidOperationException($"bot: no Nexus portal to {map}");
+            }
+            BotRunner.Status = $"to the Nexus portal to {map}";
+            yield return GoGlobal(door.Position.X + 10, door.Position.Y + 36);
+            for (int i = 0; i < 40 && GlobalState.CURRENT_MAP_NAME == "NEXUS"; i++)
+            {
+                yield return K(KeyFunctions.Up);
+                if (i == 20)
+                {
+                    yield return Tap(KeyFunctions.Accept);
+                }
+            }
+            yield return Wait(60);
+            yield return ReadDialogue();
+            yield return Wait(200);
+            if (GlobalState.CURRENT_MAP_NAME != map.ToUpperInvariant())
+            {
+                throw new InvalidOperationException($"bot: the Nexus portal did not take us to {map} (on {GlobalState.CURRENT_MAP_NAME})");
+            }
         }
 
         protected static IEnumerable<object> MenuReturnToPad(int tab)
@@ -4524,6 +4672,27 @@ namespace AnodyneSharp.Recording
                 }
                 System.Console.Error.WriteLine($"  tiles {ty,3}: {row}");
             }
+        }
+
+        /// <summary>
+        /// A shut Gate on this screen that opens on kills (frame % 10 &lt; 5: more kills on the screen than frame % 5) standing on one of the
+        /// route's first tiles on this screen, or null.
+        /// </summary>
+        protected static Entity ShutKillGateOnPath(List<Point> path)
+        {
+            var gates = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Gate" && e.Solid
+                && new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == Grid
+                && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "Gate"
+                    && Math.Abs(pr.Position.X - e.Position.X) < 2 && Math.Abs(pr.Position.Y - e.Position.Y) < 2) is AnodyneSharp.Entities.EntityPreset gp && gp.Frame % 10 < 5).ToList();
+            foreach (var t in path.TakeWhile(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y))
+            {
+                var r = new Rectangle(t.X * 16, t.Y * 16, 16, 16);
+                if (gates.FirstOrDefault(g => g.Hitbox.Intersects(r)) is Entity g)
+                {
+                    return g;
+                }
+            }
+            return null;
         }
 
         /// <summary>True while a dash trap is being baited and passed (its own walking must not start another pass).</summary>
@@ -9319,9 +9488,35 @@ namespace AnodyneSharp.Recording
             {
                 IgnoredEnemies.Clear(); // an explicit fight is for every enemy here, also the ones a soft fight on the way gave up on
             }
-            yield return FightCore(timeoutFrames, soft, only);
+            string key = $"{Map}|{Grid}|{Enemies().Count}";
+            if (soft && key == _fightLeftKey && _fightLeftCount >= 3)
+            {
+                // The same fight (same screen, same enemies) has ended with us put off its screen time after time (a current, a
+                // knock-back at the edge): starting it once more only goes round again. Leave it to the route.
+                yield break;
+            }
+            if (soft && only == null && _fightDepth > 0)
+            {
+                // (a fight walking back onto its screen arrives through GoScreenTo, whose own auto-fight would start this one again inside
+                // itself, round and round for ever: the outer fight is already on it)
+                yield break;
+            }
+            _fightKey = key;
+            _fightDepth++;
+            try
+            {
+                yield return FightCore(timeoutFrames, soft, only);
+            }
+            finally
+            {
+                _fightDepth--;
+            }
             yield return DodgeLeftoverBullets();
         }
+
+        private static int _fightDepth;
+        private static string _fightKey, _fightLeftKey;
+        private static int _fightLeftCount;
 
         /// <summary>A dead frog's last volley is still in the air: get out from under it before walking on (or standing about).</summary>
         private static IEnumerable<object> DodgeLeftoverBullets()
@@ -9452,6 +9647,7 @@ namespace AnodyneSharp.Recording
             var startGrid = Grid;
             string startMap = Map;
             int backIn = 0; // times we went back into the fight's screen after leaving it
+            int edgeSteps = 0; // frames spent stepping back in off a screen edge we straddle
             Vector2 lastPos = Pos;
             int stillFrames = 0;
             int unstick = 0;
@@ -9492,6 +9688,16 @@ namespace AnodyneSharp.Recording
                 {
                     // Knocked (or walked: a dodge, a wade) onto another screen. The fight is still there to win (a section that called it goes
                     // on as if it were): back in and on with it, twice at most; after that, that room's enemies are not this fight's business.
+                    var myScreen = new Point((int)(Player.Hitbox.Center.X / 160), (int)(Player.Hitbox.Center.Y / 160));
+                    if (myScreen == startGrid && edgeSteps < 60)
+                    {
+                        // Standing astride the edge: the camera still counts the screen next door while we are (mostly) back on the
+                        // fight's. Step on in to its middle until the screen really is the fight's again.
+                        edgeSteps++;
+                        float mx = startGrid.X * 160 + 80 - Player.Hitbox.Center.X, my = startGrid.Y * 160 + 80 - Player.Hitbox.Center.Y;
+                        yield return K(Math.Abs(mx) > Math.Abs(my) ? (mx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (my < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
                     if (backIn < 2 && Map == startMap && GlobalState.CUR_HEALTH >= 3)
                     {
                         backIn++;
@@ -9505,6 +9711,8 @@ namespace AnodyneSharp.Recording
                         stillFrames = 0;
                         continue;
                     }
+                    _fightLeftCount = _fightLeftKey == _fightKey ? _fightLeftCount + 1 : 1;
+                    _fightLeftKey = _fightKey;
                     yield break;
                 }
                 FightGrid = startGrid;
@@ -11179,6 +11387,325 @@ namespace AnodyneSharp.Recording
             if (!soft)
             {
                 throw new TimeoutException($"bot: Fight timed out on {Map} screen {Grid}");
+            }
+        }
+
+        // ---- Chasers (the Cell) ----
+        // A Chaser stands still until we line up with its row (a horizontal one) or column, then walks at us at 15px/s and paces that
+        // line end to end for good, turning at walls and the screen edge. It never dies and its touch (6 hearts) gets a jumper too.
+        // Corridors with one in them are crossed by timing: a search over (tile, time) with every Chaser's walk predicted, including
+        // the ones our own steps will set off.
+
+        private const int ChaserStepFrames = 14; // one tile of walking at 70px/s
+        private const int ChaserHorizonSteps = 150;
+        private static readonly System.Reflection.FieldInfo ChaserHorizField =
+            typeof(AnodyneSharp.Entities.Enemy.Cell.Chaser).GetField("_isHorizontal", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        private sealed class ChaserPlan
+        {
+            public Vector2 Idle;              // box top-left now
+            public bool Horiz;
+            public Vector2[] Track;           // moving now: box top-left per frame from now
+            public Vector2[] TrackNeg, TrackPos; // idle: box top-left per frame after it sets off left/up or right/down
+        }
+
+        private static bool ChaserBoxHitsWall(Rectangle box)
+        {
+            for (int ty = box.Top / 16; ty <= (box.Bottom - 1) / 16; ty++)
+            {
+                for (int tx = box.Left / 16; tx <= (box.Right - 1) / 16; tx++)
+                {
+                    if (BotNav.CurrentMap.GetTileClass(new Point(tx, ty)).Item1 == AnodyneSharp.Entities.Touching.ANY)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static Vector2[] ChaserTrack(Vector2 pos, Vector2 vel, Rectangle screen, int frames)
+        {
+            var track = new Vector2[frames + 1];
+            var p = pos;
+            for (int f = 0; f <= frames; f++)
+            {
+                track[f] = p;
+                var n = p + vel / 60f;
+                var box = new Rectangle((int)MathF.Floor(n.X), (int)MathF.Floor(n.Y), 8, 8);
+                if (!screen.Contains(box) || ChaserBoxHitsWall(box))
+                {
+                    vel = -vel;
+                }
+                else
+                {
+                    p = n;
+                }
+            }
+            return track;
+        }
+
+        private static List<ChaserPlan> ChasersOnScreen()
+        {
+            var screen = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+            int frames = ChaserHorizonSteps * ChaserStepFrames + 40;
+            var list = new List<ChaserPlan>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Cell.Chaser)
+                {
+                    continue;
+                }
+                var c = new ChaserPlan { Idle = new Vector2(e.Hitbox.X, e.Hitbox.Y), Horiz = ChaserHorizField?.GetValue(e) is true };
+                if (e.velocity != Vector2.Zero)
+                {
+                    c.Track = ChaserTrack(c.Idle, e.velocity, screen, frames);
+                }
+                else
+                {
+                    var axis = c.Horiz ? new Vector2(15, 0) : new Vector2(0, 15);
+                    c.TrackNeg = ChaserTrack(c.Idle, -axis, screen, frames);
+                    c.TrackPos = ChaserTrack(c.Idle, axis, screen, frames);
+                }
+                list.Add(c);
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// The first move of a timed way from tile `from` to `goal` past this screen's Chasers: (next tile, frames) with next == from for a
+        /// wait, or null when there is none within the horizon. Only tiles of this screen (and the goal) are used.
+        /// </summary>
+        private static (Point next, int frames)? PlanPastChasers(Point from, Point goal, List<ChaserPlan> chasers)
+        {
+            var screen = new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10);
+            int n = chasers.Count;
+            // node: tile, step, which idle Chasers we have set off (bit i) and when / which way. Nodes are the same only when all of that
+            // is (the Chasers are then where they were): one that set a Chaser off a moment later is a different world.
+            var seen = new HashSet<(Point, int, long)>();
+            long Code(int mask, int[] when, int[] dir)
+            {
+                long code = mask;
+                for (int i = 0; i < n && i < 4; i++)
+                {
+                    if ((mask & (1 << i)) != 0)
+                    {
+                        code |= (long)((when[i] / ChaserStepFrames + 1) * 2 + (dir[i] < 0 ? 1 : 0)) << (8 + 12 * i);
+                    }
+                }
+                return code;
+            }
+            _chaserPlanTrace = "";
+            var layer = new List<(Point t, int mask, int[] when, int[] dir, (Point, int)? first)>
+            {
+                (from, 0, new int[n], new int[n], null)
+            };
+            Vector2 Box(Point t) => BotNav.CentreOf(t);
+            Vector2? ChaserAt(int i, int frame, int mask, int[] when, int[] dir)
+            {
+                var c = chasers[i];
+                if (c.Track != null)
+                {
+                    return c.Track[Math.Min(frame, c.Track.Length - 1)];
+                }
+                if ((mask & (1 << i)) == 0 || frame < when[i])
+                {
+                    return c.Idle;
+                }
+                var tr = dir[i] < 0 ? c.TrackNeg : c.TrackPos;
+                return tr[Math.Min(frame - when[i], tr.Length - 1)];
+            }
+            bool Clear(Vector2 a, Vector2 b, int f0, int frames, int mask, int[] when, int[] dir)
+            {
+                for (int k = 0; k <= frames; k++)
+                {
+                    var p = Vector2.Lerp(a, b, frames == 0 ? 1 : (float)k / frames);
+                    var me = new Rectangle((int)p.X - 3, (int)p.Y - 3, 16, 18);
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (ChaserAt(i, f0 + k, mask, when, dir) is Vector2 q && me.Intersects(new Rectangle((int)q.X, (int)q.Y, 8, 8)))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            for (int step = 0; step < ChaserHorizonSteps && layer.Count > 0; step++)
+            {
+                var next = new List<(Point, int, int[], int[], (Point, int)?)>();
+                int f0 = step * ChaserStepFrames;
+                foreach (var (t, mask, when, dir, first) in layer)
+                {
+                    if (t == goal)
+                    {
+                        return first;
+                    }
+                    var moves = new List<(Point to, int steps)> { (t, 1) };
+                    foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                    {
+                        var a = new Point(t.X + d.X, t.Y + d.Y);
+                        if ((screen.Contains(a) || a == goal) && BotNav.Walkable(a) && !BotNav.IsJumpable(a))
+                        {
+                            moves.Add((a, 1));
+                        }
+                        else if (GlobalState.inventory.CanJump && screen.Contains(a) && BotNav.IsJumpable(a))
+                        {
+                            var b = new Point(a.X + d.X, a.Y + d.Y);
+                            if ((screen.Contains(b) || b == goal) && BotNav.Walkable(b) && !BotNav.IsJumpable(b))
+                            {
+                                moves.Add((b, 2));
+                            }
+                        }
+                    }
+                    foreach (var (to, steps) in moves)
+                    {
+                        int frames = steps * ChaserStepFrames;
+                        if (!Clear(Box(t), Box(to), f0, frames, mask, when, dir))
+                        {
+                            continue;
+                        }
+                        // lining up with an idle Chaser sets it off, towards us
+                        int m2 = mask;
+                        int[] w2 = when, d2 = dir;
+                        var me = Box(to);
+                        for (int i = 0; i < n; i++)
+                        {
+                            var c = chasers[i];
+                            if (c.Track != null || (mask & (1 << i)) != 0)
+                            {
+                                continue;
+                            }
+                            bool lined = c.Horiz ? me.Y > c.Idle.Y - 12 && me.Y < c.Idle.Y + 8 : me.X > c.Idle.X - 10 && me.X < c.Idle.X + 8;
+                            if (lined)
+                            {
+                                if (w2 == when)
+                                {
+                                    w2 = (int[])when.Clone();
+                                    d2 = (int[])dir.Clone();
+                                }
+                                m2 |= 1 << i;
+                                w2[i] = f0 + frames;
+                                d2[i] = c.Horiz ? Math.Sign(me.X - c.Idle.X) : Math.Sign(me.Y - c.Idle.Y);
+                            }
+                        }
+                        int s2 = step + steps;
+                        if (!seen.Add((to, s2, Code(m2, w2, d2))))
+                        {
+                            continue;
+                        }
+                        var f = first ?? (to, frames);
+                        if (steps == 1)
+                        {
+                            next.Add((to, m2, w2, d2, f));
+                        }
+                        else
+                        {
+                            // (a jump spans two steps: it lands on the next layer but one)
+                            _laterJumps.Add((s2, (to, m2, w2, d2, f)));
+                        }
+                    }
+                }
+                foreach (var lj in _laterJumps.Where(x => x.Item1 == step + 1).ToList())
+                {
+                    next.Add(lj.Item2);
+                    _laterJumps.Remove(lj);
+                }
+                layer = next;
+                if (step % 10 == 0 || layer.Count == 0)
+                {
+                    _chaserPlanTrace += $" s{step}:{layer.Count}";
+                }
+                if (seen.Count > 400000)
+                {
+                    break;
+                }
+            }
+            _laterJumps.Clear();
+            _chaserPlanReach = string.Join(" ", seen.Select(x => x.Item1).Distinct().Select(t => $"{t.X},{t.Y}"));
+            return null;
+        }
+
+        private static string _chaserPlanReach = "", _chaserPlanTrace = "";
+
+        private static readonly List<(int, (Point, int, int[], int[], (Point, int)?))> _laterJumps = new();
+        private static bool _chaserWalkOk;
+
+        /// <summary>
+        /// Walks to `goal` (a tile on this screen, or the first one across its edge) timing every step against the screen's Chasers;
+        /// _chaserWalkOk tells whether it got there.
+        /// </summary>
+        protected static IEnumerable<object> ChaserWalk(Point goal, int timeoutFrames = 3600)
+        {
+            _chaserWalkOk = false;
+            var grid = Grid;
+            for (int i = 0; i < timeoutFrames;)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return K();
+                    i++;
+                    continue;
+                }
+                var here = BotNav.TileOf(Pos);
+                if (here == goal || Grid != grid)
+                {
+                    _chaserWalkOk = here == goal || new Point(goal.X / 10, goal.Y / 10) == Grid;
+                    yield break;
+                }
+                var hc = BotNav.CentreOf(here);
+                if (Vector2.Distance(hc, Pos) > 2.5f)
+                {
+                    // (plans start from the middle of a tile)
+                    float dx = hc.X - Pos.X, dy = hc.Y - Pos.Y;
+                    yield return K(Math.Abs(dx) > 1.5f ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    i++;
+                    continue;
+                }
+                var plan = PlanPastChasers(here, goal, ChasersOnScreen());
+                if (plan == null)
+                {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  chasers: no timed way from {here} to {goal} on {Grid}; reached {_chaserPlanReach}; layers{_chaserPlanTrace}; chasers "
+                            + string.Join(" ", ChasersOnScreen().Select(c => $"{c.Idle}{(c.Horiz ? "H" : "V")}{(c.Track != null ? "moving" : $"idle +{c.TrackPos[120]}/{c.TrackPos[600]} -{c.TrackNeg[120]}/{c.TrackNeg[600]}")}")));
+                    }
+                    yield break;
+                }
+                var (to, frames) = plan.Value;
+                BotNav.ResetDustCache();
+                BotRunner.NotStuck();
+                if (to == here)
+                {
+                    BotRunner.Status = $"chasers: wait at {here} (for {goal})";
+                    for (int w = 0; w < 4; w++, i++)
+                    {
+                        yield return K();
+                    }
+                    continue;
+                }
+                BotRunner.Status = $"chasers: {here} -> {to} (for {goal})";
+                if (Math.Abs(to.X - here.X) + Math.Abs(to.Y - here.Y) == 2)
+                {
+                    yield return Leap(here, to);
+                    i += 40;
+                    continue;
+                }
+                var tc = BotNav.CentreOf(to);
+                var dir = to.X > here.X ? KeyFunctions.Right : to.X < here.X ? KeyFunctions.Left : to.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                for (int w = 0; w < 30 && Grid == grid && Vector2.Distance(tc, Pos) > 1.5f; w++, i++)
+                {
+                    bool vertical = dir == KeyFunctions.Up || dir == KeyFunctions.Down;
+                    float off = vertical ? tc.X - Pos.X : tc.Y - Pos.Y;
+                    if (Math.Abs(off) > 1.5f)
+                    {
+                        yield return K(dir, vertical ? (off < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (off < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                    else
+                    {
+                        yield return K(dir);
+                    }
+                }
             }
         }
     }

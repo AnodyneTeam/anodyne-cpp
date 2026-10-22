@@ -62,6 +62,14 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var t = new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16);
+                if (e is AnodyneSharp.Entities.Gadget.BigCardGate cg)
+                {
+                    // A card gate (two tiles wide) with enough cards in hand: the walker opens it on the way.
+                    var set = cg.Solid && GlobalState.inventory.CardCount < cg._preset.Frame ? _gatesClosed : _gatesOpen;
+                    set.Add(t);
+                    set.Add(new Point(t.X + 1, t.Y));
+                    continue;
+                }
                 (e.Solid && !(haveKey && e is AnodyneSharp.Entities.Gadget.SmallKeyGate) ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
@@ -87,13 +95,89 @@ namespace AnodyneSharp.Recording
                     _gatesOpen.Add(t);
                     continue;
                 }
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.BigCardGate) && GlobalState.inventory.CardCount >= pr.Frame)
+                {
+                    _gatesOpen.Add(t);
+                    _gatesOpen.Add(new Point(t.X + 1, t.Y));
+                    continue;
+                }
                 _gatesClosed.Add(t);
                 if (pr.Type.Name.StartsWith("Big"))
                 {
                     _gatesClosed.Add(new Point(t.X + 1, t.Y));
                 }
             }
+            RefreshKillGates();
         }
+
+        // Shut kill gates (Gate, preset frame 0-4 / 10-14: open once more than frame%5 of their screen's enemies are dead) and the tiles
+        // beside them they can be opened from: only enemies we can get at count, so a gate with its enemies all on its far side is a
+        // one-way wall from this side, even for the searches that assume shut gates open on arrival.
+        private static Dictionary<Point, HashSet<Point>> _killGateEntries = new();
+
+        private static void RefreshKillGates()
+        {
+            _killGateEntries = new Dictionary<Point, HashSet<Point>>();
+            var grid = GlobalState.CurrentMapGrid;
+            var presets = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME);
+            foreach (var pr in presets)
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.Gate) || !pr.Alive || pr.Frame % 10 >= 5)
+                {
+                    continue;
+                }
+                var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                if (!_gatesClosed.Contains(t))
+                {
+                    continue;
+                }
+                var screen = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
+                bool here = screen.X / 10 == grid.X && screen.Y / 10 == grid.Y;
+                // The enemies of that screen still to kill: the live ones when it is loaded, else the presets.
+                var foes = here
+                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToVector2())).ToList()
+                    : presets.Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                        .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
+                // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
+                int killed = here ? GlobalState.ENEMIES_KILLED : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+                    && screen.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)));
+                int need = pr.Frame % 5 + 1 - killed;
+                var entries = new HashSet<Point>();
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var side = new Point(t.X + d.X, t.Y + d.Y);
+                    if (!screen.Contains(side) || _gatesClosed.Contains(side))
+                    {
+                        continue;
+                    }
+                    // Flood this side of the gate (within its screen, other shut gates holding) and count the enemies on it.
+                    var seen = new HashSet<Point> { side };
+                    var q = new Queue<Point>();
+                    q.Enqueue(side);
+                    while (q.Count > 0)
+                    {
+                        var c = q.Dequeue();
+                        foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                        {
+                            var n = new Point(c.X + o.X, c.Y + o.Y);
+                            if (screen.Contains(n) && !_gatesClosed.Contains(n) && !seen.Contains(n) && CurrentMap.GetTileClass(n).Item1 != Touching.ANY)
+                            {
+                                seen.Add(n);
+                                q.Enqueue(n);
+                            }
+                        }
+                    }
+                    if (need <= 0 || foes.Count(seen.Contains) >= need)
+                    {
+                        entries.Add(side);
+                    }
+                }
+                _killGateEntries[t] = entries;
+            }
+        }
+
+        /// <summary>True when stepping from c onto n would walk into a shut kill gate that cannot be opened from c's side.</summary>
+        public static bool KillGateBarred(Point c, Point n) => !_respectClosedGates && _killGateEntries.TryGetValue(n, out var ok) && !ok.Contains(c);
 
         /// <summary>BFS step counts over walkable tiles from `from` (stays inside `bounds` if given).</summary>
         public static Dictionary<Point, int> DistMap(Point from, bool allowWater, Rectangle? bounds = null, bool allowJump = false)
@@ -340,7 +424,7 @@ namespace AnodyneSharp.Recording
                                 continue;
                             }
                         }
-                        else if (!Walkable(n))
+                        else if (!Walkable(n) || KillGateBarred(c, n))
                         {
                             continue;
                         }
@@ -808,7 +892,7 @@ namespace AnodyneSharp.Recording
                     var from = prev[st].Item1;
                     foreach (var n in Steps(from == c ? c : from, c))
                     {
-                        if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
+                        if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n)))
                         {
                             continue;
                         }
@@ -1503,7 +1587,7 @@ namespace AnodyneSharp.Recording
                 foreach (var n in Steps(prev[c], c))
                 {
                     var d = new Point(Math.Sign(n.X - c.X), Math.Sign(n.Y - c.Y));
-                    if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
+                    if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n)))
                     {
                         continue;
                     }
@@ -1560,7 +1644,7 @@ namespace AnodyneSharp.Recording
                 var c = q.Dequeue();
                 foreach (var n in Steps(prev[c], c))
                 {
-                    if (prev.ContainsKey(n) || (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n))))
+                    if (prev.ContainsKey(n) || (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n))))
                     {
                         continue;
                     }

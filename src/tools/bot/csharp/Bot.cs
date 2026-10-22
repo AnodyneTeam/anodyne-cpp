@@ -1064,16 +1064,27 @@ namespace AnodyneSharp.Recording
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
             bool offSpikes = false; // walked off an unwalkable tile we found ourselves standing on (the planner never plans from one)
+            int killGateFights = 0; // fights started to open a kill gate the route runs through
+            int dodgeWaits = 0; // frames spent holding back for moving dangers (they do not count against a tile)
+            int offRoute = 0, offRouteTotal = 0; // replans after being dodged off the route (recent, all told)
+            int jumpLaneReplans = 0; // replans because a jump's lane was not clear and the danger was coming for us
             int gateWait = 0; // frames spent waiting for a shut gate on this screen to open (a kill only counts once the enemy is gone)
             // Beams only become known on arriving at their screen: a route that was planned to end inside one is re-planned to end beside it.
             HashSet<Point> goalLaneBan = null;
             var laneReplanned = new HashSet<Point>();
+            var chaserGaveUp = new HashSet<Point>(); // screens whose Chasers the timed walk found no way past
             var userGoal = isGoal;
             isGoal = t => userGoal(t) && (goalLaneBan == null || !goalLaneBan.Contains(t));
             string startMap = Map;
+            int replans = 0;
             for (int attempt = 0; attempt <= maxReplans; attempt++)
             {
                 replan:
+                if (++replans > 400)
+                {
+                    // (the gotos above re-plan without using up an attempt: a loop of them that never gets anywhere ends here)
+                    throw new TimeoutException($"bot: GoTo {what} replanned {replans} times without getting there, at {Pos} on {Map}");
+                }
                 if (Map != startMap)
                 {
                     yield break; // a door took us to another map part-way: the goal was a tile of the old one, we are through
@@ -1282,6 +1293,18 @@ namespace AnodyneSharp.Recording
                         goto replan;
                     }
                 }
+                if (path.Count > 0 && killGateFights < 2 && !InRaft && ShutKillGateOnPath(path) is Entity killGate && Enemies().Any(e => new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid))
+                {
+                    // The route runs through this screen's kill gate, still shut: it opens on kills made here, so fight the screen first.
+                    killGateFights++;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  route through the shut kill gate at {killGate.Position} on {Grid}: fighting the screen first");
+                    }
+                    yield return Fight(3600, soft: true);
+                    yield return Wait(30);
+                    goto replan;
+                }
                 if (!PassingTrap && path.Count > 0 && SightTrapOnPath(path) is (Entity trap, Point side, int ti))
                 {
                     // An idle dash trap sitting in a one-tile way: bait it from the side, then slip past while it is coming back.
@@ -1325,6 +1348,27 @@ namespace AnodyneSharp.Recording
                             System.Console.Error.WriteLine($"  new screen {Grid}: the route would run along a beam: re-planning with the beams known");
                         }
                         goto replan;
+                    }
+                    if (!InRaft && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
+                        && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser))
+                    {
+                        // Chasers about: the plain walk would line up with one and meet it in a corridor. Time this screen's stretch of
+                        // the route against them instead, then plan on from wherever that leaves us.
+                        var scr = Grid;
+                        int gi = pi;
+                        while (gi < path.Count - 1 && path[gi].X / 10 == scr.X && path[gi].Y / 10 == scr.Y)
+                        {
+                            gi++;
+                        }
+                        if (BotNav.TileOf(Pos) != path[gi])
+                        {
+                            yield return ChaserWalk(path[gi]);
+                            if (!_chaserWalkOk)
+                            {
+                                chaserGaveUp.Add(scr);
+                            }
+                            goto replan;
+                        }
                     }
                     if (Grid != gridAtStart && !BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
                         && GlobalState.inventory.HasBroom && HaveLooseDust())
@@ -1393,6 +1437,60 @@ namespace AnodyneSharp.Recording
                         for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
                         {
                             yield return K(); // keys do nothing while the screen scrolls: a jump pressed now never happens
+                        }
+                        {
+                            // Something that hurts a jumper too (a Chaser pacing this corridor) must keep off the whole way, run-up to
+                            // landing, for the time the jump takes: wait for it to pass (it is never fought).
+                            var landC0 = BotNav.CentreOf(land);
+                            for (int w = 0; w < 900; w++)
+                            {
+                                var pbx0 = Player.Hitbox;
+                                var lane = Rectangle.Union(pbx0, new Rectangle((int)landC0.X, (int)landC0.Y, pbx0.Width, pbx0.Height));
+                                lane.Inflate(4, 4);
+                                bool clear = true, meSafe = true;
+                                var me0 = pbx0;
+                                me0.Inflate(4, 4);
+                                foreach (var t in PredictThreats(null).Where(t => t.HurtsInAir))
+                                {
+                                    for (int k = 0; k <= 60 && clear; k++)
+                                    {
+                                        clear = !(t.At[k] is Rectangle r && lane.Intersects(r));
+                                    }
+                                    for (int k = 0; k <= 45 && meSafe; k++)
+                                    {
+                                        meSafe = !(t.At[k] is Rectangle r && me0.Intersects(r));
+                                    }
+                                }
+                                if (clear)
+                                {
+                                    break;
+                                }
+                                if (!meSafe && jumpLaneReplans < 10)
+                                {
+                                    // it is coming for where we stand: no waiting here, let the dodging walk take us out of its way
+                                    jumpLaneReplans++;
+                                    goto replan;
+                                }
+                                BotRunner.Status = "jump: wait for the lane to clear";
+                                BotRunner.NotStuck();
+                                yield return K();
+                            }
+                        }
+                        {
+                            // Line up with the take-off tile across the jump first: a jump started a few px to the side clips the wall
+                            // beside a one-tile gap and comes down short (in the pit, or back where we were).
+                            var fc = BotNav.CentreOf(from);
+                            bool vertical = jk == KeyFunctions.Up || jk == KeyFunctions.Down;
+                            for (int w = 0; w < 40; w++)
+                            {
+                                float off = vertical ? fc.X - Pos.X : fc.Y - Pos.Y;
+                                if (Math.Abs(off) <= 1.5f)
+                                {
+                                    break;
+                                }
+                                BotRunner.Status = "jump: line up";
+                                yield return K(vertical ? (off < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (off < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                            }
                         }
                         if (BotNav.IsHole(tile))
                         {
@@ -1488,6 +1586,13 @@ namespace AnodyneSharp.Recording
                         var kc = BotNav.CentreOf(kfrom);
                         yield return OpenKeyBlock(kc.X, kc.Y, kdir);
                     }
+                    if (BotRunner.Entities().FirstOrDefault(e => e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.BigCardGate g
+                            && GlobalState.inventory.CardCount >= g._preset.Frame && e.Hitbox.Intersects(new Rectangle(tile.X * 16, tile.Y * 16, 16, 16))) is Entity cardGate)
+                    {
+                        // A card gate in the way and the cards for it: open it from the side we come from.
+                        var kfrom = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
+                        yield return OpenCardGate(cardGate, kfrom.Y > tile.Y);
+                    }
                     var c = BotNav.CentreOf(tile);
                     Vector2 last = Pos;
                     int still = 0;
@@ -1510,7 +1615,29 @@ namespace AnodyneSharp.Recording
                         var p = Pos;
                         if (Math.Abs(c.X - p.X) <= 2f && Math.Abs(c.Y - p.Y) <= 2f)
                         {
+                            offRoute = Math.Max(0, offRoute - 1); // (on the route again: the allowance builds back up)
                             break;
+                        }
+                        if (i > 10 && offRoute < 30 && offRouteTotal < 80)
+                        {
+                            // Dodged (or knocked) off the route, two tiles or more from the step we are on: walking at that tile from
+                            // here can only push into a wall, so plan again from where we are.
+                            var hereT = BotNav.TileOf(p);
+                            var prevT = pi == 0 ? hereT : path[pi - 1];
+                            if (Math.Abs(hereT.X - tile.X) + Math.Abs(hereT.Y - tile.Y) > 1 && Math.Abs(hereT.X - prevT.X) + Math.Abs(hereT.Y - prevT.Y) > 1)
+                            {
+                                offRoute++;
+                                offRouteTotal++;
+                                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                                {
+                                    System.Console.Error.WriteLine($"  off the route at {hereT} (step {prevT}>{tile}): replan {offRoute}");
+                                }
+                                goto replan;
+                            }
+                        }
+                        if (i == 150 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  slow step to tile {tile} (centre {c}) at {p}: path " + string.Join(">", path.Skip(Math.Max(0, pi - 3)).Take(10).Select(q => $"{q.X},{q.Y}")));
                         }
                         if (annoyerFights < 6 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer"
                             && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < (AutoFight ? 70 : 48)))
@@ -1640,12 +1767,27 @@ namespace AnodyneSharp.Recording
                         if (Dodged)
                         {
                             still = 0;
+                            if (dodgeWaits < 900)
+                            {
+                                // holding back for something that moves (a Chaser pacing the corridor ahead): this tile's time and the
+                                // stuck clock wait with us, up to a point
+                                dodgeWaits++;
+                                i--;
+                                BotRunner.NotStuck();
+                            }
                         }
                         yield return safe;
                     }
                     if (stuck)
                     {
                         break;
+                    }
+                    if (offRoute < 30 && Vector2.Distance(Pos, BotNav.CentreOf(tile)) > 10f)
+                    {
+                        // Out of time on this tile and nowhere near it (dodged off the route): plan again from here rather than walk on to
+                        // the next tile of a route we are no longer on.
+                        offRoute++;
+                        goto replan;
                     }
                 }
                 if (!stuck && isGoal(BotNav.TileOf(Pos)))
