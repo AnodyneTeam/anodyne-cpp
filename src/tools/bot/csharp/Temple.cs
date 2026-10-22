@@ -191,8 +191,9 @@ namespace AnodyneSharp.Recording
                 "X0 H7,2 W30 >1139,370 L30 W30 >1203,410 U20 W120 J27,26,l W20 J21,26,u W20 (21,25 W10 >339,338 W10 >451,338 W20 " +
                 "J28,21,d W20 >339,338 J21,21,d W20 (21,22 W10 >403,418 U20 W120 `ap_twin"));
             // (6,2) fight; (5,2) `[` rat button; (5,3) the crystal maze (`_` plans the switch flips); (4,3) and the (4,2) door down to (4,7).
+            // TODO: (6,2)'s dash traps and (4,3)'s silverfish (fought by walking at them) can cost 2 hearts (budgeted).
             yield return Section("apartment maze", () => Exec(
-                "X1 H6,2 W30 F1800 W30 X0 H5,2 [ W30 X0 H5,3 W20 _803,610 W20 X1 H4,3 W30 F1800 W20 H4,2 W20 >771,338 U40 W120 `ap_maze"));
+                "g2 X1 H6,2 W30 F1800 W30 X0 H5,2 [ W30 X0 H5,3 W20 _803,610 W20 X1 H4,3 W30 F1800 W20 H4,2 W20 >771,338 U40 W120 `ap_maze"));
             // (5,7) silverfish button (a Gas Guy in the room is fought first), (5,6), (6,6)'s key chest.
             // TODO: (5,6)'s dash traps and (6,6)'s slasher can still cost 2 hearts (budgeted).
             yield return Section("apartment south key", () => Exec(

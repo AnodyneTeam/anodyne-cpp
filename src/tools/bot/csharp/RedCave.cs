@@ -83,8 +83,8 @@ namespace AnodyneSharp.Recording
             yield return Section("redcave to the west steam room", () => Exec("n0 W60 O1 X1 >136,872 W10 `rc_05_in"));
             yield return Section("redcave west steam room mover", () => Exec("O0 X0 s G56,818 W90 s1 G56,858 W150"));
             // (0,4): a four-shooter in the middle of a ring of floor. Fight each Annoyer where none of its bullet lines cross: the lower one
-            // from the doorway (8,49), the upper one from (7,41).
-            yield return Section("redcave four-shooter ring", () => Exec("O1 X0 >134,782 W5 G134,770 W30 G134,782 X1 F X0 >120,664 W10 X1 F O1 X0 >136,616 W10 `rc_03_in"));
+            // from the doorway (8,49), the upper one from (7,41) (a soft fight first: chasing the upper one from below gets nowhere).
+            yield return Section("redcave four-shooter ring", () => Exec("O1 X0 >134,782 W5 G134,770 W30 G134,782 X1 F900 X0 >120,664 W10 X1 F O1 X0 >136,616 W10 `rc_03_in"));
             // (0,3): the gate's button is on the key's side: raft round through the (1,3) pool to it.
             yield return Section("redcave west key", () => Exec("O1 X0 ~21,533 W30 I32,496,d W60 `rc_key03"));
             yield return Section("redcave left keyblocks", () => Exec("n0 W60 O1 X0 >248,824 G248,822 U40 W30 G248,776 L40 W30"));

@@ -4738,6 +4738,32 @@ namespace AnodyneSharp.Recording
         private static Point _ignoredGrid = new(-1, -1);
         private static string _ignoredMap = "";
 
+        static readonly Dictionary<Entity, (Vector2 pos, long moved)> _annoyerSeen = new();
+        static readonly HashSet<Entity> _unreachableHearts = new();
+        static Entity _heartChased;
+        static float _heartBest;
+        static int _heartStall;
+
+        /// <summary>
+        /// An Annoyer sits still until we come within 64px; awake, it always flies to us (over holes too), so chasing it is no use:
+        /// it has moved within the last half second.
+        /// </summary>
+        protected static bool AnnoyerAwake(Entity a)
+        {
+            long now = BotRunner.Frame;
+            if (!_annoyerSeen.TryGetValue(a, out var seen))
+            {
+                _annoyerSeen[a] = (a.Position, -1000);
+                return false;
+            }
+            if (seen.pos != a.Position)
+            {
+                seen = (a.Position, now);
+                _annoyerSeen[a] = seen;
+            }
+            return now - seen.moved <= 30;
+        }
+
         protected static List<Entity> Enemies()
         {
             if (_ignoredGrid != Grid || _ignoredMap != Map)
@@ -7864,14 +7890,10 @@ namespace AnodyneSharp.Recording
                                         }
                                     }
                                 }
-                                // No straight walk gets clear (a corridor, a corner): the path-planned spot off both strips below does better.
-                                if (bestScore >= 500)
-                                {
-                                    _slasherRun = best;
-                                    BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)})";
-                                    yield return K(best);
-                                    continue;
-                                }
+                                _slasherRun = best;
+                                BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
+                                yield return K(best);
+                                continue;
                             }
                         }
                     }
@@ -8174,14 +8196,27 @@ namespace AnodyneSharp.Recording
                 // Hit and owing hearts: a dropped heart that is near and not guarded by an enemy is worth more than the fight (they time out).
                 if (BotRunner.DebtBaseline >= 0 || GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH)
                 {
-                    var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup")).OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length()).FirstOrDefault();
+                    var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup") && !_unreachableHearts.Contains(e)).OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length()).FirstOrDefault();
                     if (heart != null && (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length() < 110 &&
                         !Enemies().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y)).Length() < 22) &&
                         !Dangers().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < 36)) // (not with one on us, even one the fight gave up on)
                     {
                         var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
                         var hpath = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
-                        if (hpath != null && hpath.Count > 0 && hpath.Count < 12)
+                        // (one dropped against a wall can sit out of reach in it: walking at it for a second without getting closer gives up on it)
+                        float hd = (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length();
+                        if (heart != _heartChased || hd < _heartBest - 1f)
+                        {
+                            _heartChased = heart;
+                            _heartBest = hd;
+                            _heartStall = 0;
+                        }
+                        else if (++_heartStall > 60)
+                        {
+                            _unreachableHearts.Add(heart);
+                            continue;
+                        }
+                        if (hpath != null && hpath.Count > 0 && hpath.Count < 12 && BotNav.Walkable(ht))
                         {
                             BotRunner.Status = "fight/collect the dropped heart";
                             var hc = BotNav.CentreOf(hpath[0]) + new Vector2(5, 6);
@@ -8618,7 +8653,7 @@ namespace AnodyneSharp.Recording
                 {
                     noProgress++;
                 }
-                if (target.GetType().Name == "Annoyer" && distSq < 75 * 75)
+                if (target.GetType().Name == "Annoyer" && (distSq < 75 * 75 || AnnoyerAwake(target)))
                 {
                     // An awake Annoyer flies to a point 20px right of us and circles us there for 3s before it swoops: chasing it is
                     // what gets us hit. Stand still facing right and swing; it is in reach every time round.
