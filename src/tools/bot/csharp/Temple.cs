@@ -207,4 +207,21 @@ namespace AnodyneSharp.Recording
             yield return Section("apartment last card", () => Exec("H8,7 W20 I1376,1168,d W60 T W30 n0 W120 `ap_done"));
         }
     }
+
+    /// <summary>
+    /// Walkthrough Part 16: the Hotel. Its Nexus door stays dark until the Hotel's own pad has been touched, so the way in is on foot:
+    /// the Crowd's pad, the Crowd's top door into the Cliffs' east side, up to the Cliff top's door into Space, Space's pad on the
+    /// way, and Space's top door down onto the Hotel's roof.
+    /// </summary>
+    public class Hotel : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The Hotel (on foot through the Cliffs and Space)");
+            // The Apartments end at their entrance: out to the Suburb, to the Nexus, and its Crowd door.
+            yield return Section("hotel nexus to the crowd pad", () => Exec("W30 O1 X1 >396,930 D30 W90 n0 W120 >906,900 U20 W10 A W60 T W200 `ho_crowd"));
+            yield return Section("hotel cliff top", () => Exec("O1 X1 >1528,662 U30 W90 D20 W20 H8,1 >1405,214 R40 W90 `ho_space"));
+            yield return Section("hotel space", () => Exec("O1 X1 H5,2 P870,392 W60 H5,0 >876,24 U40 W120 `ho_in"));
+        }
+    }
 }

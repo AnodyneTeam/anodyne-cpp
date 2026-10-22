@@ -1453,7 +1453,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -1478,6 +1478,7 @@ namespace AnodyneSharp.Recording
             "temple2" => new Temple2(),
             "suburb" => new Suburb(),
             "apartment" => new Apartment(),
+            "hotel" => new Hotel(),
             _ => throw new ArgumentException(name)
         };
 
