@@ -188,6 +188,16 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - `DoorGuard`: a fight's own steps never walk onto a door or portal (a Crowd DownDoor beside a Dog warped the bot across the map).
 - A spike roller that has stopped across the way is jumped (rollers miss a player in the air) instead of walked into.
 - `X0` turns auto-fight off for the rest of a section: put `X1` back before a room whose fight should start on arrival (the Watcher).
+- Hotel Super Dog: five dashes (66-102px/s) each re-aimed at us; `DogAttackPlan` reads its attack clock and `DogSidestep`
+  simulates every step (half speed when wading) to stand where the dash stops short.
+- Gas Guy: homes through walls at 12px/s; `GasGuyKeys` predicts its path, swings as it enters the broom box, and the runner mirrors
+  the keys while its gas reverses them.
+- Dustmaids wake when any dust is held and chase forever over water: outrun them on the raft (`RaftPath` avoids their tiles,
+  `NearestLaunch` picks the closest bank), never fight them. `ContactEscape` steps out of any enemy body after 4 frames of touch.
+- Bullet Slimes pinned under a Burst Plant's fire: the soft fight clears the reachable plant first, then presses the Slime,
+  hopping its shots (`HopAcross` never lands on an enemy body).
+- Eye boss land phase: its lobs land where we stood 1.5s earlier and burst into splashes that slow us to 0.3 for 100 frames;
+  the fight predicts lobs, splashes and the eye's walk and steps at its real (slowed) speed.
 
 ## Status
 
@@ -235,7 +245,9 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
   (8,2) card. Part `apartment` (`Apartment` in `Temple.cs`): the Apartments from the town's north door: Broom Widen from Red
   Cave, the Silverfish card under the spike roller, both keys of the west wing, the Gas Guy card, then the east wing (rat and
   silverfish buttons, the platform rides, the water raft, the twin-platform room through the (7,2) door, the crystal maze), the
-  Watcher, its health upgrade and the (8,7) card: all 3 of its cards, 20 in all. Next: back at the Nexus, the next area.
+  Watcher, its health upgrade and the (8,7) card: all 3 of its cards, 20 in all. Parts `hotel`..`hotel6` (`Temple.cs`): the Hotel from the Nexus on foot via the Cliffs and
+  Space, its pad, the keys, the elevators, the east wing (steam pipes, rafts, Super Dog, Gas Guy, the Dustmaid lake, the (7,6)
+  key) and the Eye boss, both phases; each part passes from the previous part's end (2026-10-22).
   The Beach 2 raft crossing still
   uses the dev `c8` token.
 - Not done: everything after the Beach (Red Sea ... the 91 parts of the walkthrough), a separate speedrun route, the 100% extras.
