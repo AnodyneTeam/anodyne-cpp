@@ -2134,7 +2134,6 @@ namespace AnodyneSharp.Recording
             bool rafts = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type == typeof(AnodyneSharp.Entities.Dust));
             try
             {
-                _leaps = AllowJump; // (stepping stones too: this search only picks the switch, the walk finds its own way after)
                 foreach (int pass in new[] { 0, 1, 2 })
                 {
                     bool respect = pass == 0;

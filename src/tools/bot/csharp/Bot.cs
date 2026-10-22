@@ -418,6 +418,8 @@ namespace AnodyneSharp.Recording
         /// <summary>ANODYNE_PROF=1: time the planners per frame and show the tally with each slow frame.</summary>
         public static readonly bool ProfOn = Environment.GetEnvironmentVariable("ANODYNE_PROF") != null;
 
+        private static readonly Dictionary<string, double> _winByStatus = new();
+
         public static void Prof(string name, long t0)
         {
             double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -434,6 +436,10 @@ namespace AnodyneSharp.Recording
             var result = NextFrameCore();
             double ms = sw.Elapsed.TotalMilliseconds;
             _winMs += ms;
+            var stKey = Status ?? "";
+            int cut = stKey.IndexOf('(');
+            stKey = cut > 0 ? stKey.Substring(0, cut) : stKey; // (the doing, not where)
+            _winByStatus[stKey] = _winByStatus.GetValueOrDefault(stKey) + ms;
             if (ms > SlowFrameMs && _slowReports++ < 40)
             {
                 System.Console.Error.WriteLine($"SLOW BOT FRAME {ms:0.0}ms at f{_botFrame} ({Status}): spacetime calls {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}, nodes {AnodyneSharp.Recording.SpaceTime.NodesThisFrame}; "
@@ -445,11 +451,13 @@ namespace AnodyneSharp.Recording
                 if (avg > MaxAvgMs)
                 {
                     System.Console.Error.WriteLine($"BOT FAILED: the bot itself is slow: {avg:0.0}ms per frame over the last {_winN} frames at f{_botFrame} ({Status}); spacetime calls/nodes in the last frame {AnodyneSharp.Recording.SpaceTime.CallsThisFrame}/{AnodyneSharp.Recording.SpaceTime.NodesThisFrame}");
+                    System.Console.Error.WriteLine("  slow window by status: " + string.Join("; ", _winByStatus.OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key.Trim()} {kv.Value:0}ms")));
                     DumpRing();
                     _trace?.Flush();
                     Environment.Exit(4);
                 }
                 _winMs = 0; _winN = 0;
+                _winByStatus.Clear();
             }
             return result;
         }

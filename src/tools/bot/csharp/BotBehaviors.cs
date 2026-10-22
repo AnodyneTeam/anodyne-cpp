@@ -1692,11 +1692,13 @@ namespace AnodyneSharp.Recording
             }
             var d = DirVector(way);
             var hb = Player.Hitbox;
-            foreach (var step in new[] { 0f, WalkPxPerFrame })
+            // (and as we really go: a raft on running water carries us far faster than a walk)
+            var seen = SeenVelocity(Player) / 60f;
+            foreach (var mv in new[] { Vector2.Zero, d * WalkPxPerFrame, seen })
             {
                 for (int f = 1; f <= within; f++)
                 {
-                    var box = new Rectangle((int)(hb.X + d.X * step * f), (int)(hb.Y + d.Y * step * f), hb.Width, hb.Height);
+                    var box = new Rectangle((int)(hb.X + mv.X * f), (int)(hb.Y + mv.Y * f), hb.Width, hb.Height);
                     foreach (var t in rollers)
                     {
                         if (t.At[Math.Min(f, Horizon)] is Rectangle r)
@@ -1780,6 +1782,78 @@ namespace AnodyneSharp.Recording
         private static readonly System.Reflection.FieldInfo FsmActiveChildren = typeof(AnodyneSharp.FSM.TimerState).BaseType?.GetField("activeChildren", NonPub);
         private static readonly System.Reflection.FieldInfo TimerNowField = typeof(AnodyneSharp.FSM.TimerState).GetField("current", NonPub);
         private static readonly System.Reflection.FieldInfo TimerListField = typeof(AnodyneSharp.FSM.TimerState).GetField("timers", NonPub);
+
+        private static readonly System.Reflection.FieldInfo SlimeStateField = typeof(AnodyneSharp.Entities.Enemy.Slime).GetField("state", NonPub);
+        private static readonly System.Reflection.FieldInfo SlimeBulletsField = typeof(AnodyneSharp.Entities.Enemy.Slime).GetField("bullets", NonPub);
+
+        /// <summary>Frames until the named timer of a state machine's active timer state fires (null if it is not running).</summary>
+        private static int? FsmTimerDue(object fsm, string timer)
+        {
+            var top = (FsmActiveChildren?.GetValue(fsm) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top is not AnodyneSharp.FSM.TimerState || TimerNowField?.GetValue(top) is not float now || TimerListField?.GetValue(top) is not System.Collections.IList timers)
+            {
+                return null;
+            }
+            foreach (var t in timers)
+            {
+                var tt = t.GetType();
+                if (tt.GetField("name")?.GetValue(t) as string == timer && tt.GetField("current")?.GetValue(t) is float due)
+                {
+                    return Math.Max(0, (int)Math.Round((due - now) * 60f));
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// A bullet Slime close by about to fire (every 1.8s, at where we stand, from on top of itself, so close up there is no walking
+        /// out of it): the keys of a hop across its line, which it passes under (its bullets miss a jumper). Null if none is due.
+        /// </summary>
+        private static KeyFunctions? SlimeShotHop(int within, float range)
+        {
+            var me = Player.Hitbox;
+            foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>())
+            {
+                if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null && BotRunner.Frame % 10 == 0)
+                {
+                    var fs = SlimeStateField?.GetValue(sl);
+                    var top = fs == null ? null : (FsmActiveChildren?.GetValue(fs) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+                    System.Console.Error.WriteLine($"  slimefire f{BotRunner.Frame} {sl.Position} bullets={SlimeBulletsField?.GetValue(sl) != null} fsm={fs?.GetType().Name} top={top?.GetType().Name} due={(fs == null ? null : FsmTimerDue(fs, "ShootTimer"))}");
+                }
+                if (!sl.exists || SlimeBulletsField?.GetValue(sl) == null || (sl.Position - Player.Position).Length() > range
+                    || SlimeStateField?.GetValue(sl) is not object fsm || FsmTimerDue(fsm, "ShootTimer") is not int next || next > within)
+                {
+                    continue;
+                }
+                var d = Player.Position - sl.Position;
+                if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  slimefire due f{BotRunner.Frame} next={next} d={d}");
+                }
+                if (d.Length() < 0.01f)
+                {
+                    continue;
+                }
+                d = Vector2.Normalize(d);
+                // across its line, the more sideways way first; never towards the Slime (its body hurts on landing)
+                var cands = Math.Abs(d.X) >= Math.Abs(d.Y)
+                    ? new[] { KeyFunctions.Up, KeyFunctions.Down, d.X > 0 ? KeyFunctions.Right : KeyFunctions.Left }
+                    : new[] { KeyFunctions.Left, KeyFunctions.Right, d.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up };
+                var bodies = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Slime).Select(e => e.Hitbox).ToList();
+                foreach (var k in cands)
+                {
+                    var v = DirVector(k) * BotNav.LeapReach;
+                    var land = new Rectangle(me.X + (int)v.X, me.Y + (int)v.Y, me.Width, me.Height);
+                    var wide = land;
+                    wide.Inflate(2, 2);
+                    if (BotNav.BoxStands(land) && !bodies.Any(b => b.Intersects(wide)))
+                    {
+                        return k;
+                    }
+                }
+            }
+            return null;
+        }
 
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
@@ -4287,6 +4361,9 @@ namespace AnodyneSharp.Recording
             try { return SafeMoveCore(wanted, except, dist, stopForBlockers, look); } finally { BotRunner.Prof("SafeMove", t0); }
         }
 
+        private static KeyFunctions? _slimeHopKey;
+        private static long _slimeHopAt = -1000;
+
         protected static KeyFunctions[] SafeMoveCore(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
             Dodged = false;
@@ -4295,6 +4372,21 @@ namespace AnodyneSharp.Recording
             if (!DodgeEnabled)
             {
                 return K(wanted);
+            }
+            // A hop across a bullet Slime's shot (see SlimeShotHop): hold its way while in the air, then walk on.
+            if (Player.state == PlayerState.AIR && _slimeHopKey is KeyFunctions held && BotRunner.Frame - _slimeHopAt < 40)
+            {
+                Dodged = true;
+                return K(held);
+            }
+            if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && !Sinking && _jumpPressFrame != BotRunner.Frame - 1 && SlimeShotHop(2, 56) is KeyFunctions hk)
+            {
+                _slimeHopKey = hk;
+                _slimeHopAt = BotRunner.Frame;
+                _jumpPressFrame = BotRunner.Frame;
+                Dodged = true;
+                BotRunner.Status = "hop a bullet Slime's shot";
+                return K(KeyFunctions.Cancel, hk);
             }
             var dangers = Dangers(except);
             if (dangers.Count == 0)
@@ -4852,6 +4944,8 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        private static long _lastChipHeal = -100000; // when a walk last went to a checkpoint to win back chip damage
+
         protected static IEnumerable<object> GoGlobal(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
@@ -4886,8 +4980,15 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 || BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft) && !HasRaft() && !OnConveyor(here))
+                bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
+                // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
+                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 6000;
+                if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
+                    if (!lowHp)
+                    {
+                        _lastChipHeal = BotRunner.Frame;
+                    }
                     // Low on hearts with fights ahead: top up at a checkpoint first (then plan again from wherever that leaves us).
                     healAt = BotRunner.Frame;
                     yield return Heal();
@@ -6378,6 +6479,10 @@ namespace AnodyneSharp.Recording
                 int rideStall = 0, raftSwings = 0;
                 KeyFunctions? lastRideKey = null;
                 var edgeCrossings = new Dictionary<(Point, Point), int>();
+                List<Point> rideRoute = null;
+                Point rideFrom = new(-1, -1);
+                bool rideWet = false;
+                int rideAt = 0;
                 for (int i = 0; i < 1500; i++)
                 {
                     budget--;
@@ -6439,7 +6544,15 @@ namespace AnodyneSharp.Recording
                         }
                         break;
                     }
-                    var p2 = BotNav.RaftPath(cur, wet, goal, jump);
+                    // (the route from this tile holds while we are on it: search again only on a new tile, or now and then)
+                    if (rideRoute == null || rideFrom != cur || rideWet != wet || i - rideAt >= 30)
+                    {
+                        rideRoute = BotNav.RaftPath(cur, wet, goal, jump);
+                        rideFrom = cur;
+                        rideWet = wet;
+                        rideAt = i;
+                    }
+                    var p2 = rideRoute;
                     if (p2 == null || p2.Count == 0)
                     {
                         RaftLog($"ride ends at {cur}: no route (wet={wet})");
@@ -13797,6 +13910,24 @@ namespace AnodyneSharp.Recording
                     yield return gasKeys;
                     continue;
                 }
+                // A bullet Slime beside us about to fire: hop across its line as it does (its shot passes under a jumper).
+                if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && SlimeShotHop(2, 56) is KeyFunctions hopKey)
+                {
+                    BotRunner.Status = "fight: hop a bullet Slime's shot";
+                    _slimeHopKey = hopKey;
+                    _slimeHopAt = BotRunner.Frame;
+                    if (_jumpPressFrame == BotRunner.Frame - 1)
+                    {
+                        yield return K();
+                    }
+                    _jumpPressFrame = BotRunner.Frame;
+                    yield return K(KeyFunctions.Cancel, hopKey);
+                    for (int w = 0; w < 40 && Player.state == PlayerState.AIR; w++)
+                    {
+                        yield return K(hopKey);
+                    }
+                    continue;
+                }
                 // A super Annoyer's fireball on its way in (fired from the ring it circles us on, ~20px off: no time to walk clear of it):
                 // bat it away, the broom puts it out. Turn to it first (a swing pressed with the turn goes the old way).
                 // (one about to fire from right beside us comes out a frame or two from our box: the broom must be out already)
@@ -14412,7 +14543,7 @@ namespace AnodyneSharp.Recording
         /// and hurt only on the ground): walk a tile, wait, or jump (on the spot, to the next tile, or over a pit to the one beyond) so
         /// that every bar passes under us in the air. (next tile, kind) with kind 0 walk/wait, 1 hop to the next tile, 2 leap; null if none.
         /// </summary>
-        private static (Point next, int kind)? PlanPastSweepers(Point from, Point goal, List<(Rectangle?[] At, bool Air)> bars)
+        private static (Point next, int kind)? PlanPastSweepers(Point from, Point goal, List<(Rectangle?[] At, bool Air)> bars, int maxSteps = SweepSteps)
         {
             var screen = new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10);
             int last = bars.Count > 0 ? bars[0].At.Length - 1 : 0;
@@ -14434,14 +14565,14 @@ namespace AnodyneSharp.Recording
                 .Select(e => new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16)));
             bool Ok(Point t) => (screen.Contains(t) || t == goal) && BotNav.Walkable(t);
             var seen = new HashSet<(Point, int)>();
-            var layers = new List<(Point t, (Point, int)? first)>[SweepSteps + 3];
+            var layers = new List<(Point t, (Point, int)? first)>[maxSteps + 3];
             for (int i = 0; i < layers.Length; i++)
             {
                 layers[i] = new List<(Point, (Point, int)?)>();
             }
             layers[0].Add((from, null));
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
-            for (int step = 0; step <= SweepSteps; step++)
+            for (int step = 0; step <= maxSteps; step++)
             {
                 int f0 = step * SweepStep;
                 foreach (var (t, first) in layers[step])
@@ -14561,7 +14692,8 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var tracks = SweeperTracks(SweepStep * (SweepSteps + 3));
-                var plan = PlanPastSweepers(here, goal, tracks);
+                // (a short look ahead first: most ways turn up within a few dozen moves, and the long search is the bot's dearest frame)
+                var plan = PlanPastSweepers(here, goal, tracks, 40) ?? PlanPastSweepers(here, goal, tracks);
                 if (plan == null && noPlan < 120)
                 {
                     // No timed way from here just now (a bar about to reach us, say): don't hand over to the plain walk, which walks into it.
@@ -14588,8 +14720,10 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         BotRunner.Status = $"sweepers: no way yet from {here} (for {goal}): wait";
-                        yield return K();
-                        i++;
+                        for (int w = 0; w < 6; w++, i++, noPlan++)
+                        {
+                            yield return K(); // (plan again in a few frames: the search is dear)
+                        }
                     }
                     continue;
                 }
