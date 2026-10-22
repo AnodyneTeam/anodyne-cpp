@@ -532,6 +532,7 @@ namespace AnodyneSharp.Recording
             }
             held = BotScript.SpikeGuard(held);
             held = BotScript.SwingGuard(held);
+            held = BotScript.DoorGuard(held);
             if (Player != null && Player.reversed)
             {
                 // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go
@@ -1331,6 +1332,14 @@ namespace AnodyneSharp.Recording
                             // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
                             var blocker = BlockedBy;
                             blockerHandled++;
+                            if (blocker is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller && blocker.velocity == Vector2.Zero && GlobalState.inventory.CanJump
+                                && RollerHop(blocker, dir) is float takeoff)
+                            {
+                                // A roller that has stopped across the way is a spiked wall, but a thin one, and rollers miss us in the air.
+                                BotRunner.Status = "jump the stopped roller";
+                                yield return JumpToward(dir, takeoff);
+                                goto replan;
+                            }
                             var avoid = BotNav.NearEnemies(12);
                             BotNav.Avoid = avoid;
                             var detour = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);

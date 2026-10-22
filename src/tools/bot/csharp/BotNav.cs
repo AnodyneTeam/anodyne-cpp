@@ -622,7 +622,8 @@ namespace AnodyneSharp.Recording
                 {
                     // no sprite to have a frame
                 }
-                lines.Add($"  {ch} {name} box={hb.X},{hb.Y} {hb.Width}x{hb.Height}{v} {e.facing}{frame}" + (e.Solid ? " solid" : ""));
+                lines.Add($"  {ch} {name} box={hb.X},{hb.Y} {hb.Width}x{hb.Height}{v} {e.facing}{frame}" + (e.Solid ? " solid" : "")
+                        + (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr ? $" collide={sr.CollisionOn} visible={sr.visible} offY={sr.offset.Y:0}" : ""));
             }
             var pb = pl.Hitbox;
             int px = (int)Math.Floor(pb.Center.X / 16f) - grid.X * 10, py = (int)Math.Floor(pb.Center.Y / 16f) - grid.Y * 10;

@@ -811,6 +811,7 @@ namespace AnodyneSharp.Recording
             public Entity Source;
             public bool Stationary;
             public bool HurtsInAir; // (most things that hurt by touch skip a player in the air; a Rat or a Gas Guy does not)
+            public bool Launch; // (a frog's next volley round its corner: the one part of that rough guess a dodge must still keep off)
         }
 
         private static readonly System.Reflection.FieldInfo PewTimerField =
@@ -4798,6 +4799,63 @@ namespace AnodyneSharp.Recording
             }
             return held;
         }
+        /// <summary>
+        /// A fight's steps never take us onto a door or portal: the planner keeps off them, but a fight's own dodging does not, and a
+        /// Crowd DownDoor beside a Dog sent us to a screen across the map mid-fight.
+        /// </summary>
+        internal static KeyFunctions[] DoorGuard(KeyFunctions[] held)
+        {
+            if (Player == null || SwingTargetFrame < BotRunner.Frame - 1)
+            {
+                return held;
+            }
+            var pb = Player.Hitbox;
+            var doors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).ToList();
+            if (doors.Count == 0)
+            {
+                return held;
+            }
+            return held.Where(k =>
+            {
+                if (k is not (KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
+                {
+                    return true;
+                }
+                var d = DirVector(k) * 3f;
+                var next = new Rectangle(pb.X + (int)d.X, pb.Y + (int)d.Y, pb.Width, pb.Height);
+                return !doors.Any(e => e.Hitbox.Intersects(next) && !e.Hitbox.Intersects(pb));
+            }).ToArray();
+        }
+
+        /// <summary>
+        /// Where to take off (Pos along `dir`) to jump a stopped spike roller lying across the way: right up to it, landing (~28px on) clear
+        /// past it on floor. Null when it is too thick along that way or there is no floor beyond.
+        /// </summary>
+        internal static float? RollerHop(Entity roller, KeyFunctions dir)
+        {
+            var bh = roller.Hitbox;
+            var pb = Player.Hitbox;
+            const float Jump = 27f;
+            float off = dir switch
+            {
+                // (5px short: JumpToward runs a frame past the mark, and touching its edge already hurts)
+                KeyFunctions.Right => bh.Left - pb.Width - 5 - pb.X,
+                KeyFunctions.Left => pb.X - bh.Right - 5,
+                KeyFunctions.Down => bh.Top - pb.Height - 5 - pb.Y,
+                _ => pb.Y - bh.Bottom - 5,
+            };
+            var d = DirVector(dir);
+            var take = new Vector2(pb.X, pb.Y) + d * Math.Max(0, off);
+            var land = take + d * (Jump + 2f);
+            var landBox = new Rectangle((int)land.X, (int)land.Y, pb.Width, pb.Height);
+            if (off < -4 || landBox.Intersects(bh) || !StandsSafe(landBox))
+            {
+                return null;
+            }
+            var at = take - new Vector2(pb.X, pb.Y) + Pos;
+            return dir is KeyFunctions.Left or KeyFunctions.Right ? at.X : at.Y;
+        }
+
         static readonly HashSet<Entity> _unreachableHearts = new();
         static Entity _heartChased;
         static float _heartBest;
@@ -6324,6 +6382,15 @@ namespace AnodyneSharp.Recording
         private static KeyFunctions[] FrogStrikeKeysCore(Entity frog, ref int swingWait)
         {
             swingWait++;
+            // Note the frame each bullet splashed as it happens: first seen only when a plan is next made, the splash looked younger than
+            // it was and the next volley came early, into a plan that thought itself clear.
+            foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog))
+            {
+                foreach (var b in f.SubEntities().Where(b => b.exists && b.velocity == Vector2.Zero && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                {
+                    _frogSplashSeen.TryAdd(b, BotRunner.Frame);
+                }
+            }
             var pb = Player.Hitbox;
             // Every other danger counts too (a Rotator's fireball circling past), but frogs themselves are modelled below.
             var threats = PredictThreats(frog).Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Crowd.Frog)).ToList();
@@ -6354,7 +6421,7 @@ namespace AnodyneSharp.Recording
                     }
                     fireAt = Math.Max(fireAt, left);
                 }
-                var volley = new Threat { Name = "FrogVolley", Margin = 1, Source = f };
+                var volley = new Threat { Name = "FrogVolley", Margin = 1, Source = f, Launch = true };
                 var corner = new Rectangle((int)f.Position.X, (int)f.Position.Y, 8, 8);
                 if (fireAt == 0)
                 {
@@ -6404,7 +6471,8 @@ namespace AnodyneSharp.Recording
             }
             (Vector2, KeyFunctions, Facing) SpotAt(int side, bool needTakeoff)
             {
-                foreach (int gap in new[] { 7, 6, 8, 5, 9, 4 })
+                // (above it and left of it are beside the corner its volleys leave from: there the most room the broom allows)
+                foreach (int gap in side is 1 or 2 ? new[] { 9, 8, 7, 6, 5, 4 } : new[] { 7, 6, 8, 5, 9, 4 })
                 {
                     var at = side switch
                     {
@@ -6514,7 +6582,8 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = "fight/frog: swinging";
                     return K();
                 }
-                if (Player.facing != sp.facing && (SafeAt(here, 1, 30) || overPit))
+                // (judged as the swing is: a spot we walked onto by a plan checked against the volleys keeps to that plan)
+                if (Player.facing != sp.facing && (safeHere(here, 1, 30) || overPit))
                 {
                     BotRunner.Status = "fight/frog: face it";
                     return K(sp.face);
@@ -6557,7 +6626,7 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = "fight/frog: hold the spot over the pit";
                     return K();
                 }
-                if (SafeAt(here, 1, 30))
+                if (safeHere(here, 1, 30))
                 {
                     BotRunner.Status = "fight/frog: hold the spot";
                     return K();
@@ -6629,8 +6698,7 @@ namespace AnodyneSharp.Recording
             {
                 if (!SafeAtExact(here, 1, 30))
                 {
-                    var real = threats.Where(t => t.Name != "FrogVolley").ToList();
-                    if (SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] away)
+                    if (FrogDodge(here, threats) is KeyFunctions[] away)
                     {
                         BotRunner.Status = "fight/frog: off the spot till its bullet is down";
                         return K(away);
@@ -6661,14 +6729,13 @@ namespace AnodyneSharp.Recording
                     return K(dodge);
                 }
                 // Nowhere is clear of the rough guess at the next volley too: dodge the bullets that are really flying.
-                var real = threats.Where(t => t.Name != "FrogVolley").ToList();
-                if (!SafeAtExact(here, 1, 40) && SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] dodge2)
+                if (!SafeAtExact(here, 1, 40) && FrogDodge(here, threats) is KeyFunctions[] dodge2)
                 {
                     BotRunner.Status = "fight/frog: dodge its flying bullets";
                     return K(dodge2);
                 }
             }
-            if (OffTheFrog() is KeyFunctions[] off)
+            if (OffTheFrog(threats) is KeyFunctions[] off)
             {
                 return off;
             }
@@ -6777,13 +6844,19 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            var real = threats.Where(t => t.Name != "FrogVolley").ToList();
-            if (!safeExact(here, 1, 30) && SpaceTimeMove(here, real, useCache: false, survive: true) is KeyFunctions[] dodge)
+            if (!safeExact(here, 1, 30) && FrogDodge(here, threats) is KeyFunctions[] dodge)
             {
                 BotRunner.Status = "fight/frog: out of the way, waiting for a clear way in";
                 return K(dodge);
             }
-            if (OffTheFrog() is KeyFunctions[] off)
+            // Waiting where the next volley leaves from takes it the frame it fires (a wall can leave OffTheFrog nowhere to go).
+            if (FrogVolleyHitFrame(Enumerable.Repeat(here, 40).ToList(), out _) > 0
+                && SpaceTimeMove(here, threats.Where(t => t.Name != "FrogVolley" || t.Launch).ToList(), useCache: false, survive: true) is KeyFunctions[] clear2 && clear2.Length > 0)
+            {
+                BotRunner.Status = "fight/frog: off where its volley leaves from";
+                return K(clear2);
+            }
+            if (OffTheFrog(threats) is KeyFunctions[] off)
             {
                 return off;
             }
@@ -6793,10 +6866,21 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// Keys dodging the bullets really flying, and off the corner the next volley leaves from where that can be done too: a dodge that
+        /// ends beside the frog is hit by that volley the moment it fires. Null if no dodge is clear.
+        /// </summary>
+        private static KeyFunctions[] FrogDodge(Vector2 here, List<Threat> threats)
+        {
+            var withLaunch = threats.Where(t => t.Name != "FrogVolley" || t.Launch).ToList();
+            return SpaceTimeMove(here, withLaunch, useCache: false, survive: true)
+                ?? SpaceTimeMove(here, threats.Where(t => t.Name != "FrogVolley").ToList(), useCache: false, survive: true);
+        }
+
+        /// <summary>
         /// Keys stepping away from a frog we stand on or right beside (its volley's bullets start on top of it, and touching it hurts
         /// too): never wait there. Null when no frog is that close or no way away is walkable.
         /// </summary>
-        private static KeyFunctions[] OffTheFrog()
+        private static KeyFunctions[] OffTheFrog(List<Threat> threats = null)
         {
             var pc = Player.Hitbox.Center;
             var near = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog
@@ -6809,10 +6893,35 @@ namespace AnodyneSharp.Recording
             var keys = Math.Abs(ax) >= Math.Abs(ay)
                 ? new[] { ax < 0 ? KeyFunctions.Left : KeyFunctions.Right, ay < 0 ? KeyFunctions.Up : KeyFunctions.Down }
                 : new[] { ay < 0 ? KeyFunctions.Up : KeyFunctions.Down, ax < 0 ? KeyFunctions.Left : KeyFunctions.Right };
+            // (then the other two ways: a wall can block both of those)
+            keys = keys.Concat(new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down }.Except(keys)
+                    .Where(k => Vector2.Dot(DirVector(k), new Vector2(ax, ay)) >= 0)).ToArray();
+            var pb = Player.Hitbox;
+            bool IntoBullets(KeyFunctions k)
+            {
+                // A step straight into bullets flying, or into where the next volley leaves from, is no way off.
+                if (threats == null)
+                {
+                    return false;
+                }
+                for (int f = 1; f <= 12; f++)
+                {
+                    var at = new Vector2(pb.X, pb.Y) + DirVector(k) * (WalkPxPerFrame * f);
+                    var r = new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height);
+                    foreach (var th in threats.Where(t => t.Name is not ("FrogVolley" or "Frog") || t.Launch))
+                    {
+                        if (th.At[f] is Rectangle tr && r.Intersects(tr))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
             foreach (var k in keys)
             {
                 var step = DirVector(k) * 16f;
-                if (BotNav.Walkable(BotNav.TileOf(Pos + step)))
+                if (BotNav.Walkable(BotNav.TileOf(Pos + step)) && !IntoBullets(k))
                 {
                     BotRunner.Status = "fight/frog: off the frog";
                     return K(k);
@@ -6924,13 +7033,15 @@ namespace AnodyneSharp.Recording
                         for (int j = 0; j <= (int)Math.Ceiling(period * 60f) && fire + j <= len; j++)
                         {
                             float u = j / 60f / period;
-                            if (u > 0.146f && u < 0.854f)
+                            // (a frame's slack each end of the low part and a 3px margin: our aim at the frame it fires is a guess a
+                            // pixel or two out, and a plan that grazed its bullets by that much took the hit)
+                            if (u > 0.165f && u < 0.835f)
                             {
                                 continue; // high: passes over us
                             }
                             var bp = f.Position + aim * (v * j / 60f);
                             var br = new Rectangle((int)bp.X, (int)bp.Y, hb.Width, hb.Height);
-                            br.Inflate(2, 2);
+                            br.Inflate(3, 3);
                             var p = At(fire + j);
                             if (br.Intersects(new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height)))
                             {
