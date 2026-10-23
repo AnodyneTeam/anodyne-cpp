@@ -402,7 +402,7 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("Cards to 36: Red Cave, Crowd, Terminal and the Hotel's three");
             yield return Section("red cave (0,0) card", () => Exec("O1 X1 viaREDCAVE W30 g6 + W30 g4 O1 X1 +K W30 + W30"));
-            yield return Section("crowd (8,2) card", () => Exec("g4 O1 X1 viaCROWD W30 + W30 g4 O1 X1 H3,3 oCROWD@560,512 W30 >838,352 U30 W90 O1 X1 F3000 W60 >1190,330 >1189,262 >1240,246 G1250,246,kr W20 H8,1 F3000 W30 >1350,300 H8,2 t13 I1408,432,d W60 T W30"));
+            yield return Section("crowd (8,2) card", () => Exec("g4 O1 X1 viaCROWD W30 + W30 g4 O1 X1 H3,3 oCROWD@560,512 W30 >838,352 U30 W60 's7,2,3 >838,352 U30 W60 O1 X1 F3000 W60 >1190,330 >1189,262 >1240,246 G1250,246,kr W20 H8,1 F3000 W30 >1350,300 H8,2 t13 I1408,432,d W60 T W30"));
             yield return Section("terminal sage card", () => Exec("g4 O1 X1 viaFIELDS W30 H5,4 H5,5 H4,5 H4,4 H3,4 H3,3 H2,3 H2,2 H1,2 H1,1 oTERMINAL W60 + W30"));
             yield return Section("hotel dustmaid card", () => Exec("g4 O1 X1 viaHOTEL W30 >520,980 W20 G500,984 ed988 W30 G500,1045 er511 W30 J35,65,d+ el536 W30 G500,1064 ed1068 W200 u1 u5 W20 UC14 W190 U24 u5 W30 T W30"));
             yield return Section("hotel floor 3 key", () => Exec("g4 O1 X1 >440,872 W30 lift3 W30 H3,10 W20 >555,1675 G553,1676 W20 I608,1616,d W60 T W30"));

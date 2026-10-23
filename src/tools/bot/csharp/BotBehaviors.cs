@@ -103,6 +103,16 @@ namespace AnodyneSharp.Recording
                     case '\'':
                     {
                         // 'tx,ty,k: skip the next k tokens unless tile tx,ty can be walked to from here (a fight may leave us either side of a hole)
+                        // 's<sx>,<sy>,k: skip the next k tokens if we are on screen sx,sy (through a door already: a retry not needed)
+                        if (tok.StartsWith("'s"))
+                        {
+                            var g = tok.Substring(2).Split(',').Select(int.Parse).ToArray();
+                            if (Grid == new Point(g[0], g[1]))
+                            {
+                                skip = g[2];
+                            }
+                            break;
+                        }
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
                         var here = BotNav.TileOf(Player.Position);
                         var to = new Point(a[0], a[1]);
