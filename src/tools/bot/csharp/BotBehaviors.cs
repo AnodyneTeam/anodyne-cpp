@@ -15456,7 +15456,9 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"  fight: the Annoyer at {a.Hitbox.X},{a.Hitbox.Y} sleeps on: waking it from {(wake == null || wake.Count == 0 ? "nowhere" : wake[wake.Count - 1].ToString())}");
             }
-            return wake != null && wake.Count > 0 && !ThroughShutGate(wake) ? wake : null;
+            // (and only on this screen: one asleep over the edge, woken from there, came back as a new one each time we crossed back,
+            // round and round between Fields (10,4) and (10,5))
+            return wake != null && wake.Count > 0 && !ThroughShutGate(wake) && wake.All(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y) ? wake : null;
         }
 
         // (a shut gate on the way: waking or striking what is behind it is not ours to do yet)
