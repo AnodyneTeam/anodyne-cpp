@@ -8609,8 +8609,16 @@ namespace AnodyneSharp.Recording
             {
                 var buttons = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Button").ToList();
                 var mover = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Mover" && e.CurAnimName != "Die");
-                if (buttons.Count >= 2 && mover == null && respawns < 2 && _cameFrom is Point back && back != Grid
-                    && Math.Abs(back.X - Grid.X) + Math.Abs(back.Y - Grid.Y) == 1)
+                // (the way we came in, else the nearest screen next door we can walk to: a raft ride in leaves no record of it)
+                Point? backTo = _cameFrom is Point cf && Math.Abs(cf.X - Grid.X) + Math.Abs(cf.Y - Grid.Y) == 1 ? cf : null;
+                if (buttons.Count >= 2 && mover == null && respawns < 2 && backTo == null)
+                {
+                    var g0 = Grid;
+                    backTo = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Select(o => new Point(g0.X + o.X, g0.Y + o.Y))
+                        .Select(g => (g, p: BotNav.FindPath(BotNav.TileOf(Pos), t => t.X / 10 == g.X && t.Y / 10 == g.Y, null, strict: true)))
+                        .Where(x => x.p != null).OrderBy(x => x.p.Count).Select(x => (Point?)x.g).FirstOrDefault();
+                }
+                if (buttons.Count >= 2 && mover == null && respawns < 2 && backTo is Point back)
                 {
                     // The Mover strayed into the steam on its way to us and died: the screen's enemies come back once we leave it, so
                     // step out the way we came and back in, and lure the new one.
