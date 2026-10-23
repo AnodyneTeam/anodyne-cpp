@@ -6509,7 +6509,26 @@ namespace AnodyneSharp.Recording
                 var step = new Point(t.X - a.X, t.Y - a.Y);
                 if (b != new Point(a.X - step.X, a.Y - step.Y))
                 {
-                    continue; // not coming at it along its line
+                    // Not coming at it along its line: in from the side, right beside it, it charges point blank (Fields (7,8): down the
+                    // floor beside its corridor and in at its home tile). Come down its line instead, from three tiles back, when the
+                    // route goes on out its far side.
+                    if (k + 1 >= path.Count || LineUpSightTrap(t, path[k + 1]) is not List<Point> pre)
+                    {
+                        continue;
+                    }
+                    var rest = path.Skip(k).ToList();
+                    path.Clear();
+                    path.AddRange(pre);
+                    path.AddRange(rest);
+                    k = path.IndexOf(t);
+                    n = k + 1;
+                    a = k > 0 ? path[k - 1] : BotNav.TileOf(Pos);
+                    b = k > 1 ? path[k - 2] : BotNav.TileOf(Pos);
+                    step = new Point(t.X - a.X, t.Y - a.Y);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  dash trap at {t.X},{t.Y} is come at from the side: lining up down its line via {string.Join(">", pre.Select(q => $"{q.X},{q.Y}"))}");
+                    }
                 }
                 foreach (var side in new[] { new Point(step.Y, step.X), new Point(-step.Y, -step.X) })
                 {
@@ -6521,6 +6540,35 @@ namespace AnodyneSharp.Recording
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// A walk from here to three tiles back along an idle sight trap's line, then the two tiles in towards it, for a route that goes
+        /// on out past it (t to after, one tile on along the same line); null when there is no such line.
+        /// </summary>
+        private static List<Point> LineUpSightTrap(Point t, Point after)
+        {
+            var d = new Point(after.X - t.X, after.Y - t.Y);
+            if (Math.Abs(d.X) + Math.Abs(d.Y) != 1)
+            {
+                return null;
+            }
+            var l1 = new Point(t.X - d.X, t.Y - d.Y);
+            var l2 = new Point(t.X - 2 * d.X, t.Y - 2 * d.Y);
+            var l3 = new Point(t.X - 3 * d.X, t.Y - 3 * d.Y);
+            if (!new[] { l1, l2, l3 }.All(q => BotNav.Walkable(q) && !BotNav.IsHole(q) && q.X / 10 == t.X / 10 && q.Y / 10 == t.Y / 10))
+            {
+                return null;
+            }
+            var here = BotNav.TileOf(Pos);
+            var pre = here == l3 ? new List<Point>() : BotNav.FindPath(here, q => q == l3);
+            if (pre == null || pre.Contains(t) || pre.Contains(l1) || pre.Contains(l2))
+            {
+                return null;
+            }
+            pre.Add(l2);
+            pre.Add(l1);
+            return pre;
         }
 
         /// <summary>
@@ -7175,6 +7223,10 @@ namespace AnodyneSharp.Recording
                         // over the bank and a pixel more drift puts us ashore, raft lost. Drift back in as we go.
                         moveKeys = K(rideKey, alongY ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     }
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND)
+                    {
+                        moveKeys = AgainstCrossFlow(moveKeys, cur);
+                    }
                     var rideKeys = wet ? KeepOnWater(moveKeys, rideKey) : moveKeys;
                     if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
@@ -7309,6 +7361,47 @@ namespace AnodyneSharp.Recording
                 RaftLog($"  bouncer dodge: ride {rideKey} meets one at f{ride}, holding {best?.ToString() ?? "nothing"} (f{(bestHit == int.MaxValue ? "-" : bestHit.ToString())})");
             }
             return best is KeyFunctions bk ? K(bk) : K();
+        }
+
+        /// <summary>
+        /// A current pushing across the way we ride (35px/s, as much as half our own speed) drifts the raft off its lane in a tile or
+        /// two: lean against it as we go. And a current carrying a stopped raft (a dodge holding still) in onto a Four Shooter: hold
+        /// against it (the Fields (6,8) pool's currents all run in towards its two, and one point blank cannot be dodged).
+        /// </summary>
+        private static KeyFunctions[] AgainstCrossFlow(KeyFunctions[] keys, Point cur)
+        {
+            var flowKey = BotNav.FlowDir(cur) switch
+            {
+                Touching.UP => KeyFunctions.Up,
+                Touching.DOWN => KeyFunctions.Down,
+                Touching.LEFT => KeyFunctions.Left,
+                Touching.RIGHT => KeyFunctions.Right,
+                _ => (KeyFunctions?)null
+            };
+            if (flowKey is not KeyFunctions fk)
+            {
+                return keys;
+            }
+            var fv = DirVector(fk);
+            var back = fk switch { KeyFunctions.Up => KeyFunctions.Down, KeyFunctions.Down => KeyFunctions.Up, KeyFunctions.Left => KeyFunctions.Right, _ => KeyFunctions.Left };
+            var dirs = keys.Where(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right).ToList();
+            if (dirs.Count == 0)
+            {
+                var me = Player.Hitbox.Center.ToVector2();
+                bool ontoShooter = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Four_Shooter" && Vector2.Dot(e.Hitbox.Center.ToVector2() - me, fv) > 0f
+                    && (e.Hitbox.Center.ToVector2() - me).Length() < 56f && Math.Abs(Vector2.Dot(e.Hitbox.Center.ToVector2() - me, new Vector2(fv.Y, fv.X))) < 20f);
+                return ontoShooter ? keys.Append(back).ToArray() : keys;
+            }
+            if (dirs.Count == 1 && DirVector(dirs[0]) is Vector2 dv && Math.Abs(Vector2.Dot(dv, fv)) < 0.5f)
+            {
+                // (unless already well upstream of the tile's centre line)
+                float off = Vector2.Dot(Pos - BotNav.CentreOf(cur), fv);
+                if (off > -3f)
+                {
+                    return keys.Append(back).ToArray();
+                }
+            }
+            return keys;
         }
 
         private static KeyFunctions[] KeepOnWater(KeyFunctions[] keys, KeyFunctions rideKey)

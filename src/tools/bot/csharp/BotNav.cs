@@ -1387,6 +1387,22 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // (and the ones on the other screens a route runs through, from their presets: a plan made a screen away must not ride into one)
+            if (BotRunner.Player != null)
+            {
+                var here = TileOf(BotRunner.Player.Position);
+                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                {
+                    if (pr.Alive && pr.Type?.Name is "Burst_Plant" or "Frog" or "Red_Pillar" or "Four_Shooter")
+                    {
+                        var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                        if (t.X / 10 != here.X / 10 || t.Y / 10 != here.Y / 10)
+                        {
+                            set.Add(t);
+                        }
+                    }
+                }
+            }
             _shooterTiles = set;
         }
 
