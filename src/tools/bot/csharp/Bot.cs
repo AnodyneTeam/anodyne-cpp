@@ -2103,13 +2103,15 @@ namespace AnodyneSharp.Recording
                                 bool clear = true, meSafe = true, clearForJump = true;
                                 var me0 = pbx0;
                                 me0.Inflate(4, 4);
-                                foreach (var t in PredictThreats(null).Where(t => t.HurtsInAir))
+                                foreach (var t in PredictThreats(null))
                                 {
-                                    for (int k = 0; k <= 60 && clear; k++)
+                                    for (int k = 0; k <= 60 && clear && t.HurtsInAir; k++)
                                     {
                                         clear = !(t.At[k] is Rectangle r && lane.Intersects(r));
                                         clearForJump &= clear || k > 34;
                                     }
+                                    // (where we wait on the ground, anything that hurts there counts: a Slasher sharing the corridor cut
+                                    // four hearts off a bot that only looked out for what hurts a jumper)
                                     for (int k = 0; k <= 45 && meSafe; k++)
                                     {
                                         meSafe = !(t.At[k] is Rectangle r && me0.Intersects(r));
