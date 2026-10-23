@@ -6407,6 +6407,44 @@ namespace AnodyneSharp.Recording
                             yield break;
                         }
                     }
+                    // None of its four sides is floor (a raft the current pushed into a corner, Red Cave (1,0)'s off the bank only
+                    // diagonally): any floor round it from which the broom's sweep still meets the dust itself.
+                    var here0 = BotNav.TileOf(Pos);
+                    foreach (var t in Enumerable.Range(-1, 3).SelectMany(ox => Enumerable.Range(-1, 3).Select(oy => new Point(dt.X + ox, dt.Y + oy)))
+                        .Where(t => t != dt && BotNav.Walkable(t) && !dustTiles.Contains(t) && (t == here0 || ReachableWithJump(t))))
+                    {
+                        var c0 = BotNav.CentreOf(t);
+                        foreach (var (face, fk) in new[] { (Facing.DOWN, KeyFunctions.Down), (Facing.UP, KeyFunctions.Up), (Facing.LEFT, KeyFunctions.Left), (Facing.RIGHT, KeyFunctions.Right) })
+                        {
+                            // (the 10px box has 3px of slack in its tile each way)
+                            var at = new[] { new Vector2(0, 0), new Vector2(3, 0), new Vector2(-3, 0), new Vector2(0, 3), new Vector2(0, -3), new Vector2(3, 3), new Vector2(-3, 3), new Vector2(3, -3), new Vector2(-3, -3) }
+                                .Select(o => c0 + o).Cast<Vector2?>().FirstOrDefault(q => BroomBoxAt(q.Value, face).Intersects(d.Hitbox));
+                            if (at is not Vector2 sp)
+                            {
+                                continue;
+                            }
+                            RaftLog($"dust {dt} reached diagonally: from {t} at {sp} facing {face}");
+                            BotRunner.Status = $"sweeping dust at {dt.X},{dt.Y} (from {t.X},{t.Y})";
+                            try
+                            {
+                                yield return GoTo(c0.X, c0.Y);
+                                yield return WalkTo(sp.X, sp.Y, tol: 1f);
+                            }
+                            finally
+                            {
+                                BotNav.Avoid = null;
+                            }
+                            yield return Hold(1, fk);
+                            yield return Wait(3);
+                            yield return Tap(KeyFunctions.Accept);
+                            yield return Wait(30);
+                            if (Player.broom.dust != null)
+                            {
+                                yield break;
+                            }
+                            BotNav.Avoid = dustTiles;
+                        }
+                    }
                     BotNav.Avoid = null;
                 }
                 yield return Wait(30);
@@ -11316,6 +11354,25 @@ namespace AnodyneSharp.Recording
         /// The box the broom sweeps when we stand with our hitbox at `p` facing `f` (the normal broom: 16x16 just beyond our 10x12 box,
         /// see Broom.UpdatePos at its full reach).
         /// </summary>
+        /// <summary>Face a foe and swing whenever it can be hurt (not blinking, broom put away): null when it is out of the broom's reach.</summary>
+        private static KeyFunctions[] BlowForBlow(Entity foe)
+        {
+            var fc = new Vector2(foe.Hitbox.Center.X, foe.Hitbox.Center.Y);
+            var pc = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+            var d = fc - pc;
+            var (face, key) = Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? (Facing.LEFT, KeyFunctions.Left) : (Facing.RIGHT, KeyFunctions.Right))
+                : (d.Y < 0 ? (Facing.UP, KeyFunctions.Up) : (Facing.DOWN, KeyFunctions.Down));
+            if (!BroomBoxAt(Pos, face).Intersects(foe.Hitbox))
+            {
+                return null;
+            }
+            if (Player.facing != face)
+            {
+                return K(key);
+            }
+            return !foe._flickering && !(Player.broom != null && Player.broom.exists) ? K(KeyFunctions.Accept) : K();
+        }
+
         private static Rectangle BroomBoxAt(Vector2 p, Facing f)
         {
             int x = (int)Math.Round(p.X), y = (int)Math.Round(p.Y);
@@ -14509,6 +14566,27 @@ namespace AnodyneSharp.Recording
                         if (safe)
                         {
                             yield return K();
+                            continue;
+                        }
+                        // In a pocket of floor too small to get out of its line (Red Cave (0,0): a tile or two of bank by the water it floats
+                        // over), running about only takes every cut for nothing: stand and trade blows (3 hits kill it, one per 0.5s).
+                        int floorNear = 0;
+                        var tMe = BotNav.TileOf(Pos);
+                        for (int ox = -2; ox <= 2; ox++)
+                        {
+                            for (int oy = -2; oy <= 2; oy++)
+                            {
+                                var t1 = new Point(tMe.X + ox, tMe.Y + oy);
+                                if (t1.X / 10 == Grid.X && t1.Y / 10 == Grid.Y && BotNav.Walkable(t1))
+                                {
+                                    floorNear++;
+                                }
+                            }
+                        }
+                        if (floorNear <= 5 && BlowForBlow(target) is KeyFunctions[] blow)
+                        {
+                            BotRunner.Status = "fight/slasher: cornered, trade blows";
+                            yield return blow;
                             continue;
                         }
                         // the nearest tile (by path) that is out of both strips; the greedy step below is the fallback
