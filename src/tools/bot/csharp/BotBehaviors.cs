@@ -641,7 +641,7 @@ namespace AnodyneSharp.Recording
         /// point), so with two on a map we can always heal at the other. Walks to the nearest such one we can get to; if there is none from
         /// here, warps to the map's Nexus pad first (when warp) and looks again. True in _healOk if the hearts are full after.
         /// </summary>
-        protected static IEnumerable<object> Heal(bool warp = true)
+        protected static IEnumerable<object> Heal(bool warp = true, int? budgetTiles = null)
         {
             _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
             if (_healOk || _healing)
@@ -667,6 +667,10 @@ namespace AnodyneSharp.Recording
                             continue; // the one we saved at last does not heal
                         }
                         var stand = new Vector2(pos.X - 1, pos.Y - 3);
+                        if (budgetTiles != null && new Point((int)Math.Floor(stand.X / 160f), (int)Math.Floor(stand.Y / 160f)) != Grid)
+                        {
+                            continue; // (a top-up on this screen only: the next one over has its enemies back)
+                        }
                         if (_costlyCheckpoints.Contains((GlobalState.CURRENT_MAP_NAME, stand)))
                         {
                             continue; // (one that hurt us while we healed there: something guards it)
@@ -680,7 +684,7 @@ namespace AnodyneSharp.Recording
                     }
                     // A long trip for a heart or two is more hits than it wins back, unless the hearts are owed (past the chip allowance).
                     int missing = GlobalState.MAX_HEALTH - GlobalState.CUR_HEALTH;
-                    int budget = BotRunner.DebtMissing > BotRunner.ChipLeft || GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 ? 160 : 30 + 20 * missing;
+                    int budget = budgetTiles ?? (BotRunner.DebtMissing > BotRunner.ChipLeft || GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 ? 160 : 30 + 20 * missing);
                     if (best is Vector2 far && bestLen > budget && bestLen <= 160)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -1239,11 +1243,16 @@ namespace AnodyneSharp.Recording
                             {
                                 dir.Normalize();
                             }
-                            float run = Math.Min(110f, 110f * (f - start + 4) / 60f);
+                            // (where along that line it is by then, not the whole line at once: a box spanning the line's corners left
+                            // no sidestep of a slanting pounce, and the bot stood still in it)
+                            float run = Math.Max(0f, 110f * (f - start) / 60f);
+                            if (run > 110f)
+                            {
+                                run = 110f;
+                            }
                             var r2 = r;
                             r2.Offset((int)(dir.X * run), (int)(dir.Y * run));
-                            r = Rectangle.Union(r, r2);
-                            r = Grow(r, 8);
+                            r = Grow(f - start < 4 ? Rectangle.Union(r, r2) : r2, 8);
                         }
                         break;
                 }
@@ -5003,9 +5012,9 @@ namespace AnodyneSharp.Recording
                 bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
                 // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
                 // (and hearts already let go as chip, when a checkpoint is handy: Heal() turns down a long trip for a heart or two)
-                bool chipHeal = ((BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft)
-                    || (BotRunner.ChipLeft < BotRunner.ChipPerPart && BotRunner.DebtAge < 0 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH))
-                    && BotRunner.Frame - _lastChipHeal > 6000;
+                bool owed = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft;
+                bool topUp = !owed && BotRunner.ChipLeft < BotRunner.ChipPerPart && BotRunner.DebtAge < 0 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH;
+                bool chipHeal = (owed || topUp) && BotRunner.Frame - _lastChipHeal > 6000;
                 if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
                     if (!lowHp)
@@ -5014,7 +5023,9 @@ namespace AnodyneSharp.Recording
                     }
                     // Low on hearts with fights ahead: top up at a checkpoint first (then plan again from wherever that leaves us).
                     healAt = BotRunner.Frame;
-                    yield return Heal();
+                    // (a top-up only at a checkpoint close by: one rooms away takes us back through what we fought to get here, respawned)
+                    // (nor a warp back to the pad for one: that walks the whole way back through it all)
+                    yield return Heal(warp: !(topUp && !lowHp), budgetTiles: topUp && !lowHp ? 12 : null);
                     plan = null;
                     lastHere = new Point(-1, -1);
                     continue;
@@ -8911,6 +8922,8 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> LionFight(Func<Entity, bool> only, int timeoutFrames = 5400)
         {
             int lastSwing = -100, jumpAt = -100;
+            Entity target = null;
+            Vector2? prevGoal = null;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -8920,12 +8933,18 @@ namespace AnodyneSharp.Recording
                 }
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
+                // (two in a room: the one winding up a pounce is the one to watch, whichever is nearer; the pounce goes for wherever we stand
+                // as it sets off, so standing by the other for a strike walks into it)
                 var lion = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e)))
-                    .OrderBy(e => (e.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length()).FirstOrDefault();
+                    .OrderBy(e => FsmStateLeft(e) is var (ls0, ll0) && (ls0 == "ChargeWarnState" || ls0 == "ChargeWalkState" && ll0 < 50) ? 0 : 1)
+                    // (and the one we were after, unless another is clearly nearer: two about as near swapped every frame, and each
+                    // swap turned the bot round, back and forth in their fire)
+                    .ThenBy(e => (e.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length() - (e == target ? 24f : 0f)).FirstOrDefault();
                 if (lion == null)
                 {
                     yield break;
                 }
+                target = lion;
                 BotRunner.NotStuck(); // the fight has its own timeout
                 var st = FsmStateLeft(lion);
                 string state = st?.Item1 ?? "";
@@ -8947,7 +8966,9 @@ namespace AnodyneSharp.Recording
                 bool open = !lion._flickering && (state == "PaceState" && left >= 24 || state == "ChargeWalkState" && left >= 30 || still);
                 // Any lion in the broom's reach right now (this way, or one turn away): hit it, whatever the plan was (a hit costs us nothing,
                 // and four end it). Facing the wrong way: turn this frame, swing the next.
-                if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
+                // (not while the other lion's fire or anything else is about to reach where we stand: a swing roots us for its frames)
+                if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16
+                    && SafeAtExactThreats(here, others.Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Circus.Lion && t.Name == "Lion")).ToList(), 18))
                 {
                     Facing? reachFace = null;
                     foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
@@ -9011,8 +9032,9 @@ namespace AnodyneSharp.Recording
                     // (exactly as Lion.Fireball.Spawn does it: it turns to face us by top-left corners, each shot leaves from the edge it
                     // faces with a random slant - up to 26 in 32 across, 16 in 32 up or down - and flies 80px on either axis; the fan is
                     // swept with our box and the shot's, a couple of px to spare)
-                    var lp = lion.Position;
-                    bool OutOfFan(Vector2 c)
+                    bool OutOfFan(Vector2 c) => Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && FsmStateLeft(e)?.Item1 is "ShootWarningState" or "ShootState")
+                        .All(e => OutOfFanOf(e.Position, c));
+                    bool OutOfFanOf(Vector2 lp, Vector2 c)
                     {
                         var dir = c - lp;
                         bool side = Math.Abs(dir.X) > Math.Abs(dir.Y);
@@ -9054,12 +9076,13 @@ namespace AnodyneSharp.Recording
                     }
                     float bestScore = float.MinValue;
                     var room = new Vector2(Grid.X * 160, Grid.Y * 160);
+                    bool pounceSoon = !lion.CurAnimName.StartsWith("pounce") && (state == "ChargeWarnState" || state == "ChargeWalkState" && left < 50);
                     for (int gx = 4; gx < 160 - pb.Width; gx += 8)
                     {
                         for (int gy = 4; gy < 160 - pb.Height; gy += 8)
                         {
                             var c = room + new Vector2(gx, gy);
-                            if ((c - here).Length() > 72 || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 40) || spitting && !OutOfFan(c))
+                            if ((c - here).Length() > 72 || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 40) || !OutOfFan(c))
                             {
                                 continue;
                             }
@@ -9077,6 +9100,33 @@ namespace AnodyneSharp.Recording
                                 }
                             }
                             score += 4f * open8;
+                            if (pounceSoon)
+                            {
+                                // (its pounce goes for wherever we stand as it sets off: stand far enough off to see it come and step aside,
+                                // with floor to step onto on either side of its line, not against a wall it pins us to)
+                                var away = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2();
+                                if (away != Vector2.Zero)
+                                {
+                                    away.Normalize();
+                                }
+                                var perp = new Vector2(-away.Y, away.X);
+                                foreach (var sgn in new[] { 1f, -1f })
+                                {
+                                    var sc = c + perp * 22f * sgn;
+                                    if (StandsSafe(new Rectangle((int)sc.X, (int)sc.Y, pb.Width, pb.Height)))
+                                    {
+                                        score += 12f;
+                                    }
+                                }
+                                if (ld < 60f)
+                                {
+                                    score -= 2f * (60f - ld);
+                                }
+                            }
+                            if (prevGoal is Vector2 pg && (pg - c).Length() < 6f)
+                            {
+                                score += 8f; // (and the spot we were making for, unless another is clearly better: a near tie flipped the goal every frame)
+                            }
                             if (score > bestScore)
                             {
                                 bestScore = score;
@@ -9085,6 +9135,7 @@ namespace AnodyneSharp.Recording
                         }
                     }
                 }
+                prevGoal = open ? null : goal;
                 bool atGoal = Math.Abs(here.X - goal.X) <= 3f && Math.Abs(here.Y - goal.Y) <= 3f;
                 BotRunner.Status = $"Lion: {state} {left}{(lion._flickering ? " flickering" : "")} {(open ? "strike" : "keep off")} goal {goal - new Vector2(Grid.X * 160, Grid.Y * 160)}{(atGoal ? " (there)" : "")}";
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0)
@@ -9149,9 +9200,13 @@ namespace AnodyneSharp.Recording
                     jumpAt = i;
                     keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (not the lion itself: it hurts in the air too)
                 }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0 && keys != null)
+                {
+                    System.Console.Error.WriteLine($"  lion f{i} keys={string.Join("+", keys)}");
+                }
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (keys == null || keys.Length == 0))
                 {
-                    System.Console.Error.WriteLine($"  lion f{i} no move: me={pb} walk={FastWalkable()(pb)} threats: {string.Join(" ", threats.Select(t => $"{t.Name}{t.At[0]}{t.At[10]}"))}");
+                    System.Console.Error.WriteLine($"  lion f{i} no move: me={pb} walk={FastWalkable()(pb)} threats: {string.Join(" ", threats.Select(t => $"{t.Name}{(t.Source == lion ? "*" : "")}{t.At[0]}{t.At[10]}{t.At[30]}"))}");
                 }
                 yield return keys ?? K();
             }

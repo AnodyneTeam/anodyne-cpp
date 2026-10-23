@@ -1531,6 +1531,10 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
+            if (SolidNpcTiles().Contains(t))
+            {
+                return false; // a rock or other fixed NPC: it stands in the way like a wall (it pushes us back)
+            }
             if (_shooterTiles.Contains(t))
             {
                 return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
@@ -1582,6 +1586,37 @@ namespace AnodyneSharp.Recording
                     return allow == Touching.NONE && (AllowWater || Wade || (AllowJump && NarrowWater(t)));
             }
             return allow == Touching.NONE;
+        }
+
+        private static long _solidNpcFrame = -1;
+        private static readonly HashSet<Point> _solidNpcTiles = new();
+
+        /// <summary>Tiles covered by rocks and statues (fixed NPCs that push us back): solid as walls, though the tile data shows floor.</summary>
+        private static HashSet<Point> SolidNpcTiles()
+        {
+            if (_solidNpcFrame == BotRunner.Frame)
+            {
+                return _solidNpcTiles;
+            }
+            _solidNpcFrame = BotRunner.Frame;
+            _solidNpcTiles.Clear();
+            foreach (var e in BotRunner.Entities())
+            {
+                // (only the ones nothing is ever fetched from: an NPC we go and talk to must stay a tile a route can end on)
+                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue) || e.width <= 0 || e.height <= 0)
+                {
+                    continue;
+                }
+                var hb = e.Hitbox;
+                for (int ty = (int)Math.Floor(hb.Top / 16f); ty <= (int)Math.Floor((hb.Bottom - 1) / 16f); ty++)
+                {
+                    for (int tx = (int)Math.Floor(hb.Left / 16f); tx <= (int)Math.Floor((hb.Right - 1) / 16f); tx++)
+                    {
+                        _solidNpcTiles.Add(new Point(tx, ty));
+                    }
+                }
+            }
+            return _solidNpcTiles;
         }
 
         /// <summary>Entity-made floor hazards (cracked tiles that collapse, holes) the tile data doesn't show.</summary>
