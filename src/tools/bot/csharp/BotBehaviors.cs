@@ -4108,6 +4108,65 @@ namespace AnodyneSharp.Recording
                         Corner((int)Math.Floor(r.Left / 16f), (int)Math.Floor((r.Bottom - 1) / 16f), r) && Corner((int)Math.Floor((r.Right - 1) / 16f), (int)Math.Floor((r.Bottom - 1) / 16f), r);
         }
 
+        /// <summary>
+        /// Where to hold against Annoyers (they come to us): null if nothing else reaches where we stand over the horizon, else the
+        /// nearest tile of this screen (8 steps at most) that nothing but the Annoyers reaches, or null if there is none.
+        /// </summary>
+        private static Point? QuietHoldTile(Entity except)
+        {
+            var others = PredictThreats(except).Where(t => t.Source == null || t.Source.GetType().Name != "Annoyer").ToList();
+            if (others.Count == 0)
+            {
+                return null;
+            }
+            var pb = Player.Hitbox;
+            bool Quiet(Vector2 at)
+            {
+                var box = new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height);
+                foreach (var th in others)
+                {
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        if (th.At[f] is Rectangle r && new Rectangle(r.X - th.Margin, r.Y - th.Margin, r.Width + 2 * th.Margin, r.Height + 2 * th.Margin).Intersects(box))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            if (Quiet(new Vector2(pb.X, pb.Y)))
+            {
+                return null;
+            }
+            var grid = Grid;
+            var start = BotNav.TileOf(Pos);
+            var seen = new HashSet<Point> { start };
+            var frontier = new List<Point> { start };
+            for (int depth = 0; depth < 8 && frontier.Count > 0; depth++)
+            {
+                var next = new List<Point>();
+                foreach (var t in frontier)
+                {
+                    foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                    {
+                        var n = new Point(t.X + d.X, t.Y + d.Y);
+                        if (new Point(n.X / 10, n.Y / 10) != grid || !BotNav.Walkable(n) || !seen.Add(n))
+                        {
+                            continue;
+                        }
+                        if (Quiet(BotNav.CentreOf(n)))
+                        {
+                            return n;
+                        }
+                        next.Add(n);
+                    }
+                }
+                frontier = next;
+            }
+            return null;
+        }
+
         /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
         protected static KeyFunctions[] StandSafe(Entity except, bool ignoreAnnoyers = false)
         {
@@ -4121,12 +4180,27 @@ namespace AnodyneSharp.Recording
             {
                 return K();
             }
+            var moveThreats = threats;
+            if (ignoreAnnoyers)
+            {
+                // ...but a dodge must not walk into one: where each is now, for the first few frames of the way (it only ever comes to us)
+                moveThreats = threats.ToList();
+                foreach (var an in Enemies().Where(e => e.GetType().Name == "Annoyer"))
+                {
+                    var body = new Threat { Name = "Annoyer body", Source = an, Margin = 3, HurtsInAir = true };
+                    for (int f = 0; f <= 10; f++)
+                    {
+                        body.At[f] = an.Hitbox;
+                    }
+                    moveThreats.Add(body);
+                }
+            }
             // Standing here is about to be hit: search for a way to keep clear over the whole horizon (a first-fit sidestep ran from a patroller
             // straight into the next danger, then back again).
             if (Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null)
             {
                 var pbs = Player.Hitbox;
-                var stay = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), threats, useCache: false, survive: true);
+                var stay = SpaceTimeMove(new Vector2(pbs.X, pbs.Y), moveThreats, useCache: false, survive: true);
                 if (stay != null && stay.Length > 0)
                 {
                     return K(stay);
@@ -4134,7 +4208,7 @@ namespace AnodyneSharp.Recording
             }
             foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
             {
-                if (WalkableAhead(k, 8) && PlanHitFrame(k, 8, k, 0, threats) == int.MaxValue)
+                if (WalkableAhead(k, 8) && PlanHitFrame(k, 8, k, 0, moveThreats) == int.MaxValue)
                 {
                     return K(k);
                 }
@@ -12369,6 +12443,7 @@ namespace AnodyneSharp.Recording
             int planHold = 0; // frames during which a chosen route around a Shieldy is followed without re-deciding (no flip-flopping)
             float bestDist = float.MaxValue; // closest we have got to the current target (hits knock us about, so "still" is not enough)
             KeyFunctions[] safeKeep = null; int safeKeepLeft = 0;
+            Point? quietTile = null; int quietCheckAt = 0;
             int noProgress = 0;
             Entity lastTarget = null;
             Entity ambushFor = null;
@@ -13989,7 +14064,42 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    var safeFrame = safeKeepLeft > 0 ? safeKeep : StandSafe(target, ignoreAnnoyers: true);
+                    // Something else sweeping the spot we hold (a spike bar the height of the room, say): hold where nothing else comes,
+                    // and let the Annoyers come to us there, rather than dodging it with them on us.
+                    if (safeKeepLeft <= 0 && i >= quietCheckAt)
+                    {
+                        quietCheckAt = i + 15;
+                        quietTile = QuietHoldTile(target);
+                    }
+                    if (quietTile is Point qt && BotNav.TileOf(Pos) != qt)
+                    {
+                        var qpath = BotNav.FindPath(BotNav.TileOf(Pos), qt);
+                        if (qpath != null && qpath.Count > 0)
+                        {
+                            BotRunner.Status = $"fight/annoyer hold: to a quiet spot {qt}";
+                            // (timed past whatever sweeps the way there: it is why we go)
+                            var qThreats = PredictThreats(target).Where(t => t.Source == null || t.Source.GetType().Name != "Annoyer").ToList();
+                            if (SpaceTimeMove(BotNav.CentreOf(qt), qThreats, useCache: false) is KeyFunctions[] qst)
+                            {
+                                yield return K(qst);
+                                continue;
+                            }
+                            var qc = BotNav.CentreOf(qpath[0]) + new Vector2(5, 6);
+                            yield return K(StepKey(qc.X - me.X, qc.Y - me.Y, target));
+                            continue;
+                        }
+                        quietTile = null;
+                    }
+                    // With an Annoyer circling us, a patroller still a while off is not worth walking away for (stepping about with it
+                    // on us is what gets us hit: it is the one at arm's length): swing at it until the other is close.
+                    bool annoyerOnUs = Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < 36);
+                    bool otherSoon = true;
+                    if (annoyerOnUs && safeKeepLeft <= 0)
+                    {
+                        var others = PredictThreats(target).Where(t => t.Source == null || t.Source.GetType().Name != "Annoyer").ToList();
+                        otherSoon = others.Count > 0 && PlanHitFrameStanding(20, KeyFunctions.Right, 0, others) != int.MaxValue;
+                    }
+                    var safeFrame = safeKeepLeft > 0 ? safeKeep : otherSoon ? StandSafe(target, ignoreAnnoyers: true) : K();
                     if (safeFrame.Length > 0)
                     {
                         BotRunner.Status = "fight/annoyer hold: stand safe";
@@ -14454,6 +14564,51 @@ namespace AnodyneSharp.Recording
         /// rollers (they turn only at walls, so far ahead is exact; ground only) and fire pillars (their flame, from their state machine's
         /// clock: idle 0.74s, rising 0.3s, flame 1s, sinking 0.3s; it burns a jumper too).
         /// </summary>
+        /// <summary>
+        /// The way to hop (null: on the spot) so that no ground bar is on us when we come down nor for a while after, and no flame on us
+        /// at all; the one with the latest first hit when none is clear.
+        /// </summary>
+        private static KeyFunctions? SweeperHopKey(List<(Rectangle?[] At, bool Air)> tracks, Point grid)
+        {
+            const float Air = 0.83f * 70f / 60f;
+            const int AirFrames = 30, After = 24;
+            var pb = Player.Hitbox;
+            KeyFunctions? best = null;
+            int bestHit = -1;
+            foreach (var k in new KeyFunctions?[] { null, KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
+            {
+                var dir = k is KeyFunctions kk ? DirVector(kk) : Vector2.Zero;
+                var land = new Rectangle((int)(pb.X + dir.X * Air * AirFrames), (int)(pb.Y + dir.Y * Air * AirFrames), pb.Width, pb.Height);
+                if (!BotNav.BoxStands(land) || new Point((int)Math.Floor(land.Center.X / 16f) / 10, (int)Math.Floor(land.Center.Y / 16f) / 10) != grid)
+                {
+                    continue;
+                }
+                int hit = int.MaxValue;
+                for (int f = 0; f <= AirFrames + After && hit == int.MaxValue; f++)
+                {
+                    var at = f < AirFrames ? new Rectangle((int)(pb.X + dir.X * Air * f), (int)(pb.Y + dir.Y * Air * f), pb.Width, pb.Height) : land;
+                    foreach (var tr in tracks)
+                    {
+                        if ((tr.Air || f >= AirFrames - 1) && tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(at))
+                        {
+                            hit = f;
+                            break;
+                        }
+                    }
+                }
+                if (hit > bestHit)
+                {
+                    bestHit = hit;
+                    best = k;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null)
+            {
+                System.Console.Error.WriteLine($"  sweeper hop f{BotRunner.Frame}: P={pb} key={(best?.ToString() ?? "none")} firstHit={bestHit}");
+            }
+            return best;
+        }
+
         private static List<(Rectangle?[] At, bool Air)> SweeperTracks(int frames)
         {
             var list = new List<(Rectangle?[], bool)>();
@@ -14641,9 +14796,9 @@ namespace AnodyneSharp.Recording
                         {
                             bool ok = true;
                             float pace = Kicked(t, d) || Kicked(a, d) ? 1.8f : 1f;
-                            for (int k = 1; k <= SweepStep && ok; k++)
+                            for (int k = 1; k <= SweepStep + 2 && ok; k++)
                             {
-                                ok = GroundClear(Vector2.Lerp(c, ac, Math.Min(1f, k * pace / SweepStep)), f0 + k);
+                                ok = GroundClear(Vector2.Lerp(c, ac, Math.Min(1f, k * pace / SweepStep)), f0 + k); // (and a couple of frames there: the walk runs late)
                             }
                             if (ok)
                             {
@@ -14667,7 +14822,8 @@ namespace AnodyneSharp.Recording
                             {
                                 ok = Clear(Vector2.Lerp(c, tc, Math.Min(1f, k / 17f)), f0 + k, true); // (what burns a jumper too, along the way)
                             }
-                            for (int k = 2 * SweepStep - 2; k <= 2 * SweepStep + 2 && ok; k++)
+                            // (we come down ~30 frames after take-off, and the next move starts from wherever the landing was: a few frames late)
+                            for (int k = 2 * SweepStep - 2; k <= 2 * SweepStep + 6 && ok; k++)
                             {
                                 ok = GroundClear(tc, f0 + k);
                             }
@@ -14738,7 +14894,9 @@ namespace AnodyneSharp.Recording
                     bool soon = tracks.Any(tr => !tr.Air && Enumerable.Range(0, 8).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
                     bool burns = tracks.Any(tr => tr.Air && Enumerable.Range(0, 16).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
                     Point? refuge = null;
-                    if (burns)
+                    // (a bar that would still be on us as a hop comes down: better a step to a tile it misses)
+                    bool hopLandsOnIt = soon && tracks.Any(tr => !tr.Air && Enumerable.Range(26, 10).Any(f => tr.At[Math.Min(f, tr.At.Length - 1)] is Rectangle r && r.Intersects(me)));
+                    if (burns || hopLandsOnIt)
                     {
                         // (a flame coming up where we stand burns a jumper too: off this tile to one that stays clear a while)
                         foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
@@ -14765,7 +14923,7 @@ namespace AnodyneSharp.Recording
                     }
                     if (refuge is Point rf)
                     {
-                        BotRunner.Status = $"sweepers: off a flame's tile at {here} to {rf} (for {goal})";
+                        BotRunner.Status = $"sweepers: off a {(burns ? "flame's" : "bar's")} tile at {here} to {rf} (for {goal})";
                         var rc = BotNav.CentreOf(rf);
                         for (int w = 0; w < 20 && Vector2.Distance(rc, Pos) > 1.5f; w++, i++)
                         {
@@ -14778,18 +14936,21 @@ namespace AnodyneSharp.Recording
                     }
                     else if (soon && GlobalState.inventory.CanJump)
                     {
-                        BotRunner.Status = $"sweepers: hop a bar on the spot at {here} (for {goal})";
+                        // A bar takes ~36 frames to roll over us and a hop is 27 in the air: on the spot it comes down on the bar. Hop
+                        // through it instead (towards where it comes from, so it is behind us as we land), or wherever lands clear.
+                        var hopKey = SweeperHopKey(tracks, grid);
+                        BotRunner.Status = $"sweepers: hop a bar {(hopKey is KeyFunctions hk0 ? hk0.ToString() : "on the spot")} at {here} (for {goal})";
                         if (_jumpPressFrame == BotRunner.Frame - 1)
                         {
                             yield return K();
                             i++;
                         }
                         _jumpPressFrame = BotRunner.Frame;
-                        yield return K(KeyFunctions.Cancel);
+                        yield return hopKey is KeyFunctions hk ? K(KeyFunctions.Cancel, hk) : K(KeyFunctions.Cancel);
                         i++;
                         for (int w = 0; w < 40 && Player.state == PlayerState.AIR; w++, i++)
                         {
-                            yield return K();
+                            yield return hopKey is KeyFunctions hk2 ? K(hk2) : K(); // (an axis with no key held stops dead in the air)
                         }
                     }
                     else
