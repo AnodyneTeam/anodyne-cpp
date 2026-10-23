@@ -12125,6 +12125,17 @@ namespace AnodyneSharp.Recording
                     var end = path(n) ?? dog.Hitbox;
                     wet = OnConveyor(BotNav.TileOf(p));
                     score = Vector2.Distance(p + new Vector2(5, 6), end.Center.ToVector2()) - (ks.Length == 0 ? 0 : 2) - (wet ? 24 : 0); // (standing wins a tie; ending in the water is worse)
+                    if (others != null)
+                    {
+                        // (and not up against the other dog: run there and the next dash corners us between the two)
+                        foreach (var t in others)
+                        {
+                            if (t.At[Math.Min(n, Horizon)] is Rectangle orr)
+                            {
+                                score -= 2f * Math.Max(0f, 40f - Vector2.Distance(p + new Vector2(5, 6), orr.Center.ToVector2()));
+                            }
+                        }
+                    }
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_DOG_TRACE") != null)
                 {
