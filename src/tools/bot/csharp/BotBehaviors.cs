@@ -233,7 +233,7 @@ namespace AnodyneSharp.Recording
                     }
                     case 't': yield return CrowdPlatforms.Platforms(n); break; // t<n>: a Crowd moving-platform route (see CrowdPlatforms)
                     case 'x': yield return WallBossFight(); break; // x: the Crowd's Wall boss
-                    case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); break;
+                    case '`': SectionEnumerator.SnapshotNow(tok.Substring(1)); BotRunner.ChipLeft = BotRunner.ChipPerPart; break; // (a section is a restart point: its own chip allowance)
                     case 'g': BotRunner.BossDamageBudget = int.Parse(tok.Substring(1)); break; // g<n>: this section may cost n hearts (documented, shrinking: every one is a TODO)
                     case 'l':
                     {
@@ -4114,20 +4114,21 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static Point? QuietHoldTile(Entity except)
         {
-            var others = PredictThreats(except).Where(t => t.Source == null || t.Source.GetType().Name != "Annoyer").ToList();
-            if (others.Count == 0)
+            // (only what sweeps the floor on a fixed beat, a spike bar or a fire pillar: shots are aimed at us wherever we hold)
+            if (!BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller or AnodyneSharp.Entities.Enemy.Circus.FirePillar or AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap))
             {
                 return null;
             }
+            var others = SweeperTracks(Horizon);
             var pb = Player.Hitbox;
             bool Quiet(Vector2 at)
             {
-                var box = new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height);
+                var box = new Rectangle((int)at.X - 2, (int)at.Y - 2, pb.Width + 4, pb.Height + 4);
                 foreach (var th in others)
                 {
-                    for (int f = 0; f <= Horizon; f++)
+                    for (int f = 0; f < th.At.Length; f++)
                     {
-                        if (th.At[f] is Rectangle r && new Rectangle(r.X - th.Margin, r.Y - th.Margin, r.Width + 2 * th.Margin, r.Height + 2 * th.Margin).Intersects(box))
+                        if (th.At[f] is Rectangle r && r.Intersects(box))
                         {
                             return false;
                         }
