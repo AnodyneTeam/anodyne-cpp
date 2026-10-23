@@ -41,6 +41,13 @@ namespace AnodyneSharp.Recording
                     yield return SightTrapWalk(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
                     continue;
                 }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^([UDLR])([UDLR])(\d+)$") is { Success: true } two)
+                {
+                    // RD30: hold two directions at once for n frames (wading across a current, leaning into it)
+                    static KeyFunctions Dir(char c) => c switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    yield return Hold(int.Parse(two.Groups[3].Value), Dir(two.Groups[1].Value[0]), Dir(two.Groups[2].Value[0]));
+                    continue;
+                }
                 if (tok == "heal")
                 {
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
@@ -11541,6 +11548,160 @@ namespace AnodyneSharp.Recording
             return !foe._flickering && !(Player.broom != null && Player.broom.exists) ? K(KeyFunctions.Accept) : K();
         }
 
+        /// <summary>
+        /// A woken Dustmaid walks straight at us at 20px/s and can only be hurt between its 1s blinks: stand still facing it and swing
+        /// the moment it is in the broom's box, then back off while it blinks (it would walk onto us), lining up again as it comes on.
+        /// </summary>
+        private static KeyFunctions[] MaidKeys(Entity maid)
+        {
+            ExactKeysUntil = BotRunner.Frame + 1; // our own dodging: the contact/swing guards would undo it
+            var pb = Player.Hitbox;
+            var tb = maid.Hitbox;
+            var pc = new Vector2(pb.Center.X, pb.Center.Y);
+            var tc = new Vector2(tb.Center.X, tb.Center.Y);
+            float dx = tc.X - pc.X, dy = tc.Y - pc.Y;
+            int gx = Math.Max(tb.Left - pb.Right, pb.Left - tb.Right);
+            int gy = Math.Max(tb.Top - pb.Bottom, pb.Top - tb.Bottom);
+            int gap = Math.Max(gx, gy);
+            bool horiz = Math.Abs(dx) >= Math.Abs(dy);
+            var (face, key) = horiz ? (dx < 0 ? (Facing.LEFT, KeyFunctions.Left) : (Facing.RIGHT, KeyFunctions.Right))
+                : (dy < 0 ? (Facing.UP, KeyFunctions.Up) : (Facing.DOWN, KeyFunctions.Down));
+            if (Player.broom != null && Player.broom.exists)
+            {
+                return K(); // a swing holds us still anyway
+            }
+            bool blinking = maid._flickering;
+            var screen = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+            bool Free(Rectangle r) => screen.Contains(r) && CornersWalkable(r) && !OnConveyor(BotNav.TileOf(new Vector2(r.X, r.Y)))
+                && !BotNav.IsHole(BotNav.TileOf(new Vector2(r.X, r.Y)))
+                && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(r)); // (loose dust is solid to us)
+            // the ways that take us further from it (never past it), with how far we can go that way
+            var away = new List<(KeyFunctions k, int run, float gain)>();
+            foreach (var k in new[] { KeyFunctions.Up, KeyFunctions.Down, KeyFunctions.Left, KeyFunctions.Right })
+            {
+                var u = DirVector(k);
+                float gain = -(u.X * dx + u.Y * dy); // >0: moving this way opens the gap
+                if (gain < -4)
+                {
+                    continue;
+                }
+                int run = 0;
+                for (int step = 4; step <= 24; step += 4)
+                {
+                    var r = pb;
+                    r.Offset((int)(u.X * step), (int)(u.Y * step));
+                    if (!Free(r))
+                    {
+                        break;
+                    }
+                    run = step;
+                }
+                if (run > 0)
+                {
+                    away.Add((k, run, gain));
+                }
+            }
+            bool reach = BroomBoxAt(Pos, face).Intersects(tb);
+            if (SeenVelocity(maid).Length() < 6f)
+            {
+                gap += 10; // caught on a wall corner, not closing in: no hurry, swing from wherever the broom reaches it
+            }
+            // A swing holds us still ~20 frames while it walks ~7px: swing from 8px off at least (else it is on us as the broom goes),
+            // and turn to face it from 10px off (the turn steps us ~1px at it).
+            if (!blinking && reach && Player.facing == face && (gap >= 8 || away.Count == 0))
+            {
+                _maidRetreat = KeyFunctions.Accept;
+                return K(KeyFunctions.Accept);
+            }
+            if (!blinking && Player.facing != face && (gap >= 10 || away.Count == 0))
+            {
+                return K(key);
+            }
+            if (blinking && gap > 28)
+            {
+                return Player.facing != face ? K(key) : K(); // room enough: let it finish blinking on its way to us
+            }
+            if (blinking || gap < 10)
+            {
+                // to the tile furthest from it that we can reach without brushing it, a step at a time (round corners and the dust)
+                var start = BotNav.TileOf(Pos);
+                bool TileFree(Point t) => screen.Contains(new Rectangle(t.X * 16, t.Y * 16, 16, 16)) && BotNav.Walkable(t) && !OnConveyor(t) && !BotNav.IsHole(t)
+                    && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(new Rectangle(t.X * 16 + 2, t.Y * 16 + 2, 12, 12)));
+                float Clear(Point t) => (new Vector2(t.X * 16 + 8, t.Y * 16 + 8) - tc).Length();
+                var parent = new Dictionary<Point, Point> { [start] = start };
+                var clear = new Dictionary<Point, float> { [start] = float.PositiveInfinity };
+                var q = new Queue<Point>();
+                q.Enqueue(start);
+                Point goal = start;
+                float goalD = Clear(start);
+                while (q.Count > 0 && parent.Count < 60)
+                {
+                    var t = q.Dequeue();
+                    foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                    {
+                        var n = t + o;
+                        if (parent.ContainsKey(n) || !TileFree(n))
+                        {
+                            continue;
+                        }
+                        float c = Math.Min(clear[t], Clear(n));
+                        if (c < 14)
+                        {
+                            continue; // would brush past it
+                        }
+                        parent[n] = t;
+                        clear[n] = c;
+                        q.Enqueue(n);
+                        if (Clear(n) > goalD + 0.5f)
+                        {
+                            goal = n;
+                            goalD = Clear(n);
+                        }
+                    }
+                }
+                if (goal == start)
+                {
+                    if (away.Count == 0)
+                    {
+                        return K();
+                    }
+                    var best = away.OrderByDescending(w => Math.Min(w.run, 16) * 4 + w.gain + (w.k == _maidRetreat ? 8 : 0)).First();
+                    _maidRetreat = best.k;
+                    return K(best.k);
+                }
+                var nxt = goal;
+                while (parent[nxt] != start)
+                {
+                    nxt = parent[nxt];
+                }
+                // into the next tile: line up across first if the box does not fit through yet
+                float ex = nxt.X * 16 + 8 - pc.X, ey = nxt.Y * 16 + 8 - pc.Y;
+                KeyFunctions along = Math.Abs(ex) >= Math.Abs(ey) ? (ex < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ey < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                KeyFunctions acrossK = Math.Abs(ex) >= Math.Abs(ey) ? (ey < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (ex < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                var av = DirVector(along) * 2;
+                var ar = pb;
+                ar.Offset((int)Math.Round(av.X), (int)Math.Round(av.Y));
+                _maidRetreat = Free(ar) ? along : acrossK;
+                return K(_maidRetreat);
+            }
+            _maidRetreat = KeyFunctions.Accept;
+            float across = horiz ? dy : dx;
+            if (Math.Abs(across) > 5)
+            {
+                var side = horiz ? (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down) : (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                var v = DirVector(side) * 4;
+                var r = pb;
+                r.Offset((int)v.X, (int)v.Y);
+                if (Free(r))
+                {
+                    return K(side);
+                }
+            }
+            return K(); // facing it: let it walk into the broom's reach
+        }
+
+        private static KeyFunctions _maidRetreat = KeyFunctions.Accept;
+
         private static Rectangle BroomBoxAt(Vector2 p, Facing f)
         {
             int x = (int)Math.Round(p.X), y = (int)Math.Round(p.Y);
@@ -12222,13 +12383,16 @@ namespace AnodyneSharp.Recording
             var seen = new HashSet<Point> { start };
             var q = new Queue<Point>();
             q.Enqueue(start);
+            // (on a raft on still water the pool is ours to walk: the raft keeps under us while it stays on water)
+            bool raft = Player.raft != null && OnConveyor(start) && BotNav.FlowDir(start) == Touching.NONE;
             while (q.Count > 0 && seen.Count < limit)
             {
                 var t = q.Dequeue();
                 foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
                 {
                     var n = new Point(t.X + o.X, t.Y + o.Y);
-                    if (!seen.Contains(n) && n.X / 10 == screen.X && n.Y / 10 == screen.Y && n.X >= 0 && n.Y >= 0 && BotNav.Walkable(n))
+                    if (!seen.Contains(n) && n.X / 10 == screen.X && n.Y / 10 == screen.Y && n.X >= 0 && n.Y >= 0
+                        && (raft ? OnConveyor(n) && BotNav.FlowDir(n) == Touching.NONE : BotNav.Walkable(n)))
                     {
                         seen.Add(n);
                         q.Enqueue(n);
@@ -14453,7 +14617,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (i % 120 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={GlobalState.CUR_HEALTH} enemies={enemies.Count}");
+                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={GlobalState.CUR_HEALTH} enemies={enemies.Count}{(target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(target) is int th ? $" its hp={th}" : "")}");
                 }
                 // Whatever the plan is, a patrolling Shieldy that is about to walk into where we stand comes first: clear of it, then carry on.
                 if (!(Player.broom != null && Player.broom.exists))
@@ -15609,6 +15773,94 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     noProgress++;
+                }
+                static bool StillWater(Point t) => OnConveyor(t) && BotNav.FlowDir(t) == Touching.NONE;
+                var tgtTile = new Point((int)target.Hitbox.Center.X / 16, (int)target.Hitbox.Center.Y / 16);
+                if (Player.raft != null && StillWater(BotNav.TileOf(Pos))
+                    && new[] { Point.Zero, new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => StillWater(tgtTile + o)))
+                {
+                    // On a raft on the same still pool as it: the pool is our floor (the raft keeps under us while we stay on water).
+                    static bool Pool(Point t) => OnConveyor(t) && BotNav.FlowDir(t) == Touching.NONE;
+                    bool OnPool(Rectangle r) => Pool(new Point(r.Left / 16, r.Top / 16)) && Pool(new Point((r.Right - 1) / 16, r.Top / 16))
+                        && Pool(new Point(r.Left / 16, (r.Bottom - 1) / 16)) && Pool(new Point((r.Right - 1) / 16, (r.Bottom - 1) / 16));
+                    BotRunner.Status = $"fight {target.GetType().Name} from the raft";
+                    BotRunner.NotStuck();
+                    stillFrames = 0;
+                    var ctx = PolicyCtx(target);
+                    ctx.Walk = OnPool;
+                    // its shots only hurt us standing, and a hit knocks us off the raft: step out of a shot's line first
+                    var pbx = Player.Hitbox;
+                    var shot = BotRunner.Entities().FirstOrDefault(b => b.exists && b.GetType().Name == "Bullet" && b.velocity != Vector2.Zero && Enumerable.Range(0, 18).Any(f =>
+                    {
+                        var bb = b.Hitbox;
+                        bb.Offset((int)(b.velocity.X * f / 60f), (int)(b.velocity.Y * f / 60f));
+                        bb.Inflate(3, 3);
+                        return bb.Intersects(pbx);
+                    }));
+                    KeyFunctions? dodge = null;
+                    if (shot != null)
+                    {
+                        var sides = Math.Abs(shot.velocity.X) >= Math.Abs(shot.velocity.Y)
+                            ? new[] { pbx.Center.Y <= shot.Hitbox.Center.Y ? KeyFunctions.Up : KeyFunctions.Down, pbx.Center.Y <= shot.Hitbox.Center.Y ? KeyFunctions.Down : KeyFunctions.Up }
+                            : new[] { pbx.Center.X <= shot.Hitbox.Center.X ? KeyFunctions.Left : KeyFunctions.Right, pbx.Center.X <= shot.Hitbox.Center.X ? KeyFunctions.Right : KeyFunctions.Left };
+                        foreach (var k in sides)
+                        {
+                            var v = DirVector(k) * 3;
+                            var r = pbx;
+                            r.Offset((int)Math.Round(v.X), (int)Math.Round(v.Y));
+                            if (OnPool(r))
+                            {
+                                dodge = k;
+                                break;
+                            }
+                        }
+                    }
+                    if (dodge is KeyFunctions dk)
+                    {
+                        BotRunner.Status = "fight from the raft: out of a shot's line";
+                        yield return K(dk);
+                        continue;
+                    }
+                    if (distSq < 55 * 55 && FightPolicies.Slime(ctx, pmem) is PKey[] rk)
+                    {
+                        yield return PolicyFrame(rk, target);
+                        continue;
+                    }
+                    // close in: along the longer axis, else the other, staying on the water
+                    var order = Math.Abs(dx) >= Math.Abs(dy)
+                        ? new[] { dx < 0 ? KeyFunctions.Left : KeyFunctions.Right, dy < 0 ? KeyFunctions.Up : KeyFunctions.Down }
+                        : new[] { dy < 0 ? KeyFunctions.Up : KeyFunctions.Down, dx < 0 ? KeyFunctions.Left : KeyFunctions.Right };
+                    KeyFunctions[] step = K();
+                    foreach (var k in order)
+                    {
+                        var v = DirVector(k) * 3;
+                        var r = Player.Hitbox;
+                        r.Offset((int)Math.Round(v.X), (int)Math.Round(v.Y));
+                        if (OnPool(r))
+                        {
+                            step = K(k);
+                            break;
+                        }
+                    }
+                    yield return step;
+                    continue;
+                }
+                if (target is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && distSq < 64 * 64 && Player.raft == null)
+                {
+                    var mk = MaidKeys(target);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  maid policy f{i}: keys=[{string.Join("+", mk)}] P={Player.Hitbox} T={target.Hitbox} facing={Player.facing} blink={target._flickering} broom={Player.broom?.exists}");
+                    }
+                    BotRunner.Status = "fight/dustmaid: let it come, swing, back off";
+                    BotRunner.NotStuck();
+                    stillFrames = 0;
+                    if (noKill > 0 && noKill < 3000)
+                    {
+                        noKill = 1;
+                    }
+                    yield return mk;
+                    continue;
                 }
                 if (target is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && Player.raft == null && GasGuyKeys(target) is KeyFunctions[] gasKeys)
                 {
