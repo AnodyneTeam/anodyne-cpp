@@ -853,8 +853,59 @@ namespace AnodyneSharp.Recording
         /// Any walk (a fight's chase, a dodge) about to step off the floor onto ground spikes jumps them instead, if the far side is
         /// clear floor ~27px on.
         /// </summary>
+        /// <summary>
+        /// Standing still in a spike tile's core (a fight's "let it come" there in HAPPY took twelve hearts, one every 49 frames): step
+        /// off it the shortest way onto floor, whatever was asked for. Keys that already move us off it are left alone.
+        /// </summary>
+        private static KeyFunctions[] SpikeEscape(KeyFunctions[] held)
+        {
+            if (Player == null || Player.state != PlayerState.GROUND || GlobalState.ScreenTransition || held.Contains(KeyFunctions.Cancel)
+                || held.Any(k => k is KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
+            {
+                return null;
+            }
+            var hb = Player.Hitbox;
+            bool Core(Rectangle r)
+            {
+                for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+                {
+                    for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+                    {
+                        if (BotNav.IsSpike(new Point(tx, ty)) && new Rectangle(tx * 16 + 6, ty * 16 + 6, 5, 6).Intersects(r))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            if (!Core(hb))
+            {
+                return null;
+            }
+            bool Floor(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
+                .All(c => BotNav.Walkable(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            foreach (int d in Enumerable.Range(1, 16))
+            {
+                foreach (var (k, v) in new[] { (KeyFunctions.Left, new Point(-1, 0)), (KeyFunctions.Right, new Point(1, 0)), (KeyFunctions.Up, new Point(0, -1)), (KeyFunctions.Down, new Point(0, 1)) })
+                {
+                    var r = hb;
+                    r.Offset(v.X * d, v.Y * d);
+                    if (!Core(r) && Floor(r))
+                    {
+                        return new[] { k };
+                    }
+                }
+            }
+            return null;
+        }
+
         internal static KeyFunctions[] SpikeGuard(KeyFunctions[] held)
         {
+            if (SpikeEscape(held) is KeyFunctions[] off)
+            {
+                return off;
+            }
             if (Player == null || Player.state != PlayerState.GROUND || !GlobalState.inventory.CanJump || held.Contains(KeyFunctions.Cancel) || GlobalState.ScreenTransition || Environment.GetEnvironmentVariable("ANODYNE_NO_SPIKEGUARD") != null)
             {
                 return held;
