@@ -514,11 +514,67 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // And off Four Shooters' lines of fire over the water (their bullets fly over it; a raft can only dodge so far, and the
+            // Fields (6,8) pool's currents all run in towards its two), and from beside Frogs: only when there is no other way does a ride
+            // go through them.
+            var lanes = new HashSet<Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Alive && pr.Type?.Name == "Frog")
+                {
+                    // (and the water right beside a Frog: its body snags a raft going by, sat in its spit)
+                    var ft = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    for (int ox = -1; ox <= 1; ox++)
+                    {
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            var n = new Point(ft.X + ox, ft.Y + oy);
+                            if (IsConveyor(n) && n != from && n != goal)
+                            {
+                                lanes.Add(n);
+                            }
+                        }
+                    }
+                }
+                if (pr.Alive && pr.Type?.Name == "Four_Shooter")
+                {
+                    var st = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    // (it fires four ways along the grid, then four along the diagonals)
+                    foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1), new Point(1, 1), new Point(-1, 1), new Point(1, -1), new Point(-1, -1) })
+                    {
+                        for (var n = st + d; n.X / 10 == st.X / 10 && n.Y / 10 == st.Y / 10 && !IsBeamWall(n); n += d)
+                        {
+                            if (IsConveyor(n) && n != from && n != goal)
+                            {
+                                lanes.Add(n);
+                            }
+                        }
+                    }
+                }
+            }
+            RaftUnderFire = false;
+            if (lanes.Count > 0)
+            {
+                lanes.UnionWith(chasers);
+                if (RaftPathCore(from, wet, goal, jump, lanes) is List<Point> clear)
+                {
+                    return clear;
+                }
+                RaftUnderFire = true; // (whatever comes back now, if anything, rides through a line of fire)
+                // Then as few tiles in them as it takes: straight across each line, not along it (the way in rode a Four Shooter's row
+                // right up to it).
+                lanes.ExceptWith(chasers);
+                var crossing = RaftPathCore(from, wet, goal, jump, chasers.Count > traps.Count ? chasers : traps.Count > 0 ? traps : null, lanes);
+                if (crossing != null)
+                {
+                    return crossing;
+                }
+            }
             return (chasers.Count > traps.Count ? RaftPathCore(from, wet, goal, jump, chasers) : null)
                 ?? (traps.Count > 0 ? RaftPathCore(from, wet, goal, jump, traps) : null) ?? RaftPathCore(from, wet, goal, jump, null);
         }
 
-        private static List<Point> RaftPathCore(Point from, bool wet, Point goal, bool jump, HashSet<Point> avoid)
+        private static List<Point> RaftPathCore(Point from, bool wet, Point goal, bool jump, HashSet<Point> avoid, HashSet<Point> costly = null)
         {
             RefreshGates();
             RefreshShooterTiles(); // a Four_Shooter in the river is solid, and rafting into it is sitting in its crossfire
@@ -588,7 +644,8 @@ namespace AnodyneSharp.Recording
                     }
                     bool ncarry = nw ? false : (w ? true : (carry && !screenChanged));
                     var key = (n, nw, ncarry);
-                    int nd = dc + 1 + (w && !nw && n != goal ? 6 : 0) + (_gatesClosed.Contains(n) && !_gatesOpen.Contains(n) ? 20 : 0); // (a fight to open it)
+                    int nd = dc + 1 + (w && !nw && n != goal ? 6 : 0) + (_gatesClosed.Contains(n) && !_gatesOpen.Contains(n) ? 20 : 0) // (a fight to open it)
+                        + (costly != null && costly.Contains(n) ? 12 : 0);
                     if (dist.TryGetValue(key, out int old) && old <= nd)
                     {
                         continue;
@@ -615,6 +672,9 @@ namespace AnodyneSharp.Recording
             path.Reverse();
             return path;
         }
+
+        /// <summary>Set by the last raft search: its route (if any) rides through a Four Shooter's line of fire, there being no other.</summary>
+        public static bool RaftUnderFire;
 
         /// <summary>Raft steps (tile to tile) found impassable while riding, e.g. a screen edge the current keeps pushing back over.</summary>
         public static readonly HashSet<(Point, Point)> RaftBlocked = new();

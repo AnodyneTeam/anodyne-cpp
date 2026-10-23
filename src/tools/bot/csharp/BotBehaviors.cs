@@ -5363,7 +5363,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
         private static readonly HashSet<System.Guid> _failedChests = new();
         private static readonly HashSet<System.Guid> _pressedButtons = new();
-        private static bool _chestsNoneReachable;
+        private static bool _chestsNoneReachable, _chestsUnderFire;
 
         /// <summary>
         /// Token i: the Health Cicada of this map (a HealthCicadaSentinel preset that has not been used): walk to it at once (it flies off
@@ -5952,18 +5952,25 @@ namespace AnodyneSharp.Recording
                 BotNav.ResetDustCache();
                 bool jumpOk = GlobalState.inventory.CanJump;
                 var hereT = BotNav.TileOf(Pos);
-                // Buttons whose gates are still shut come first: those in a room with a chest still to open (the gate they open is most
-                // likely that chest's), and any other only once no chest can be got to at all (a press on the far side of the map on
-                // the way spent a key on a key block the route after it needed).
+                // Buttons whose gates are still shut come first, nearest first: those in a room with a chest still to open (the gate they
+                // open is most likely that chest's) or not far off (the Fields lake's dry way round is a button a screen off the route), as long as
+                // the way there spends no key; any other only once no chest can be got to at all (a press on the far side of the map spent
+                // a key on a key block the route after it needed, and a tour of every button walked into fights it had no need of).
                 var chestScreens = new HashSet<Point>(chests.Select(c => new Point((int)c.Position.X / 160, (int)c.Position.Y / 160)));
                 bool anyButton = n > 0 && _chestsNoneReachable;
                 _chestsNoneReachable = false;
+                // (and every button the way to which spends no key, when the only way to the nearest chest is through gunfire: one may
+                // open a way round)
+                bool riskyChests = n > 0 && _chestsUnderFire;
+                _chestsUnderFire = false;
+                var keyGates = new HashSet<Point>(AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Where(pr => pr.Alive && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
+                    .Select(pr => new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16)));
                 var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
                     .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID)
-                        && (anyButton || chestScreens.Contains(new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160)))
                         && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen))
                     .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
-                    .Where(x => x.rp != null).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
+                    .Where(x => x.rp != null && (anyButton || (!x.rp.Any(keyGates.Contains) && (riskyChests || chestScreens.Contains(new Point((int)x.pr.Position.X / 160, (int)x.pr.Position.Y / 160)) || x.rp.Count <= 40)))).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
                 if (btn != null)
                 {
                     _pressedButtons.Add(btn.EntityID);
@@ -5982,11 +5989,12 @@ namespace AnodyneSharp.Recording
                 }
                 (AnodyneSharp.Entities.EntityPreset pr, Point t)? best = null;
                 int bestLen = int.MaxValue;
-                bool bestLeap = false;
+                bool bestLeap = false, bestUnderFire = false;
                 foreach (var pr in chests)
                 {
                     var t = BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17));
                     var rp = BotNav.RaftPath(hereT, OnConveyor(hereT), t, jumpOk);
+                    bool underFire = rp != null && BotNav.RaftUnderFire;
                     bool leapOnly = false;
                     if (rp == null && jumpOk)
                     {
@@ -6000,7 +6008,14 @@ namespace AnodyneSharp.Recording
                         bestLen = rp.Count;
                         best = (pr, t);
                         bestLeap = leapOnly;
+                        bestUnderFire = underFire;
                     }
+                }
+                if (bestUnderFire && !riskyChests && !anyButton)
+                {
+                    RaftLog($"chest at {best.Value.t} only by rafting through gunfire: the buttons first");
+                    _chestsUnderFire = true;
+                    continue;
                 }
                 if (best == null && !anyButton && chests.Count > 0)
                 {
@@ -6321,7 +6336,7 @@ namespace AnodyneSharp.Recording
                 for (int tx = x0; tx <= x1; tx++)
                 {
                     var t = new Point(tx, ty);
-                    row.Append(t == a ? '@' : t == b ? 'G' : BotNav.Walkable(t) ? '.' : BotNav.IsConveyor(t) ? '~' : BotNav.IsGateTile(t) ? 'g' : '#');
+                    row.Append(t == a ? '@' : t == b ? 'G' : BotNav.Walkable(t) ? '.' : BotNav.IsConveyor(t) ? BotNav.FlowDir(t) switch { Touching.UP => '^', Touching.DOWN => 'v', Touching.LEFT => '<', Touching.RIGHT => '>', _ => '~' } : BotNav.IsGateTile(t) ? 'g' : '#');
                 }
                 System.Console.Error.WriteLine($"  tiles {ty,3}: {row}");
             }
@@ -6496,6 +6511,30 @@ namespace AnodyneSharp.Recording
             return lanes.Any(l => l.Intersects(next));
         }
 
+        /// <summary>True when a flying Four Shooter bullet meets our box within `frames` frames (straight on at its speed).</summary>
+        private static bool FourShotSoon(int frames)
+        {
+            var me = Player.Hitbox;
+            me.Inflate(1, 1);
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Redcave.Four_Shooter.Bullet || e.velocity == Vector2.Zero)
+                {
+                    continue;
+                }
+                for (int f = 0; f <= frames; f++)
+                {
+                    var b = e.Hitbox;
+                    b.Offset((int)Math.Round(e.velocity.X * f / 60f), (int)Math.Round(e.velocity.Y * f / 60f));
+                    if (b.Intersects(me))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         /// <summary>True while the automatic emitter plugging runs (its own walking must not trigger more plugging).</summary>
         protected static bool Plugging;
 
@@ -6535,6 +6574,18 @@ namespace AnodyneSharp.Recording
                     throw new TimeoutException($"bot: RaftTo({gx},{gy}) made no headway from {here} on {Map}");
                 }
                 bool wetNow = OnConveyor(here);
+                if (wetNow && !HasRaft() && !BotNav.Wade && round > 0)
+                {
+                    // In the water with no raft under us (it was left behind, or stepped off): the route from here would be ridden on
+                    // foot, a sink every 3s (the Fields lake drowned us 7 times over). Out onto the nearest bank first and plan again.
+                    if (BotNav.WadePath(here, t => !OnConveyor(t)) is List<Point> ashore && ashore.Count > 0)
+                    {
+                        RaftLog($"round {round}: in the water at {here} without a raft: ashore at {ashore[ashore.Count - 1]} first");
+                        var ac = BotNav.CentreOf(ashore[ashore.Count - 1]);
+                        yield return GoTo(ac.X - BotNav.HalfW, ac.Y - BotNav.HalfH);
+                        continue;
+                    }
+                }
                 var path = BotNav.RaftPath(here, wetNow, goal, jump);
                 if (path == null && round > 0 && !wetNow)
                 {
@@ -6542,6 +6593,29 @@ namespace AnodyneSharp.Recording
                     RaftLog($"no raft route on from {here}: walking/wading the rest");
                     yield return GoTo(gx, gy);
                     yield break;
+                }
+                if (path == null && wetNow && HasRaft())
+                {
+                    // Carried (or dodged) downstream of the way on: no raft goes up a current. Ride to the nearest bank we still can and plan
+                    // again from there (the Fields Four Shooter room's currents put us past the turn off).
+                    Point? bank = null;
+                    foreach (var lt in Enumerable.Range(-6, 13).SelectMany(dx => Enumerable.Range(-6, 13).Select(dy => new Point(here.X + dx, here.Y + dy)))
+                        .Where(t => !OnConveyor(t) && BotNav.Walkable(t)).OrderBy(t => Math.Abs(t.X - here.X) + Math.Abs(t.Y - here.Y)).Take(12))
+                    {
+                        if (BotNav.RaftPath(here, true, lt, jump) != null)
+                        {
+                            bank = lt;
+                            break;
+                        }
+                    }
+                    if (bank is Point bk)
+                    {
+                        RaftLog($"round {round}: no way on from {here} against the current: ashore at {bk} first");
+                        var bc = BotNav.CentreOf(bk);
+                        yield return RaftToInner(bc.X - BotNav.HalfW, bc.Y - BotNav.HalfH);
+                        budget -= 300;
+                        continue;
+                    }
                 }
                 if (path == null)
                 {
@@ -6888,6 +6962,18 @@ namespace AnodyneSharp.Recording
                             }
                             continue;
                         }
+                    }
+                    // A Four Shooter's bullet about to reach us on the water (the Fields (6,8) pool's currents carry us in among them,
+                    // with no room to dodge): they only hurt on the ground, so hop it where we are and ride on after.
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && FourShotSoon(6))
+                    {
+                        RaftLog($"hop a Four Shooter bullet at {Pos}");
+                        yield return K(rideKey, KeyFunctions.Cancel);
+                        for (int a = 0; a < 40 && Player.state != PlayerState.GROUND; a++)
+                        {
+                            yield return K(rideKey);
+                        }
+                        continue;
                     }
                     var pcr = Player.Hitbox.Center.ToVector2();
                     var dangersNow = Dangers();
@@ -12806,12 +12892,21 @@ namespace AnodyneSharp.Recording
                 // knock-back at the edge): starting it once more only goes round again. Leave it to the route.
                 yield break;
             }
-            if (soft && _fightDepth > 0)
+            if (soft && _fightDepth > 0 && (only == null || _fightDepth > 1 || _nestedSoft >= 6))
             {
                 // (a fight walking back onto its screen arrives through GoScreenTo, whose own auto-fight would start this one again inside
                 // itself, round and round for ever: the outer fight is already on it; so would the "shooter on the way" one, for the very
-                // plant the outer fight was routing over a gap to, 7000 times over)
+                // plant the outer fight was routing over a gap to, 7000 times over. One foe in the way of the outer fight's walk is fought,
+                // a few times over at most: refused, the walk went on into the Slime blocking a corridor, hit after hit.)
                 yield break;
+            }
+            if (_fightDepth == 0)
+            {
+                _nestedSoft = 0;
+            }
+            else
+            {
+                _nestedSoft++;
             }
             _fightKey = key;
             _fightDepth++;
@@ -12826,7 +12921,7 @@ namespace AnodyneSharp.Recording
             yield return DodgeLeftoverBullets();
         }
 
-        private static int _fightDepth;
+        private static int _fightDepth, _nestedSoft;
         private static string _fightKey, _fightLeftKey;
         private static int _fightLeftCount;
 
