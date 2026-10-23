@@ -2100,7 +2100,7 @@ namespace AnodyneSharp.Recording
                                 var pbx0 = Player.Hitbox;
                                 var lane = Rectangle.Union(pbx0, new Rectangle((int)landC0.X, (int)landC0.Y, pbx0.Width, pbx0.Height));
                                 lane.Inflate(4, 4);
-                                bool clear = true, meSafe = true, clearForJump = true;
+                                bool clear = true, meSafe = true, clearForJump = true, meSafeInAir = true;
                                 var me0 = pbx0;
                                 me0.Inflate(4, 4);
                                 foreach (var t in PredictThreats(null))
@@ -2112,10 +2112,19 @@ namespace AnodyneSharp.Recording
                                     }
                                     // (where we wait on the ground, anything that hurts there counts: a Slasher sharing the corridor cut
                                     // four hearts off a bot that only looked out for what hurts a jumper)
-                                    for (int k = 0; k <= 45 && meSafe; k++)
+                                    for (int k = 0; k <= 45; k++)
                                     {
-                                        meSafe = !(t.At[k] is Rectangle r && me0.Intersects(r));
+                                        if (t.At[k] is Rectangle r && me0.Intersects(r))
+                                        {
+                                            meSafe = false;
+                                            meSafeInAir &= !t.HurtsInAir;
+                                        }
                                     }
+                                }
+                                if (!meSafe && meSafeInAir && clearForJump)
+                                {
+                                    // (only ground threats on us, and the lane clear of jumpers' ones for the jump: the jump is the dodge)
+                                    break;
                                 }
                                 // (standing where it will burn - on a fire pillar's tile, say - the lane need only stay clear for the jump itself)
                                 if (clear || !meSafe && clearForJump)
@@ -2130,6 +2139,16 @@ namespace AnodyneSharp.Recording
                                 }
                                 BotRunner.Status = "jump: wait for the lane to clear";
                                 BotRunner.NotStuck();
+                                if (!meSafe && Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists)
+                                    && new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN }.Cast<Facing?>()
+                                        .FirstOrDefault(f => Enemies().Any(e => !e._flickering && BroomBoxAt(Player.Position, f.Value).Intersects(e.Hitbox))) is Facing hf)
+                                {
+                                    // (something that hurts where we wait is in the broom's reach: hit it, rather than take its blows - a
+                                    // Slasher sharing Fields (2,6)'s corridor cut four hearts off a bot waiting to jump over to it)
+                                    yield return hf == Player.facing ? K(KeyFunctions.Accept) : K(KeyOf(hf));
+                                    yield return K();
+                                    continue;
+                                }
                                 if (!meSafe)
                                 {
                                     // (out of the way of whatever is coming for where we wait, a Slasher's cuts say, rather than wait in them:
