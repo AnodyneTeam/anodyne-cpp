@@ -14185,14 +14185,25 @@ namespace AnodyneSharp.Recording
                         BotNav.AllowJump = false;
                         // (the walk round is made without jumps: a way that only a jump into its pit finds is no way round either; Red Cave
                         // (4,6)'s Slasher stands among the pits)
-                        bool walkRound = canGoRound && BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
-                        if (!walkRound && !soft && canGoRound)
+                        int farEnough0 = theirs.Any(t => Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= 3) ? 3 : 2;
+                        var sideLanes0 = BotNav.LaneTiles();
+                        bool walkRound = canGoRound && BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t) && !sideLanes0.Contains(t)
+                            && Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= farEnough0) != null;
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
+                            System.Console.Error.WriteLine($"  fight: {target.GetType().Name} at {tTile} walled off from {BotNav.TileOf(Pos)} (region {mine.Count} tiles, theirs {theirs.Count}): round with jumps {canGoRound}, on foot {walkRound}");
+                        }
+                        if (!walkRound && !(soft && !canGoRound))
+                        {
+                            // (no walk gets there: one stood over a pit, Red Cave (4,6)'s Slasher. The others here are still fought.)
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
-                                System.Console.Error.WriteLine($"  fight: the {target.GetType().Name} is only reached by a jump into its pit: leaving it");
+                                System.Console.Error.WriteLine($"  fight: no walk reaches the {target.GetType().Name}: passing it over");
                             }
-                            yield break;
+                            IgnoredEnemies.Add(target);
+                            routedFor = null;
+                            committed = null;
+                            continue;
                         }
                         if (!canGoRound && soft)
                         {
