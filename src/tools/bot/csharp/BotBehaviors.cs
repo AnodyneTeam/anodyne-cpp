@@ -8004,6 +8004,28 @@ namespace AnodyneSharp.Recording
         /// A jump across a shot's line (it moves too slowly to pass under a jump in place): sideways to `line` where we land on floor, else
         /// back along it, else forward. Null when no landing is safe.
         /// </summary>
+        /// <summary>
+        /// A landing box an on-sight dash trap would see (its row or column band) from close by as we come down: it charges the moment we
+        /// are in its line, at 80px/s, and we are on the ground then.
+        /// </summary>
+        private static bool InTrapSight(Rectangle land, float after)
+        {
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists))
+            {
+                var r = t.Hitbox;
+                r.Offset((int)Math.Round(t.velocity.X * after), (int)Math.Round(t.velocity.Y * after));
+                bool seeX = land.Left <= r.Right && land.Right >= r.Left;
+                bool seeY = land.Top <= r.Bottom && land.Bottom >= r.Top;
+                int dx = Math.Max(0, Math.Max(r.Left - land.Right, land.Left - r.Right));
+                int dy = Math.Max(0, Math.Max(r.Top - land.Bottom, land.Top - r.Bottom));
+                if ((seeX && dy < 40) || (seeY && dx < 40))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static KeyFunctions[] HopAcross(Vector2 line)
         {
             bool alongX = Math.Abs(line.X) > Math.Abs(line.Y);
@@ -8031,7 +8053,8 @@ namespace AnodyneSharp.Recording
                 }
             }
             // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
-            foreach (var (k, margin) in keys.Select(k => (k, 3)).Concat(keys.Select(k => (k, 0))))
+            // (out of every on-sight dash trap's line first; failing that, any landing still beats coming down where we stand)
+            foreach (var (k, margin, sight) in keys.Select(k => (k, 3, true)).Concat(keys.Select(k => (k, 0, true))).Concat(keys.Select(k => (k, 0, false))))
             {
                 var d = DirVector(k);
                 var move = d * 24f; // (in the air an axis with no key held stops dead: Player.Set_init_vel, and we hold only this one)
@@ -8040,7 +8063,8 @@ namespace AnodyneSharp.Recording
                 land.Inflate(margin, margin); // (no hole tile at all under the landing: the jump's length is not exact, and the fight walks on as we land)
                 if (new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
                     .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t))
-                    && !bodies.Any(r => r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height))))
+                    && !bodies.Any(r => r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height)))
+                    && !(sight && InTrapSight(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height), air)))
                 {
                     _hopDir = k;
                     _hopUntil = BotRunner.Frame + 40;
@@ -12130,6 +12154,7 @@ namespace AnodyneSharp.Recording
         private static long _frogVolleyWaitFrom = -1000, _frogVolleyWaitLast = -1000;
         private static int _frogGroundStall;
         private static long _frogBaitUntil = -1;
+        private static int _frogTrades;
 
         /// <summary>
         /// A spot on our side of the floor: walk in, strike and back off by a plan checked frame by frame against the bullets flying and the
@@ -12202,8 +12227,10 @@ namespace AnodyneSharp.Recording
                 why = $"volley {hit}/{plan.Count} {who}";
                 // Two frogs side by side never leave a clean way in and out (each spits the moment its last volley is down). With the
                 // hearts to spare and a long wait behind us, take the one late bullet: it only lands after the swing that hurts the frog.
-                if (hit > walk + 6 && _frogGroundStall > 300 && GlobalState.CUR_HEALTH >= Math.Max(5, GlobalState.MAX_HEALTH - 1))
+                var frogsNear = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToVector2() - (spot + new Vector2(5, 6))).Length() < 40).Count();
+                if (frogsNear >= 2 && _frogTrades < 3 && hit > walk + 6 && _frogGroundStall > 300 && GlobalState.CUR_HEALTH >= Math.Max(5, GlobalState.MAX_HEALTH - 1))
                 {
+                    _frogTrades++;
                     clear = true;
                     why += " (trading a hit for the swing)";
                 }
@@ -12232,6 +12259,10 @@ namespace AnodyneSharp.Recording
                     var at = spot + outDir * d;
                     if (frogCs.All(fc => (at + halfBox - fc).Length() >= 68f))
                     {
+                        if (InTrapSight(new Rectangle((int)at.X, (int)at.Y, pb.Width, pb.Height), 0f))
+                        {
+                            break; // (a wait in a dash trap's line is a hit of its own: not there)
+                        }
                         if ((at - here).Length() <= 2f)
                         {
                             break; // there: wait (and bait) below
@@ -12246,7 +12277,7 @@ namespace AnodyneSharp.Recording
                 BotRunner.Status = "fight/frog: bait its volley";
                 return K(Towards(spot));
             }
-            if (_frogGroundStall % 150 == 149 && safeExact(here, 1, 8))
+            if (_frogGroundStall % 150 == 149 && safeExact(here, 1, 8) && !InTrapSight(pb, 0f))
             {
                 // Still no clear way in from just out of reach: step into its reach for a moment so it spits now, while we are far
                 // enough off to dodge, and go in while that volley is still flying (a frog never spits again before it is done).
@@ -13131,6 +13162,7 @@ namespace AnodyneSharp.Recording
             {
                 _nestedSoft = 0;
                 _frogGroundStall = 0; // (a stall from an earlier fight is not this one's: it would skip straight to giving up)
+                _frogTrades = 0;
             }
             else
             {
