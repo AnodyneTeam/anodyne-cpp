@@ -608,6 +608,27 @@ namespace AnodyneSharp.Recording
                     yield return Hold(10, KeyFunctions.Down);
                     break;
                 }
+                case 13:
+                {
+                    // (8,2) in from the north (the gate the dogs of (8,1) hold shut): the roller across the doorway drops when we touch
+                    // it and rolls south 112px to stop on the chest's row. Get ahead of it and jump back over it, then the dust onto the
+                    // platform down across the pit, ride it to its stop and jump off over the stopped roller to the floor below the chest.
+                    var roller = BotRunner.Entities().OfType<BaseSpikeRoller>().OrderBy(e => (Mid(e) - Me).LengthSquared()).First();
+                    yield return GoTo(BotNav.CentreOf(new Point(84, 22)).X, BotNav.CentreOf(new Point(84, 22)).Y);
+                    yield return WaitFor(() => roller.CollisionOn && roller.Hitbox.Bottom >= Player.Hitbox.Top - 3, "the spike roller to come");
+                    Trace($"hop the roller at {roller.Hitbox}");
+                    yield return LeapOff(KeyFunctions.Up);
+                    yield return WaitFor(() => roller.velocity == Vector2.Zero, "the spike roller to stop");
+                    Trace($"roller stopped at {roller.Hitbox}");
+                    yield return SweepUpNear(85, 22);
+                    yield return SweepTill(84, 22, KeyFunctions.Down, Facing.DOWN, false);
+                    Trace($"dust on the down platform: active={Active(PlatformAt(84, 23))}");
+                    yield return JumpOnto(84, 23, KeyFunctions.Down);
+                    yield return Ride(84, 23);
+                    yield return LeapOff(KeyFunctions.Down);
+                    yield return Hold(10, KeyFunctions.Down);
+                    break;
+                }
                 case 20:
                     // The Apartments' entrance (2,5): the active platform on the west holes, over a hole from the floor, rides up to the
                     // top row and the way north.
