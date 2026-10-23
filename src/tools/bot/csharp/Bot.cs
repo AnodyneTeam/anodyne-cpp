@@ -35,7 +35,7 @@ namespace AnodyneSharp.Recording
         public static long DebtAge => DebtBaseline >= 0 ? _botFrame - _debtSince : -1;
         /// <summary>Hearts owed (0 when none).</summary>
         public static int DebtMissing => DebtBaseline >= 0 ? Math.Max(0, Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - GlobalState.CUR_HEALTH) : 0;
-        /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2); reset at the start of each part and section.</summary>
+        /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2); reset at the start of each part and section, and once back at full health.</summary>
         public static int ChipLeft = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_CHIP"), out int cl) ? cl : 2;
         public static readonly int ChipPerPart = ChipLeft;
         public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 900;
@@ -379,6 +379,10 @@ namespace AnodyneSharp.Recording
                         why = $"took damage and did not get the hearts back within {RecoverFrames} frames (HP {DebtBaseline}->{hp}, chip allowance {ChipLeft})";
                     }
                 }
+            }
+            if (DebtBaseline < 0 && hp >= GlobalState.MAX_HEALTH && ChipLeft < ChipPerPart)
+            {
+                ChipLeft = ChipPerPart; // (the hearts let go were won back after all, at a checkpoint later on: nothing is missing any more)
             }
             _hpSeen = hp;
             if ((why != null && why != _whyShown) || (_allowDamage && _hpSeenAllow >= 0 && hp < _hpSeenAllow))
@@ -1850,6 +1854,7 @@ namespace AnodyneSharp.Recording
                                 BotRunner.Status = "jump: wait for the lane to clear";
                                 BotRunner.NotStuck();
                                 yield return K();
+                                yield return K(); // (look again every other frame: the whole room's threats are dear to predict)
                             }
                         }
                         {

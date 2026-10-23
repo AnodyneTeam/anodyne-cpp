@@ -5002,7 +5002,10 @@ namespace AnodyneSharp.Recording
                 }
                 bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
                 // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
-                bool chipHeal = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft && BotRunner.Frame - _lastChipHeal > 6000;
+                // (and hearts already let go as chip, when a checkpoint is handy: Heal() turns down a long trip for a heart or two)
+                bool chipHeal = ((BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft)
+                    || (BotRunner.ChipLeft < BotRunner.ChipPerPart && BotRunner.DebtAge < 0 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH))
+                    && BotRunner.Frame - _lastChipHeal > 6000;
                 if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
                     if (!lowHp)
