@@ -6407,6 +6407,7 @@ namespace AnodyneSharp.Recording
 
         /// <summary>True while a dash trap is being baited and passed (its own walking must not start another pass).</summary>
         protected static bool PassingTrap;
+        protected static long _trapLineJumpAt = -1000;
 
         /// <summary>
         /// An idle OnSightDashTrap whose tile the route walks over, coming at it along its line for at least three tiles: the trap,
@@ -7938,7 +7939,19 @@ namespace AnodyneSharp.Recording
                 };
                 if (gap >= 0 && gap <= 20 && (vertical ? Math.Abs(tb.Center.X - pb.Center.X) < 48 : Math.Abs(tb.Center.Y - pb.Center.Y) < 48))
                 {
-                    return true;
+                    // (only when its charge at us runs on a long way past us before it bounces: back from a wall a tile off it is on
+                    // us again as we land)
+                    var tc = BotNav.TileOf(t.Position + new Vector2(8, 8) - new Vector2(BotNav.HalfW, BotNav.HalfH));
+                    var toward = vertical ? new Point(Math.Sign(pb.Center.X - tb.Center.X), 0) : new Point(0, Math.Sign(pb.Center.Y - tb.Center.Y));
+                    int run = 0;
+                    for (var q = new Point(tc.X + toward.X, tc.Y + toward.Y); run < 10 && BotNav.Walkable(q) && !BotNav.IsHole(q); q = new Point(q.X + toward.X, q.Y + toward.Y))
+                    {
+                        run++;
+                    }
+                    if (run >= 4)
+                    {
+                        return true;
+                    }
                 }
             }
             return false;

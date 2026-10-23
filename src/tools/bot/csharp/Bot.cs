@@ -2209,9 +2209,10 @@ namespace AnodyneSharp.Recording
                         {
                             safe = K(dir); // every way of dealing with the blocker has been tried: take the chance
                         }
-                        if (GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap
+                        if (GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && BotRunner.Frame > _trapLineJumpAt + 90
                             && ((Dodged && dodgeWaits > 90 && OnSightTrapLineAhead(dir)) || TrapLineToJump(dir)))
                         {
+                            _trapLineJumpAt = BotRunner.Frame; // (one at a time: a replan that turns us round must not jump straight back)
                             // Held back at the edge of an on-sight dash trap's line with it too close to ever walk across in time: it only
                             // hurts on the ground, so jump into the line (it charges under us and on past) and walk on out the far side.
                             BotRunner.Status = "jump across the dash trap's line";
