@@ -6158,6 +6158,9 @@ namespace AnodyneSharp.Recording
                 yield return GlobalState.ScreenTransition || Talking ? K() : K(bestPush);
             }
             yield return Until(() => !GlobalState.ScreenTransition, 600, "door warp");
+            // (a warp within the map fades back in for a while with us held still; the pause menu opened in that fade left us held for
+            // good, BLANK's portal to (4,1))
+            yield return Until(() => !Player.dontMove, 600, "door warp fade-in");
             yield return Wait(30);
         }
 
@@ -6460,7 +6463,10 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
-            if (GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t) != 0 || !SwapAllowed(t) || BotNav.SolidNpcTiles().Contains(t))
+            // (a wall in its overlay layer stays a wall whatever floor is swapped in below it; a non-solid overlay, Windmill's shadows,
+            // does not matter)
+            int bg2 = GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t);
+            if ((bg2 != 0 && ClassOfTileId(bg2).Item1 != Touching.NONE) || !SwapAllowed(t) || BotNav.SolidNpcTiles().Contains(t))
             {
                 return false;
             }
@@ -6470,7 +6476,8 @@ namespace AnodyneSharp.Recording
         /// <summary>Floor to trade for a wall: walkable, nothing on top, not a hole.</summary>
         private static bool SpareFloor(Point t)
         {
-            if (GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t) != 0 || !SwapAllowed(t) || !BotNav.Walkable(t))
+            // (an overlay tile on top is fine: only the floor below is traded, and the overlay lets us walk, so it walls nothing)
+            if (!SwapAllowed(t) || !BotNav.Walkable(t))
             {
                 return false;
             }
@@ -6491,6 +6498,7 @@ namespace AnodyneSharp.Recording
             }
             int fails = 0;
             BotRunner.NoAccept = true; // (a swing on the way, by a guard or a walker, is a swap step: it swapped a dug shaft shut behind us)
+            Player.transformer.Reset(); // (and one let through before, the menu's own Accept: a selector up holds us still, BLANK (4,1))
             try
             {
                 for (int dig = 0; dig < 120; dig++)

@@ -434,6 +434,9 @@ namespace AnodyneSharp.Recording
             // Red Sea (0,6) Depressed Mushroom: a long dig down the west edge. Walls cost a lot so it walks where it can,
             // and auto fight is off so it does not chase Annoyers into the dug corridor.
             yield return Section("red sea mushroom card", () => Exec("O1 X1 viaREDSEA W30 X0 dig2,65,40 X1 W10 I32,1024,d W60 T W30"));
+            // BLANK (5,1) Broom: dig east from the Windmill's top into the other windmill, which leads to BLANK. Dig into the
+            // sealed portal room, take the white portal and dig to the chest.
+            yield return Section("blank broom card", () => Exec("O1 X1 g4 viaWINDMILL W30 dig25,40 W10 oBLANK W60 dig53,38 W10 door86 W30 dig57,17 W10 I912,256,d W60 T W30"));
         }
     }
 
