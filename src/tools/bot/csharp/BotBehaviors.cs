@@ -12210,6 +12210,12 @@ namespace AnodyneSharp.Recording
                 return true;
             }
             var here = new Vector2(pb.X, pb.Y);
+            if (Player.state == PlayerState.AIR && _frogStJumpKeys != null && BotRunner.Frame <= _frogStJumpAt + 40)
+            {
+                // A jump the space-time move made (over a bullet): hold its way till we land, not a pit jump's old landing point.
+                BotRunner.Status = "fight/frog: jump (space-time)";
+                return _frogStJumpKeys;
+            }
             if (Player.state == PlayerState.AIR)
             {
                 // Mid-jump (over a pit): steer onto the landing point and let go there (the air speed is 0.83 of walking).
@@ -12258,6 +12264,7 @@ namespace AnodyneSharp.Recording
                     var home = _frogTakeoff.Value;
                     var hk = Math.Abs(home.X - here.X) >= Math.Abs(home.Y - here.Y) ? (home.X > here.X ? KeyFunctions.Right : KeyFunctions.Left) : (home.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up);
                     _frogAirTarget = home;
+                    _frogStJumpKeys = null;
                     _frogAirFrom = here;
                     _frogTakeoff = null;
                     BotRunner.Status = "fight/frog: jump home (planned)";
@@ -12281,6 +12288,7 @@ namespace AnodyneSharp.Recording
                             // Staying is worse than a bad jump home.
                             var hk = _frogTakeoff.Value.X > here.X + 4 ? KeyFunctions.Right : _frogTakeoff.Value.X < here.X - 4 ? KeyFunctions.Left : _frogTakeoff.Value.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
                             _frogAirTarget = _frogTakeoff.Value;
+                            _frogStJumpKeys = null;
                             _frogAirFrom = here;
                             _frogTakeoff = null;
                             BotRunner.Status = "fight/frog: jump home now";
@@ -12382,6 +12390,11 @@ namespace AnodyneSharp.Recording
             if (mv != null)
             {
                 BotRunner.Status = $"fight/frog: to the {spot.face} spot round its bullets";
+                if (mv.Contains(KeyFunctions.Cancel))
+                {
+                    _frogStJumpKeys = mv.Where(k => k != KeyFunctions.Cancel).ToArray();
+                    _frogStJumpAt = BotRunner.Frame;
+                }
                 return K(mv);
             }
             if (pitOnWay && FrogJumpKeys(spot.pos, threats, SafeAt, along: spot.face, safeAtExact: SafeAtExact) is KeyFunctions[] jk)
@@ -12650,6 +12663,8 @@ namespace AnodyneSharp.Recording
         private static long _frogCommit = -1, _frogBackAt = long.MaxValue, _frogDrawFrame = -1;
         private static int _frogDrawIdx;
         private static Vector2 _frogAirTarget, _frogAirFrom;
+        private static KeyFunctions[] _frogStJumpKeys;
+        private static long _frogStJumpAt = -1000;
 
         private static bool FrogPitBetween(Vector2 a, Vector2 b)
         {
@@ -13052,6 +13067,7 @@ namespace AnodyneSharp.Recording
                 System.Console.Error.WriteLine($"  frogjump JUMP f{BotRunner.Frame} from {here} to {spot}");
             }
             _frogAirTarget = spot;
+            _frogStJumpKeys = null;
             _frogAirFrom = here;
             _frogBackAt = takeoffOnly ? long.MaxValue : BotRunner.Frame + AirFrames + stay;
             return K(key, KeyFunctions.Cancel);
