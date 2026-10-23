@@ -7883,6 +7883,44 @@ namespace AnodyneSharp.Recording
 
         private static readonly Dictionary<Entity, (Vector2 pos, long frame, bool moved)> _trapLastPos = new();
 
+        /// <summary>
+        /// Walking across an idle on-sight dash trap's line right beside it (too close to ever walk over in time: it charges the moment we
+        /// are in its band, at 80px/s): true when the band starts a few pixels ahead, is narrow enough for one jump to clear, and the far
+        /// side is floor out of every other trap's line. The air is safe from it.
+        /// </summary>
+        protected static bool TrapLineToJump(KeyFunctions dir)
+        {
+            var pb = Player.Hitbox;
+            bool horiz = dir == KeyFunctions.Left || dir == KeyFunctions.Right;
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            {
+                var tb = t.Hitbox;
+                int gap = dir switch
+                {
+                    KeyFunctions.Up => pb.Top - tb.Bottom - 1,
+                    KeyFunctions.Down => tb.Top - pb.Bottom,
+                    KeyFunctions.Left => pb.Left - tb.Right - 1,
+                    _ => tb.Left - pb.Right,
+                };
+                int side = horiz ? Math.Max(0, Math.Max(tb.Top - pb.Bottom, pb.Top - tb.Bottom)) : Math.Max(0, Math.Max(tb.Left - pb.Right, pb.Left - tb.Right));
+                int across = gap + (horiz ? tb.Width + pb.Width : tb.Height + pb.Height) + 2;
+                if (gap < 0 || gap > 4 || side > 40 || across > 27)
+                {
+                    continue;
+                }
+                var land = pb;
+                var d = DirVector(dir);
+                land.Offset((int)(d.X * across), (int)(d.Y * across));
+                bool floor = new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
+                    .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(q => BotNav.Walkable(q) && !BotNav.IsHole(q));
+                if (floor)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>An idle on-sight dash trap whose line (its row or column band) starts within 20px ahead of us going `dir`.</summary>
         protected static bool OnSightTrapLineAhead(KeyFunctions dir)
         {
