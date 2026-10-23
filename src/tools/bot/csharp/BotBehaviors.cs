@@ -83,6 +83,20 @@ namespace AnodyneSharp.Recording
                     yield return DustOnto(target);
                     continue;
                 }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^strike(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),([udlr]),(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$") is { Success: true } stk)
+                {
+                    // strike<x>,<y>,<face>,<sx>,<sy>: kill the rooted foe beside (x,y) from there, facing that way, two swings a second apart,
+                    // stepping in from (sx,sy) only while any fire pillar over the spot stays out for the whole of it
+                    var fk = stk.Groups[3].Value[0] switch { 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, 'l' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    yield return TimedStrike(new Vector2(float.Parse(stk.Groups[1].Value), float.Parse(stk.Groups[2].Value)), fk,
+                        new Vector2(float.Parse(stk.Groups[4].Value), float.Parse(stk.Groups[5].Value)));
+                    continue;
+                }
+                if (tok is "kg0" or "kg1")
+                {
+                    KillerGuardOn = tok == "kg1"; // kg1/kg0: no step of ours wakes a Suburb killer (outside fights too) / only in fights
+                    continue;
+                }
                 if (System.Text.RegularExpressions.Regex.Match(tok, @"^lure(\d+),(\d+),(\d+)$") is { Success: true } lure)
                 {
                     // lure<x>,<y0>,<y1>: fight the screen's enemies; whenever the fight gives up on one out of reach, walk down (or up) the
@@ -523,7 +537,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} long={GlobalState.inventory.HasLengthen} wide={GlobalState.inventory.HasWiden} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -2136,34 +2150,18 @@ namespace AnodyneSharp.Recording
                     result.Add(gt);
                     continue;
                 }
-                if (BotNav.IsSuburbKiller(d))
+                if (BotNav.IsSuburbKiller(d) && _killerMoving?.GetValue(d) is not true)
                 {
                     // Asleep it wakes once we come within 36px (top-left to top-left) and then creeps after us at 30px/s, re-aiming every
-                    // half second, for good: asleep, its whole wake berth is the danger (a dog fight beside two of them woke both); awake, it
-                    // homes in on where we are.
-                    bool awake = _killerMoving?.GetValue(d) is true;
-                    var kt = new Threat { Name = "SuburbKiller", Source = d, Margin = awake ? 2 : 0, HurtsInAir = true, Stationary = !awake };
-                    var pp = Player.Position;
+                    // half second, for good: asleep, its whole wake berth is the danger (a dog fight beside two of them woke both). (Awake, the
+                    // straight line of its velocity below is right for the half second it holds it; aiming it at us read worse.)
+                    var kt = new Threat { Name = "SuburbKiller", Source = d, Margin = 0, HurtsInAir = true, Stationary = true };
+                    // (the wake test is on the top-left corners, ours of a 10x12 box, its of its 6x6 one: our box meets this one just when
+                    // our corner is within 36px of its on both axes; it reached too far down to draw a far dog up to us)
+                    var kr = new Rectangle(d.Hitbox.X - 26, d.Hitbox.Y - 24, 62, 60);
                     for (int f = 0; f <= Horizon; f++)
                     {
-                        var r = d.Hitbox;
-                        if (awake)
-                        {
-                            var to = pp - d.Position;
-                            float len = to.Length(), step = Math.Min(len, 30f * f / 60f);
-                            if (len > 0.01f)
-                            {
-                                r.Offset((int)(to.X / len * step), (int)(to.Y / len * step));
-                            }
-                            r.Inflate(3, 3);
-                        }
-                        else
-                        {
-                            // (the wake test is on the top-left corners, ours of a 10x12 box, its of its 6x6 one: our box meets this one
-                            // just when our corner is within 36px of its on both axes; it reached too far down to draw a far dog up to us)
-                            r = new Rectangle(r.X - 26, r.Y - 24, 62, 60);
-                        }
-                        kt.At[f] = r;
+                        kt.At[f] = kr;
                     }
                     result.Add(kt);
                     continue;
@@ -6786,8 +6784,34 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> MenuEquipBroom(int k)
         {
+            var want = k switch { 1 => AnodyneSharp.Entities.BroomType.Long, 2 => AnodyneSharp.Entities.BroomType.Wide, 3 => AnodyneSharp.Entities.BroomType.Transformer, _ => AnodyneSharp.Entities.BroomType.Normal };
+            // (a press in the first moments after a load, or during a screen's scroll, is not taken: again until it is on)
+            for (int tries = 0; tries < 3 && GlobalState.inventory.EquippedBroom != want; tries++)
+            {
+                yield return Until(() => !GlobalState.ScreenTransition, 300, "screen settled for the menu");
+                yield return MenuEquipBroomOnce(k);
+            }
+        }
+
+        /// <summary>Menu presses: no guard may turn them into dodges (a Burst Plant's bullets about had the bullet hop eat the Pause press,
+        /// and the menu's Up and Down walked us about instead).</summary>
+        internal static bool MenuKeys;
+
+        private static IEnumerable<object> MenuEquipBroomOnce(int k)
+        {
+            MenuKeys = true;
+            yield return MenuEquipBroomPresses(k);
+            MenuKeys = false;
+        }
+
+        private static IEnumerable<object> MenuEquipBroomPresses(int k)
+        {
             yield return Tap(KeyFunctions.Pause);
             yield return Wait(20);
+            if (!BotRunner.PlayBusyName.Contains("Pause"))
+            {
+                yield break; // (not up: its Up and Down presses would walk us)
+            }
             for (int i = 0; i < 8; i++)
             {
                 yield return Tap(KeyFunctions.Up);
@@ -6877,12 +6901,86 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        /// <summary>Frames until a fire pillar burns again (0 while it burns), read from its state machine; null when it cannot be read.</summary>
+        private static int? FramesToFlame(Entity pillar) => PillarStateLeft(pillar) is var (st, left)
+            ? st switch { "FlameState" => 0, "EmergeState" => left, "RecedeState" => left + 44 + 18, _ => left + 18 }
+            : null;
+
+        /// <summary>To hitbox top-left `at` by single-axis presses (guards still on), within 0.7px, at most `frames` frames.</summary>
+        protected static IEnumerable<object> ExactWalk(Vector2 at, int frames = 120)
+        {
+            for (int i = 0; i < frames; i++)
+            {
+                float ex = at.X - Pos.X, ey = at.Y - Pos.Y;
+                if (Math.Abs(ex) <= 0.7f && Math.Abs(ey) <= 0.7f)
+                {
+                    yield break;
+                }
+                var mk = new List<KeyFunctions>();
+                if (Math.Abs(ex) > 0.7f) { mk.Add(ex < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                if (Math.Abs(ey) > 0.7f) { mk.Add(ey < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                yield return mk.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// A rooted foe (a Burst Plant) whose only spots in reach sit on a fire pillar: wait beside the spot (at `stage`) until every pillar
+        /// over it has just gone out (80 frames clear: sinking, out, rising), step in, face it and swing, again 62 frames on (its flicker
+        /// after a hit lasts a second), and step back out before the flame. Black and White Town's last room, its plants boxed in by pillars
+        /// with the killers beside them.
+        /// </summary>
+        protected static IEnumerable<object> TimedStrike(Vector2 at, KeyFunctions face, Vector2 stage)
+        {
+            var spot = new Rectangle((int)at.X, (int)at.Y, 10, 12);
+            var target = Enemies().OrderBy(e => (e.Hitbox.Center.ToVector2() - spot.Center.ToVector2()).Length()).FirstOrDefault();
+            if (target == null)
+            {
+                yield break;
+            }
+            var reach = spot;
+            reach.Inflate(4, 4);
+            for (int round = 0; round < 6 && Enemies().Contains(target); round++)
+            {
+                BotRunner.Status = $"strike: wait at {stage.X:0},{stage.Y:0} for the pillars";
+                yield return ExactWalk(stage);
+                var pillars = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Circus.FirePillar && e.Hitbox.Intersects(reach)).ToList();
+                int need = (int)Math.Ceiling((at - stage).Length() / 1.1f) + 74;
+                for (int w = 0; w < 400 && !pillars.All(pl => FramesToFlame(pl) is int ff && ff >= need); w++)
+                {
+                    yield return K();
+                }
+                BotRunner.Status = $"strike: in at {at.X:0},{at.Y:0}";
+                long start = BotRunner.Frame;
+                yield return ExactWalk(at, 20);
+                yield return K(face);
+                yield return Tap(KeyFunctions.Accept);
+                while (BotRunner.Frame - start < need - 10 && Enemies().Contains(target))
+                {
+                    if (BotRunner.Frame - start >= (int)Math.Ceiling((at - stage).Length() / 1.1f) + 64 && !(Player.broom != null && Player.broom.exists))
+                    {
+                        yield return Tap(KeyFunctions.Accept);
+                        continue;
+                    }
+                    yield return K();
+                }
+                BotRunner.Status = "strike: out before the flame";
+                yield return ExactWalk(stage, 20);
+            }
+        }
+
         /// <summary>
         /// Black and White Town's dog room: two killers asleep in the middle wall off the dogs below from the fight's planner, and a dog
         /// only comes for us once we are in its 96px square. The one way down between the killers is a column 8px wide (the killer guard
         /// keeps us in it): stand in it until a dog comes up, fight it, and again until the room is clear.
         /// </summary>
         protected static IEnumerable<object> LureFight(int x, int y0, int y1)
+        {
+            KillerGuardOn = true;
+            yield return LureFightRounds(x, y0, y1);
+            KillerGuardOn = false;
+        }
+
+        private static IEnumerable<object> LureFightRounds(int x, int y0, int y1)
         {
             for (int round = 0; round < 8 && Enemies().Count > 0; round++)
             {
@@ -6912,6 +7010,13 @@ namespace AnodyneSharp.Recording
         }
 
         protected static IEnumerable<object> MenuReturnToPad(int tab)
+        {
+            MenuKeys = true;
+            yield return MenuReturnToPadPresses(tab);
+            MenuKeys = false;
+        }
+
+        private static IEnumerable<object> MenuReturnToPadPresses(int tab)
         {
             // (a press in the first moments after a load, or during a screen's scroll, is not taken: press again until the menu is up)
             for (int tries = 0; tries < 4; tries++)
@@ -8594,12 +8699,16 @@ namespace AnodyneSharp.Recording
         /// that gets us further from the nearest of them is always let through (one woken on us, we must be able to run).
         /// </summary>
         private static readonly HashSet<Entity> _wokenKillers = new();
+        internal static bool KillerGuardOn;
 
         internal static KeyFunctions[] KillerGuard(KeyFunctions[] held)
         {
-            if (Player == null)
+            if (Player == null || (_fightDepth == 0 && !KillerGuardOn))
             {
-                return held; // (in the air too: the wake test is on where we are, not whether we touch, and a jump over a dog's dash landed by one)
+                // (in fights only, and in the air too: the wake test is on where we are, not whether we touch, and a jump over a dog's
+                // dash landed by one. On the way the planner keeps its berth, and a room whose button sits by one (Black and White Town's
+                // first gauntlet room) has to wake it and outrun it.)
+                return held;
             }
             var ks = BotRunner.Entities().Where(e => e.exists && BotNav.IsSuburbKiller(e)).ToList();
             if (ks.Count == 0)
@@ -8615,10 +8724,13 @@ namespace AnodyneSharp.Recording
             }
             // (with a foe at hand a hit's knock-back throws us 10px: a berth wider by that, or it throws us in to wake one)
             var mc = Player.Hitbox.Center.ToVector2();
-            float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && (e.Hitbox.Center.ToVector2() - mc).Length() < 36f) ? 14f : 0f;
+            // (a foe that runs at us, a dog: a bullet or a fire pillar hits too, but from a stand we chose facing it, which throws us back
+            // the way we came; the wider berth with a plant's bullets about walled the plants off)
+            float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && e.velocity != Vector2.Zero && !ProjectileName.IsMatch(e.GetType().Name)
+                && (e.Hitbox.Center.ToVector2() - mc).Length() < 36f) ? 14f : 0f;
             float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValue(k) is true
                 ? (k.Hitbox.Center.ToVector2() - (p + new Vector2(5, 6))).Length() - 18f - knock
-                : (k.Position - p).Length() - 37f - knock);
+                : (k.Position - p).Length() - 36.3f - knock);
             Vector2 Step(IEnumerable<KeyFunctions> keys) => keys.Aggregate(Vector2.Zero, (a, k) => a + DirVector(k)) * 4f;
             var now = Player.Position;
             float here = Room(now);
@@ -8647,6 +8759,17 @@ namespace AnodyneSharp.Recording
                 if (Ok(new[] { one }))
                 {
                     return rest.Append(one).ToArray();
+                }
+            }
+            if (dirs.Count == 1)
+            {
+                // (a step straight at the berth: slide round it instead, the way that keeps furthest from it; a fight walking at a plant
+                // beside one stood at its edge for good)
+                var side = (dirs[0] is KeyFunctions.Left or KeyFunctions.Right ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Left, KeyFunctions.Right })
+                    .Where(k => Ok(new[] { k }) && WalkableAhead(k, 4)).OrderByDescending(k => Room(now + Step(new[] { k }))).Cast<KeyFunctions?>().FirstOrDefault();
+                if (side is KeyFunctions sk)
+                {
+                    return rest.Append(sk).ToArray();
                 }
             }
             return rest.ToArray();

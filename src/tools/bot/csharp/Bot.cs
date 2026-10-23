@@ -593,7 +593,7 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
-            if (Frame > BotScript.ExactKeysUntil)
+            if (Frame > BotScript.ExactKeysUntil && !BotScript.MenuKeys)
             {
                 held = BotScript.SpikeGuard(held);
                 held = BotScript.HoleGuard(held);
@@ -604,7 +604,10 @@ namespace AnodyneSharp.Recording
                 held = BotScript.ContactEscape(held);
                 held = BotScript.SteamBrace(held);
             }
-            held = BotScript.KillerGuard(held); // (whatever is steering, exact keys too)
+            if (!BotScript.MenuKeys)
+            {
+                held = BotScript.KillerGuard(held); // (whatever is steering, exact keys too)
+            }
             if (NoAccept && held.Contains(KeyFunctions.Accept))
             {
                 held = held.Where(k => k != KeyFunctions.Accept).ToArray();

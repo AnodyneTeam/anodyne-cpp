@@ -443,6 +443,14 @@ namespace AnodyneSharp.Recording
             yield return Section("archives cards", () => Exec("O1 X1 viaOVERWORLD W30 dig14,8 W10 door85 W60 dig54,23,40 W10 door79 W60 door83 W60 dig47,78 W10 I768,1232,d W60 T W30 dig12,68 W10 door83 W60 door84 W60 dig27,13 W10 I432,192,d W60 T W30 n0 W120"));
             // Fields (11,9) Rank: dig from the pad down to the walled-in pool and through its north wall to the chest.
             yield return Section("fields rank card", () => Exec("O1 X1 viaFIELDS W30 dig116,95 W10 I1856,1504,d W60 T W30"));
+            // Crowd (7,6): the Extend broom, which the route walks past.
+            yield return Section("crowd extend broom", () => Exec("O1 X1 viaCROWD W30 dig75,62 W10 I1200,976,d W60 T W30"));
+            // Black and White Town (2,7) Evil Suburbanite: dig down into the gauntlet. Its first room's three buttons; the dogs of the
+            // second lured up one at a time between its two killers; the third's plants struck from beside their fire pillars while those
+            // are out (the town only allows the knife, so no reach from further off).
+            yield return Section("suburb card", () => Exec("O1 X1 viaSUBURB W30 dig24,48 W10 dig24,50 W10 >456,824 W10 >456,936 W10 >344,824 W10 >400,952 W30"
+                + " >400,976 lure397,1000,1040 >400,1000 kg1 @x397,d D120 W30 X0 D20 L20 U6 strike366.5,1136,l,369,1136 R36 strike423.5,1136,r,421,1136"
+                + " L16 @x397,u D90 @x424,u strike424,1236,r,420,1236 X1 kg0 I384,1232,d W60 T W30"));
         }
     }
 
