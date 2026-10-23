@@ -573,6 +573,7 @@ namespace AnodyneSharp.Recording
                 }
             }
             held = BotScript.SpikeGuard(held);
+            held = BotScript.HoleGuard(held);
             held = BotScript.SwingGuard(held);
             held = BotScript.DoorGuard(held);
             held = BotScript.FightEdgeGuard(held);
@@ -895,6 +896,89 @@ namespace AnodyneSharp.Recording
                 System.Console.Error.WriteLine($"  spike guard f{BotRunner.Frame}: jump the spikes ahead at {hb} ({BotRunner.Status})");
             }
             return held.Append(KeyFunctions.Cancel).ToArray();
+        }
+
+        /// <summary>
+        /// A fight's chase or dodge about to step onto a pit (its 6x4 core swallows us after a moment on it) jumps it when there is floor
+        /// ~27px on, else keeps only the way(s) that stay off it. Routes plan their own jumps; this is for the moves made on the spot.
+        /// </summary>
+        static KeyFunctions[] _holeJumpKeys; // the way a pit jump of ours set off: held until we land (an axis let go stops dead in the air)
+        static long _holeJumpAt;
+
+        internal static KeyFunctions[] HoleGuard(KeyFunctions[] held)
+        {
+            if (_holeJumpKeys != null)
+            {
+                if (Player != null && Player.state != PlayerState.GROUND && BotRunner.Frame < _holeJumpAt + 60)
+                {
+                    return _holeJumpKeys;
+                }
+                _holeJumpKeys = null;
+            }
+            if (Player == null || Player.state != PlayerState.GROUND || held.Contains(KeyFunctions.Cancel) || GlobalState.ScreenTransition
+                || !(BotRunner.Status ?? "").StartsWith("fight"))
+            {
+                return held;
+            }
+            float dx = (held.Contains(KeyFunctions.Right) ? 1 : 0) - (held.Contains(KeyFunctions.Left) ? 1 : 0);
+            float dy = (held.Contains(KeyFunctions.Down) ? 1 : 0) - (held.Contains(KeyFunctions.Up) ? 1 : 0);
+            if (dx == 0 && dy == 0)
+            {
+                return held;
+            }
+            var hb = Player.Hitbox;
+            bool OnHole(Rectangle r)
+            {
+                for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+                {
+                    for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+                    {
+                        if (BotNav.IsHole(new Point(tx, ty)) && new Rectangle(tx * 16 + 5, ty * 16 + 5, 6, 4).Intersects(r))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            bool Floor(Rectangle r) => new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
+                .All(c => BotNav.Walkable(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            var next = hb;
+            next.Offset((int)(dx * 2), (int)(dy * 2));
+            if (OnHole(hb) || !OnHole(next))
+            {
+                return held;
+            }
+            var land = hb;
+            land.Offset((int)(dx * 27), (int)(dy * 27));
+            if (GlobalState.inventory.CanJump && !OnHole(land) && Floor(land))
+            {
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  hole guard f{BotRunner.Frame}: jump the pit ahead at {hb} ({BotRunner.Status})");
+                }
+                _holeJumpKeys = held.Where(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right).ToArray();
+                _holeJumpAt = BotRunner.Frame;
+                return held.Append(KeyFunctions.Cancel).ToArray();
+            }
+            var keep = held.ToList();
+            var nx = hb;
+            nx.Offset((int)(dx * 2), 0);
+            if (dx != 0 && OnHole(nx))
+            {
+                keep.Remove(dx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
+            }
+            var ny = hb;
+            ny.Offset(0, (int)(dy * 2));
+            if (dy != 0 && OnHole(ny))
+            {
+                keep.Remove(dy > 0 ? KeyFunctions.Down : KeyFunctions.Up);
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && keep.Count != held.Length)
+            {
+                System.Console.Error.WriteLine($"  hole guard f{BotRunner.Frame}: no floor past the pit ahead at {hb}: not stepping in ({BotRunner.Status})");
+            }
+            return keep.ToArray();
         }
 
         /// <summary>
