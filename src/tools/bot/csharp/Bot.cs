@@ -1716,7 +1716,7 @@ namespace AnodyneSharp.Recording
                         }
                         goto replan;
                     }
-                    if (path == null && !screenReset && BotNav.KillGateShutHere() && Enemies().Any(e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == Grid))
+                    if (path == null && !screenReset && BotNav.KillGateShutHere())
                     {
                         // Shut in by this screen's kill gate with the enemies left out of reach (an Annoyer parked inside the wall where its
                         // swoop ran out of screen): step out to a screen next door and back, as a player would; the room comes back as it
