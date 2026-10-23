@@ -13458,7 +13458,7 @@ namespace AnodyneSharp.Recording
                 bool killGate = KillGateShut();
                 foreach (var e in Enemies().Where(e => e.velocity == Vector2.Zero && e.GetType().Name is "Burst_Plant" or "Frog"))
                 {
-                    if (!killGate)
+                    if (!killGate && !(only != null && only(e))) // (one asked for by name is the fight, gate or not)
                     {
                         IgnoredEnemies.Add(e);
                         continue;

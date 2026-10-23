@@ -902,6 +902,7 @@ namespace AnodyneSharp.Recording
         /// A fight's chase or dodge about to step onto a pit (its 6x4 core swallows us after a moment on it) jumps it when there is floor
         /// ~27px on, else keeps only the way(s) that stay off it. Routes plan their own jumps; this is for the moves made on the spot.
         /// </summary>
+        static readonly HashSet<Entity> _leapFrogsFought = new HashSet<Entity>();
         static KeyFunctions[] _holeJumpKeys; // the way a pit jump of ours set off: held until we land (an axis let go stops dead in the air)
         static long _holeJumpAt;
 
@@ -1207,6 +1208,20 @@ namespace AnodyneSharp.Recording
             // Coming down beside an enemy (a dog pacing by where a spring drops us): wait at the take-off until the landing is clear.
             // (the jump cannot be steered off it once we are in the air)
             var landBox = new Rectangle(finalTile.X * 16 - 6, finalTile.Y * 16 - 6, 28, 28);
+            // A Frog sitting by the landing never goes away (Hotel (7,8)'s sits on the far lip of the gap, spitting at the take-off):
+            // waiting for it to clear only collects its volleys. Kill it first (2 hits), once per Frog, then plan again.
+            var lipBox = landBox;
+            lipBox.Inflate(24, 24);
+            if (BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && e.Hitbox.Intersects(lipBox) && !_leapFrogsFought.Contains(e)) is Entity lipFrog)
+            {
+                _leapFrogsFought.Add(lipFrog);
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  leap to {finalTile}: a Frog at {lipFrog.Hitbox} sits by the landing: fighting it first");
+                }
+                yield return Fight(1800, soft: true, only: e => e == lipFrog);
+                yield break;
+            }
             for (int w = 0; w < 300; w++)
             {
                 var lt = PredictThreats(null);
