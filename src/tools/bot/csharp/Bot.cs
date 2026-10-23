@@ -1667,7 +1667,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerWaits = 0, walkHp = GlobalState.CUR_HEALTH;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerWaits = 0, walkHp = GlobalState.CUR_HEALTH, airWaits = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -1840,6 +1840,18 @@ namespace AnodyneSharp.Recording
                             System.Console.Error.WriteLine($"  no path: forgetting the blocked tiles {string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}"))} and trying again");
                         }
                         BotNav.Blocked.Clear();
+                        goto replan;
+                    }
+                    if (path == null && airWaits < 4 && Player.state != AnodyneSharp.Entities.PlayerState.GROUND)
+                    {
+                        // Mid-jump over a hole tile (a frog's volley hopped us off the route in Crowd (4,6)): no plan starts from the air,
+                        // so land first (or fall, and plan from where the game puts us back).
+                        airWaits++;
+                        for (int w = 0; w < 60 && Player.state != AnodyneSharp.Entities.PlayerState.GROUND; w++)
+                        {
+                            yield return K();
+                        }
+                        yield return Wait(10);
                         goto replan;
                     }
                     if (path == null && !offSpikes && !BotNav.Walkable(BotNav.TileOf(Pos)) && SpikeExit() is Point exit)
