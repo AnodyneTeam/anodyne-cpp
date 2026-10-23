@@ -2128,6 +2128,15 @@ namespace AnodyneSharp.Recording
                                 }
                                 BotRunner.Status = "jump: wait for the lane to clear";
                                 BotRunner.NotStuck();
+                                if (!meSafe)
+                                {
+                                    // (out of the way of whatever is coming for where we wait, a Slasher's cuts say, rather than wait in them:
+                                    // four hearts went standing still here)
+                                    var dodge = BotScript.SpaceTimeMove(Pos, PredictThreats(null), useCache: false, survive: true);
+                                    yield return dodge ?? K();
+                                    yield return dodge ?? K();
+                                    continue;
+                                }
                                 yield return K();
                                 yield return K(); // (look again every other frame: the whole room's threats are dear to predict)
                             }
