@@ -7882,6 +7882,29 @@ namespace AnodyneSharp.Recording
 
         private static readonly Dictionary<Entity, (Vector2 pos, long frame, bool moved)> _trapLastPos = new();
 
+        /// <summary>An idle on-sight dash trap whose line (its row or column band) starts within 20px ahead of us going `dir`.</summary>
+        protected static bool OnSightTrapLineAhead(KeyFunctions dir)
+        {
+            var pb = Player.Hitbox;
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            {
+                var tb = t.Hitbox;
+                bool vertical = dir == KeyFunctions.Up || dir == KeyFunctions.Down;
+                int gap = dir switch
+                {
+                    KeyFunctions.Up => pb.Top - tb.Bottom,
+                    KeyFunctions.Down => tb.Top - pb.Bottom,
+                    KeyFunctions.Left => pb.Left - tb.Right,
+                    _ => tb.Left - pb.Right,
+                };
+                if (gap >= 0 && gap <= 20 && (vertical ? Math.Abs(tb.Center.X - pb.Center.X) < 48 : Math.Abs(tb.Center.Y - pb.Center.Y) < 48))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         internal static KeyFunctions[] BulletHop(KeyFunctions[] held)
         {
             if (Player != null && Player.state == AnodyneSharp.Entities.PlayerState.AIR && BotRunner.Frame <= _hopUntil && _hopDir is KeyFunctions hd)

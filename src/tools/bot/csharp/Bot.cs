@@ -2205,6 +2205,27 @@ namespace AnodyneSharp.Recording
                         {
                             safe = K(dir); // every way of dealing with the blocker has been tried: take the chance
                         }
+                        if (Dodged && dodgeWaits > 90 && GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnSightTrapLineAhead(dir))
+                        {
+                            // Held back at the edge of an on-sight dash trap's line with it too close to ever walk across in time: it only
+                            // hurts on the ground, so jump into the line (it charges under us and on past) and walk on out the far side.
+                            BotRunner.Status = "jump across the dash trap's line";
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  jump across a dash trap's line going {dir} at {Pos}");
+                            }
+                            yield return K(KeyFunctions.Cancel, dir);
+                            for (int a = 0; a < 60 && (a < 3 || Player.state == AnodyneSharp.Entities.PlayerState.AIR); a++)
+                            {
+                                yield return K(dir);
+                            }
+                            for (int a = 0; a < 14; a++)
+                            {
+                                yield return K(dir);
+                            }
+                            dodgeWaits = 0;
+                            continue;
+                        }
                         if (Dodged)
                         {
                             still = 0;
