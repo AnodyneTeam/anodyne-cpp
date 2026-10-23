@@ -13257,6 +13257,10 @@ namespace AnodyneSharp.Recording
             {
                 IgnoredEnemies.Clear(); // an explicit fight is for every enemy here, also the ones a soft fight on the way gave up on
             }
+            if (only != null)
+            {
+                IgnoredEnemies.RemoveWhere(e => only(e)); // (and one asked for by name, even if a fight on the way gave up on it)
+            }
             string key = $"{Map}|{Grid}|{Enemies().Count}";
             if (soft && key == _fightLeftKey && _fightLeftCount >= 3)
             {
