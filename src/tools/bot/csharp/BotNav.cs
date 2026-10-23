@@ -1725,6 +1725,11 @@ namespace AnodyneSharp.Recording
                 if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name == "SteamPipe" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
+                    if (name.EndsWith("Door") && name != "NexusDoor" && name != "OneWayDoor")
+                    {
+                        // (a door off the tile grid, or a wide or tall one, reaches into the tiles round it too)
+                        AddDoorTiles(set, e.Hitbox.X, e.Hitbox.Y, e.Hitbox.Width, e.Hitbox.Height);
+                    }
                 }
             }
             // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
@@ -1740,9 +1745,30 @@ namespace AnodyneSharp.Recording
                             set.Add(new Point((int)(pr.Position.X + 8) / 16 + dx, (int)(pr.Position.Y + 8) / 16));
                         }
                     }
+                    if (pr.Type.Name.EndsWith("Door") && pr.Type.Name != "OneWayDoor")
+                    {
+                        bool wide = pr.Type.Name.StartsWith("Wide"), tall = pr.Type.Name.StartsWith("Tall");
+                        AddDoorTiles(set, pr.Position.X - (wide ? 32 : 0), pr.Position.Y - (tall ? 32 : 0), wide ? 80 : 16, tall ? 80 : 16);
+                    }
                 }
             }
             return set;
+        }
+
+        /// <summary>Every tile a door's box (x,y,w,h) reaches at least 2px into.</summary>
+        private static void AddDoorTiles(HashSet<Point> set, float x, float y, float w, float h)
+        {
+            var here = TileOf(BotRunner.Player.Position); // (not the tile we came out of it onto)
+            for (int ty = (int)Math.Floor((y + 2) / 16f); ty <= (int)Math.Floor((y + h - 2) / 16f); ty++)
+            {
+                for (int tx = (int)Math.Floor((x + 2) / 16f); tx <= (int)Math.Floor((x + w - 2) / 16f); tx++)
+                {
+                    if (new Point(tx, ty) != here)
+                    {
+                        set.Add(new Point(tx, ty));
+                    }
+                }
+            }
         }
 
         /// <summary>Debug: the screens (160x160) containing at least one tile reachable on foot from a.</summary>
