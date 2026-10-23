@@ -9249,7 +9249,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < 48))
+                if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < (e is AnodyneSharp.Entities.Enemy.Crowd.Rotator ? 72 : 48)))
                 {
                     yield break; // not off a raft, nor into whatever dropped it (a Gas Guy's cloud): a heart is not worth more hits
                 }
@@ -9266,6 +9266,10 @@ namespace AnodyneSharp.Recording
                     var nc = BotNav.CentreOf(hp[0]);
                     float px = nc.X - Pos.X, py = nc.Y - Pos.Y;
                     yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                }
+                if (GlobalState.CUR_HEALTH < hpAtStart)
+                {
+                    yield break; // (hit on the way: that heart is guarded, and going back for it again took four from a Rotator's arm)
                 }
                 yield return Wait(2);
             }
