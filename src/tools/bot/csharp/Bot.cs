@@ -577,7 +577,7 @@ namespace AnodyneSharp.Recording
                     held = frame;
                     if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
                     {
-                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={AnodyneSharp.Registry.GlobalState.CUR_HEALTH} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
+                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={AnodyneSharp.Registry.GlobalState.CUR_HEALTH} yp={Player?.y_push} dm={Player?.dontMove} ex={Player?.exists} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
                     }
                     break;
                 }
@@ -1067,6 +1067,45 @@ namespace AnodyneSharp.Recording
                 yield return K();
             }
             throw new TimeoutException($"bot: timed out waiting for {what} (map {Map}, pos {Pos})");
+        }
+
+        /// <summary>
+        /// The end of the game: the last cutscene wants us to walk up into the light (and read what is said on the way), then the
+        /// credits roll. Holds Up and reads until the credits are on.
+        /// </summary>
+        protected static IEnumerable<object> WatchEnding(int timeoutFrames = 20000)
+        {
+            bool hidden = false;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                var state = (GlobalState.GameState as AnodyneSharp.AnodyneGame)?.CurrentState;
+                if (state is AnodyneSharp.States.CreditsState)
+                {
+                    BotRunner.Status = "credits";
+                    System.Console.Error.WriteLine($"ENDING: the credits are rolling (f{BotRunner.Frame}, hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH})");
+                    yield break;
+                }
+                BotRunner.Status = "the ending";
+                // A cutscene's own dialogue boxes do not show in GlobalState.Dialogue: while the player is swapped for a stand-in, keep reading.
+                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || !Player.exists)
+                {
+                    hidden |= !Player.exists;
+                    yield return BotScript.AdvanceKeys(i);
+                    continue;
+                }
+                // On the ending screen the cutscene wants you sunk into the water first (deep enough), then walking off the top.
+                if (GlobalState.CURRENT_MAP_NAME == "GO" && GlobalState.CurrentMapGrid.Y == 0 && !hidden)
+                {
+                    // The water's current runs down at 35px/s and it only counts while you are above its last 20px: tread water mid-screen.
+                    float ly = Player.Position.Y - GlobalState.CurrentMapGrid.Y * 160;
+                    yield return ly > 118 ? K(KeyFunctions.Up) : K();
+                    continue;
+                }
+                // Walk up the middle of the screen: the way out of the Briar's arena and the ending's walk are both there.
+                float dx = GlobalState.CurrentMapGrid.X * 160 + 80 - Player.Hitbox.Center.X;
+                yield return dx > 3 ? K(KeyFunctions.Up, KeyFunctions.Right) : dx < -3 ? K(KeyFunctions.Up, KeyFunctions.Left) : K(KeyFunctions.Up);
+            }
+            throw new InvalidOperationException("bot: the ending never got to the credits");
         }
 
         /// <summary>Advances dialogue (mashing Accept) until it has ended and stays ended for a few frames.</summary>
@@ -2552,7 +2591,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards", "circus", "circusb", "circus2", "circus3", "cards2" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards", "circus", "circusb", "circus2", "circus3", "cards2", "endgame" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -2589,6 +2628,7 @@ namespace AnodyneSharp.Recording
             "circus2" => new Circus2(),
             "circus3" => new Circus3(),
             "cards2" => new Cards2(),
+            "endgame" => new Endgame(),
             _ => throw new ArgumentException(name)
         };
 

@@ -49,6 +49,11 @@ namespace AnodyneSharp.Recording
                     yield return Hold(int.Parse(two.Groups[2].Value), two.Groups[1].Value.Select(Dir).ToArray());
                     continue;
                 }
+                if (tok == "ending")
+                {
+                    yield return WatchEnding(); // ending: walk on through the last cutscene (it needs us to walk up and read) to the credits
+                    continue;
+                }
                 if (tok == "heal")
                 {
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
@@ -11814,6 +11819,8 @@ namespace AnodyneSharp.Recording
             int lastHearts = GlobalState.CUR_HEALTH;
             BriarBomb bomb = null;
             bool wasCarrying = false;
+            var carryAt = Vector2.Zero;
+            int carrySince = 0, unstickUntil = -1;
             _briarSpotSwings.Clear();
             int planAt = -100;
             for (int i = 0; i < timeoutFrames; i++)
@@ -11975,6 +11982,26 @@ namespace AnodyneSharp.Recording
                         if (move is (Vector2 from, Point dsp))
                         {
                             // carry one there, a frame at a time round the fire (the plain dust walker does not dodge)
+                            if ((here - carryAt).Length() > 4)
+                            {
+                                carryAt = here;
+                                carrySince = i;
+                            }
+                            if (i - carrySince > 120 && i >= unstickUntil)
+                            {
+                                // (no headway in two seconds, the planners pulling two ways in a corner: out into the open for a moment, and replan)
+                                unstickUntil = i + 40;
+                                carrySince = i;
+                                bomb = null;
+                                _briarSpotSwings.Clear();
+                            }
+                            if (i < unstickUntil)
+                            {
+                                BotRunner.Status = "Briar: dust bomb, out of a corner";
+                                ExactKeysUntil = BotRunner.Frame + 1;
+                                yield return SpaceTimeMove(tl + new Vector2(80, 128), threats, useCache: false) ?? SpaceTimeMove(here, threats, useCache: false, survive: true) ?? K();
+                                continue;
+                            }
                             var (ck, swing) = BriarCarryKeys(dsp, dusts, threats, solids, from);
                             if (swing && grounded && !broomOut && i - lastSwing > 16)
                             {

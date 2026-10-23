@@ -415,6 +415,29 @@ namespace AnodyneSharp.Recording
         }
     }
 
+    public class Endgame : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The endgame: the Sage, GO, BLUE, HAPPY and the Briar");
+            yield return Section("hotel exit", () => Exec("O1 X1 W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200"));
+            yield return Section("terminal sage", () => Exec("g4 O1 X1 viaTERMINAL W30 >392,600 W30 F20000 W60"));
+            yield return Section("terminal to go", () => Exec("O1 X1 >396,40 W10 U90 W120"));
+            yield return Section("go swap puzzle", () => Exec("I393,752,d W60 T W30 >392,720 W30 H2,3 W20 goswap W60 H2,2 W30"));
+            yield return Section("go to blue", () => Exec("O1 X1 H3,2 W20 H4,2 W30 door44 W60"));
+            yield return Section("blue in", () => Exec("g8 O1 X1 b344,746 W60 g4 O1 X1 >563,404 W30"));
+            yield return Section("blue (3,2) islands", () => Exec("O1 X0 G545,396 W10 @x539,u !1 U28 L13 W2 ULC1 UL7 U18 W20 DC1 D14 R8 W20 !0 @x539,d !1 D20 !0 @y425,r !1 L48 W2 D12 W2 LC1 L17 D8 W20 UC1 U8 R12 W20 U8 R30 U20 !0 W10"));
+            yield return Section("blue (4,1) dash chain", () => Exec("O1 X1 >755,330 W20 >755,312 W20 O1 X0 W5 !1 UL28 ULC1 UL27 U6 UC1 U30 !0 W30"));
+            yield return Section("blue (4,0) climb", () => Exec("O1 X0 !1 R32 !0 @x731,u ^x731,u,140 W5 !1 LC1 L27 W8 L4 LC1 L27 W8 L4 LC1 L27 W8 L40 !0 W20"));
+            yield return Section("blue (2,0) lasers", () => Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10"));
+            yield return Section("blue mitra buttons", () => Exec("g6 O1 X1 b150,40 W30 G72,36 W1500"));
+            yield return Section("blue back to go", () => Exec("g6 O1 X1 >36,84 W5 L40 W200 g6 O1 X1 >40,408 W30 L60 W100"));
+            yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,60 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
+            yield return Section("happy back to go", () => Exec("g6 O1 X1 W30 >764,244 W10 R40 W150 >392,300 W30"));
+            yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending"));
+        }
+    }
+
     public class Circus3 : BotScript
     {
         public override IEnumerable<object> Run()
