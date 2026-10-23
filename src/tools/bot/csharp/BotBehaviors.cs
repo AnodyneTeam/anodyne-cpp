@@ -9299,6 +9299,29 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // (and the lanes the bouncing dash traps sweep: Space (6,5) has one in every row but the top and bottom of the room)
+            set.UnionWith(BouncerLaneTiles());
+            return set;
+        }
+
+        /// <summary>The tiles of this screen that a bouncing dash trap sweeps: its row (or column) of floor, wall to wall.</summary>
+        static HashSet<Point> BouncerLaneTiles()
+        {
+            var set = new HashSet<Point>();
+            foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap"))
+            {
+                var t0 = BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y));
+                var step = Math.Abs(e.velocity.X) >= Math.Abs(e.velocity.Y) ? new Point(1, 0) : new Point(0, 1);
+                set.Add(t0);
+                foreach (int sgn in new[] { 1, -1 })
+                {
+                    for (var t = new Point(t0.X + sgn * step.X, t0.Y + sgn * step.Y); t.X / 10 == t0.X / 10 && t.Y / 10 == t0.Y / 10 && BotNav.Walkable(t);
+                        t = new Point(t.X + sgn * step.X, t.Y + sgn * step.Y))
+                    {
+                        set.Add(t);
+                    }
+                }
+            }
             return set;
         }
 
@@ -16623,6 +16646,7 @@ namespace AnodyneSharp.Recording
                             return v0 == Vector2.Zero ? v0 : Vector2.Normalize(v0) * WalkPxPerFrame;
                         }
                         // (then: a second leg after the first walk, round a corner, instead of standing)
+                        var simLanes = BouncerLaneTiles();
                         (bool clear, Vector2 end, int hitAt) Sim(KeyFunctions[] runDir, int walk = 66, KeyFunctions[] then = null)
                         {
                             var v = Vel(runDir);
@@ -16635,8 +16659,25 @@ namespace AnodyneSharp.Recording
                             var gasBoxes = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "GasGuy").Select(e => e.Hitbox).ToList();
                             var gasOff = gasBoxes.Select(_ => Vector2.Zero).ToArray();
                             var cut = new Rectangle?[winding.Count];
+                            // (and the bouncing dash traps, sweeping their lanes at 80px/s and turning at walls: a dodge into a lane as one
+                            // comes is the next hit)
+                            var bouncers = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap").ToList();
+                            var bPos = bouncers.Select(e => new Vector2(e.Hitbox.X, e.Hitbox.Y)).ToArray();
+                            var bVel = bouncers.Select(e => e.velocity * GameTimes.DeltaTime).ToArray();
                             for (int k = 1; k <= 66; k++)
                             {
+                                for (int b = 0; b < bouncers.Count; b++)
+                                {
+                                    var nb = bPos[b] + bVel[b];
+                                    if (CornersWalkable(new Rectangle((int)nb.X, (int)nb.Y, bouncers[b].Hitbox.Width, bouncers[b].Hitbox.Height)))
+                                    {
+                                        bPos[b] = nb;
+                                    }
+                                    else
+                                    {
+                                        bVel[b] = -bVel[b];
+                                    }
+                                }
                                 var nq = q + (k <= walk ? v : v2);
                                 var nr = new Rectangle((int)(nq.X + hbOff.X), (int)(nq.Y + hbOff.Y), Player.Hitbox.Width, Player.Hitbox.Height);
                                 // (the whole of us stays on the screen: the fight never walks off it, see FightEdgeGuard)
@@ -16648,6 +16689,13 @@ namespace AnodyneSharp.Recording
                                 if (k <= 30 && bodies.Any(b => b.Intersects(me2)))
                                 {
                                     return (false, q, k);
+                                }
+                                for (int b = 0; b < bouncers.Count && k <= 40; b++)
+                                {
+                                    if (new Rectangle((int)bPos[b].X, (int)bPos[b].Y, bouncers[b].Hitbox.Width, bouncers[b].Hitbox.Height).Intersects(me2))
+                                    {
+                                        return (false, q, k);
+                                    }
                                 }
                                 for (int g = 0; g < gasBoxes.Count && k <= 40; g++)
                                 {
@@ -16690,11 +16738,16 @@ namespace AnodyneSharp.Recording
                                     }
                                 }
                             }
+                            // (a run that ends in a bouncing trap's lane is only clear until the trap comes round)
+                            if (simLanes.Contains(BotNav.TileOf(q + hbOff + new Vector2(5, 6))))
+                            {
+                                return (false, q, 60);
+                            }
                             return (true, q, 99);
                         }
-                        // (Apartments and HAPPY only: in Red Cave's narrow ledges a straight run is rarely clear, and the path-planned spot off both
-                        // strips below costs fewer hits there; TODO: one way that does well in both)
-                        if ((winding.Count > 0 || cutsNow.Count > 0) && (Map == "APARTMENT" || Map == "HAPPY"))
+                        // (Apartments, HAPPY and rooms of bouncing traps only: in Red Cave's narrow ledges a straight run is rarely clear, and the
+                        // path-planned spot off both strips below costs fewer hits there; TODO: one way that does well in both)
+                        if ((winding.Count > 0 || cutsNow.Count > 0) && (Map == "APARTMENT" || Map == "HAPPY" || simLanes.Count > 0))
                         {
                             slStepClear = k => Sim(new[] { k }, 12).clear;
                             // How much floor is round a spot (walkable tiles of the 5x5 block on it, on this screen): Slashers track us and cut
@@ -16902,6 +16955,35 @@ namespace AnodyneSharp.Recording
                     }
                     // striking: walk the path to it (it can be stuck behind a corner while we stand in a straight line to it)
                     var slHere = BotNav.TileOf(Pos);
+                    var bouncerLanes = BouncerLaneTiles();
+                    if (bouncerLanes.Count > 0)
+                    {
+                        // Among bouncing dash traps, going to it means crossing their lanes with a cut on the way (Space (6,5): three
+                        // Slashers and a trap in every row). It floats to us anyway: wait out of the lanes, and get out of one if in it.
+                        var tb0 = target.Hitbox;
+                        var mb0 = Player.Hitbox;
+                        int gx0 = Math.Max(tb0.Left - mb0.Right, mb0.Left - tb0.Right), gy0 = Math.Max(tb0.Top - mb0.Bottom, mb0.Top - tb0.Bottom);
+                        bool reach0 = (gx0 <= 10 && gy0 <= -4) || (gy0 <= 10 && gx0 <= -4);
+                        if (!reach0 && !bouncerLanes.Contains(slHere))
+                        {
+                            BotRunner.Status = "fight/slasher: wait for it out of the traps' lanes";
+                            yield return K();
+                            continue;
+                        }
+                        if (!reach0)
+                        {
+                            var outOfLane = BotNav.FindPath(slHere, t => !bouncerLanes.Contains(t) && t.X / 10 == Grid.X && t.Y / 10 == Grid.Y, null);
+                            if (outOfLane != null && outOfLane.Count > 0)
+                            {
+                                var nc = BotNav.CentreOf(outOfLane[0]) + new Vector2(5, 6);
+                                var meC = Pos + new Vector2(5, 6);
+                                float ox = nc.X - meC.X, oy = nc.Y - meC.Y;
+                                BotRunner.Status = "fight/slasher: out of the traps' lanes";
+                                yield return K(Math.Abs(ox) > 2f ? (ox < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (oy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                                continue;
+                            }
+                        }
+                    }
                     var slCen = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
                     var slNear = new HashSet<Point>();
                     for (int ox = -16; ox <= 16; ox += 8)
