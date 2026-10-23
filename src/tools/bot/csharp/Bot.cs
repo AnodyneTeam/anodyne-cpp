@@ -2068,6 +2068,21 @@ namespace AnodyneSharp.Recording
                             still = 0;
                             continue;
                         }
+                        if (still > 40 && gateWait < 180 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Gate" && e.Solid
+                            && e.Hitbox.Intersects(new Rectangle(tile.X * 16, tile.Y * 16, 16, 16))))
+                        {
+                            // Up against a gate the route counts on opening (the last kill still dying): wait for it, not round it.
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && gateWait == 0)
+                            {
+                                System.Console.Error.WriteLine($"  at a shut gate on {tile}: waiting for it to open");
+                            }
+                            for (int w = 0; w < 15; w++, gateWait++)
+                            {
+                                yield return K();
+                            }
+                            still = 0;
+                            continue;
+                        }
                         if (still > 40)
                         {
                             BotNav.Blocked.Add(tile);
