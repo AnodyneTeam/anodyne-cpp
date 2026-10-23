@@ -3136,6 +3136,8 @@ namespace AnodyneSharp.Recording
         /// doorway would see us off the screen), out of every on-sight dash trap's row and column and 80px or more from every frog, the
         /// nearest such to us.
         /// </summary>
+        private static int _raftGasFrames; // frames a raft ride has stood waiting for Gas Guys (a cap, so it never waits for ever)
+
         private static (Point here, Point grid, long frame, Point? spot) _gasSpotMemo = (new Point(-1, -1), new Point(-1, -1), -1000, null);
 
         private static Point? GasWaitSpot()
@@ -6974,6 +6976,43 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                     lastRideKey = rideKey;
+                    // A Gas Guy homing in on the raft (Hotel (8,7) hangs over the river's bend, by a steam pipe): riding on past it only
+                    // dodges about in its gas, which turns our keys round, until the steam or the bank has us. Stop, face it as it comes
+                    // and swing when it is in front of us, as on land: each hit throws it back, the third kills it.
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && _raftGasFrames < 1200 && !InSteam(Player.Hitbox, 6)
+                        && Enemies().Where(e => e.GetType().Name == "GasGuy" && Grid == new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)))
+                            .OrderBy(e => (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length())
+                            .FirstOrDefault(e => (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() < 56f) is Entity rgas)
+                    {
+                        _raftGasFrames++;
+                        i--; // (waiting on purpose: not the ride's own time)
+                        BotRunner.NotStuck();
+                        float gdx = rgas.Hitbox.Center.X - Player.Hitbox.Center.X, gdy = rgas.Hitbox.Center.Y - Player.Hitbox.Center.Y;
+                        var gface = Math.Abs(gdx) > Math.Abs(gdy) ? (gdx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (gdy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        BotRunner.Status = "raft: wait for the Gas Guy and swing";
+                        if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
+                        {
+                            RaftLog($"  gas wait f{BotRunner.Frame} d=({gdx},{gdy}) face={Player.facing} rev={Player.reversed} flick={rgas._flickering} me={Player.Hitbox} gas={rgas.Hitbox}");
+                        }
+                        if (Player.facing != FacingOf(gface))
+                        {
+                            yield return K(gface);
+                            continue;
+                        }
+                        bool inReach = Math.Abs(gdx) > Math.Abs(gdy) ? Math.Abs(gdx) < 24 && Math.Abs(gdy) < 16 : Math.Abs(gdy) < 26 && Math.Abs(gdx) < 14;
+                        if (inReach && !rgas._flickering)
+                        {
+                            yield return Tap(KeyFunctions.Accept);
+                            yield return Wait(12);
+                            continue;
+                        }
+                        yield return K(); // (the steam brace still holds us against a pipe's push)
+                        continue;
+                    }
+                    if (!Enemies().Any(e => e.GetType().Name == "GasGuy"))
+                    {
+                        _raftGasFrames = 0;
+                    }
                     // (and a Frog beside the current: waiting by it for a safe moment only lets it spit again and again)
                     // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
                     // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
@@ -7062,6 +7101,12 @@ namespace AnodyneSharp.Recording
                     bool onlySlowChasers = dangersNow.Count > 0 && dangersNow.All(d => d is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && !DormantDustmaid(d));
                     bool chaserClose = dangersNow.Any(d => Vector2.Distance(d.Hitbox.Center.ToVector2(), pcr) < 20f);
                     var moveKeys = onlySlowChasers && !chaserClose ? K(rideKey) : SafeMove(rideKey, null, 16f);
+                    if (wet && HasRaft() && moveKeys.Length > 0 && !moveKeys.Contains(rideKey) && InSteam(Player.Hitbox, 0))
+                    {
+                        // In a steam pipe's blast the raft is pushed at 50px/s towards the bank: dodging about there only lets it beach us
+                        // (a Gas Guy over Hotel (8,7)'s bend did), so ride straight on out of it.
+                        moveKeys = K(rideKey);
+                    }
                     if (wet && HasRaft() && RaftBouncerDodge(rideKey, cur) is KeyFunctions[] bd)
                     {
                         moveKeys = bd;
@@ -7761,6 +7806,14 @@ namespace AnodyneSharp.Recording
         /// Hotel steam: touching a pipe's steam shoves us 50px/s the way it blows (into the pits beside the pipes). While walking through it,
         /// lean against it: add the key against the blow (walking is 70px/s, so we still make way) unless we are walking with it anyway.
         /// </summary>
+        /// <summary>Whether a box (grown by `margin`) touches a live steam pipe or its steam (it pushes us at 50px/s, raft and all).</summary>
+        internal static bool InSteam(Rectangle box, int margin)
+        {
+            box.Inflate(margin, margin);
+            return BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>()
+                .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(box))));
+        }
+
         internal static KeyFunctions[] SteamBrace(KeyFunctions[] held)
         {
             if (Player == null || !held.Any(k => k is KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
