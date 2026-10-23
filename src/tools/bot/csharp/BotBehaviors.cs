@@ -13078,6 +13078,7 @@ namespace AnodyneSharp.Recording
             if (_fightDepth == 0)
             {
                 _nestedSoft = 0;
+                _frogGroundStall = 0; // (a stall from an earlier fight is not this one's: it would skip straight to giving up)
             }
             else
             {
