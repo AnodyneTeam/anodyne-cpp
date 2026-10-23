@@ -14183,22 +14183,16 @@ namespace AnodyneSharp.Recording
                         BotNav.AllowJump = GlobalState.inventory.CanJump;
                         bool canGoRound = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
                         BotNav.AllowJump = false;
-                        // (the walk round is made without jumps: a way that only a jump into its pit finds is no way round either; Red Cave
-                        // (4,6)'s Slasher stands among the pits)
-                        int farEnough0 = theirs.Any(t => Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= 3) ? 3 : 2;
-                        var sideLanes0 = BotNav.LaneTiles();
-                        bool walkRound = canGoRound && BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t) && !sideLanes0.Contains(t)
-                            && Math.Max(Math.Abs(t.X - tTile.X), Math.Abs(t.Y - tTile.Y)) >= farEnough0) != null;
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  fight: {target.GetType().Name} at {tTile} walled off from {BotNav.TileOf(Pos)} (region {mine.Count} tiles, theirs {theirs.Count}): round with jumps {canGoRound}, on foot {walkRound}");
+                            System.Console.Error.WriteLine($"  fight: {target.GetType().Name} at {tTile} walled off from {BotNav.TileOf(Pos)} (region {mine.Count} tiles, theirs {theirs.Count}): way round {canGoRound}");
                         }
-                        if (!walkRound && !(soft && !canGoRound))
+                        if (!canGoRound && !soft)
                         {
-                            // (no walk gets there: one stood over a pit, Red Cave (4,6)'s Slasher. The others here are still fought.)
+                            // (no way gets there at all: one stood over a pit, Red Cave (4,6)'s Slasher. The others here are still fought.)
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
-                                System.Console.Error.WriteLine($"  fight: no walk reaches the {target.GetType().Name}: passing it over");
+                                System.Console.Error.WriteLine($"  fight: nothing reaches the {target.GetType().Name}: passing it over");
                             }
                             IgnoredEnemies.Add(target);
                             routedFor = null;
