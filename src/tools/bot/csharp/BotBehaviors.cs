@@ -3136,32 +3136,42 @@ namespace AnodyneSharp.Recording
         /// doorway would see us off the screen), out of every on-sight dash trap's row and column and 80px or more from every frog, the
         /// nearest such to us.
         /// </summary>
+        private static (Point here, Point grid, long frame, Point? spot) _gasSpotMemo = (new Point(-1, -1), new Point(-1, -1), -1000, null);
+
         private static Point? GasWaitSpot()
         {
             var grid = Grid;
             var here = BotNav.TileOf(Pos);
+            // (asked every frame of the wait: the same tile and screen within half a second gives the same answer)
+            if (_gasSpotMemo.here == here && _gasSpotMemo.grid == grid && BotRunner.Frame - _gasSpotMemo.frame < 30)
+            {
+                return _gasSpotMemo.spot;
+            }
             var traps = TrapRects().Select(r => BotNav.TileOf(new Vector2(r.Center.X - BotNav.HalfW, r.Center.Y - BotNav.HalfH))).ToList();
             var frogs = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Frog").Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).ToList();
             Point? best = null;
-            int bestD = int.MaxValue;
-            for (int ty = grid.Y * 10; ty < grid.Y * 10 + 10; ty++)
+            var cands = new List<Point>();
+            for (int ty = grid.Y * 10 + 1; ty < grid.Y * 10 + 9; ty++)
             {
-                for (int tx = grid.X * 10; tx < grid.X * 10 + 10; tx++)
+                for (int tx = grid.X * 10 + 1; tx < grid.X * 10 + 9; tx++)
                 {
-                    var t = new Point(tx, ty);
-                    int d = Math.Abs(t.X - here.X) + Math.Abs(t.Y - here.Y);
-                    if (d >= bestD || !BotNav.Walkable(t) || tx % 10 == 0 || tx % 10 == 9 || ty % 10 == 0 || ty % 10 == 9 || traps.Any(r => r.X == t.X || r.Y == t.Y)
-                        || frogs.Any(f => (f - new Vector2(t.X * 16 + 8, t.Y * 16 + 8)).Length() < 80))
-                    {
-                        continue;
-                    }
-                    if (t == here || (BotNav.FindPath(here, t) is { } way && way.All(q => q.X / 10 == grid.X && q.Y / 10 == grid.Y)))
-                    {
-                        best = t;
-                        bestD = d;
-                    }
+                    cands.Add(new Point(tx, ty));
                 }
             }
+            // nearest first: the first that passes is the answer, so the paths are only looked for until then
+            foreach (var t in cands.OrderBy(t => Math.Abs(t.X - here.X) + Math.Abs(t.Y - here.Y)))
+            {
+                if (!BotNav.Walkable(t) || traps.Any(r => r.X == t.X || r.Y == t.Y) || frogs.Any(f => (f - new Vector2(t.X * 16 + 8, t.Y * 16 + 8)).Length() < 80))
+                {
+                    continue;
+                }
+                if (t == here || (BotNav.FindPath(here, t) is { } way && way.All(q => q.X / 10 == grid.X && q.Y / 10 == grid.Y)))
+                {
+                    best = t;
+                    break;
+                }
+            }
+            _gasSpotMemo = (here, grid, BotRunner.Frame, best);
             return best;
         }
 
