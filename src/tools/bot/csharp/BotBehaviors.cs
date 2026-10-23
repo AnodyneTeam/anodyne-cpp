@@ -13360,7 +13360,9 @@ namespace AnodyneSharp.Recording
         private static int _fightDepth, _nestedSoft;
         private static readonly HashSet<Entity> _annoyerWakeTried = new();
 
-        private static readonly HashSet<Entity> _parkedTried = new();
+        private static readonly HashSet<(Entity, Point)> _parkedTried = new(); // (an enemy and the tile it was parked on: hit, it may park again elsewhere)
+
+        private static bool ParkedTry(Entity e) => _parkedTried.Add((e, new Point((int)e.Hitbox.Center.X / 16, (int)e.Hitbox.Center.Y / 16)));
 
         // (its "Wait" state, asleep on its perch: the only TimerState under its Active one)
         private static bool AnnoyerWaiting(Entity a) => FsmPath(a).StartsWith("ActiveState/TimerState");
@@ -13911,7 +13913,7 @@ namespace AnodyneSharp.Recording
                 lastPos = Pos;
                 if (stillFrames > 100 && lastTarget != null && lastTarget.GetType().Name == "Annoyer" && !ignoredTargets.Contains(lastTarget))
                 {
-                    if (!AnnoyerWaiting(lastTarget) && _parkedTried.Add(lastTarget))
+                    if (!AnnoyerWaiting(lastTarget) && ParkedTry(lastTarget))
                     {
                         yield return StrikeParked(lastTarget);
                         stillFrames = 0;
@@ -15284,7 +15286,7 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                     }
-                    if (annoyerStill > 90 && !AnnoyerWaiting(target) && _parkedTried.Add(target))
+                    if (annoyerStill > 90 && !AnnoyerWaiting(target) && ParkedTry(target))
                     {
                         yield return StrikeParked(target);
                         annoyerStill = 0;
