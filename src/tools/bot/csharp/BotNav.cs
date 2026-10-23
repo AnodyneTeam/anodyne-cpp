@@ -252,6 +252,14 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>A gate on this screen that is shut now and opens once enough enemies of the screen are dead.</summary>
+        /// <summary>Whether this screen has a shut gate that opens on kills made here.</summary>
+        public static bool KillGateShutHere()
+        {
+            RefreshGates();
+            var g = GlobalState.CurrentMapGrid;
+            return Enumerable.Range(0, 100).Any(k => IsShutKillGate(new Point(g.X * 10 + k % 10, g.Y * 10 + k / 10)));
+        }
+
         public static bool IsShutKillGate(Point t) => _gatesClosed.Contains(t) && _killGateEntries.ContainsKey(t) && t.X / 10 == GlobalState.CurrentMapGrid.X && t.Y / 10 == GlobalState.CurrentMapGrid.Y;
 
         /// <summary>BFS step counts over walkable tiles from `from` (stays inside `bounds` if given).</summary>

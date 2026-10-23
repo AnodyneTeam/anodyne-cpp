@@ -1515,6 +1515,7 @@ namespace AnodyneSharp.Recording
             int offRoute = 0, offRouteTotal = 0; // replans after being dodged off the route (recent, all told)
             int jumpLaneReplans = 0; // replans because a jump's lane was not clear and the danger was coming for us
             int gateWait = 0; // frames spent waiting for a shut gate on this screen to open (a kill only counts once the enemy is gone)
+            bool screenReset = false; // went out and back in to put a room with unreachable kill-gate enemies back as it started
             // Beams only become known on arriving at their screen: a route that was planned to end inside one is re-planned to end beside it.
             HashSet<Point> goalLaneBan = null;
             var laneReplanned = new HashSet<Point>();
@@ -1713,6 +1714,30 @@ namespace AnodyneSharp.Recording
                             yield return K();
                         }
                         goto replan;
+                    }
+                    if (path == null && !screenReset && BotNav.KillGateShutHere() && Enemies().Any(e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == Grid))
+                    {
+                        // Shut in by this screen's kill gate with the enemies left out of reach (an Annoyer parked inside the wall where its
+                        // swoop ran out of screen): step out to a screen next door and back, as a player would; the room comes back as it
+                        // started, enemies where they can be fought.
+                        screenReset = true;
+                        var home = Grid;
+                        var nextDoor = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Select(o => new Point(home.X + o.X, home.Y + o.Y))
+                            .Select(g => (g, p: BotNav.FindPath(BotNav.TileOf(Pos), t => t.X / 10 == g.X && t.Y / 10 == g.Y)))
+                            .Where(x => x.p != null).OrderBy(x => x.p.Count).Select(x => (Point?)x.g).FirstOrDefault();
+                        if (nextDoor is Point nd)
+                        {
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  no path at {Pos}: the kill gate on {home} is shut with its enemies out of reach: out to {nd} and back to reset the room");
+                            }
+                            yield return GoScreenTo(nd.X, nd.Y);
+                            yield return Wait(20);
+                            yield return GoScreenTo(home.X, home.Y);
+                            yield return Wait(20);
+                            gateWait = 0;
+                            goto replan;
+                        }
                     }
                     if (path == null)
                     {
