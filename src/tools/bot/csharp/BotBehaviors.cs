@@ -11701,6 +11701,7 @@ namespace AnodyneSharp.Recording
         private static readonly Dictionary<(Point, Facing), int> _briarSpotSwings = new Dictionary<(Point, Facing), int>();
         private static (Point, Facing) _briarSwingSpot;
 
+        private static int _briarUnsafeWaits; // frames spent on a carry spot waiting for the fire to let up enough for a swing
         private static bool BriarCarrying => Player.broom.dust != null && !Player.broom.dust.exists;
 
         private static List<Threat> BriarThreats(AnodyneSharp.Entities.Entity fight, int phase)
@@ -11854,6 +11855,7 @@ namespace AnodyneSharp.Recording
             var carryAt = Vector2.Zero;
             int carrySince = 0, unstickUntil = -1;
             _briarSpotSwings.Clear();
+            _briarUnsafeWaits = 0;
             int planAt = -100;
             var lastAt = Vector2.Zero;
             int pushedFor = 0, nudgeUntil = -1, nudges = 0;
@@ -12046,8 +12048,7 @@ namespace AnodyneSharp.Recording
                                 // (no headway in two seconds, the planners pulling two ways in a corner: out into the open for a moment, and replan)
                                 unstickUntil = i + 40;
                                 carrySince = i;
-                                bomb = null;
-                                _briarSpotSwings.Clear();
+                                bomb = null; // (the spots' failed swings are kept: a spot whose swing misses is no better after a walk round)
                             }
                             if (i < unstickUntil)
                             {
@@ -12236,10 +12237,14 @@ namespace AnodyneSharp.Recording
                     }
                     // (a swing holds us still for about 15 frames, and the eye's shots come at where we stand back to back: swing only
                     // with none due by then, else off and back, which sends the next ones wide)
-                    if (!SafeAtExactThreats(here, threats, 16))
+                    // (but the eye can keep a spot under fire for good: after four seconds of waiting on spots, a swing with only the
+                    // next few frames clear, taking the odd hit rather than never getting the dust)
+                    if (!SafeAtExactThreats(here, threats, _briarUnsafeWaits > 240 ? 3 : 16))
                     {
+                        _briarUnsafeWaits++;
                         return (null, false);
                     }
+                    _briarUnsafeWaits = 0;
                     _briarSwingSpot = (sp.ToPoint(), f);
                     return (new KeyFunctions[0], true);
                 }
