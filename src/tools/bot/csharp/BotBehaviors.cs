@@ -10139,11 +10139,13 @@ namespace AnodyneSharp.Recording
                     var me0 = BotNav.TileOf(Pos);
                     bool oldJump = BotNav.AllowJump;
                     BotNav.AllowJump = GlobalState.inventory.CanJump;
-                    bool reach = big.Any(c => BotNav.FindPath(me0, new Point(c.Hitbox.Center.X / 16, c.Hitbox.Center.Y / 16)) != null);
+                    // (by a way that stays about this screen: one only got to round by the next screens is walled off from this fight)
+                    bool reach = big.Any(c => BotNav.FindPath(me0, new Point(c.Hitbox.Center.X / 16, c.Hitbox.Center.Y / 16)) is List<Point> cp && cp.Count <= 20
+                        && cp.All(q => q.X / 10 == me0.X / 10 && q.Y / 10 == me0.Y / 10));
                     BotNav.AllowJump = oldJump;
                     // (one only drifting over water or a conveyor for a while comes back: leave only those walled off for good)
                     unreach = reach ? 0 : unreach + 1;
-                    if (unreach >= 10)
+                    if (unreach >= (i == 0 ? 1 : 10))
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
@@ -12876,7 +12878,8 @@ namespace AnodyneSharp.Recording
             if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Contort && (only == null || only(e))))
             {
                 yield return BouncerFight(only);
-                if (Enemies().Count(e => only == null || only(e)) == 0)
+                // (what its fight left are walled off from us: the plain fight would only walk round the next screens after them)
+                if (Enemies().Where(e => only == null || only(e)).All(e => e is AnodyneSharp.Entities.Enemy.Circus.Contort or AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall))
                 {
                     yield break;
                 }

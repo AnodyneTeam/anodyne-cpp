@@ -1322,7 +1322,9 @@ namespace AnodyneSharp.Recording
                 float along = vertical ? c.Y : c.X, across = vertical ? c.X : c.Y;
                 var keys = new List<KeyFunctions> { key };
                 // (over two: on the last tile, its pad already fired, edge over too; the dash keeps its pace with a side key down)
-                bool onLast = BotNav.TileOf(new Vector2(c.X, c.Y)) == a;
+                // (not where the tile beside the take-off is a hole: drifting over its edge on the ground, at a dash's pace, drops us in it
+                // in four frames, before the jump goes off)
+                bool onLast = BotNav.TileOf(new Vector2(c.X, c.Y)) == a && !BotNav.IsHole(new Point(a.X + lat.X, a.Y + lat.Y));
                 if ((jumped || latN >= 2 && onLast) && latKey is KeyFunctions lk && (latGoal - across) * (vertical ? lat.X : lat.Y) > 2f)
                 {
                     keys.Add(lk); // drift over to the side landing
@@ -1340,6 +1342,10 @@ namespace AnodyneSharp.Recording
                 }
                 if (jumped && Player.state == PlayerState.GROUND)
                 {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"    leap end w{w} c={c} anim={Player.CurAnimName} f{BotRunner.Frame}");
+                    }
                     break;
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
@@ -2056,7 +2062,10 @@ namespace AnodyneSharp.Recording
                             goto replan;
                         }
                         if (AutoFight && lionFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().FirstOrDefault(e => (e is AnodyneSharp.Entities.Enemy.Circus.Lion || e is AnodyneSharp.Entities.Enemy.Circus.Contort)
-                            && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 96) is Entity hunter)
+                            && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 96
+                            // (and on our side of the walls: one bouncing about the far side of one is no danger on the way, and its fight
+                            // went round the long way after it until it timed out)
+                            && BotNav.FindPath(BotNav.TileOf(Pos), new Point(e.Hitbox.Center.X / 16, e.Hitbox.Center.Y / 16)) is List<Point> hp && hp.Count <= 10) is Entity hunter)
                         {
                             // A Lion (it pounces at us and spits fire across the room) or a Contort drifting about: walking through past one
                             // takes hit after hit. Fight it the way its fight knows, then replan.
