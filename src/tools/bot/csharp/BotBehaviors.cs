@@ -14183,6 +14183,17 @@ namespace AnodyneSharp.Recording
                         BotNav.AllowJump = GlobalState.inventory.CanJump;
                         bool canGoRound = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
                         BotNav.AllowJump = false;
+                        // (the walk round is made without jumps: a way that only a jump into its pit finds is no way round either; Red Cave
+                        // (4,6)'s Slasher stands among the pits)
+                        bool walkRound = canGoRound && BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
+                        if (!walkRound && !soft && canGoRound)
+                        {
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  fight: the {target.GetType().Name} is only reached by a jump into its pit: leaving it");
+                            }
+                            yield break;
+                        }
                         if (!canGoRound && soft)
                         {
                             // (walled off from here and no way round from this side of the screen: a fight on the way is not worth a detour
