@@ -6673,7 +6673,7 @@ namespace AnodyneSharp.Recording
                         // (a Frog the moment it is in the broom's reach: it spits at anything within 64px, stalled or not)
                         .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering) // (even one the fight passed over)
                             .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
-                            .Where(v => Math.Max(Math.Abs(v.X), Math.Abs(v.Y)) < 30f && Math.Min(Math.Abs(v.X), Math.Abs(v.Y)) < 10f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
+                            .Where(v => Math.Max(Math.Abs(v.X), Math.Abs(v.Y)) < 36f && Math.Min(Math.Abs(v.X), Math.Abs(v.Y)) < 10f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
                         raftSwings++;
                         var faceKey = Math.Abs(foe.X) > Math.Abs(foe.Y) ? (foe.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (foe.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down);
@@ -6684,7 +6684,7 @@ namespace AnodyneSharp.Recording
                             yield return K(faceKey);
                         }
                         // (a Frog a pixel past the broom's reach: drift that way the pixel first, it does not move)
-                        for (int nudge = 0; nudge < 4 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
+                        for (int nudge = 0; nudge < 8 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
                                 && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f && !e.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant))); nudge++)
                         {
                             yield return K(faceKey);
