@@ -12155,6 +12155,13 @@ namespace AnodyneSharp.Recording
             {
                 clear = false;
                 why = $"volley {hit}/{plan.Count} {who}";
+                // Two frogs side by side never leave a clean way in and out (each spits the moment its last volley is down). With the
+                // hearts to spare and a long wait behind us, take the one late bullet: it only lands after the swing that hurts the frog.
+                if (hit > walk + 6 && _frogGroundStall > 300 && GlobalState.CUR_HEALTH >= Math.Max(5, GlobalState.MAX_HEALTH - 1))
+                {
+                    clear = true;
+                    why += " (trading a hit for the swing)";
+                }
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && (clear || BotRunner.Frame % 10 == 0))
             {
