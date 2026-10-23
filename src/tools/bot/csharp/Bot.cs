@@ -1112,6 +1112,29 @@ namespace AnodyneSharp.Recording
                 }
                 yield return K(keys.ToArray());
             }
+            // Coming down beside an enemy (a dog pacing by where a spring drops us): wait at the take-off until the landing is clear.
+            // (the jump cannot be steered off it once we are in the air)
+            var landBox = new Rectangle(finalTile.X * 16 - 6, finalTile.Y * 16 - 6, 28, 28);
+            for (int w = 0; w < 300; w++)
+            {
+                var lt = PredictThreats(null);
+                int lf0 = spring != null ? 30 : 20, lf1 = spring != null ? 75 : 40;
+                if (!lt.Any(t => Enumerable.Range(lf0, lf1 - lf0 + 1).Any(f => t.At[Math.Min(f, t.At.Length - 1)] is Rectangle r && r.Intersects(landBox))))
+                {
+                    break;
+                }
+                if (w == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  leap to {finalTile}: something will be by the landing, waiting at the take-off");
+                }
+                BotRunner.Status = $"leap to {b.X},{b.Y}: wait for the landing to clear";
+                BotRunner.NotStuck();
+                yield return StandSafe(null) is var ss && ss.Length > 0 ? ss : K();
+                if (Math.Abs(to.X - Pos.X) >= 1f || Math.Abs(to.Y - Pos.Y) >= 1f)
+                {
+                    yield break; // (dodged off the take-off: let the walker plan again)
+                }
+            }
             yield return K(); // stand still: an axis without a key keeps whatever speed it had at take-off
             var jumpKeys = new List<KeyFunctions> { KeyFunctions.Cancel };
             if (sx != 0)
