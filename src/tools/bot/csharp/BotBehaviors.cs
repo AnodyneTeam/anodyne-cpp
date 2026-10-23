@@ -5418,6 +5418,18 @@ namespace AnodyneSharp.Recording
                     lastHere = new Point(-1, -1);
                     continue;
                 }
+                if (route == null && BotNav.Blocked.Count > 0)
+                {
+                    // Tiles learned as "blocked" (a fight stuck on one) may be what cuts the way: forget them and plan again.
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  no route: forgetting the blocked tiles {string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}"))} and trying again");
+                    }
+                    BotNav.Blocked.Clear();
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
+                }
                 if (route == null)
                 {
                     DumpTiles(here, goal);
