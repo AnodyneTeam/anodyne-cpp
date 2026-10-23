@@ -5916,7 +5916,18 @@ namespace AnodyneSharp.Recording
             }
             int maxBefore = GlobalState.MAX_HEALTH;
             BotRunner.Status = $"to the health cicada at {pr.Position.X:0},{pr.Position.Y:0}";
-            yield return GoGlobal(pr.Position.X, pr.Position.Y);
+            // (no trip to heal on the way: the cicada tops us up itself, and the Circus boss's warp back to the pad for one left the
+            // keyblocks spent between us and it)
+            bool heal = AutoHeal;
+            AutoHeal = false;
+            try
+            {
+                yield return GoGlobal(pr.Position.X, pr.Position.Y);
+            }
+            finally
+            {
+                AutoHeal = heal;
+            }
             bool sawBusy = false;
             for (int i = 0; i < 1800; i++)
             {

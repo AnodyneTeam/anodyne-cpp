@@ -383,9 +383,11 @@ namespace AnodyneSharp.Recording
         public override IEnumerable<object> Run()
         {
             yield return Say("The Circus: the boss");
+            // (hearts topped up at the entrance's checkpoint first, a few tiles off)
             // (key 3 is in the north-west chest past the (45,40) keyblock; the boss's way needs it for the (45,30) one)
-            yield return Section("circus boss button", () => Exec("O1 X1 >659,338 W60 >707,338 W30 `cc_pre"));
-            yield return Section("circus boss", () => Exec("O1 X1 F W60 i W30 `cc_boss"));
+            yield return Section("circus boss button", () => Exec("heal O1 X1 >659,338 W60 >707,338 W30 `cc_pre"));
+            // (TODO: Arthur and Javiera's flames still cost 4-5 hearts, budgeted)
+            yield return Section("circus boss", () => Exec("O1 X1 g5 F W60 i W30 `cc_boss"));
             yield return Section("circus A&J card", () => Exec("O1 X1 door32 W30 + W30 `cc_aj"));
         }
     }
