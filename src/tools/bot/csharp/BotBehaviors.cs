@@ -83,6 +83,13 @@ namespace AnodyneSharp.Recording
                     yield return DustOnto(target);
                     continue;
                 }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^lure(\d+),(\d+),(\d+)$") is { Success: true } lure)
+                {
+                    // lure<x>,<y0>,<y1>: fight the screen's enemies; whenever the fight gives up on one out of reach, walk down (or up) the
+                    // column x from y0 to y1, where it notices us, and fight again
+                    yield return LureFight(int.Parse(lure.Groups[1].Value), int.Parse(lure.Groups[2].Value), int.Parse(lure.Groups[3].Value));
+                    continue;
+                }
                 if (tok.StartsWith("via") && tok.Length > 3 && char.IsUpper(tok[3]))
                 {
                     // via<MAP>: to the Nexus (a dungeon's own pad first) and through the portal to MAP's pad
@@ -516,7 +523,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -1991,6 +1998,8 @@ namespace AnodyneSharp.Recording
             return t;
         }
 
+        private static readonly System.Reflection.FieldInfo _killerMoving = typeof(AnodyneSharp.Entities.Enemy.Suburb.SuburbKiller).GetField("moving", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
         private static List<Threat> PredictThreatsCore(Entity except)
         {
             var result = new List<Threat>();
@@ -2125,6 +2134,38 @@ namespace AnodyneSharp.Recording
                         gt.At[f] = r;
                     }
                     result.Add(gt);
+                    continue;
+                }
+                if (BotNav.IsSuburbKiller(d))
+                {
+                    // Asleep it wakes once we come within 36px (top-left to top-left) and then creeps after us at 30px/s, re-aiming every
+                    // half second, for good: asleep, its whole wake berth is the danger (a dog fight beside two of them woke both); awake, it
+                    // homes in on where we are.
+                    bool awake = _killerMoving?.GetValue(d) is true;
+                    var kt = new Threat { Name = "SuburbKiller", Source = d, Margin = awake ? 2 : 0, HurtsInAir = true, Stationary = !awake };
+                    var pp = Player.Position;
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        var r = d.Hitbox;
+                        if (awake)
+                        {
+                            var to = pp - d.Position;
+                            float len = to.Length(), step = Math.Min(len, 30f * f / 60f);
+                            if (len > 0.01f)
+                            {
+                                r.Offset((int)(to.X / len * step), (int)(to.Y / len * step));
+                            }
+                            r.Inflate(3, 3);
+                        }
+                        else
+                        {
+                            // (the wake test is on the top-left corners, ours of a 10x12 box, its of its 6x6 one: our box meets this one
+                            // just when our corner is within 36px of its on both axes; it reached too far down to draw a far dog up to us)
+                            r = new Rectangle(r.X - 26, r.Y - 24, 62, 60);
+                        }
+                        kt.At[f] = r;
+                    }
+                    result.Add(kt);
                     continue;
                 }
                 if (name is "Shieldy" or "BounceDashTrap")
@@ -6836,6 +6877,40 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        /// <summary>
+        /// Black and White Town's dog room: two killers asleep in the middle wall off the dogs below from the fight's planner, and a dog
+        /// only comes for us once we are in its 96px square. The one way down between the killers is a column 8px wide (the killer guard
+        /// keeps us in it): stand in it until a dog comes up, fight it, and again until the room is clear.
+        /// </summary>
+        protected static IEnumerable<object> LureFight(int x, int y0, int y1)
+        {
+            for (int round = 0; round < 8 && Enemies().Count > 0; round++)
+            {
+                yield return Fight(1500, soft: true);
+                if (Enemies().Count == 0)
+                {
+                    break;
+                }
+                BotRunner.Status = $"lure: down the column x={x} to y={y1}";
+                yield return GoTo(x + 3, y0);
+                for (int i = 0; i < 90 && Math.Abs(Pos.X - x) > 0.7f; i++)
+                {
+                    ExactKeysUntil = BotRunner.Frame + 1;
+                    yield return K(Pos.X < x ? KeyFunctions.Right : KeyFunctions.Left);
+                }
+                var way = y1 > y0 ? KeyFunctions.Down : KeyFunctions.Up;
+                for (int i = 0; i < 90 && Math.Abs(Pos.Y - y1) > 1f && Enemies().All(e => !(e.velocity.Length() > 40f)); i++)
+                {
+                    ExactKeysUntil = BotRunner.Frame + 1;
+                    yield return K(way);
+                }
+                for (int i = 0; i < 240 && Enemies().All(e => !(e.velocity.Length() > 40f) && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() > 40f); i++)
+                {
+                    yield return K(); // (until one comes for us)
+                }
+            }
+        }
+
         protected static IEnumerable<object> MenuReturnToPad(int tab)
         {
             // (a press in the first moments after a load, or during a screen's scroll, is not taken: press again until the menu is up)
@@ -8513,6 +8588,70 @@ namespace AnodyneSharp.Recording
             }
             return held;
         }
+        /// <summary>
+        /// No step of ours, whatever is steering, wakes a sleeping Suburb killer (within 36px of it, top-left to top-left) or closes on a
+        /// woken one: a touch costs 6 hearts and nothing kills them. A dog fight closing in on its dog walked straight past two. A step
+        /// that gets us further from the nearest of them is always let through (one woken on us, we must be able to run).
+        /// </summary>
+        private static readonly HashSet<Entity> _wokenKillers = new();
+
+        internal static KeyFunctions[] KillerGuard(KeyFunctions[] held)
+        {
+            if (Player == null)
+            {
+                return held; // (in the air too: the wake test is on where we are, not whether we touch, and a jump over a dog's dash landed by one)
+            }
+            var ks = BotRunner.Entities().Where(e => e.exists && BotNav.IsSuburbKiller(e)).ToList();
+            if (ks.Count == 0)
+            {
+                return held;
+            }
+            foreach (var k in ks)
+            {
+                if (_killerMoving?.GetValue(k) is true && _wokenKillers.Add(k))
+                {
+                    System.Console.Error.WriteLine($"  killer woke f{BotRunner.Frame} at {k.Position} us {Player.Position} hp {GlobalState.CUR_HEALTH} doing [{BotRunner.Status}]");
+                }
+            }
+            // (with a foe at hand a hit's knock-back throws us 10px: a berth wider by that, or it throws us in to wake one)
+            var mc = Player.Hitbox.Center.ToVector2();
+            float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && (e.Hitbox.Center.ToVector2() - mc).Length() < 36f) ? 14f : 0f;
+            float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValue(k) is true
+                ? (k.Hitbox.Center.ToVector2() - (p + new Vector2(5, 6))).Length() - 18f - knock
+                : (k.Position - p).Length() - 37f - knock);
+            Vector2 Step(IEnumerable<KeyFunctions> keys) => keys.Aggregate(Vector2.Zero, (a, k) => a + DirVector(k)) * 4f;
+            var now = Player.Position;
+            float here = Room(now);
+            bool Ok(IEnumerable<KeyFunctions> keys)
+            {
+                var st = Step(keys);
+                if (st == Vector2.Zero)
+                {
+                    return true;
+                }
+                float there = Room(now + st);
+                return there >= 0 || there > here;
+            }
+            var dirs = held.Where(k => DirVector(k) != Vector2.Zero).ToList();
+            if (Ok(dirs))
+            {
+                return held;
+            }
+            if (BotRunner.Frame % 60 == 0)
+            {
+                System.Console.Error.WriteLine($"  killer guard f{BotRunner.Frame}: held [{string.Join("+", held)}] at {now} room {here:0.0} knock {knock}");
+            }
+            var rest = held.Where(k => DirVector(k) == Vector2.Zero);
+            foreach (var one in dirs)
+            {
+                if (Ok(new[] { one }))
+                {
+                    return rest.Append(one).ToArray();
+                }
+            }
+            return rest.ToArray();
+        }
+
         /// <summary>
         /// A fight's steps never take us onto a door or portal: the planner keeps off them, but a fight's own dodging does not, and a
         /// Crowd DownDoor beside a Dog sent us to a screen across the map mid-fight.

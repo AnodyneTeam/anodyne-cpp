@@ -441,6 +441,8 @@ namespace AnodyneSharp.Recording
             // corridor to the door into the Archives; the left teleporter's end has the Carved Stone chest, the right one's the Young
             // chest (dug into: its room is sealed, so out by the menu).
             yield return Section("archives cards", () => Exec("O1 X1 viaOVERWORLD W30 dig14,8 W10 door85 W60 dig54,23,40 W10 door79 W60 door83 W60 dig47,78 W10 I768,1232,d W60 T W30 dig12,68 W10 door83 W60 door84 W60 dig27,13 W10 I432,192,d W60 T W30 n0 W120"));
+            // Fields (11,9) Rank: dig from the pad down to the walled-in pool and through its north wall to the chest.
+            yield return Section("fields rank card", () => Exec("O1 X1 viaFIELDS W30 dig116,95 W10 I1856,1504,d W60 T W30"));
         }
     }
 

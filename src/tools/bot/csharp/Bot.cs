@@ -604,6 +604,7 @@ namespace AnodyneSharp.Recording
                 held = BotScript.ContactEscape(held);
                 held = BotScript.SteamBrace(held);
             }
+            held = BotScript.KillerGuard(held); // (whatever is steering, exact keys too)
             if (NoAccept && held.Contains(KeyFunctions.Accept))
             {
                 held = held.Where(k => k != KeyFunctions.Accept).ToArray();
