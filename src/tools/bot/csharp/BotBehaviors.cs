@@ -12180,6 +12180,10 @@ namespace AnodyneSharp.Recording
                     var at = spot + outDir * d;
                     if (frogCs.All(fc => (at + halfBox - fc).Length() >= 68f))
                     {
+                        if ((at - here).Length() <= 2f)
+                        {
+                            break; // there: wait (and bait) below
+                        }
                         BotRunner.Status = "fight/frog: closer in, just out of its reach";
                         return K(Towards(at));
                     }
