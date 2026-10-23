@@ -92,6 +92,53 @@ namespace AnodyneSharp.Recording
                         new Vector2(float.Parse(stk.Groups[4].Value), float.Parse(stk.Groups[5].Value)));
                     continue;
                 }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^plant(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),([udlrw]+),(\d+)$") is { Success: true } pst)
+                {
+                    // plant<x>,<y>,<faces>,<frames>: stand on (x,y) and swing, turning to each of faces in turn, at every foe beside us there
+                    // (a long broom between two Frogs and their fire pillars) until none is left in reach, or frames run out; w: until none is
+                    // left on the screen (chasers on their way to us)
+                    yield return PlantStrike(new Vector2(float.Parse(pst.Groups[1].Value), float.Parse(pst.Groups[2].Value)), pst.Groups[3].Value, int.Parse(pst.Groups[4].Value));
+                    continue;
+                }
+                if (tok.StartsWith("lane") && tok.Length > 4 && char.IsDigit(tok[4]))
+                {
+                    // lane<x>,<y>/<x>,<y>/...: from the first tile (walked to as usual) run down the rest, through a laser beam no dust can
+                    // plug, setting off at the moment the bolts' gaps let us through with the fewest hits
+                    var tiles = tok.Substring(4).Split('/').Select(a => a.Split(',')).Select(a => new Point(int.Parse(a[0]), int.Parse(a[1]))).ToList();
+                    yield return GoTo(BotNav.CentreOf(tiles[0]).X, BotNav.CentreOf(tiles[0]).Y);
+                    yield return WalkTo(BotNav.CentreOf(tiles[0]).X, BotNav.CentreOf(tiles[0]).Y, tol: 1f);
+                    yield return LaserGauntlet(tiles.Skip(1).Select(t => BotNav.CentreOf(t)).ToList());
+                    continue;
+                }
+                if (tok == "dd")
+                {
+                    // dd: carrying a dust, set it down on a free tile beside us (off any beam)
+                    if (Player.broom.dust != null)
+                    {
+                        var here = BotNav.TileOf(Pos);
+                        var lanesDd = BotNav.LaneTiles();
+                        foreach (var o in new[] { new Point(-1, 0), new Point(1, 0), new Point(0, 1), new Point(0, -1) })
+                        {
+                            var t = new Point(here.X + o.X, here.Y + o.Y);
+                            if (BotNav.Walkable(t) && !lanesDd.Contains(t) && t.X / 10 == Grid.X && t.Y / 10 == Grid.Y)
+                            {
+                                yield return StandFaceAccept(here.X, here.Y, FaceChar(o));
+                                yield return Wait(20);
+                                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                                {
+                                    System.Console.Error.WriteLine($"  dd: from {here} toward {t}: me {Pos} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}"))}");
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (tok is "kd0" or "kd1")
+                {
+                    KeepDust = tok == "kd1"; // kd1/kd0: no swing sweeps up a loose dust (dust set down on fire pillars) / swings as they come
+                    continue;
+                }
                 if (tok is "kg0" or "kg1")
                 {
                     KillerGuardOn = tok == "kg1"; // kg1/kg0: no step of ours wakes a Suburb killer (outside fights too) / only in fights
@@ -946,7 +993,18 @@ namespace AnodyneSharp.Recording
             float sx = side == 'l' ? x - 11 : side == 'r' ? x + 17 : x + 3;
             float sy = side == 'u' ? y - 13 : side == 'd' ? y + 17 : y + 2;
             yield return GoTo(sx, sy);
-            yield return WalkTo(sx, sy);
+            // (square on to the object first, then slide along it: cutting the corner snags on it where there is no room to spare, as
+            // under Space's Entities chest)
+            if (side is 'u' or 'd')
+            {
+                yield return WalkTo(Pos.X, sy);
+            }
+            else
+            {
+                yield return WalkTo(sx, Pos.Y);
+            }
+            // (and where it still snags, as near as we get: the chest there opens from the corner of its underside)
+            yield return ExactWalk(new Vector2(sx, sy), 90);
             KeyFunctions face = side == 'l' ? KeyFunctions.Right : side == 'r' ? KeyFunctions.Left : side == 'u' ? KeyFunctions.Down : KeyFunctions.Up;
             yield return Hold(8, face);
             for (int i = 0; i < presses; i++)
@@ -3157,6 +3215,32 @@ namespace AnodyneSharp.Recording
         /// Carries a dust of this screen onto tile `target`: the dust and the sides to pick it up from and to set it down from that make the
         /// shortest walk, then pick up (a broom swing at it) and set down (another, facing the target).
         /// </summary>
+        /// <summary>A helper's frames with every nested helper run out in place, so a per-frame condition can cut it anywhere.</summary>
+        protected static IEnumerable<object> Flatten(IEnumerable<object> frames)
+        {
+            foreach (var f in frames)
+            {
+                if (f is IEnumerable<object> nested)
+                {
+                    foreach (var g in Flatten(nested))
+                    {
+                        yield return g;
+                    }
+                }
+                else if (f is IEnumerator<object> nestedEnum)
+                {
+                    foreach (var g in Flatten(nestedEnum.AsEnumerable()))
+                    {
+                        yield return g;
+                    }
+                }
+                else
+                {
+                    yield return f;
+                }
+            }
+        }
+
         protected static IEnumerable<object> DustOnto(Point target)
         {
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
@@ -3221,13 +3305,23 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  dust onto {target}: pick up {bdt} from {bpick}, set down from {bstand}");
                 }
                 BotRunner.Status = $"dust onto {target}";
-                yield return StandFaceAccept(bpick.X, bpick.Y, FaceChar(new Point(bdt.X - bpick.X, bdt.Y - bpick.Y)));
+                // (something woke and hurt us on the way: leave the dust to the fight that follows rather than keep walking into it)
+                int hp0 = GlobalState.CUR_HEALTH;
+                yield return Flatten(StandFaceAccept(bpick.X, bpick.Y, FaceChar(new Point(bdt.X - bpick.X, bdt.Y - bpick.Y)))).TakeUntil(() => GlobalState.CUR_HEALTH < hp0);
+                if (GlobalState.CUR_HEALTH < hp0)
+                {
+                    yield break;
+                }
                 yield return Wait(10);
                 if (Player.broom.dust == null)
                 {
                     continue;
                 }
-                yield return StandFaceAccept(bstand.X, bstand.Y, FaceChar(new Point(target.X - bstand.X, target.Y - bstand.Y)));
+                yield return Flatten(StandFaceAccept(bstand.X, bstand.Y, FaceChar(new Point(target.X - bstand.X, target.Y - bstand.Y)))).TakeUntil(() => GlobalState.CUR_HEALTH < hp0);
+                if (GlobalState.CUR_HEALTH < hp0)
+                {
+                    yield break;
+                }
                 yield return Wait(20);
                 if (Player.broom.dust == null)
                 {
@@ -4990,7 +5084,7 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Stand centred on tile (tx,ty), turn to face `face` (one-frame tap; the nudge is ~1px), then press Accept once.</summary>
-        protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face)
+        protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face, Point? clearOfBolts = null, bool here = false)
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
             if (BotNav.Walkable(new Point(tx, ty - 1)) && BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
@@ -5001,12 +5095,39 @@ namespace AnodyneSharp.Recording
                 c.Y -= 5;
             }
             BotRunner.Status += $" [stand {tx},{ty}]";
-            yield return GoTo(c.X, c.Y);
-            yield return WalkTo(c.X, c.Y, tol: 1f);
+            if (!here)
+            {
+                yield return GoTo(c.X, c.Y);
+                yield return WalkTo(c.X, c.Y, tol: 1f);
+            }
             var key = face == 'u' ? KeyFunctions.Up : face == 'd' ? KeyFunctions.Down : face == 'l' ? KeyFunctions.Left : KeyFunctions.Right;
             yield return Hold(1, key);
             yield return Wait(3);
+            if (clearOfBolts is Point cb)
+            {
+                // (dust set down on a beam tile with a bolt on it is shoved off it, as far as into the wall: between bolts)
+                // (a bolt poofing at the wall at the beam's end sits on its last tile for half a second, and the next comes as it goes: the
+                // gaps are when the emitter's five bolts are all out and it skips a shot)
+                var tileBox = new Rectangle(cb.X * 16 - 6, cb.Y * 16 - 2, 28, 20);
+                for (int w = 0; w < 300 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser && e.Hitbox.Intersects(tileBox)); w++)
+                {
+                    yield return K();
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  set dust down onto {cb.X},{cb.Y}: centre {Player.Center} face {Player.facing} f{BotRunner.Frame} carried {Player.broom.dust?.Position} {Player.broom.dust?.exists} released {Player.broom.just_released_dust} broom out {Player.broom.exists}");
+                }
+            }
             yield return Tap(KeyFunctions.Accept);
+            if (clearOfBolts != null && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                for (int w = 0; w < 12; w++)
+                {
+                    System.Console.Error.WriteLine($"   after f{BotRunner.Frame}: dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}{e.CurAnimName}"))} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Position.X:0}"))}");
+                    yield return K();
+                }
+                yield break;
+            }
             yield return Wait(12);
         }
 
@@ -5068,15 +5189,80 @@ namespace AnodyneSharp.Recording
                 {
                     var t1 = new Point(target.X + step.X, target.Y + step.Y);
                     var stand1 = SafeStand(t1, lanes0, target);
-                    if (!stand1.HasValue)
+                    if (!stand1.HasValue && LeapfrogStand(target, step, lanes0) is { } frog)
+                    {
+                        // Walled-in beam (no side tile to work from near the muzzle): plug it far out where there is one, then walk
+                        // two dusts up the beam, always standing on one while setting the other down a tile nearer the muzzle.
+                        BotRunner.Status = $"plugging laser at {et.X},{et.Y}: leapfrog from {frog.beam[frog.j].X},{frog.beam[frog.j].Y}";
+                        // (no dodging the bolts meanwhile: a dodge steps onto a plug, which the planner cannot walk off again)
+                        bool dodgeWas = DodgeEnabled;
+                        DodgeEnabled = false;
+                        try
+                        {
+                            yield return PickUpLooseDust(null);
+                            if (!_pickedDust)
+                            {
+                                continue;
+                            }
+                            var back = frog.stand;
+                            yield return StandFaceAccept(back.X, back.Y, FaceChar(new Point(frog.beam[frog.j].X - back.X, frog.beam[frog.j].Y - back.Y)), frog.beam[frog.j]);
+                            for (int w = 0; w < 30; w++)
+                            {
+                                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && w % 3 == 0)
+                                {
+                                    System.Console.Error.WriteLine($"  leapfrog w{w}: me {Pos} v {Player.velocity} carrying {Player.broom.dust != null} dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}{e.CurAnimName}"))}");
+                                }
+                                yield return K();
+                            }
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  leapfrog first plug: me {Pos} centre {Player.Center} face {Player.facing} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position.ToString()))}");
+                            }
+                            BotNav.HardAvoid = BotNav.LaneTiles();
+                            yield return PickUpLooseDust(frog.beam[frog.j]);
+                            if (!_pickedDust)
+                            {
+                                continue;
+                            }
+                            for (int i = frog.j; i > 0; i--)
+                            {
+                                BotNav.HardAvoid = BotNav.LaneTiles();
+                                // (onto the dust just set down: it is solid to us, so the planner's walk stalls a px short; close enough)
+                                yield return ExactWalk(BotNav.CentreOf(frog.beam[i]), 60);
+                                yield return StandFaceAccept(BotNav.TileOf(Pos).X, BotNav.TileOf(Pos).Y, FaceChar(new Point(-step.X, -step.Y)), frog.beam[i - 1], here: true);
+                                yield return Wait(30);
+                                if (i == 1)
+                                {
+                                    break;
+                                }
+                                // the dust just set down shields this one: pick it up from behind and carry it on
+                                BotNav.HardAvoid = BotNav.LaneTiles();
+                                yield return StandFaceAccept(back.X, back.Y, FaceChar(new Point(frog.beam[i].X - back.X, frog.beam[i].Y - back.Y)));
+                                yield return Wait(30);
+                                if (Player.broom.dust == null)
+                                {
+                                    break;
+                                }
+                                back = frog.beam[i];
+                            }
+                        }
+                        finally
+                        {
+                            DodgeEnabled = dodgeWas;
+                        }
+                    }
+                    else if (!stand1.HasValue)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
+                            System.Console.Error.WriteLine($"  dust: {string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{BotNav.TileOf(e.Position + new Vector2(8, 8))}{(e.exists ? "" : "x")}"))}");
                             var near = BotNav.NearEnemies(14, null, stationaryOnly: true);
                             System.Console.Error.WriteLine($"  laser {et.X},{et.Y}: no safe tile to plug {target.X},{target.Y} from; me {BotNav.TileOf(Pos)} lanes {string.Join(" ", lanes0.Select(l => $"{l.X},{l.Y}"))} walk {string.Join(" ", new[] { new Point(0, 1), new Point(0, -1), new Point(-1, 0) }.Select(o => $"{o.X},{o.Y}:{BotNav.Walkable(new Point(target.X + o.X, target.Y + o.Y))}/{near.Contains(new Point(target.X + o.X, target.Y + o.Y))}"))}");
                         }
                         continue;
                     }
+                    else
+                    {
                     BotRunner.Status = $"plugging laser at {et.X},{et.Y}: two-step, fetch dust, stand {stand1.Value.X},{stand1.Value.Y}";
                     yield return PickUpLooseDust(null);
                     if (!_pickedDust)
@@ -5092,6 +5278,7 @@ namespace AnodyneSharp.Recording
                     }
                     yield return StandFaceAccept(t1.X, t1.Y, FaceChar(new Point(-step.X, -step.Y)));
                     yield return Wait(30);
+                    }
                 }
                 BotNav.HardAvoid = null;
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -5104,6 +5291,36 @@ namespace AnodyneSharp.Recording
 
 
         private static bool _pickedDust;
+
+        /// <summary>
+        /// For a beam with no side tile to plug it from near the muzzle: the beam's tiles out from the muzzle (beam[0] = `target`), the
+        /// nearest one, beam[j] (j >= 2), with a safe side tile `stand`, when there are two loose dusts to leapfrog up it from there.
+        /// </summary>
+        private static (List<Point> beam, int j, Point stand)? LeapfrogStand(Point target, Point step, HashSet<Point> lanes)
+        {
+            var dusts = BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8)))) + (Player.broom.dust != null ? 1 : 0);
+            if (dusts < 2)
+            {
+                return null;
+            }
+            var beam = new List<Point>();
+            for (var t = target; lanes.Contains(t) && beam.Count < 24; t = new Point(t.X + step.X, t.Y + step.Y))
+            {
+                beam.Add(t);
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  leapfrog beam {string.Join(" ", beam.Select(b => $"{b.X},{b.Y}"))}; walk {string.Join(" ", beam.Select(b => BotNav.Walkable(b) ? 1 : 0))}");
+            }
+            for (int j = 2; j < beam.Count; j++)
+            {
+                if (SafeStand(beam[j], lanes, beam[j - 1]) is { } st)
+                {
+                    return (beam, j, st);
+                }
+            }
+            return null;
+        }
 
         /// <summary>A tile next to `tile` (not the emitter's) that is walkable, off every open beam and reachable without crossing one.</summary>
         private static Point? SafeStand(Point tile, HashSet<Point> lanes, Point emitter)
@@ -5138,7 +5355,7 @@ namespace AnodyneSharp.Recording
             }
             var lanes = BotNav.LaneTiles();
             var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8)))
-                    && BotNav.TileOf(e.Position + new Vector2(8, 8)) != except)
+                    && BotNav.TileOf(e.Position + new Vector2(8, 8)) != except && BotNav.TileOf(e.Position + new Vector2(8, 8)) is var et && et.X / 10 == Grid.X && et.Y / 10 == Grid.Y)
                 .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
             if (dust == null)
             {
@@ -5194,7 +5411,7 @@ namespace AnodyneSharp.Recording
         protected static bool HaveLooseDust()
         {
             var lanes = BotNav.LaneTiles();
-            return Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))));
+            return Player.broom.dust != null || BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))));
         }
 
         /// <summary>Walks screen by screen along the most permissive route (rafts, jumps) to the tile containing (gx,gy).</summary>
@@ -6969,6 +7186,225 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>
+        /// A spot from which the broom meets rooted foes on more than one side (Space's frog room: a long broom from the one tile between
+        /// the fire pillars reaches both frogs): stay on it, swing at each side in turn while a foe there can be hurt, until none is left in
+        /// reach. Their shots are taken (only the spot is clear of the pillars); every foe dies in a few swings.
+        /// </summary>
+        private sealed class SimBolt
+        {
+            public Vector2 at;
+            public Vector2 v;
+            public int w, h;
+            public float age, poofLeft = -1;
+            public bool hurts = true;
+        }
+
+        /// <summary>
+        /// Walk the straight legs through `path` (player positions) across PewLaser beams, waiting first for the start (up to 4s) that the
+        /// bolts would hit us fewest times on: the emitters and their bolts are played forward (a shot every half second while one of the
+        /// five is free, bolts stopped by walls and dust, a hit buying 0.8s of bolts poofing on us harmlessly).
+        /// </summary>
+        protected static IEnumerable<object> LaserGauntlet(List<Vector2> path)
+        {
+            const float dt = 1f / 60f, speed = 70f;
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var emitters = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).ToList();
+            var dusts = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Hitbox).ToList();
+            int Simulate(int delay, bool trace)
+            {
+                var guns = new List<(Entity em, float timer, List<SimBolt> bolts, Vector2 spawn, Vector2 v, int w, int h)>();
+                foreach (var em in emitters)
+                {
+                    var pool = typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", flags).GetValue(em);
+                    var all = ((IEnumerable<Entity>)pool.GetType().GetProperty("Entities").GetValue(pool)).ToList();
+                    var off = (Vector2)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("spawn_offset", flags).GetValue(all[0]);
+                    bool fast = (bool)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", flags).GetValue(all[0]);
+                    var v = new Vector2(FacingStep(em.facing).X, FacingStep(em.facing).Y) * (fast ? 70f : 40f);
+                    var bolts = all.Where(b => b.exists).Select(b => new SimBolt
+                    {
+                        at = b.Position,
+                        v = v,
+                        w = b.Hitbox.Width,
+                        h = b.Hitbox.Height,
+                        age = 1f,
+                        poofLeft = b.CurAnimName == "poof" ? Math.Max(0f, (8 - b.Frame) / 8f) : -1f
+                    }).ToList();
+                    guns.Add((em, (float)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em), bolts, em.Position + off, v,
+                        all[0].Hitbox.Width, all[0].Hitbox.Height));
+                }
+                var me = Pos;
+                int leg = 0, hits = 0, frame = 0;
+                float invincible = 0f, bump = 0f;
+                var heading = Vector2.Zero;
+                while (leg < path.Count && frame < delay + 600)
+                {
+                    if (bump > 0f)
+                    {
+                        // knocked back off a hit: a fifth of a second shoved the way we came at 50px/s
+                        bump -= dt;
+                        me -= heading * 50f * dt;
+                    }
+                    else if (frame >= delay)
+                    {
+                        var to = path[leg] - me;
+                        heading = new Vector2(Math.Sign(to.X), Math.Abs(to.X) > 0.7f ? 0 : Math.Sign(to.Y));
+                        if (Math.Abs(to.X) <= 0.7f && Math.Abs(to.Y) <= 0.7f)
+                        {
+                            leg++;
+                            continue;
+                        }
+                        me.X += Math.Sign(to.X) * Math.Min(Math.Abs(to.X), speed * dt);
+                        me.Y += Math.Sign(to.Y) * Math.Min(Math.Abs(to.Y), speed * dt);
+                    }
+                    invincible -= dt;
+                    // (a pixel of slack all round, and a bolt still hurts for a few frames once at the wall: the game stops it a frame or two later)
+                    var box = new Rectangle((int)me.X - 1, (int)me.Y - 1, 12, 14);
+                    for (int g = 0; g < guns.Count; g++)
+                    {
+                        var gun = guns[g];
+                        foreach (var b in gun.bolts)
+                        {
+                            if (b.poofLeft >= 0)
+                            {
+                                b.poofLeft -= dt;
+                                if (b.poofLeft > 0.45f && invincible <= 0f && b.hurts && new Rectangle((int)b.at.X, (int)b.at.Y, b.w, b.h).Intersects(box))
+                                {
+                                    hits++;
+                                    invincible = 0.8f;
+                                    bump = 0.2f;
+                                    b.hurts = false;
+                                }
+                                continue;
+                            }
+                            b.at += b.v * dt;
+                            b.age += dt;
+                            var bb = new Rectangle((int)b.at.X, (int)b.at.Y, b.w, b.h);
+                            var lead = new Vector2(b.v.X > 0 ? bb.Right : b.v.X < 0 ? bb.Left - 1 : bb.Center.X, b.v.Y > 0 ? bb.Bottom : b.v.Y < 0 ? bb.Top - 1 : bb.Center.Y);
+                            if ((b.age > 0.4f && BotNav.IsBeamWall(new Point((int)Math.Floor(lead.X / 16f), (int)Math.Floor(lead.Y / 16f)))) || dusts.Any(d => d.Intersects(bb)))
+                            {
+                                b.poofLeft = 0.5f;
+                            }
+                            else if (bb.Intersects(box))
+                            {
+                                b.poofLeft = 0.5f;
+                                b.hurts = false;
+                                if (invincible <= 0f)
+                                {
+                                    hits++;
+                                    invincible = 0.8f;
+                                    bump = 0.2f;
+                                    if (trace)
+                                    {
+                                        System.Console.Error.WriteLine($"  gauntlet sim: hit at f+{frame} me {me}");
+                                    }
+                                }
+                            }
+                        }
+                        gun.bolts.RemoveAll(b => b.poofLeft != -1 && b.poofLeft < 0);
+                        gun.timer -= dt;
+                        if (gun.timer < 0)
+                        {
+                            gun.timer = 0.5f;
+                            if (gun.bolts.Count < 5)
+                            {
+                                gun.bolts.Add(new SimBolt { at = gun.spawn, v = gun.v, w = gun.w, h = gun.h });
+                            }
+                        }
+                        guns[g] = gun;
+                    }
+                    if (trace && frame % 20 == 0 && frame <= delay)
+                    {
+                        System.Console.Error.WriteLine($"  gauntlet sim f+{frame}: bolts {string.Join(" ", guns.SelectMany(g => g.bolts).Select(b => $"{(int)b.at.X},{(int)b.at.Y}{(b.poofLeft >= 0 ? 'p' : 's')}"))}");
+                    }
+                    frame++;
+                }
+                return hits;
+            }
+            int best = 0, bestHits = int.MaxValue;
+            for (int d = 0; d < 420; d++)
+            {
+                int h = Simulate(d, false);
+                if (h < bestHits)
+                {
+                    bestHits = h;
+                    best = d;
+                }
+                if (h == 0)
+                {
+                    break;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  gauntlet: set off in {best} frames for {bestHits} hits, from {Pos} via {string.Join(" ", path.Select(p => $"{p.X:0},{p.Y:0}"))}");
+                Simulate(best, true);
+                foreach (var em in emitters)
+                {
+                    System.Console.Error.WriteLine($"  gauntlet: emitter {em.Position} timer {typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em)} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox}{e.CurAnimName}{e.Frame}"))}");
+                }
+            }
+            BotRunner.Status = $"gauntlet: wait {best} frames ({bestHits} hits)";
+            for (int i = 0; i < best; i++)
+            {
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 20 == 0)
+                {
+                    System.Console.Error.WriteLine($"  gauntlet live f+{i}: bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox.X},{e.Hitbox.Y}{e.CurAnimName[0]}"))}");
+                }
+                yield return K();
+            }
+            foreach (var p in path)
+            {
+                BotRunner.Status = $"gauntlet: run to {p.X:0},{p.Y:0}";
+                yield return ExactWalk(p, 120);
+            }
+        }
+
+        protected static IEnumerable<object> PlantStrike(Vector2 at, string faces, int frames)
+        {
+            var me = new Rectangle((int)at.X, (int)at.Y, 10, 12);
+            Facing FaceOf(char c) => c switch { 'u' => Facing.UP, 'd' => Facing.DOWN, 'l' => Facing.LEFT, _ => Facing.RIGHT };
+            // (reach of the longest broom: 38px out beside us, a little either side across)
+            Rectangle Reach(Facing f) => f switch
+            {
+                Facing.LEFT => new Rectangle(me.X - 28, me.Y - 2, 28, me.Height + 4),
+                Facing.RIGHT => new Rectangle(me.Right, me.Y - 2, 28, me.Height + 4),
+                Facing.UP => new Rectangle(me.X - 2, me.Y - 28, me.Width + 4, 28),
+                _ => new Rectangle(me.X - 2, me.Bottom, me.Width + 4, 28),
+            };
+            int lastSwing = -100, turn = 0;
+            yield return ExactWalk(at);
+            for (int i = 0; i < frames; i++)
+            {
+                BotRunner.NotStuck();
+                var open = faces.Where(c => c != 'w').Select(FaceOf).Where(f => Enemies().Any(e => e.Hitbox.Intersects(Reach(f)))).ToList();
+                if (open.Count == 0 && (!faces.Contains('w') || Enemies().Count == 0))
+                {
+                    yield break;
+                }
+                if (Math.Abs(Pos.X - at.X) > 1.5f || Math.Abs(Pos.Y - at.Y) > 1.5f)
+                {
+                    BotRunner.Status = $"plant: back onto {at.X:0},{at.Y:0}";
+                    yield return ExactWalk(at, 20); // (knocked off it)
+                    continue;
+                }
+                var ready = open.Where(f => Enemies().Any(e => e.Hitbox.Intersects(Reach(f)) && !e._flickering)).ToList();
+                if (ready.Count == 0 || i - lastSwing < 18 || Player.broom != null && Player.broom.exists)
+                {
+                    yield return K();
+                    continue;
+                }
+                var face = ready[turn++ % ready.Count];
+                BotRunner.Status = $"plant: swing {face} from {at.X:0},{at.Y:0}";
+                if (Player.facing != face)
+                {
+                    yield return K(KeyOf(face));
+                }
+                lastSwing = i;
+                yield return Tap(KeyFunctions.Accept);
+            }
+        }
+
+        /// <summary>
         /// Black and White Town's dog room: two killers asleep in the middle wall off the dogs below from the fight's planner, and a dog
         /// only comes for us once we are in its 96px square. The one way down between the killers is a column 8px wide (the killer guard
         /// keeps us in it): stand in it until a dog comes up, fight it, and again until the room is clear.
@@ -8648,6 +9084,9 @@ namespace AnodyneSharp.Recording
         /// A swing in a fight that would broom an idle TeleGuy that is not the one we are after is held back: it would wake it, and it
         /// charges at us while something else is about.
         /// </summary>
+        /// <summary>kd1/kd0 tokens: no swing that would sweep up a loose dust (see SwingGuard).</summary>
+        internal static bool KeepDust;
+
         internal static KeyFunctions[] SwingGuard(KeyFunctions[] held)
         {
             if (Player == null || !held.Contains(KeyFunctions.Accept))
@@ -8662,6 +9101,11 @@ namespace AnodyneSharp.Recording
                 Facing.LEFT => new Rectangle(pb.X - 26, pb.Y - 8, 26, pb.Height + 16),
                 _ => new Rectangle(pb.Right, pb.Y - 8, 26, pb.Height + 16),
             };
+            // Dust set down on purpose (on a fire pillar, say): a swing that sweeps it up undoes that. Hold the swing.
+            if (KeepDust && Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(BroomBoxAt(Player.Position, Player.facing))))
+            {
+                return held.Where(k => k != KeyFunctions.Accept).ToArray();
+            }
             // A bullet Slime close by about to fire that the swing would not reach: a broom out stops us dead in the air, so the hop over
             // its shot (BulletHop) would go nowhere. Hold the swing.
             if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump)
@@ -10509,6 +10953,68 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>True if standing still at p (top-left) stays clear of the threats for the next frames.</summary>
+        /// <summary>
+        /// When every plan gets hit: the step (or standing still) whose way stays clear of the threats longest, so the hit we cannot
+        /// dodge comes as late as can be, and often not at all (a pillar's flame, a pounce, moves on). Null if standing still is best.
+        /// </summary>
+        private static int _slasherLaneWait;
+
+        private static KeyFunctions[] LeastBadKeys(Vector2 here, List<Threat> threats)
+        {
+            KeyFunctions[] best = null;
+            int bestScore = int.MinValue;
+            var size = new Point(Player.Hitbox.Width, Player.Hitbox.Height);
+            foreach (var (dx, dy) in new[] { (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1) })
+            {
+                // (a step and on out the same way, as far as the floor goes: one step is rarely out of a whole block of fire)
+                var dir = new Vector2(dx, dy);
+                if (dir != Vector2.Zero)
+                {
+                    dir.Normalize();
+                }
+                foreach (float far in dx == 0 && dy == 0 ? new[] { 0f } : new[] { 13f, 26f, 40f })
+                {
+                    var to = here + dir * far;
+                    bool floor = true;
+                    for (float d = 4f; d <= far && floor; d += 4f)
+                    {
+                        var on = here + dir * Math.Min(d, far);
+                        floor = StandsSafe(new Rectangle((int)on.X, (int)on.Y, size.X, size.Y));
+                    }
+                    if (!floor || !StandsSafe(new Rectangle((int)to.X, (int)to.Y, size.X, size.Y)))
+                    {
+                        break;
+                    }
+                    // (fewest frames in harm's way first - already standing in it, every way scores a hit at once - then the latest first touch)
+                    int first = -1, touching = 0;
+                    float walk = Math.Max(1f, far / 1.2f); // (~1.2px a frame)
+                    for (int k = 0; k <= Math.Min(60, Horizon); k++)
+                    {
+                        var p = Vector2.Lerp(here, to, Math.Min(1f, k / walk));
+                        var me = new Rectangle((int)p.X, (int)p.Y, size.X, size.Y);
+                        if (threats.Any(t => t.At[k] is Rectangle r && new Rectangle(r.X - t.Margin, r.Y - t.Margin, r.Width + 2 * t.Margin, r.Height + 2 * t.Margin).Intersects(me)))
+                        {
+                            touching++;
+                            if (first < 0)
+                            {
+                                first = k;
+                            }
+                        }
+                    }
+                    int score = -touching * 100 + (first < 0 ? 99 : first);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        var ks = new List<KeyFunctions>();
+                        if (dx > 0) { ks.Add(KeyFunctions.Right); } else if (dx < 0) { ks.Add(KeyFunctions.Left); }
+                        if (dy > 0) { ks.Add(KeyFunctions.Down); } else if (dy < 0) { ks.Add(KeyFunctions.Up); }
+                        best = ks.Count == 0 ? null : ks.ToArray();
+                    }
+                }
+            }
+            return best;
+        }
+
         private static bool SafeAtExactThreats(Vector2 p, List<Threat> threats, int frames)
         {
             var me = new Rectangle((int)p.X, (int)p.Y, Player.Hitbox.Width, Player.Hitbox.Height);
@@ -11175,7 +11681,7 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"  lion f{i} {BotRunner.Status} lion={lion.Hitbox} {lion.CurAnimName} me={pb} face={Player.facing}");
                 }
-                if (open && atGoal)
+                if (open && atGoal && SafeAtExactThreats(here, others, 8))
                 {
                     if (Player.facing != face)
                     {
@@ -11208,7 +11714,7 @@ namespace AnodyneSharp.Recording
                     yield return K(dk.ToArray());
                     continue;
                 }
-                if (open && (goal - here).Length() < 28 && SafeAtExactThreats(here, others, 10))
+                if (open && (goal - here).Length() < 28 && SafeAtExactThreats(here, others, 10) && SafeAtExactThreats(goal, others, 30))
                 {
                     // The last few px straight in (the planner keeps a margin off the lion we mean to stand beside).
                     var dk = new List<KeyFunctions>();
@@ -11232,6 +11738,11 @@ namespace AnodyneSharp.Recording
                 {
                     jumpAt = i;
                     keys = new[] { KeyFunctions.Cancel }; // cornered: over the fire (not the lion itself: it hurts in the air too)
+                }
+                if (keys == null && Player.state == PlayerState.GROUND)
+                {
+                    // (no way through clean, e.g. boxed in by fire pillars: standing still in one is the worst of it)
+                    keys = LeastBadKeys(here, threats);
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0 && keys != null)
                 {
@@ -13693,8 +14204,12 @@ namespace AnodyneSharp.Recording
             }
             bool blinking = maid._flickering;
             var screen = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+            var maidLanes = BotNav.LaneTiles();
+            bool InLane(Rectangle r) => maidLanes.Count > 0 && new[] { new Vector2(r.Left, r.Top), new Vector2(r.Right - 1, r.Top), new Vector2(r.Left, r.Bottom - 1), new Vector2(r.Right - 1, r.Bottom - 1) }
+                .Any(c => maidLanes.Contains(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+            var otherMaids = Enemies().Where(e => e != maid && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid).Select(e => { var r = e.Hitbox; r.Inflate(4, 4); return r; }).ToList();
             bool Free(Rectangle r) => screen.Contains(r) && CornersWalkable(r) && !OnConveyor(BotNav.TileOf(new Vector2(r.X, r.Y)))
-                && !BotNav.IsHole(BotNav.TileOf(new Vector2(r.X, r.Y)))
+                && !BotNav.IsHole(BotNav.TileOf(new Vector2(r.X, r.Y))) && !otherMaids.Any(om => om.Intersects(r)) && !InLane(r)
                 && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(r)); // (loose dust is solid to us)
             // the ways that take us further from it (never past it), with how far we can go that way
             var away = new List<(KeyFunctions k, int run, float gain)>();
@@ -13816,9 +14331,11 @@ namespace AnodyneSharp.Recording
             {
                 // to the tile furthest from it that we can reach without brushing it, a step at a time (round corners and the dust)
                 var start = BotNav.TileOf(Pos);
-                bool TileFree(Point t) => screen.Contains(new Rectangle(t.X * 16, t.Y * 16, 16, 16)) && BotNav.Walkable(t) && !OnConveyor(t) && !BotNav.IsHole(t)
+                bool TileFree(Point t) => screen.Contains(new Rectangle(t.X * 16, t.Y * 16, 16, 16)) && BotNav.Walkable(t) && !OnConveyor(t) && !BotNav.IsHole(t) && !maidLanes.Contains(t)
                     && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(new Rectangle(t.X * 16 + 2, t.Y * 16 + 2, 12, 12)));
-                float Clear(Point t) => (new Vector2(t.X * 16 + 8, t.Y * 16 + 8) - tc).Length();
+                // (from every maid on us, not only this one: five of them corner us where the furthest from one is beside another)
+                var maidCs = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid).Select(e => e.Hitbox.Center.ToVector2()).Append(tc).ToList();
+                float Clear(Point t) => maidCs.Min(mc => (new Vector2(t.X * 16 + 8, t.Y * 16 + 8) - mc).Length());
                 var parent = new Dictionary<Point, Point> { [start] = start };
                 var clear = new Dictionary<Point, float> { [start] = float.PositiveInfinity };
                 var q = new Queue<Point>();
@@ -15012,6 +15529,10 @@ namespace AnodyneSharp.Recording
             {
                 return off;
             }
+            if (FrogWaitEscape(here, threats) is KeyFunctions[] esc)
+            {
+                return K(esc);
+            }
             BotRunner.Status = "fight/frog: wait";
             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
             {
@@ -15026,6 +15547,21 @@ namespace AnodyneSharp.Recording
                 }
             }
             return K();
+        }
+
+        /// <summary>
+        /// Waiting on a spot something will be on soon (a fire pillar's flame - the frog's guessed volleys aside): the least bad step off
+        /// it. Null if the spot stays clear, or standing is still the best of it.
+        /// </summary>
+        private static KeyFunctions[] FrogWaitEscape(Vector2 here, List<Threat> threats)
+        {
+            var real = threats.Where(t => t.Name == "FirePillar").ToList();
+            if (real.Count == 0 || SafeAtExactThreats(here, real, 24))
+            {
+                return null;
+            }
+            BotRunner.Status = "fight/frog: off a fire pillar";
+            return LeastBadKeys(here, real);
         }
 
         private static long _frogGroundCommit = -1;
@@ -15181,8 +15717,12 @@ namespace AnodyneSharp.Recording
             {
                 return off;
             }
-            BotRunner.Status = "fight/frog: wait for a clear way in";
             BotRunner.NotStuck(); // waiting for the volleys to line up is progress (the stall count above gives up on it)
+            if (FrogWaitEscape(here, threats) is KeyFunctions[] esc)
+            {
+                return K(esc);
+            }
+            BotRunner.Status = "fight/frog: wait for a clear way in";
             return K();
         }
 
@@ -17309,13 +17849,15 @@ namespace AnodyneSharp.Recording
                         var mb0 = Player.Hitbox;
                         int gx0 = Math.Max(tb0.Left - mb0.Right, mb0.Left - tb0.Right), gy0 = Math.Max(tb0.Top - mb0.Bottom, mb0.Top - tb0.Bottom);
                         bool reach0 = (gx0 <= 10 && gy0 <= -4) || (gy0 <= 10 && gx0 <= -4);
-                        if (!reach0 && !bouncerLanes.Contains(slHere))
+                        // (but not for ever: one parked out of reach - the last of them, nothing left to chase it - never comes)
+                        _slasherLaneWait = reach0 ? 0 : _slasherLaneWait + 1;
+                        if (!reach0 && !bouncerLanes.Contains(slHere) && _slasherLaneWait % 900 < 360)
                         {
                             BotRunner.Status = "fight/slasher: wait for it out of the traps' lanes";
                             yield return K();
                             continue;
                         }
-                        if (!reach0)
+                        if (!reach0 && _slasherLaneWait % 900 < 360)
                         {
                             var outOfLane = BotNav.FindPath(slHere, t => !bouncerLanes.Contains(t) && t.X / 10 == Grid.X && t.Y / 10 == Grid.Y, null);
                             if (outOfLane != null && outOfLane.Count > 0)

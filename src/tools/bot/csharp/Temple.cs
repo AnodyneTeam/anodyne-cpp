@@ -453,6 +453,17 @@ namespace AnodyneSharp.Recording
                 + " L16 @x397,u D90 @x424,u strike424,1236,r,420,1236 X1 kg0 I384,1232,d W60 T W30"));
             // Red Cave (3,1) Mover: the any% route leaves its gates shut; dig to the chest.
             yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 dig34,12 W10 I544,176,d W60 T W30"));
+            // Space (5,7) Entities: dig south off the pad's column into the walled-off south half; its chest is behind two gates, one
+            // opened by a button at the end of the west path, the other by a kill on its screen at the end of the east path. West: the
+            // Dustmaids (fought from their exit corridor with the long broom), the laser lane (no side tile to plug it from: run it at the
+            // bolts' best gap), the Gas Guys and four buttons. Out by the menu.
+            yield return Section("space west path", () => Exec("O1 X1 g8 viaSPACE W30 ;0 W5 X0 dig54,48,40 W10 X1 H3,5 W10 X0 ;1 W5 J36,54,l W2 >632,824 plant627,818,lw,1800 W10 dd ;0 W5 lane37,57/37,58/32,58/32,59 W10 X1 H3,6 W30"
+                + " >776,984 W10 >664,1096 W10 >776,1096 W30 X0 >824,1048 W30 X1 n0 W120 heal W30"));
+            // East: the Slashers, the Lion among fire pillars (two dusts put out two of them, kept by never sweeping them up), the frogs
+            // (a long broom from the one tile between their pillars) and the Slime that opens the chest's other gate.
+            yield return Section("space east path", () => Exec("O1 X1 g8 viaSPACE W30 ;0 W5 X0 dig54,48,40 W10 X1 H6,5 W10 F4000 W20 X0 H7,5 W2 dust:72,55 dust:73,55"
+                + " kd1 X1 F3000 kd0 W20 X0 ;1 W5 H7,6 plant1187,978,lr,900 plant1187,1074,lr,900 ;0 W5 X1 F W20 X0 H6,6 W10 >950,1044 W10 X1 F W30 X0 n0 W120 heal W30"));
+            yield return Section("space entities card", () => Exec("O1 X1 viaSPACE W30 X0 dig54,48,40 W10 I872,1202,d W60 T W30"));
         }
     }
 
