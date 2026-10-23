@@ -6527,6 +6527,101 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 RaftLog($"round {round}: from {here} (wet={wetNow}) first water {path[wi]} goal {goal}, {path.Count} tiles");
+                if (!wetNow && Player.broom.dust == null && !BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
+                {
+                    // No dust on this screen to float on (it does not come with us over a screen's edge, and the one here was ridden off
+                    // earlier): wade it instead, where every stretch of water is short enough to get out of before we sink.
+                    if (!OnConveyor(goal) && BotNav.WadePath(here, t => t == goal) != null)
+                    {
+                        RaftLog($"no dust here: wading from {here} to {goal}");
+                        yield return GoTo(gx, gy);
+                        yield break;
+                    }
+                    // A goal out on the water (to be carried on by the current): step in from the bank and let the current take us,
+                    // if it puts us ashore before we sink (35px/s walking plus 35px/s of current, 3s to sink).
+                    if (OnConveyor(goal) && path.IndexOf(goal) >= wi)
+                    {
+                        var bank = wi == 0 ? here : path[wi - 1];
+                        var t = path[wi];
+                        float secs = 16f / 35f;
+                        var seen = new HashSet<Point>();
+                        while (OnConveyor(t) && seen.Add(t) && secs <= 2.4f)
+                        {
+                            var fl = BotNav.FlowDir(t);
+                            if (fl == Touching.NONE)
+                            {
+                                secs = float.MaxValue;
+                                break;
+                            }
+                            t = t + (fl switch { Touching.UP => new Point(0, -1), Touching.DOWN => new Point(0, 1), Touching.LEFT => new Point(-1, 0), _ => new Point(1, 0) });
+                            secs += 16f / 70f;
+                        }
+                        RaftLog($"no dust here: wading in at {path[wi]} the current would put us at {t} after {secs:0.0}s (walkable {BotNav.Walkable(t)})");
+                        if (!(secs <= 2.4f && BotNav.Walkable(t)))
+                        {
+                            // Still water (or a current that does not put us ashore in time): wade over to the far side of it, to a bank the
+                            // dry way does not reach, a short stretch of water at a time.
+                            var pool = new HashSet<Point> { goal };
+                            var open = new Queue<Point>(pool);
+                            var far = new HashSet<Point>();
+                            while (open.Count > 0 && pool.Count < 200)
+                            {
+                                var w = open.Dequeue();
+                                foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                                {
+                                    var n = w + o;
+                                    if (OnConveyor(n))
+                                    {
+                                        if (pool.Add(n))
+                                        {
+                                            open.Enqueue(n);
+                                        }
+                                    }
+                                    else if (BotNav.Walkable(n) && n != here)
+                                    {
+                                        far.Add(n);
+                                    }
+                                }
+                            }
+                            far.RemoveWhere(f => BotNav.FindPath(here, q => q == f, f) != null);
+                            var wade = far.Count > 0 ? BotNav.WadePath(here, q => far.Contains(q)) : null;
+                            RaftLog($"no dust here: far banks {string.Join(" ", far)}: wade {(wade == null ? "none" : string.Join(">", wade))}");
+                            if (wade != null)
+                            {
+                                var end = BotNav.CentreOf(wade[wade.Count - 1]);
+                                yield return GoTo(end.X - BotNav.HalfW, end.Y - BotNav.HalfH);
+                                yield break;
+                            }
+                        }
+                        if (secs <= 2.4f && BotNav.Walkable(t))
+                        {
+                            RaftLog($"no dust here: wading in at {path[wi]} from {bank}, the current puts us ashore at {t} after {secs:0.0}s");
+                            if (here != bank)
+                            {
+                                var bc = BotNav.CentreOf(bank);
+                                yield return GoTo(bc.X - BotNav.HalfW, bc.Y - BotNav.HalfH);
+                            }
+                            var into = path[wi] - bank;
+                            var inKey = into.X > 0 ? KeyFunctions.Right : into.X < 0 ? KeyFunctions.Left : into.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up;
+                            for (int i = 0; i < 240; i++)
+                            {
+                                var cur = BotNav.TileOf(Pos);
+                                if (GlobalState.ScreenTransition)
+                                {
+                                    yield return K();
+                                    continue;
+                                }
+                                if (cur == t || (i > 10 && !OnConveyor(cur) && cur != bank))
+                                {
+                                    break;
+                                }
+                                var fl = OnConveyor(cur) ? BotNav.FlowDir(cur) : Touching.NONE;
+                                yield return K(fl switch { Touching.UP => KeyFunctions.Up, Touching.DOWN => KeyFunctions.Down, Touching.LEFT => KeyFunctions.Left, Touching.RIGHT => KeyFunctions.Right, _ => inKey });
+                            }
+                            yield break;
+                        }
+                    }
+                }
                 if (!wetNow)
                 {
                     var s = wi == 0 ? here : path[wi - 1];
@@ -6538,6 +6633,10 @@ namespace AnodyneSharp.Recording
                         if (BotNav.TileOf(Pos) != s && BotNav.TileOf(Pos) != here)
                         {
                             continue; // crossed a screen or got pushed: plan again from here
+                        }
+                        if (Player.broom.dust == null && !BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
+                        {
+                            continue; // (no dust here: plan again from the bank, where wading in may now do, through a gate a button on the way opened)
                         }
                     }
                     BotRunner.Status = $"raft: dust onto the water at {wt.X},{wt.Y}";
