@@ -44,6 +44,7 @@ namespace AnodyneSharp.Recording
         private static long _debtSince;
         public static bool PlayBusy;
         private static string _lastBusyName = "";
+        public static KeyFunctions[] LastHeld = Array.Empty<KeyFunctions>(); // the keys pressed last frame, after the guards
         public static string PlayBusyName = ""; // which child states of the play state are open (for the failure ring)
 
         /// <summary>The "Continue?" menu after dying is open (Up selects Yes, Accept confirms; No would send us to the death room).</summary>
@@ -605,6 +606,7 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"  guarded f{Frame} [{string.Join("+", held)}]");
             }
+            LastHeld = held;
             if (Player != null && Player.reversed)
             {
                 // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go

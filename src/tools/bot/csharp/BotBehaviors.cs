@@ -5427,10 +5427,13 @@ namespace AnodyneSharp.Recording
                 if (route.FirstOrDefault(BotNav.IsShutKillGate) is var kg && BotNav.IsShutKillGate(kg) && route.TakeWhile(t => t != kg).All(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y))
                 {
                     // The way out is a gate of this screen that opens on kills: fight for it first.
-                    if (Enemies().Count == 0 && gateGrace < 120)
+                    var gridNow = Grid;
+                    if (Enemies().Count == 0 && gateGrace < 120 && !BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == gridNow))
                     {
-                        // (nothing left to fight: the last one is still dying, and the gate opens when it is gone)
+                        // (nothing left to fight: the last one is still dying, and the gate opens when it is gone; Dustmaids asleep are
+                        // still to wake and beat, which FightForKillGate does)
                         gateGrace++;
+                        hop--; // (a frame's wait is not a hop: 80 of them would end the walk before the grace does)
                         BotRunner.NotStuck();
                         yield return K();
                         plan = null;
@@ -11767,8 +11770,10 @@ namespace AnodyneSharp.Recording
                 {
                     if (e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye eye)
                     {
-                        foreach (var m in eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist))
+                        foreach (var m in eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist && !m.Hitbox.Intersects(Player.Hitbox)))
                         {
+                            // (not one we are in already, knocked or jumped into it: the planners find no way from inside a threat, and
+                            // it is harmless, so walk out of it)
                             // (its mist is harmless but in the way: we cannot walk into it)
                             var t = new Threat { Name = "Briar mist", Source = m, Stationary = true, HurtsInAir = true, Margin = 0 };
                             for (int k = 0; k <= Horizon; k++)
@@ -11777,16 +11782,11 @@ namespace AnodyneSharp.Recording
                             }
                             threats.Add(t);
                         }
+                        var eyeDusts = eye.SubEntities().Where(d => d.exists && d is AnodyneSharp.Entities.Dust).ToList();
+                        var eyeMists = eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(m => m.Hitbox).ToList();
                         foreach (var f in eye.SubEntities().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
                         {
-                            var t = new Threat { Name = "Briar fireball", Source = f, Margin = 1 };
-                            for (int k = 0; k <= Horizon; k++)
-                            {
-                                var r = f.Hitbox;
-                                r.Offset((int)(f.velocity.X * k / 60f), (int)(f.velocity.Y * k / 60f));
-                                t.At[k] = r;
-                            }
-                            threats.Add(t);
+                            BriarShotThreats(threats, "Briar fireball", f, new Vector2(f.Hitbox.X, f.Hitbox.Y), f.velocity, 0, eyeDusts, eyeMists, 2);
                         }
                     }
                     else if (e is AnodyneSharp.Entities.Enemy.Go.HappyThorn.IceCrystal && e.velocity != Vector2.Zero)
@@ -11803,6 +11803,38 @@ namespace AnodyneSharp.Recording
                 }
             }
             return threats;
+        }
+
+        /// <summary>
+        /// A Briar fireball's way, and the four lanes (70px/s from the dust's corner) of the blast where it meets a dust first, so a
+        /// stand on a lane is left before the blast comes back at us, not when it is a frame away.
+        /// </summary>
+        private static void BriarShotThreats(List<Threat> threats, string name, Entity src, Vector2 at, Vector2 v, int from, List<Entity> dusts, List<Rectangle> mists, int depth)
+        {
+            var t = new Threat { Name = name, Source = src, Margin = 1 };
+            threats.Add(t);
+            for (int k = from; k <= Horizon; k++)
+            {
+                var r = new Rectangle((int)(at.X + v.X * (k - from) / 60f), (int)(at.Y + v.Y * (k - from) / 60f), 6, 6);
+                t.At[k] = r;
+                if (mists.Any(m => m.Intersects(r)))
+                {
+                    return;
+                }
+                var hit = dusts.FirstOrDefault(d => d.Hitbox.Intersects(r));
+                if (hit != null)
+                {
+                    if (depth > 0)
+                    {
+                        var rest = dusts.Where(d => d != hit).ToList();
+                        foreach (var dir in new[] { Vector2.UnitX, -Vector2.UnitX, Vector2.UnitY, -Vector2.UnitY })
+                        {
+                            BriarShotThreats(threats, "Briar lane", src, hit.Position, dir * 70, k + 1, rest, mists, depth - 1);
+                        }
+                    }
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -11823,11 +11855,33 @@ namespace AnodyneSharp.Recording
             int carrySince = 0, unstickUntil = -1;
             _briarSpotSwings.Clear();
             int planAt = -100;
+            var lastAt = Vector2.Zero;
+            int pushedFor = 0, nudgeUntil = -1, nudges = 0;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
+                    continue;
+                }
+                // Walking into something for a second and a half without budging (a mist's box is not quite the one we plan round): a
+                // few steps each way in turn, and plan again from there.
+                bool walking = BotRunner.LastHeld.Any(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right);
+                pushedFor = walking && Player.state == PlayerState.GROUND && (Player.Position - lastAt).Length() < 0.2f ? pushedFor + 1 : 0;
+                lastAt = Player.Position;
+                if (pushedFor > 90 && i >= nudgeUntil)
+                {
+                    nudgeUntil = i + 15;
+                    nudges++;
+                    pushedFor = 0;
+                    bomb = null;
+                }
+                if (i < nudgeUntil)
+                {
+                    BotRunner.NotStuck();
+                    BotRunner.Status = "Briar: stuck, a step out";
+                    ExactKeysUntil = BotRunner.Frame + 1;
+                    yield return K(new[] { KeyFunctions.Up, KeyFunctions.Left, KeyFunctions.Down, KeyFunctions.Right }[nudges % 4]);
                     continue;
                 }
                 var main = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BriarBossMain);
@@ -12043,7 +12097,13 @@ namespace AnodyneSharp.Recording
                             ExactKeysUntil = BotRunner.Frame + 1;
                             keys = kk.ToArray();
                         }
-                        if (grounded && (here - ss).Length() < 3 && threats.Any(t => t.Name == "Briar fireball" && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(pb))))
+                        bool shotAtUs = threats.Any(t => t.Name == "Briar fireball" && t.At.Any(r => r is Rectangle rr && rr.Intersects(pb)));
+                        if (!shotAtUs && threats.Any(t => t.Name == "Briar lane" && t.At.Any(r => r is Rectangle rr && rr.Intersects(pb))))
+                        {
+                            // our shot is past us and on its way to the dust: off the stand before its blast's lane comes back along it
+                            keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                        }
+                        if (grounded && (here - ss).Length() < 3 && threats.Any(t => t.Name is "Briar fireball" or "Briar lane" && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(pb))))
                         {
                             // a shot about to reach us where we wait: over it (it flies on to the dust behind, or on past)
                             keys = new[] { KeyFunctions.Cancel };
