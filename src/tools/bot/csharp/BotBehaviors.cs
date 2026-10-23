@@ -7880,6 +7880,8 @@ namespace AnodyneSharp.Recording
             return keys.ToArray();
         }
 
+        private static readonly Dictionary<Entity, (Vector2 pos, long frame, bool moved)> _trapLastPos = new();
+
         internal static KeyFunctions[] BulletHop(KeyFunctions[] held)
         {
             if (Player != null && Player.state == AnodyneSharp.Entities.PlayerState.AIR && BotRunner.Frame <= _hopUntil && _hopDir is KeyFunctions hd)
@@ -7926,6 +7928,25 @@ namespace AnodyneSharp.Recording
             {
                 foreach (var dt in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.DashTrap>().Where(e => e.exists && e.velocity != Vector2.Zero))
                 {
+                    // (one held up against something solid, an explosion's box say, keeps its velocity but goes nowhere: not coming)
+                    if (_trapLastPos.Count > 200)
+                    {
+                        _trapLastPos.Clear();
+                    }
+                    bool moved = true;
+                    if (_trapLastPos.TryGetValue(dt, out var lp) && lp.frame == BotRunner.Frame)
+                    {
+                        moved = lp.moved; // (asked twice in a frame)
+                    }
+                    else
+                    {
+                        moved = lp.frame != BotRunner.Frame - 1 || lp.pos != dt.Position;
+                        _trapLastPos[dt] = (dt.Position, BotRunner.Frame, moved);
+                    }
+                    if (!moved)
+                    {
+                        continue;
+                    }
                     // (relative to us: walking into the back of one going home at half speed is as much a hit as one coming at us)
                     var rel = dt.velocity - Player.velocity;
                     bool soon = Enumerable.Range(1, 9).Any(f =>
