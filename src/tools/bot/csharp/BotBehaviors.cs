@@ -41,11 +41,12 @@ namespace AnodyneSharp.Recording
                     yield return SightTrapWalk(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
                     continue;
                 }
-                if (System.Text.RegularExpressions.Regex.Match(tok, @"^([UDLRC])([UDLRC])(\d+)$") is { Success: true } two)
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^([UDLRC]{2,3})(\d+)$") is { Success: true } two)
                 {
-                    // RD30: hold two directions at once for n frames (wading across a current, leaning into it); UC20: jump holding Up
+                    // RD30: hold two directions at once for n frames (wading across a current, leaning into it); UC20: jump holding Up;
+                    // ULC2: a diagonal jump
                     static KeyFunctions Dir(char c) => c switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, 'C' => KeyFunctions.Cancel, _ => KeyFunctions.Right };
-                    yield return Hold(int.Parse(two.Groups[3].Value), Dir(two.Groups[1].Value[0]), Dir(two.Groups[2].Value[0]));
+                    yield return Hold(int.Parse(two.Groups[2].Value), two.Groups[1].Value.Select(Dir).ToArray());
                     continue;
                 }
                 if (tok == "heal")
@@ -76,6 +77,60 @@ namespace AnodyneSharp.Recording
                 {
                     // via<MAP>: to the Nexus (a dungeon's own pad first) and through the portal to MAP's pad
                     yield return ViaNexus(tok.Substring(3));
+                    continue;
+                }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^@([xy])(\d+),([udlr])$") is { Success: true } edge)
+                {
+                    // @x539,u: to hitbox x = 539 exactly (a 10px seam between two pits' cores), sliding that way (u) on the other axis the
+                    // while: a diagonal step is under a pixel, so it cannot skip the column
+                    bool xAxis = edge.Groups[1].Value == "x";
+                    int want = int.Parse(edge.Groups[2].Value);
+                    var side = edge.Groups[3].Value[0] switch { 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, 'l' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    for (int w = 0; w < 120; w++)
+                    {
+                        int at = xAxis ? Player.Hitbox.X : Player.Hitbox.Y;
+                        if (at == want)
+                        {
+                            break;
+                        }
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        var toward = xAxis ? (at > want ? KeyFunctions.Left : KeyFunctions.Right) : (at > want ? KeyFunctions.Up : KeyFunctions.Down);
+                        yield return K(toward, side);
+                    }
+                    continue;
+                }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^\^([xy])(\d+),([udlr]),(\d+)$") is { Success: true } seam)
+                {
+                    // ^x731,u,90: hold u for 90 frames along the line hitbox x = 731, steering back onto it each frame (a pixel seam
+                    // between pits, with steam or a current pushing us off it)
+                    bool xAxis = seam.Groups[1].Value == "x";
+                    int want = int.Parse(seam.Groups[2].Value);
+                    var side = seam.Groups[3].Value[0] switch { 'u' => KeyFunctions.Up, 'd' => KeyFunctions.Down, 'l' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    int frames = int.Parse(seam.Groups[4].Value);
+                    for (int w = 0; w < frames; w++)
+                    {
+                        int at = xAxis ? Player.Hitbox.X : Player.Hitbox.Y;
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        if (at == want)
+                        {
+                            yield return K(side);
+                            continue;
+                        }
+                        var toward = xAxis ? (at > want ? KeyFunctions.Left : KeyFunctions.Right) : (at > want ? KeyFunctions.Up : KeyFunctions.Down);
+                        yield return K(toward, side);
+                    }
+                    continue;
+                }
+                if (tok == "!1" || tok == "!0")
+                {
+                    // !1 ... !0: the holds between go to the game exactly (no hole, spike or contact guard)
+                    ExactHolds = tok == "!1";
+                    continue;
+                }
+                if (tok == "goswap")
+                {
+                    // goswap: solve this screen's GO tile puzzle with the swap broom
+                    yield return GoSwapPuzzle();
                     continue;
                 }
                 if (tok.StartsWith("lift") && int.TryParse(tok.Substring(4), out int floor))
@@ -6206,6 +6261,92 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Opens the pause menu, goes to the Map tab and takes the "return to this area's Nexus pad" warp.</summary>
         /// <summary>Pause menu -> Items (the second tab) -> down to broom row k (0 plain, 1 extend, 2 widen, 3 swap) -> equip -> close.</summary>
+        /// <summary>
+        /// A GO tile puzzle (GoDetector): it is solved once the tiles at its check offsets read 60, 61, 62... in order. With the swap broom
+        /// (the Transformer) on, a press shows the selector on the tile ahead, a second press marks it and a third swaps the marked tile with
+        /// the one then ahead. So for each check not yet right: mark its slot, walk to where its tile lies and swap the two.
+        /// </summary>
+        protected static IEnumerable<object> GoSwapPuzzle()
+        {
+            var det = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.GoDetector);
+            if (det == null)
+            {
+                System.Console.Error.WriteLine("  go puzzle: no detector here (solved already)");
+                yield break;
+            }
+            var checks = (List<Point>)typeof(AnodyneSharp.Entities.Gadget.GoDetector).GetField("checks", Priv).GetValue(det);
+            var origin = GlobalState.Map.ToMapLoc(det.Position);
+            int Tile(Point p) => GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, p);
+            var was = GlobalState.inventory.EquippedBroom;
+            if (was != AnodyneSharp.Entities.BroomType.Transformer)
+            {
+                yield return MenuEquipBroom(3);
+            }
+            for (int i = 0; i < checks.Count; i++)
+            {
+                var slot = origin + checks[i];
+                if (Tile(slot) == 60 + i)
+                {
+                    continue;
+                }
+                // the nearest tile of this number on the screen that is not already in its own slot
+                var g = Grid;
+                var from = Enumerable.Range(0, 100).Select(k => new Point(g.X * 10 + k % 10, g.Y * 10 + k / 10))
+                    .Where(p => Tile(p) == 60 + i && !checks.Select((c, j) => (origin + c, j)).Any(cj => cj.Item1 == p && Tile(p) == 60 + cj.j))
+                    .OrderBy(p => Math.Abs(p.X - slot.X) + Math.Abs(p.Y - slot.Y)).Cast<Point?>().FirstOrDefault();
+                if (from == null)
+                {
+                    throw new InvalidOperationException($"bot: go puzzle: no tile {60 + i} on screen {g} for the slot {slot}");
+                }
+                System.Console.Error.WriteLine($"  go puzzle: tile {60 + i} from {from} into {slot}");
+                BotRunner.Status = $"go puzzle: tile {60 + i} into {slot}";
+                yield return FaceTile(slot);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+                yield return FaceTile(from.Value);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(20);
+                BotNav.ResetDustCache();
+                if (Tile(slot) != 60 + i)
+                {
+                    throw new InvalidOperationException($"bot: go puzzle: the swap of {from} and {slot} did not take (slot reads {Tile(slot)})");
+                }
+            }
+            yield return Wait(30);
+            System.Console.Error.WriteLine($"  go puzzle: solved={!det.exists}");
+            // back to the broom we fought with (the menu's rows: plain, extend, widen)
+            yield return MenuEquipBroom(was == AnodyneSharp.Entities.BroomType.Long ? 1 : was == AnodyneSharp.Entities.BroomType.Wide ? 2 : 0);
+        }
+
+        /// <summary>Stands on a walkable tile beside tile t (the nearest by path) and turns to face it.</summary>
+        protected static IEnumerable<object> FaceTile(Point t)
+        {
+            var here = BotNav.TileOf(Pos);
+            (Point stand, KeyFunctions key)? best = null;
+            int bestLen = int.MaxValue;
+            foreach (var (d, key) in new[] { (new Point(0, 1), KeyFunctions.Up), (new Point(0, -1), KeyFunctions.Down), (new Point(1, 0), KeyFunctions.Left), (new Point(-1, 0), KeyFunctions.Right) })
+            {
+                var stand = new Point(t.X + d.X, t.Y + d.Y);
+                var p = stand == here ? new List<Point>() : BotNav.FindPath(here, q => q == stand, stand, strict: true);
+                if (p != null && p.Count < bestLen)
+                {
+                    bestLen = p.Count;
+                    best = (stand, key);
+                }
+            }
+            if (best == null)
+            {
+                throw new InvalidOperationException($"bot: no walkable tile beside {t} on {Map}");
+            }
+            var c = BotNav.CentreOf(best.Value.stand);
+            yield return GoTo(c.X, c.Y);
+            yield return WalkTo(c.X, c.Y, tol: 1f);
+            yield return Hold(2, best.Value.key);
+            yield return Wait(4);
+        }
+
         protected static IEnumerable<object> MenuEquipBroom(int k)
         {
             yield return Tap(KeyFunctions.Pause);
@@ -11190,6 +11331,322 @@ namespace AnodyneSharp.Recording
             throw new InvalidOperationException($"bot: Contort fight timed out at {Pos}");
         }
 
+        private static readonly System.Reflection.FieldInfo SageHealthField = typeof(AnodyneSharp.Entities.Enemy.Etc.SageBoss).GetField("_health", Priv);
+        private static readonly System.Reflection.FieldInfo SageCanHurtField = typeof(AnodyneSharp.Entities.Enemy.Etc.SageBoss).GetField("_canHurt", Priv);
+        private static readonly System.Reflection.FieldInfo SageLogicField = typeof(AnodyneSharp.Entities.Enemy.Etc.SageBoss).GetField("_stateLogic", Priv);
+        private static readonly Dictionary<Entity, float> _sageOrbOff = new Dictionary<Entity, float>();
+        private static readonly Dictionary<Entity, float> _sageOrbRate = new Dictionary<Entity, float>();
+
+        /// <summary>A local of the Sage's running stage (its iterator keeps them as fields named &lt;name&gt;5__n), or null.</summary>
+        private static object SageStageLocal(Entity sage, string name)
+        {
+            var logic = SageLogicField?.GetValue(sage);
+            var f = logic?.GetType().GetFields(Priv | System.Reflection.BindingFlags.Public).FirstOrDefault(x => x.Name.StartsWith("<" + name + ">"));
+            return f?.GetValue(logic);
+        }
+
+        /// <summary>
+        /// The Sage and its attacks, frame by frame. The arena is a 64px wide hall (the screen's x 48..112, y 16..144). The Sage's body hurts
+        /// in the air too while it fights; the rest hurt only on the ground (they are jumped):
+        ///   lasers: 56px bars that fall down the hall at 50px/s from the top every 1.6/1.4/1.2s (stage 1, the next one from its clock), or
+        ///     lie still along the hall's top and bottom (stages 2 and 3);
+        ///   orbs: 8px balls held above, below and to the sides of the body, in stage 3 pulsing out to 34px and back each second;
+        ///   bullets: 8px balls that fall down one of four lanes (stage 4).
+        /// The body bounces off the hall's walls at its speed on each axis.
+        /// </summary>
+        private static List<Threat> SageThreats(Entity sage)
+        {
+            var tl = new Vector2(Grid.X * 160, Grid.Y * 160);
+            float minX = tl.X + 48, maxX = tl.X + 112 - sage.width, minY = tl.Y + 16, maxY = tl.Y + 144 - sage.height;
+            bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+            var threats = new List<Threat>();
+            var sp = new Rectangle?[Horizon + 1];
+            {
+                float x = sage.Position.X, y = sage.Position.Y, vx = sage.velocity.X / 60f, vy = sage.velocity.Y / 60f;
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    sp[f] = new Rectangle((int)x, (int)y, (int)sage.width, (int)sage.height);
+                    x += vx;
+                    y += vy;
+                    if (x < minX || x > maxX)
+                    {
+                        vx = -vx;
+                        x = Math.Clamp(x, minX, maxX);
+                    }
+                    if (y < minY || y > maxY)
+                    {
+                        vy = -vy;
+                        y = Math.Clamp(y, minY, maxY);
+                    }
+                }
+            }
+            int hpNow = SageHealthField?.GetValue(sage) is int hv ? hv : 0;
+            if (canHurt || hpNow > 0)
+            {
+                // (between stages it is harmless, but the next stage's orbs appear round it and its lasers along the hall's ends: keep off)
+                threats.Add(new Threat { Name = "Sage", Source = sage, At = sp.ToArray(), Margin = canHurt ? 3 : 18, HurtsInAir = true });
+                // The hall's two ends: stage 2 lays its lasers along them (unseen until then) and stage 4's bullets start in the top one.
+                foreach (var end in new[] { new Rectangle((int)tl.X + 48, (int)tl.Y + 16, 64, 13), new Rectangle((int)tl.X + 48, (int)tl.Y + 131, 64, 13) })
+                {
+                    var th = new Threat { Name = "Sage hall end", Margin = 1, Stationary = true };
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        th.At[f] = end;
+                    }
+                    threats.Add(th);
+                }
+            }
+            foreach (var e in sage.SubEntities().Where(e => e.exists))
+            {
+                if (!(e is AnodyneSharp.Entities.Enemy.Etc.SageBoss.HurtingEntity he) || !he.IsHurting)
+                {
+                    continue;
+                }
+                var th = new Threat { Name = e.GetType().Name, Source = e, Margin = 1 };
+                var hb = e.Hitbox;
+                if (e is AnodyneSharp.Entities.Enemy.Etc.SageBoss.ShortAttack sa && !sa.MapColission)
+                {
+                    // an orb: where it sits off the body (which side, how far out) and which way that distance is going
+                    var rel = e.Position - sage.Position;
+                    int side = rel.Y < -5 ? 0 : rel.Y > 8 ? 1 : rel.X < 0 ? 2 : 3;
+                    float off = side switch { 0 => -10 - rel.Y, 1 => rel.Y - 12, 2 => -12 - rel.X, _ => rel.X - 14 };
+                    float rate = _sageOrbOff.TryGetValue(e, out var po) ? off - po : 0f;
+                    _sageOrbOff[e] = off;
+                    if (Math.Abs(rate) < 0.2f && _sageOrbRate.TryGetValue(e, out var pr) && off > 1 && off < 33)
+                    {
+                        rate = pr; // (a frame's step can round to nothing mid-pulse)
+                    }
+                    _sageOrbRate[e] = rate;
+                    float step = Math.Abs(rate) >= 0.2f ? Math.Sign(rate) * 34f / 60f : 0f;
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        var b = sp[f].Value;
+                        float o = Math.Clamp(off, 0, 34);
+                        th.At[f] = side switch
+                        {
+                            0 => new Rectangle(b.X + (b.Width - hb.Width) / 2, (int)(b.Y - 10 - o), hb.Width, hb.Height),
+                            1 => new Rectangle(b.X + (b.Width - hb.Width) / 2, (int)(b.Y + 12 + o), hb.Width, hb.Height),
+                            2 => new Rectangle((int)(b.X - 12 - o), b.Y, hb.Width, hb.Height),
+                            _ => new Rectangle((int)(b.X + 14 + o), b.Y, hb.Width, hb.Height),
+                        };
+                        off += step;
+                        if (off > 34 || off < 0)
+                        {
+                            step = -step;
+                            off = Math.Clamp(off, 0, 34);
+                        }
+                    }
+                    th.Margin = 2;
+                }
+                else
+                {
+                    // a laser or a bullet: straight on until it meets the hall's wall, where it is gone
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        var r = new Rectangle((int)(hb.X + e.velocity.X / 60f * f), (int)(hb.Y + e.velocity.Y / 60f * f), hb.Width, hb.Height);
+                        if (r.Bottom > tl.Y + 144 + 1)
+                        {
+                            break;
+                        }
+                        th.At[f] = r;
+                    }
+                }
+                threats.Add(th);
+            }
+            // Stage 1's next laser, from its clock (it appears at the hall's top: no time to see it coming otherwise)
+            if (canHurt && SageStageLocal(sage, "bClock") is float clock && SageStageLocal(sage, "bDelay") is float[] delays
+                && SageHealthField?.GetValue(sage) is int hp && hp > 0)
+            {
+                float delay = delays[Math.Clamp(3 - hp, 0, delays.Length - 1)];
+                var th = new Threat { Name = "Sage next laser", Margin = 1 };
+                for (int n = 0; n < 3; n++)
+                {
+                    int k0 = (int)Math.Ceiling((delay - clock + n * delay) * 60f);
+                    if (n == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Frame % 10 == 0)
+                    {
+                        System.Console.Error.WriteLine($"  sage next laser in {k0} frames (clock {clock:0.00}/{delay})");
+                    }
+                    for (int f = Math.Max(k0, 0); f <= Horizon; f++)
+                    {
+                        var r = new Rectangle((int)(tl.X + 52), (int)(tl.Y + 20 + 50f / 60f * (f - k0)), 56, 10);
+                        if (r.Bottom > tl.Y + 145)
+                        {
+                            break;
+                        }
+                        th.At[f] = th.At[f] is Rectangle o ? Rectangle.Union(o, r) : r;
+                    }
+                }
+                threats.Add(th);
+            }
+            return threats;
+        }
+
+        /// <summary>
+        /// The Sage (Terminal): four stages of 3, 3, 4 and 3 hits, each hit followed by 1s (stage 4: 2.5s) of flicker in which it cannot be hurt.
+        /// Everything it throws is predicted (SageThreats) for the space-time planner, which walks and jumps clear of it; a swing goes in when
+        /// the broom will meet the body and standing still for the swing is safe.
+        /// </summary>
+        protected static IEnumerable<object> SageFight(int timeoutFrames = 20000)
+        {
+            BotRunner.BossDamageBudget = 3; // TODO: tune down once the fight is clean over a few seeds
+            _sageOrbOff.Clear();
+            _sageOrbRate.Clear();
+            int lastSwing = -100;
+            int lastHearts = GlobalState.CUR_HEALTH;
+            var sageFace = Facing.UP;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var sage = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Etc.SageBoss);
+                if (sage == null)
+                {
+                    BotRunner.BossDamageBudget = 0;
+                    yield break;
+                }
+                BotRunner.NotStuck();
+                int hp = SageHealthField?.GetValue(sage) is int h ? h : -1;
+                bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+                var threats = SageThreats(sage);
+                var pb = Player.Hitbox;
+                var here = new Vector2(pb.X, pb.Y);
+                if (GlobalState.CUR_HEALTH < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  SAGE HURT f{i} by {GlobalState.DamageDealer} P={pb} air={Player.state} S={sage.Hitbox} v={sage.velocity} threats={string.Join(",", threats.Select(t => $"{t.Name}@{t.At[0]}"))}");
+                }
+                lastHearts = GlobalState.CUR_HEALTH;
+                bool vulnerable = canHurt && !sage._flickering;
+                BotRunner.Status = $"Sage fight: hp {hp}{(vulnerable ? " open" : "")} threats {threats.Count}";
+                var sageAt8 = threats.FirstOrDefault(t => t.Source == sage)?.At[8] ?? sage.Hitbox;
+                Rectangle BroomRect(Facing f)
+                {
+                    return f switch
+                    {
+                        Facing.UP => new Rectangle(pb.X - 5, pb.Y - 17, 24, 12),
+                        Facing.DOWN => new Rectangle(pb.X - 11, pb.Bottom + 4, 24, 12),
+                        Facing.LEFT => new Rectangle(pb.X - 13, pb.Y - 5, 12, 24),
+                        _ => new Rectangle(pb.Right + 3, pb.Y - 5, 12, 24)
+                    };
+                }
+                bool StandingSafe(int frames)
+                {
+                    for (int f = 1; f <= Math.Min(frames, Horizon); f++)
+                    {
+                        foreach (var th in threats)
+                        {
+                            if (th.At[f] is Rectangle r)
+                            {
+                                r.Inflate(th.Margin, th.Margin);
+                                if (pb.Intersects(r))
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                if (Player.state == PlayerState.GROUND && vulnerable && i - lastSwing > 24 && !BroomRect(Player.facing).Intersects(sageAt8) && StandingSafe(24)
+                    && new[] { Facing.UP, Facing.LEFT, Facing.RIGHT, Facing.DOWN }.FirstOrDefault(f => BroomRect(f).Intersects(sageAt8)) is var turnTo
+                    && BroomRect(turnTo).Intersects(sageAt8))
+                {
+                    // in reach, only facing the wrong way: turn to it (a frame's step) and swing next
+                    yield return K(turnTo == Facing.UP ? KeyFunctions.Up : turnTo == Facing.DOWN ? KeyFunctions.Down : turnTo == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right);
+                    continue;
+                }
+                if (Player.state == PlayerState.GROUND && vulnerable && BroomRect(Player.facing).Intersects(sageAt8) && StandingSafe(22) && i - lastSwing > 24)
+                {
+                    lastSwing = i;
+                    if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                    {
+                        System.Console.Error.WriteLine($"  sage SWING f{i} hp={hp} P={pb} face={Player.facing} S={sage.Hitbox} @8={sageAt8}");
+                    }
+                    yield return K(KeyFunctions.Accept);
+                    continue;
+                }
+                // Where to be: at striking distance from whichever side can be reached safely (below first: it keeps to the hall's top).
+                var cands = new[]
+                {
+                    (new Vector2(sageAt8.Center.X - 5, sageAt8.Bottom + 6), Facing.UP),
+                    (new Vector2(sageAt8.Left - 14, sageAt8.Center.Y - 6), Facing.RIGHT),
+                    (new Vector2(sageAt8.Right + 4, sageAt8.Center.Y - 6), Facing.LEFT),
+                    (new Vector2(sageAt8.Center.X - 5, sageAt8.Top - 18), Facing.DOWN),
+                };
+                // Never wait in its way: with it moving fast on an axis, the spot on the side it is heading for is where it will run us over.
+                // Nor on the side it is leaving if it turns back off a wall soon: it comes back faster than we walk.
+                var sv = sage.velocity;
+                var bodyAt = threats.FirstOrDefault(t => t.Source == sage)?.At;
+                bool TurnsSoon(bool yAxis)
+                {
+                    if (bodyAt == null)
+                    {
+                        return false;
+                    }
+                    for (int f = 0; f < 45 && f + 1 <= Horizon; f++)
+                    {
+                        float d = yAxis ? bodyAt[f + 1].Value.Y - bodyAt[f].Value.Y : bodyAt[f + 1].Value.X - bodyAt[f].Value.X;
+                        if (d * (yAxis ? sv.Y : sv.X) < 0)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                bool turnY = Math.Abs(sv.Y) > 30 && TurnsSoon(true), turnX = Math.Abs(sv.X) > 30 && TurnsSoon(false);
+                cands = cands.Where(c => !(c.Item2 == Facing.UP && (sv.Y > 30 || turnY) || c.Item2 == Facing.DOWN && (sv.Y < -30 || turnY)
+                    || c.Item2 == Facing.LEFT && (sv.X > 30 || turnX) || c.Item2 == Facing.RIGHT && (sv.X < -30 || turnX))).ToArray();
+                var goal = here;
+                var face = Facing.UP;
+                KeyFunctions[] keys = null;
+                if (!canHurt && hp <= 0)
+                {
+                    // the intro: walk up under it until it notices us (within 32px, on the ground) and its talk starts
+                    goal = new Vector2(sageAt8.Center.X - 5, sageAt8.Bottom + 16);
+                    keys = SpaceTimeMove(goal, threats, useCache: false);
+                }
+                else if (!canHurt)
+                {
+                    // between stages: well away from it (the next stage's orbs appear round it), in the middle of the hall's lower half
+                    goal = new Vector2(Grid.X * 160 + 75, Grid.Y * 160 + 100);
+                    if (Math.Abs(sage.Hitbox.Center.Y - (goal.Y + 6)) < 40)
+                    {
+                        goal.Y = Grid.Y * 160 + 40; // (it came back down this far: the upper half then)
+                    }
+                    keys = SpaceTimeMove(goal, threats.Where(t => t.Source != sage).ToList(), useCache: false);
+                }
+                else
+                {
+                    foreach (var (spot, f) in cands.OrderBy(c => c.Item2 == sageFace ? 0 : 1).ThenBy(c => (c.Item1 - here).LengthSquared()))
+                    {
+                        var k = SpaceTimeMove(spot, threats, useCache: false);
+                        if (k != null && SpaceTime.Reached)
+                        {
+                            (goal, face, keys) = (spot, f, k);
+                            sageFace = f; // (keep to one side while it can be reached: two about as near made us dither between them)
+                            break;
+                        }
+                    }
+                    if (keys == null)
+                    {
+                        keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                    }
+                }
+                if (keys != null && keys.Length == 0 && canHurt && Player.facing != face && (here - goal).Length() < 4)
+                {
+                    keys = new[] { face == Facing.UP ? KeyFunctions.Up : face == Facing.DOWN ? KeyFunctions.Down : face == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right };
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                {
+                    System.Console.Error.WriteLine($"  sage f{i} hp={hp} hurt={canHurt} vuln={vulnerable} P={pb} {Player.state} S={sage.Hitbox} v={sage.velocity} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}] threats={threats.Count}");
+                }
+                yield return keys ?? K();
+            }
+            throw new InvalidOperationException($"bot: Sage fight timed out at {Pos}");
+        }
+
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -14056,6 +14513,11 @@ namespace AnodyneSharp.Recording
             if (Enemies().Any(e => e.GetType().Name == "Seer"))
             {
                 yield return SeerFight();
+                yield break;
+            }
+            if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Etc.SageBoss))
+            {
+                yield return SageFight();
                 yield break;
             }
             if (Enemies().Any(IsEyeBoss))

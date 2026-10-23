@@ -1023,10 +1023,17 @@ namespace AnodyneSharp.Recording
             yield return K();
         }
 
+        /// <summary>Set by the token !1 (cleared by !0): held keys go to the game as they are, past the per-frame guards (a hand-timed hop or a step along a pit's rim).</summary>
+        internal static bool ExactHolds;
+
         protected static IEnumerable<object> Hold(int frames, params KeyFunctions[] k)
         {
             for (int i = 0; i < frames; i++)
             {
+                if (ExactHolds)
+                {
+                    ExactKeysUntil = BotRunner.Frame + 1;
+                }
                 yield return K(k);
             }
         }
@@ -1328,6 +1335,24 @@ namespace AnodyneSharp.Recording
                 }
                 return true;
             }
+            const int PadRest = 130;
+            // Standing and waiting: hop what is about to sweep over us (a spike roller crossing the pad), as long as it spares a jumper.
+            KeyFunctions[] WaitKeys()
+            {
+                if (Player.state != PlayerState.GROUND || !GlobalState.inventory.CanJump)
+                {
+                    return K();
+                }
+                var box = Player.Hitbox;
+                var threats = PredictThreats(null);
+                bool soon = threats.Any(t => !t.HurtsInAir && Enumerable.Range(0, 7).Any(f => t.At[f] is Rectangle r && r.Intersects(box)));
+                bool airSafe = !threats.Any(t => t.HurtsInAir && Enumerable.Range(0, 30).Any(f => t.At[f] is Rectangle r && r.Intersects(box)));
+                if (soon && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  dash leap wait f{BotRunner.Frame}: about to be hit at {box}, hop {airSafe}");
+                }
+                return soon && airSafe ? K(KeyFunctions.Cancel) : K();
+            }
             bool HereThreatened()
             {
                 var threats = PredictThreats(null);
@@ -1337,7 +1362,7 @@ namespace AnodyneSharp.Recording
             for (int w = 0; w < 300 && Vector2.Distance(sc, Pos) > 1f && !BackClear() && !HereThreatened(); w++)
             {
                 BotRunner.Status = $"dash leap to {b.X},{b.Y}: wait to back up to {start}";
-                yield return K();
+                yield return WaitKeys();
             }
             for (int w = 0; w < 120 && Vector2.Distance(sc, Pos) > 1f; w++)
             {
@@ -1353,9 +1378,10 @@ namespace AnodyneSharp.Recording
                 }
                 yield return K(keys.ToArray());
             }
-            for (int w = 0; w < 65; w++)
+            var restPad = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && BotNav.TileOf(e.Position + new Vector2(3, 2)) == BotNav.TileOf(Pos));
+            for (int w = 0; w < 65 && !(restPad != null && restPad.opacity >= 1f); w++)
             {
-                yield return K(); // (a pad we stood on rests for a second before it pushes again)
+                yield return K(); // (a pad we stood on rests for a second before it pushes again; one we only landed on is ready now)
             }
             // Wait for a run and jump that nothing meets: on the ground anything that hurts, in the air what hurts a jumper (a fire pillar
             // burning where we come down, say). The run is ~1.5x walking speed, the jump ~28 frames.
@@ -1377,6 +1403,29 @@ namespace AnodyneSharp.Recording
                     {
                         if (threats.Any(t => (!air || t.HurtsInAir) && t.At[k] is Rectangle r && r.Intersects(box)))
                         {
+                            return false;
+                        }
+                    }
+                }
+                if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"    leap f{BotRunner.Frame}: run clear, pad landing {BotNav.DashPads().ContainsKey(b)}");
+                }
+                if (BotNav.DashPads().TryGetValue(b, out var landDir) && !BotNav.Walkable(new Point(b.X + landDir.X, b.Y + landDir.Y)))
+                {
+                    // Landing on another pad that sends us on over a pit (a chain of leaps): we stand on it while it re-arms and then take off,
+                    // so the bars that sweep the room must keep off that spot for so long too (they are too wide to hop where they turn at a wall).
+                    var bars = SweeperTracks(total + PadRest);
+                    var lb = landBox;
+                    lb.Inflate(2, 2);
+                    for (int f = total; f <= total + PadRest; f++)
+                    {
+                        if (bars.Any(tr => tr.At[f] is Rectangle r && r.Intersects(lb)))
+                        {
+                            if (Environment.GetEnvironmentVariable("ANODYNE_LEAP_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"    leap f{BotRunner.Frame}: landing pad {b} swept at +{f} (bars {bars.Count}: {string.Join(" ", bars.Select(tr => tr.At[f]?.ToString() ?? "-"))})");
+                            }
                             return false;
                         }
                     }
@@ -1407,13 +1456,13 @@ namespace AnodyneSharp.Recording
                         break;
                     }
                     BotRunner.Status = $"dash leap to {b.X},{b.Y}: on the pad, wait for it to re-arm ({armIn}) and a clear run";
-                    yield return K();
+                    yield return K(); // (no hop here: in the air as it re-arms, its push is lost and the leap falls short)
                 }
             }
             for (int w = 0; w < 400 && !Clear(); w++)
             {
                 BotRunner.Status = $"dash leap to {b.X},{b.Y}: wait for a clear run";
-                yield return K();
+                yield return WaitKeys();
             }
             BotRunner.Status = $"dash leap to {b.X},{b.Y}: run";
             bool vertical = d.Y != 0;
@@ -2413,7 +2462,12 @@ namespace AnodyneSharp.Recording
             {
                 if (Talking)
                 {
+                    // (a talk on the way, like the Sage stepping in at the Terminal's card gate, does not use up the walk's time)
                     still = 0;
+                    if (timeout < 20000)
+                    {
+                        timeout++;
+                    }
                     yield return BotScript.AdvanceKeys(i);
                     continue;
                 }
