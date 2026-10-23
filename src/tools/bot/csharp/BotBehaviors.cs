@@ -1152,6 +1152,18 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
+        /// <summary>Does the broom reach e from where we stand, or from a few px nearer it (a raft drifts that far for a nudge)?</summary>
+        private static bool RaftBroomReaches(Entity e)
+        {
+            var v = e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2();
+            var f = Math.Abs(v.X) > Math.Abs(v.Y) ? (v.X < 0 ? Facing.LEFT : Facing.RIGHT) : (v.Y < 0 ? Facing.UP : Facing.DOWN);
+            var near = Player.Hitbox;
+            var step = Entity.FacingDirection(f) * 4f;
+            near.Offset((int)step.X, (int)step.Y);
+            // (no nearer through a wall: a Frog the far side of one is out of reach whatever the offset says)
+            return WallFree(near) && e.Hitbox.Intersects(BroomBoxAt(Player.Position + step, f));
+        }
+
         private static bool WallFree(Rectangle r)
         {
             for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
@@ -6671,7 +6683,7 @@ namespace AnodyneSharp.Recording
                         .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
                         .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f))
                         // (a Frog the moment it is in the broom's reach: it spits at anything within 64px, stalled or not)
-                        .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering) // (even one the fight passed over)
+                        .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering && RaftBroomReaches(e)) // (even one the fight passed over)
                             .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
                             .Where(v => Math.Max(Math.Abs(v.X), Math.Abs(v.Y)) < 36f && Math.Min(Math.Abs(v.X), Math.Abs(v.Y)) < 10f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
@@ -6686,7 +6698,7 @@ namespace AnodyneSharp.Recording
                         // (a Frog a pixel past the broom's reach: drift that way the pixel first, it does not move)
                         var frogFoe = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
                             && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f);
-                        for (int nudge = 0; nudge < 8 && frogFoe != null && frogFoe.exists && !frogFoe.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant)); nudge++)
+                        for (int nudge = 0; nudge < 8 && frogFoe != null && frogFoe.exists && !frogFoe.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant)) && !frogFoe.Hitbox.Intersects(new Rectangle(Player.Hitbox.X - 4, Player.Hitbox.Y - 4, Player.Hitbox.Width + 8, Player.Hitbox.Height + 8)); nudge++)
                         {
                             yield return K(faceKey);
                         }
@@ -6740,6 +6752,10 @@ namespace AnodyneSharp.Recording
                     bool onlySlowChasers = dangersNow.Count > 0 && dangersNow.All(d => d is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && !DormantDustmaid(d));
                     bool chaserClose = dangersNow.Any(d => Vector2.Distance(d.Hitbox.Center.ToVector2(), pcr) < 20f);
                     var moveKeys = onlySlowChasers && !chaserClose ? K(rideKey) : SafeMove(rideKey, null, 16f);
+                    if (wet && HasRaft() && RaftBouncerDodge(rideKey, cur) is KeyFunctions[] bd)
+                    {
+                        moveKeys = bd;
+                    }
                     var rideKeys = wet ? KeepOnWater(moveKeys, rideKey) : moveKeys;
                     if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
@@ -6804,6 +6820,78 @@ namespace AnodyneSharp.Recording
         /// A dodge picked on the raft must not step off it: a sidestep by the bank puts us ashore next to whatever we were dodging. Drops
         /// any direction whose next few pixels leave the water (the raft goes on along the route if nothing is left).
         /// </summary>
+        /// <summary>
+        /// A Contort (or its pieces) drifting over the water we ride: the current carries us whatever we press, so SafeMove's walking
+        /// steps are the wrong model. Try holding each way (or nothing) with the current added and keep the one that meets it last;
+        /// null when none is near or the ride's own way is clear.
+        /// </summary>
+        private static KeyFunctions[] RaftBouncerDodge(KeyFunctions rideKey, Point cur)
+        {
+            var pc = Player.Hitbox.Center.ToVector2();
+            var bouncers = PredictThreats(null).Where(t => t.Source is AnodyneSharp.Entities.Enemy.Circus.Contort or AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall
+                && (t.Source.Hitbox.Center.ToVector2() - pc).Length() < 80).ToList();
+            if (bouncers.Count == 0)
+            {
+                return null;
+            }
+            var flow = BotNav.FlowDir(cur) switch
+            {
+                Touching.LEFT => new Vector2(-35f, 0),
+                Touching.RIGHT => new Vector2(35f, 0),
+                Touching.UP => new Vector2(0, -35f),
+                Touching.DOWN => new Vector2(0, 35f),
+                _ => Vector2.Zero,
+            } / 60f;
+            int FirstHit(KeyFunctions? k)
+            {
+                var v = flow + (k is KeyFunctions kk ? DirVector(kk) * (70f / 60f) : Vector2.Zero);
+                var p = new Vector2(Player.Hitbox.X, Player.Hitbox.Y);
+                for (int f = 1; f <= 40; f++)
+                {
+                    var np = p + v;
+                    var nb = new Rectangle((int)np.X, (int)np.Y, Player.Hitbox.Width, Player.Hitbox.Height);
+                    if (WallFree(nb))
+                    {
+                        p = np;
+                    }
+                    var box = new Rectangle((int)p.X, (int)p.Y, Player.Hitbox.Width, Player.Hitbox.Height);
+                    foreach (var t in bouncers)
+                    {
+                        if (t.At[Math.Min(f, t.At.Length - 1)] is Rectangle r)
+                        {
+                            r.Inflate(2, 2);
+                            if (r.Intersects(box))
+                            {
+                                return f;
+                            }
+                        }
+                    }
+                }
+                return int.MaxValue;
+            }
+            int ride = FirstHit(rideKey);
+            if (ride == int.MaxValue)
+            {
+                return null;
+            }
+            KeyFunctions? best = rideKey;
+            int bestHit = ride;
+            foreach (var k in new KeyFunctions?[] { null, KeyFunctions.Up, KeyFunctions.Down, KeyFunctions.Left, KeyFunctions.Right })
+            {
+                int h = FirstHit(k);
+                if (h > bestHit)
+                {
+                    bestHit = h;
+                    best = k;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
+            {
+                RaftLog($"  bouncer dodge: ride {rideKey} meets one at f{ride}, holding {best?.ToString() ?? "nothing"} (f{(bestHit == int.MaxValue ? "-" : bestHit.ToString())})");
+            }
+            return best is KeyFunctions bk ? K(bk) : K();
+        }
+
         private static KeyFunctions[] KeepOnWater(KeyFunctions[] keys, KeyFunctions rideKey)
         {
             // (half a tile of margin: the game's idea of "on the water" is not quite our centre tile)
