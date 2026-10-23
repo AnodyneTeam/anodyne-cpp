@@ -57,6 +57,8 @@ namespace AnodyneSharp.Recording
             _gatesClosed = new HashSet<Point>();
             _edgeGates = new HashSet<Point>();
             _keyLocked = new HashSet<Point>();
+            // (only the blocks still shut: an opened one stayed in here and KeyLimited, with no key left, then shut it for good)
+            _keyBlocks.Clear();
             // A key block with a key in hand is a door we open on the way (the walker does, on reaching it): plan through it.
             bool haveKey = GlobalState.inventory.GetCurrentMapKeys() > 0;
             foreach (var e in BotRunner.Entities())
