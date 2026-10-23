@@ -1711,6 +1711,7 @@ namespace AnodyneSharp.Recording
                         }
                         for (int w = 0; w < 15; w++, gateWait++)
                         {
+                            BotRunner.NotStuck(); // (waiting on purpose, and briefly)
                             yield return K();
                         }
                         goto replan;
