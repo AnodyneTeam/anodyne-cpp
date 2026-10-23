@@ -8359,7 +8359,39 @@ namespace AnodyneSharp.Recording
         /// are in its band, at 80px/s): true when the band starts a few pixels ahead, is narrow enough for one jump to clear, and the far
         /// side is floor out of every other trap's line. The air is safe from it.
         /// </summary>
-        protected static bool TrapLineToJump(KeyFunctions dir)
+        protected static bool TrapLineToJump(KeyFunctions dir) => TrapLineToJump(dir, 0);
+
+        /// <summary>
+        /// Short of the take-off for TrapLineToJump by a few pixels, and that far is safe to walk (still out of the line after a step):
+        /// creep up to it. A dodge held a bot 3-4px back from (5,6)'s trap line, a jump too short from there, till it gave up.
+        /// </summary>
+        protected static bool TrapLineCreep(KeyFunctions dir)
+        {
+            if (TrapLineToJump(dir) || !TrapLineToJump(dir, 6))
+            {
+                return false;
+            }
+            var pb = Player.Hitbox;
+            var p = Player.Position;
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            {
+                var tb = t.Hitbox;
+                float gap = dir switch
+                {
+                    KeyFunctions.Up => p.Y - tb.Bottom,
+                    KeyFunctions.Down => tb.Top - (p.Y + pb.Height),
+                    KeyFunctions.Left => p.X - tb.Right,
+                    _ => tb.Left - (p.X + pb.Width),
+                };
+                if (gap > -1f && gap < 7f && gap <= 1.5f)
+                {
+                    return false; // (a step on would be in its line)
+                }
+            }
+            return true;
+        }
+
+        protected static bool TrapLineToJump(KeyFunctions dir, int slack)
         {
             var pb = Player.Hitbox;
             bool horiz = dir == KeyFunctions.Left || dir == KeyFunctions.Right;
@@ -8375,7 +8407,7 @@ namespace AnodyneSharp.Recording
                 };
                 int side = horiz ? Math.Max(0, Math.Max(tb.Top - pb.Bottom, pb.Top - tb.Bottom)) : Math.Max(0, Math.Max(tb.Left - pb.Right, pb.Left - tb.Right));
                 int across = gap + (horiz ? tb.Width + pb.Width : tb.Height + pb.Height) + 2;
-                if (gap < 0 || gap > 4 || side > 40 || across > 27)
+                if (gap < 0 || gap > 4 + slack || side > 40 || across > 27 + slack)
                 {
                     continue;
                 }
@@ -14096,6 +14128,15 @@ namespace AnodyneSharp.Recording
                 if (!horiz && aim.Y - here.Y > 1f) { dk.Add(KeyFunctions.Down); } else if (!horiz && here.Y - aim.Y > 1f) { dk.Add(KeyFunctions.Up); }
                 BotRunner.Status = "fight/frog: jump";
                 return dk.ToArray();
+            }
+            if (Player.state == PlayerState.GROUND && !frog._flickering && !(Player.broom != null && Player.broom.exists)
+                && new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN }.Cast<Facing?>()
+                    .FirstOrDefault(f => BroomBoxAt(here, f.Value).Intersects(frog.Hitbox)) is Facing ff)
+            {
+                // In the broom's reach of it, wherever we are (not only on a planned spot): hit it. Apartments (5,6) pinned a bot in the
+                // corner beside its Frog, jumping on the spot in the volleys it fired point blank, till nine hearts were gone.
+                BotRunner.Status = "fight/frog: in reach, swing";
+                return ff == Player.facing ? K(KeyFunctions.Accept) : K(KeyOf(ff));
             }
             // Standing on a spot we jumped to: strike while it stays clear long enough for the swing (the broom holds us ~20 frames), and
             // jump back the way we came before a landing bullet or the next volley gets there.

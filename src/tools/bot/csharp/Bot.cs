@@ -1616,7 +1616,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkHp = GlobalState.CUR_HEALTH;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -2351,6 +2351,18 @@ namespace AnodyneSharp.Recording
                             yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");
                             goto replan;
                         }
+                        if (dogFights < 2 && GlobalState.CUR_HEALTH <= walkHp - 2 && !OnWater() && GlobalState.inventory.HasBroom
+                            && Enemies().FirstOrDefault(e => e is AnodyneSharp.Entities.Enemy.Crowd.Dog
+                                && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 48) is Entity dog)
+                        {
+                            // Dogs that have bitten us twice on this walk and are still at our heels (even with auto-fight off: Overworld
+                            // (8,9)'s pack sat in its north doorway and bit five hearts off a bot shoving past): see them off, then replan.
+                            dogFights++;
+                            walkHp = GlobalState.CUR_HEALTH;
+                            BotRunner.Status = "see off the Dogs on the way";
+                            yield return Fight(1800, soft: true, only: e => e is AnodyneSharp.Entities.Enemy.Crowd.Dog);
+                            goto replan;
+                        }
                         if (AutoFight && lionFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().FirstOrDefault(e => (e is AnodyneSharp.Entities.Enemy.Circus.Lion || e is AnodyneSharp.Entities.Enemy.Circus.Contort)
                             && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 96
                             // (and on our side of the walls: one bouncing about the far side of one is no danger on the way, and its fight
@@ -2494,6 +2506,12 @@ namespace AnodyneSharp.Recording
                         if (BlockedBy != null)
                         {
                             safe = K(dir); // every way of dealing with the blocker has been tried: take the chance
+                        }
+                        if (Dodged && GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && TrapLineCreep(dir))
+                        {
+                            // (held back a few pixels short of where a jump over a dash trap's line takes off: edge on up to it)
+                            yield return K(dir);
+                            continue;
                         }
                         if (GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && BotRunner.Frame > _trapLineJumpAt + 90
                             && ((Dodged && dodgeWaits > 90 && OnSightTrapLineAhead(dir)) || TrapLineToJump(dir)))
