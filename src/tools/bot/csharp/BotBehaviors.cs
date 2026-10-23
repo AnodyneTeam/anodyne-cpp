@@ -15359,13 +15359,24 @@ namespace AnodyneSharp.Recording
                 {
                     return null;
                 }
-                // (our box kept inside the tile, as near the enemy as it goes)
-                var p = new Vector2(Math.Clamp(ec.X - BotNav.HalfW, t.X * 16, t.X * 16 + 6), Math.Clamp(ec.Y - BotNav.HalfH, t.Y * 16, t.Y * 16 + 4));
-                foreach (var f in new[] { Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                // (our box kept inside the tile, as near the enemy as it goes, but not touching it: a parked Annoyer still hurts to
+                // touch, and striking from on top of it cost a heart a swing)
+                var near = new Vector2(Math.Clamp(ec.X - BotNav.HalfW, t.X * 16, t.X * 16 + 6), Math.Clamp(ec.Y - BotNav.HalfH, t.Y * 16, t.Y * 16 + 4));
+                var clear = eb;
+                clear.Inflate(2, 2);
+                foreach (var p in new[] { near, new Vector2(t.X * 16, near.Y), new Vector2(t.X * 16 + 6, near.Y), new Vector2(near.X, t.Y * 16), new Vector2(near.X, t.Y * 16 + 4),
+                    new Vector2(t.X * 16, t.Y * 16), new Vector2(t.X * 16 + 6, t.Y * 16), new Vector2(t.X * 16, t.Y * 16 + 4), new Vector2(t.X * 16 + 6, t.Y * 16 + 4) })
                 {
-                    if (BroomBoxAt(p, f).Intersects(eb))
+                    if (new Rectangle((int)p.X, (int)p.Y, 10, 12).Intersects(clear))
                     {
-                        return (p, f);
+                        continue;
+                    }
+                    foreach (var f in new[] { Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                    {
+                        if (BroomBoxAt(p, f).Intersects(eb))
+                        {
+                            return (p, f);
+                        }
                     }
                 }
                 return null;
