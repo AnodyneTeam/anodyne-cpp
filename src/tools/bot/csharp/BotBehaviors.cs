@@ -110,6 +110,20 @@ namespace AnodyneSharp.Recording
                     yield return LaserGauntlet(tiles.Skip(1).Select(t => BotNav.CentreOf(t)).ToList());
                     continue;
                 }
+                if (tok.StartsWith("rhop") && tok.Length > 4 && char.IsDigit(tok[4]))
+                {
+                    // rhop<x>,<y>/<x>,<y>/...[;p][;t<n>]: hop island to island along the tiles (two apart, or diagonal neighbours) across a
+                    // room swept by spike rollers, the whole chain timed against the bars; p: first sweep up the dust beside the first
+                    // island (a raft we just got off); t<n>: and stay clear n frames on the last one (to set the dust down off it)
+                    var parts = tok.Substring(4).Split(';');
+                    var tiles = parts[0].Split('/').Select(a => a.Split(',')).Select(a => new Point(int.Parse(a[0]), int.Parse(a[1]))).ToList();
+                    bool pick = parts.Skip(1).Contains("p");
+                    int tail = parts.Skip(1).Where(q => q.StartsWith("t")).Select(q => int.Parse(q.Substring(1))).FirstOrDefault();
+                    // (;r<U|D|L|R>: off the last island onto the water that way, on the dust we carry as a raft)
+                    var rk = parts.Skip(1).Where(q => q.Length == 2 && q[0] == 'r').Select(q => q[1] switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, _ => KeyFunctions.Right }).Cast<KeyFunctions?>().FirstOrDefault();
+                    yield return RollerHops(tiles, pick, tail, rk);
+                    continue;
+                }
                 if (tok == "dd")
                 {
                     // dd: carrying a dust, set it down on a free tile beside us (off any beam)
@@ -145,6 +159,11 @@ namespace AnodyneSharp.Recording
                     // dashrun<x>: from where we stand, run right over the row's dash pads to x, hopping each run of spikes, setting off
                     // when the Chasers' beats leave the row clear for the whole run
                     yield return ChaserDashRun(float.Parse(drn.Groups[1].Value));
+                    continue;
+                }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^havecard(\d+)$") is { Success: true } hc)
+                {
+                    GlobalState.inventory.CardStatus[int.Parse(hc.Groups[1].Value)] = true; // havecard<n>: (testing) as if card n were got
                     continue;
                 }
                 if (tok is "ca0" or "ca1")
@@ -6963,6 +6982,14 @@ namespace AnodyneSharp.Recording
             var doors = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
                 .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal" || pr.Type.Name == "NexusPad"))
                 .Select(pr => BotNav.TileOf(pr.Position + new Vector2(3, 2))).Where(t => t != goal && t != from).ToHashSet();
+            // (nor over a shut gate here: its tile is floor below it, so a dig "into" it swapped floor for floor 120 times, BLANK (1,2))
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.Gate)
+                {
+                    doors.Add(BotNav.TileOf(e.Position + new Vector2(8, 8)));
+                }
+            }
             var dist = new Dictionary<Point, int> { [from] = 0 };
             var prev = new Dictionary<Point, Point>();
             var open = new PriorityQueue<Point, int>();
@@ -8346,7 +8373,7 @@ namespace AnodyneSharp.Recording
                     float ddx = c.X - Pos.X, ddy = c.Y - Pos.Y;
                     if ((i % 20 == 0 && i < 200) || Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
-                        RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos}");
+                        RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos} v={Player.velocity} add={Player.additionalVel} st={Player.state} f{BotRunner.Frame}");
                     }
                     // The 10px hitbox has ~3px of slack in a 16px tile: only correct sideways when well off, else go along the route (a raft
                     // that cannot slide the last pixel sideways would otherwise sit there for ever).
@@ -8368,6 +8395,24 @@ namespace AnodyneSharp.Recording
                     if (rideStall > 10 && Math.Abs(side) > 0.5f)
                     {
                         yield return K(rideKey, alongY ? (side < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (side < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                        continue;
+                    }
+                    // Across a current that runs into a pit beside the route (Debug (2,3): belts running down into a row of holes): lean
+                    // into it, along and against at once (a diagonal on the raft beats the 35px/s push), or it carries us over the edge.
+                    // (only on a run across it, once it has carried us off the line: on (0,3)'s staircase of short steps a lean overshot a corner into a pit)
+                    var push = BotNav.FlowDir(cur) switch { Touching.UP => new Point(0, -1), Touching.DOWN => new Point(0, 1), Touching.LEFT => new Point(-1, 0), Touching.RIGHT => new Point(1, 0), _ => Point.Zero };
+                    var runDir = DirVector(rideKey);
+                    int run = 0;
+                    for (var rq = cur; run < p2.Count && p2[run] == new Point(rq.X + (int)runDir.X, rq.Y + (int)runDir.Y); run++)
+                    {
+                        rq = p2[run];
+                    }
+                    float drift = alongY ? -ddx * push.X : -ddy * push.Y; // (how far the current has carried us off the line already)
+                    if (wet && HasRaft() && push != Point.Zero && run >= 2 && drift > 1.5f && (alongY ? push.Y == 0 : push.X == 0) && p2[0] != new Point(cur.X + push.X, cur.Y + push.Y)
+                        && (BotNav.IsHole(new Point(cur.X + push.X, cur.Y + push.Y)) || BotNav.IsHole(new Point(cur.X + 2 * push.X, cur.Y + 2 * push.Y))))
+                    {
+                        lastRideKey = rideKey;
+                        yield return K(rideKey, push.X > 0 ? KeyFunctions.Left : push.X < 0 ? KeyFunctions.Right : push.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
                         continue;
                     }
                     lastRideKey = rideKey;
@@ -8435,7 +8480,20 @@ namespace AnodyneSharp.Recording
                             yield return K(faceKey);
                         }
                         yield return Tap(KeyFunctions.Accept);
-                        yield return Wait(14);
+                        if (push != Point.Zero && (BotNav.IsHole(new Point(cur.X + push.X, cur.Y + push.Y)) || BotNav.IsHole(new Point(cur.X + 2 * push.X, cur.Y + 2 * push.Y))))
+                        {
+                            // (braced against a current running into a pit: Debug (2,3)'s bats came at us while its belts carried us down
+                            // to the holes during the swing)
+                            var brace = push.X > 0 ? KeyFunctions.Left : push.X < 0 ? KeyFunctions.Right : push.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
+                            for (int bw = 0; bw < 14; bw++)
+                            {
+                                yield return K(brace);
+                            }
+                        }
+                        else
+                        {
+                            yield return Wait(14);
+                        }
                         continue;
                     }
                     // Bullets over the water (Red Cave's four-shooters) are dodged like on land: hold back (the raft drifts) or hop over them.
@@ -8461,7 +8519,9 @@ namespace AnodyneSharp.Recording
                             land.Offset((int)(dv.X * 29), (int)(dv.Y * 29));
                             var landWide = land;
                             landWide.Inflate(4, 4); // (the drift is ~27-31px, with the current's push on top)
-                            if (!SpikeCoreUnder(landWide) && NoWall(land) && !rollerThreats.Any(t => Enumerable.Range(25, 6).Any(f => t.At[Math.Min(f, Horizon)] is Rectangle r && r.Intersects(land))))
+                            // (nor into a pit: Debug (1,3)'s rafts ride between rows of holes, and a hop "against" one came down in them)
+                            var landC = new Point((int)Math.Floor(land.Center.X / 16f), (int)Math.Floor(land.Center.Y / 16f));
+                            if (!SpikeCoreUnder(landWide) && NoWall(land) && !BotNav.IsHole(landC) && !rollerThreats.Any(t => Enumerable.Range(25, 6).Any(f => t.At[Math.Min(f, Horizon)] is Rectangle r && r.Intersects(land))))
                             {
                                 hopKey = cand;
                                 found = true;
@@ -9342,6 +9402,32 @@ namespace AnodyneSharp.Recording
             box.Inflate(margin, margin);
             return BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>()
                 .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(box))));
+        }
+
+        /// <summary>
+        /// On a raft over a current that runs into a pit (Debug (2,3): belts running down into a row of holes), whatever is steering:
+        /// a frame with no key along the current (held back for a bat, a swing's wait) adds the key against it, or the current carries
+        /// raft and all over the edge.
+        /// </summary>
+        internal static KeyFunctions[] RaftPitBrace(KeyFunctions[] held)
+        {
+            if (Player?.raft == null || Player.state != PlayerState.GROUND || GlobalState.ScreenTransition)
+            {
+                return held;
+            }
+            var cur = BotNav.TileOf(Pos);
+            var push = BotNav.FlowDir(cur) switch { Touching.UP => new Point(0, -1), Touching.DOWN => new Point(0, 1), Touching.LEFT => new Point(-1, 0), Touching.RIGHT => new Point(1, 0), _ => Point.Zero };
+            if (push == Point.Zero || !(BotNav.IsHole(new Point(cur.X + push.X, cur.Y + push.Y)) || BotNav.IsHole(new Point(cur.X + 2 * push.X, cur.Y + 2 * push.Y))))
+            {
+                return held;
+            }
+            var along = push.X != 0 ? new[] { KeyFunctions.Left, KeyFunctions.Right } : new[] { KeyFunctions.Up, KeyFunctions.Down };
+            if (held.Any(along.Contains) || held.Contains(KeyFunctions.Accept)) // (nor on a swing's press: it would turn the swing round)
+            {
+                return held;
+            }
+            var brace = push.X > 0 ? KeyFunctions.Left : push.X < 0 ? KeyFunctions.Right : push.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
+            return held.Append(brace).ToArray();
         }
 
         internal static KeyFunctions[] SteamBrace(KeyFunctions[] held)
@@ -19732,6 +19818,297 @@ namespace AnodyneSharp.Recording
         /// and hurt only on the ground): walk a tile, wait, or jump (on the spot, to the next tile, or over a pit to the one beyond) so
         /// that every bar passes under us in the air. (next tile, kind) with kind 0 walk/wait, 1 hop to the next tile, 2 leap; null if none.
         /// </summary>
+        private const int HopAirFrames = 28;
+        private const float HopDrift = 29.2f, HopDriftDiag = 20.4f; // (0.83 x 70px/s for 0.46s and the frames either end, as measured; 0.7 of it each way on a diagonal)
+        private const int HopPickFrames = 21;
+        private static int HopSlack = 1;
+        private const int HopLandLag = 3; // (frames from coming down to the first step of the walk on: the landing is seen late)
+        private static string _rhopWhy = "";
+
+        /// <summary>Where a hop from island i to i+1 of `path` takes off (player position), and where it comes down from there.</summary>
+        private static (Vector2 off, Vector2 land, KeyFunctions[] keys) HopLeg(List<Point> path, int i)
+        {
+            var a = path[i];
+            var b = path[i + 1];
+            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+            var keys = new List<KeyFunctions>();
+            if (sx != 0) { keys.Add(sx < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+            if (sy != 0) { keys.Add(sy < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+            var ca = BotNav.CentreOf(a);
+            if (sx != 0 && sy != 0)
+            {
+                // (a diagonal neighbour is 16px each way, and the drift 18.7: from a couple of px back of the middle)
+                var off = new Vector2(ca.X - 2 * sx, ca.Y - 2 * sy);
+                return (off, off + new Vector2(HopDriftDiag * sx, HopDriftDiag * sy), keys.ToArray());
+            }
+            // (two tiles on is 32px and the drift 26.7: from 4px out towards the gap, which still has our middle on the island)
+            var o = new Vector2(ca.X + 4 * sx, ca.Y + 4 * sy);
+            return (o, o + new Vector2(HopDrift * sx, HopDrift * sy), keys.ToArray());
+        }
+
+        /// <summary>The player's positions, frame by frame, walking from p to q (70px/s, 0.7 of it each way on a diagonal).</summary>
+        private static List<Vector2> WalkFrames(Vector2 p, Vector2 q)
+        {
+            var list = new List<Vector2>();
+            const float step = 70f / 60f;
+            for (int f = 0; f < 90 && (Math.Abs(q.X - p.X) > 0.6f || Math.Abs(q.Y - p.Y) > 0.6f); f++)
+            {
+                float dx = q.X - p.X, dy = q.Y - p.Y;
+                bool both = Math.Abs(dx) > 0.6f && Math.Abs(dy) > 0.6f;
+                float sp = both ? step * 0.7f : step;
+                p = new Vector2(p.X + (Math.Abs(dx) > 0.6f ? Math.Sign(dx) * Math.Min(sp, Math.Abs(dx)) : 0), p.Y + (Math.Abs(dy) > 0.6f ? Math.Sign(dy) * Math.Min(sp, Math.Abs(dy)) : 0));
+                list.Add(p);
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// The take-off frames (from now) for hopping from island `from` on along `path`, starting at `pos`: every frame on the ground clear
+        /// of the bars, every hop in the air while one rolls under us. A search over (island, frame): wait a frame, or walk to the take-off
+        /// and hop. Before the first island `pre` frames may be spent where we are (waiting), then `pick` frames on it (sweeping a dust).
+        /// </summary>
+        private static List<int> PlanRollerHops(List<Point> path, int from, Vector2 pos, bool pick, int tail, List<(Rectangle?[] At, bool Air)> bars, int horizon, Vector2 away = default)
+        {
+            int last = bars.Count > 0 ? bars[0].At.Length - 1 : 0;
+            var hb = Player.Hitbox;
+            var boxOff = new Vector2(hb.X - Pos.X, hb.Y - Pos.Y);
+            bool Clear(Vector2 p, int f)
+            {
+                var me = new Rectangle((int)Math.Floor(p.X + boxOff.X) - 1, (int)Math.Floor(p.Y + boxOff.Y) - 1, hb.Width + 2, hb.Height + 2);
+                foreach (var tr in bars)
+                {
+                    // (a couple of frames either way too: the walks and the sweep run a frame or two off the model, and a chain planned
+                    // to the frame came apart on the first of them)
+                    for (int d = -HopSlack; d <= HopSlack; d++)
+                    {
+                        if (!tr.Air && tr.At[Math.Clamp(f + d, 0, last)] is Rectangle r && r.Intersects(me))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            var seen = new HashSet<(int, int)>();
+            var q = new Queue<(int i, int f, List<int> plan)>();
+            // (the way onto the take-off of the first leg: at once, or after waiting where we are)
+            for (int w = 0; w <= horizon; w++)
+            {
+                if (!Clear(pos, w))
+                {
+                    break;
+                }
+                int f = w;
+                var p = pos;
+                bool ok = true;
+                if (pick)
+                {
+                    var ca = BotNav.CentreOf(path[from]);
+                    foreach (var wp in WalkFrames(p, ca))
+                    {
+                        ok &= Clear(wp, ++f);
+                        p = wp;
+                    }
+                    for (int k = 0; k < HopPickFrames && ok; k++)
+                    {
+                        ok &= Clear(p, ++f);
+                    }
+                }
+                foreach (var wp in WalkFrames(p, HopLeg(path, from).off))
+                {
+                    ok &= Clear(wp, ++f);
+                }
+                if (ok)
+                {
+                    q.Enqueue((from, f, new List<int>()));
+                }
+            }
+            int starts = q.Count, deepest = from;
+            _rhopWhy = "";
+            while (q.Count > 0)
+            {
+                var (i, f, plan) = q.Dequeue();
+                if (f > horizon || !seen.Add((i, f)))
+                {
+                    continue;
+                }
+                deepest = Math.Max(deepest, i);
+                _rhopWhy = $"starts {starts}, got to island {deepest} ({path[deepest]})";
+                var leg = HopLeg(path, i);
+                if (Clear(leg.off, f + 1))
+                {
+                    q.Enqueue((i, f + 1, plan));
+                }
+                if (!Clear(leg.off, f))
+                {
+                    continue;
+                }
+                int land = f + HopAirFrames;
+                if (!Enumerable.Range(land - 1, 4).All(k => Clear(leg.land, k)))
+                {
+                    continue;
+                }
+                var np = new List<int>(plan) { f };
+                if (i + 2 == path.Count)
+                {
+                    // (the tail: stood there `tail` frames, then walking off it `away`, 70px/s, for 12 more)
+                    if (Enumerable.Range(land + 3, tail).All(k => Clear(leg.land, k))
+                        && Enumerable.Range(1, away == Vector2.Zero ? 0 : 12).All(k => Clear(leg.land + away * (70f / 60f * k), land + 2 + tail + k)))
+                    {
+                        return np;
+                    }
+                    continue;
+                }
+                int g = land + HopLandLag;
+                bool ok = true;
+                foreach (var wp in WalkFrames(leg.land, HopLeg(path, i + 1).off))
+                {
+                    ok &= Clear(wp, ++g);
+                }
+                if (ok)
+                {
+                    q.Enqueue((i + 1, g, np));
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Across a room of stepping stones swept by bouncing spike rollers (Debug (3,3): islands two tiles apart over pits, two bars
+        /// spanning the room, wall to wall at 40px/s): hop island to island along `path`. A bar takes longer to roll over us than a hop
+        /// lasts, so every bar must pass under a hop, and with two bars a chain only goes in some phases of theirs: plan the whole chain
+        /// at once, frame by frame, wait for it where we stand (on a raft off their reach, say), and plan again after each landing.
+        /// </summary>
+        protected static IEnumerable<object> RollerHops(List<Point> path, bool pick, int tail, KeyFunctions? raftOff = null)
+        {
+            const int horizon = 1500;
+            int at = path.IndexOf(BotNav.TileOf(Pos));
+            int from = Math.Max(0, at);
+            bool picked = !pick;
+            List<long> sched = null; // (the take-off frame of each leg still to go, while we keep to it)
+            for (int round = 0; round < 40 && from < path.Count - 1; round++)
+            {
+                if (sched != null && sched.Count > 0)
+                {
+                    goto hop;
+                }
+                var bars = SweeperTracks(horizon + 60);
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                var away = raftOff is KeyFunctions rok ? DirVector(rok) : Vector2.Zero;
+                var plan = PlanRollerHops(path, from, Pos, !picked, tail, bars, horizon, away);
+                BotRunner.Thinking = true;
+                double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                System.Console.Error.WriteLine($"  rhop f{BotRunner.Frame}: from {path[from]} at {Pos} plan {(plan == null ? "none: " + _rhopWhy : string.Join(",", plan))} ({ms:0}ms)");
+                if (plan == null)
+                {
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        var w1 = PlanRollerHops(path, from, Pos, false, tail, bars, horizon);
+                        string why1 = _rhopWhy;
+                        var w2 = PlanRollerHops(path, from, Pos, !picked, 0, bars, horizon);
+                        System.Console.Error.WriteLine($"  rhop: without the sweep {(w1 == null ? "none: " + why1 : "ok")}; without the tail {(w2 == null ? "none: " + _rhopWhy : "ok")}");
+                    }
+                    // (no way that leaves time to get off the last island: one that gets there, then)
+                    plan = tail > 0 ? PlanRollerHops(path, from, Pos, !picked, 0, bars, horizon) : null;
+                    if (plan == null)
+                    {
+                        throw new InvalidOperationException($"bot: rhop: no timed way on from {path[from]} at {Pos} on {Map}");
+                    }
+                }
+                long frame0 = BotRunner.Frame;
+                sched = plan.Select(pf => frame0 + pf).ToList();
+                long jumpAt = sched[0];
+                if (!picked)
+                {
+                    // (the wait is in the plan's first take-off: stand until the walk and the sweep would end right on it)
+                    var ca = BotNav.CentreOf(path[from]);
+                    int need = WalkFrames(Pos, ca).Count + HopPickFrames + WalkFrames(ca, HopLeg(path, from).off).Count;
+                    while (BotRunner.Frame < jumpAt - need)
+                    {
+                        BotRunner.Status = $"rhop: wait for the bars ({jumpAt - need - BotRunner.Frame} frames)";
+                        yield return K();
+                    }
+                    yield return ExactWalk(ca, 60);
+                    var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").OrderBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+                    if (dust != null)
+                    {
+                        float ddx = dust.Position.X - Pos.X, ddy = dust.Position.Y - Pos.Y;
+                        var fk = Math.Abs(ddx) > Math.Abs(ddy) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        BotRunner.Status = "rhop: sweep up the raft's dust";
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        yield return K(fk);
+                        yield return Tap(KeyFunctions.Accept);
+                        for (int w = 0; w < 40 && (Player.broom.dust == null || Player.broom.exists); w++)
+                        {
+                            yield return K(); // (and the swing out: no walking while the broom is out)
+                        }
+                    }
+                    picked = true;
+                    if (Player.broom.dust == null)
+                    {
+                        System.Console.Error.WriteLine("  rhop: the dust was not swept up");
+                    }
+                }
+            hop:
+                jumpAt = sched[0];
+                var leg = HopLeg(path, from);
+                BotRunner.Status = $"rhop: to the take-off for {path[from + 1]}";
+                yield return ExactWalk(leg.off, 40);
+                if (BotRunner.Frame > jumpAt)
+                {
+                    System.Console.Error.WriteLine($"  rhop f{BotRunner.Frame}: late for the take-off at f{jumpAt} on {path[from]}: plan again");
+                    sched = null;
+                    continue;
+                }
+                while (BotRunner.Frame < jumpAt)
+                {
+                    BotRunner.Status = $"rhop: wait on {path[from]} for the bars ({jumpAt - BotRunner.Frame} frames)";
+                    yield return K();
+                }
+                BotRunner.Status = $"rhop: hop {path[from]} -> {path[from + 1]}";
+                yield return K(leg.keys.Append(KeyFunctions.Cancel).ToArray());
+                for (int a = 0; a < 45 && (a < 3 || Player.state == PlayerState.AIR); a++)
+                {
+                    yield return K(leg.keys);
+                }
+                var now = BotNav.TileOf(Pos);
+                int ni = path.IndexOf(now);
+                if (ni < 0)
+                {
+                    throw new InvalidOperationException($"bot: rhop: came down off the islands at {Pos} ({now}) on {Map}");
+                }
+                System.Console.Error.WriteLine($"  rhop f{BotRunner.Frame}: down on {now} at {Pos} (modelled {leg.land})");
+                sched = ni == from + 1 ? sched.Skip(1).ToList() : null;
+                from = ni;
+            }
+            if (raftOff is KeyFunctions ro && from == path.Count - 1 && Player.broom.dust != null)
+            {
+                // Straight off the last island (the bars still reach it): the dust down on the water in front, and onto it.
+                int f0 = (int)BotRunner.Frame;
+                BotRunner.Status = "rhop: the dust onto the water, and onto it";
+                ExactKeysUntil = BotRunner.Frame + 1;
+                yield return K(ro);
+                yield return Tap(KeyFunctions.Accept);
+                long fDrop = BotRunner.Frame;
+                // (facing down while the broom is out: a bar that catches us bumps us up into the wall, not back into the pit)
+                for (int w = 0; w < 30 && (Player.broom.exists || Player.broom.dust != null); w++)
+                {
+                    yield return K(KeyFunctions.Down);
+                }
+                long fFree = BotRunner.Frame;
+                for (int w = 0; w < 60 && !(HasRaft() && OnConveyor(BotNav.TileOf(Pos))); w++)
+                {
+                    yield return K(ro);
+                }
+                System.Console.Error.WriteLine($"  rhop: dust down by +{fDrop - f0}, broom away by +{fFree - f0}, on the raft by +{BotRunner.Frame - f0}");
+                for (int w = 0; w < 12; w++)
+                {
+                    yield return K(ro); // (on well clear of the bars' reach)
+                }
+                System.Console.Error.WriteLine($"  rhop: off the last island onto the raft in {BotRunner.Frame - f0} frames (raft {HasRaft()}) at {Pos}");
+            }
+        }
+
         private static (Point next, int kind)? PlanPastSweepers(Point from, Point goal, List<(Rectangle?[] At, bool Air)> bars, int maxSteps = SweepSteps)
         {
             var screen = new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10);
@@ -19791,6 +20168,11 @@ namespace AnodyneSharp.Recording
                     if (waitOk && !cracked.Contains(t))
                     {
                         Add(t, 1, 0);
+                    }
+                    else if (step < 8 && Environment.GetEnvironmentVariable("ANODYNE_SWEEP_TRACE") != null)
+                    {
+                        var meW = new Rectangle((int)c.X, (int)c.Y, Player.Hitbox.Width, Player.Hitbox.Height);
+                        System.Console.Error.WriteLine($"  sweep wait fails at {t} step {step}: me {meW} bars " + string.Join(" ", bars.Select(tr => $"{tr.At[Math.Min(f0 + 7, last)]}")));
                     }
                     foreach (var d in o4)
                     {

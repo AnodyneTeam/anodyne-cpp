@@ -603,6 +603,7 @@ namespace AnodyneSharp.Recording
                 held = BotScript.BulletHop(held);
                 held = BotScript.ContactEscape(held);
                 held = BotScript.SteamBrace(held);
+                held = BotScript.RaftPitBrace(held);
             }
             if (!BotScript.MenuKeys)
             {
