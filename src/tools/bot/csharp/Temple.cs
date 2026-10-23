@@ -423,7 +423,7 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("The endgame: the Sage, GO, BLUE, HAPPY and the Briar");
             yield return Section("hotel exit", () => Exec("O1 X1 W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200"));
-            yield return Section("terminal sage", () => Exec("g4 O1 X1 viaTERMINAL W30 >392,600 W30 F20000 W60"));
+            yield return Section("terminal sage", () => Exec("g4 O1 X1 viaTERMINAL W30 >392,600 W30 F40000 W60"));
             yield return Section("terminal to go", () => Exec("O1 X1 >396,40 W10 U90 W120"));
             yield return Section("go swap puzzle", () => Exec("I393,752,d W60 T W30 >392,720 W30 H2,3 W20 goswap W60 H2,2 W30"));
             yield return Section("go to blue", () => Exec("O1 X1 H3,2 W20 H4,2 W30 door44 W60"));

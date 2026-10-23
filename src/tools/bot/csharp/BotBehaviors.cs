@@ -11589,7 +11589,8 @@ namespace AnodyneSharp.Recording
         /// Everything it throws is predicted (SageThreats) for the space-time planner, which walks and jumps clear of it; a swing goes in when
         /// the broom will meet the body and standing still for the swing is safe.
         /// </summary>
-        protected static IEnumerable<object> SageFight(int timeoutFrames = 20000)
+        // (it lasts 5000-10500 frames on most seeds, and one ran past 20000 without a hit taken: TODO land more strikes)
+        protected static IEnumerable<object> SageFight(int timeoutFrames = 40000)
         {
             BotRunner.BossDamageBudget = 3; // TODO: tune down once the fight is clean over a few seeds
             _sageOrbOff.Clear();
