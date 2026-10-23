@@ -428,13 +428,24 @@ namespace AnodyneSharp.Recording
             yield return Section("blue in", () => Exec("g8 O1 X1 b344,746 W60 g4 O1 X1 >563,404 W30"));
             yield return Section("blue (3,2) islands", () => Exec("O1 X0 G545,396 W10 @x539,u !1 U28 L13 W2 ULC1 UL7 U18 W20 DC1 D14 R8 W20 !0 @x539,d !1 D20 !0 @y425,r !1 L48 W2 D12 W2 LC1 L17 D8 W20 UC1 U8 R12 W20 U8 R30 U20 !0 W10"));
             yield return Section("blue (4,1) dash chain", () => Exec("O1 X1 >755,330 W20 >755,312 W20 O1 X0 W5 !1 UL28 ULC1 UL27 U6 UC1 U30 !0 W30"));
-            yield return Section("blue (4,0) climb", () => Exec("O1 X0 !1 R32 !0 @x731,u ^x731,u,140 W5 !1 LC1 L27 W8 L4 LC1 L27 W8 L4 LC1 L27 W8 L40 !0 W20"));
+            yield return Section("blue (4,0) climb", BlueSteamClimb);
             yield return Section("blue (2,0) lasers", () => Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10"));
             yield return Section("blue mitra buttons", () => Exec("g6 O1 X1 b150,40 W30 G72,36 W1500"));
             yield return Section("blue back to go", () => Exec("g6 O1 X1 >36,84 W5 L40 W200 g6 O1 X1 >40,408 W30 L60 W100"));
             yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,60 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
             yield return Section("happy back to go", () => Exec("g6 O1 X1 W30 >764,244 W10 R40 W150 >392,300 W30"));
             yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending"));
+        }
+
+        /// <summary>Up the pixel seam between (4,0)'s pits, with steam pushing off it (a fall puts us back at the bottom: again), then west along the top.</summary>
+        private static IEnumerable<object> BlueSteamClimb()
+        {
+            for (int t = 0; t < 4 && Player.Position.Y > 40; t++)
+            {
+                yield return Exec("O1 X0 !1 R32 !0 @x731,u ^x731,u,140 W5");
+                yield return Wait(60); // (a fall: back at the bottom by now)
+            }
+            yield return Exec("O1 X0 !1 LC1 L27 W8 L4 LC1 L27 W8 L4 LC1 L27 W8 L40 !0 W20");
         }
     }
 

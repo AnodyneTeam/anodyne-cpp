@@ -114,15 +114,18 @@ namespace AnodyneSharp.Recording
                     int frames = int.Parse(seam.Groups[4].Value);
                     for (int w = 0; w < frames; w++)
                     {
-                        int at = xAxis ? Player.Hitbox.X : Player.Hitbox.Y;
+                        float e = (xAxis ? Player.Position.X : Player.Position.Y) - want; // (on the line while 0 <= e < 1)
                         ExactKeysUntil = BotRunner.Frame + 1;
-                        if (at == want)
+                        if (e >= 0 && e < 1)
                         {
                             yield return K(side);
                             continue;
                         }
-                        var toward = xAxis ? (at > want ? KeyFunctions.Left : KeyFunctions.Right) : (at > want ? KeyFunctions.Up : KeyFunctions.Down);
-                        yield return K(toward, side);
+                        var toward = xAxis ? (e > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (e > 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        // Back onto it by the step that lands on it: a straight step (1.17px) when that far off, which also beats steam's
+                        // push where a diagonal's (0.82px) does not, else a diagonal one that goes on along it too.
+                        float off = e > 0 ? e - 1 : -e;
+                        yield return off >= 0.17f && e > 0 || off > 0.82f ? K(toward) : K(toward, side);
                     }
                     continue;
                 }
