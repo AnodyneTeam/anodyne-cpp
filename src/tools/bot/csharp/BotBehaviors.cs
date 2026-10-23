@@ -5979,6 +5979,7 @@ namespace AnodyneSharp.Recording
             var screen = Grid;
             yield return StepOffDoor(BotNav.TileOf(Pos));
             bool warped = false; // went back to the Nexus pad to look from there
+            int opened = 0; // (once one is open, the rest out of reach from here are for later: a warp away would strand the route)
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
                 System.Console.Error.WriteLine("  chests: all " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
@@ -6068,7 +6069,7 @@ namespace AnodyneSharp.Recording
                     {
                         System.Console.Error.WriteLine($"  chests: no route from {hereT} to any of {string.Join(" ", chests.Select(c => $"{c.Position.X:0},{c.Position.Y:0}"))} (failed {_failedChests.Count})");
                     }
-                    if (chests.Count > 0 && !warped && !screenOnly && !Map.Equals("NEXUS")
+                    if (chests.Count > 0 && !warped && opened == 0 && !screenOnly && !Map.Equals("NEXUS")
                         && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad"))
                     {
                         // Shut in a dead end (a pocket behind a one-way leap): back to the map's Nexus pad and look again from there.
@@ -6099,6 +6100,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break; // could not open it; do not loop forever
                 }
+                opened++;
             }
         }
 
