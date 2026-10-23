@@ -14218,6 +14218,10 @@ namespace AnodyneSharp.Recording
                                         }
                                     }
                                 }
+                                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                                {
+                                    System.Console.Error.WriteLine($"  slrun f{BotRunner.Frame} me={Player.Hitbox} best={string.Join("+", best)} score={bestScore} winding=" + string.Join(" ", winding.Select(w => $"{w.e.Position}:{w.left}")) + " straight: " + string.Join(" ", StActions.Skip(1).Select(rd => string.Join("+", rd) + ":" + Sim(rd, 66).hitAt + "@" + Sim(rd, 66).end)) + " L26U:" + Sim(new[] { KeyFunctions.Left }, 26, new[] { KeyFunctions.Up }).hitAt);
+                                }
                                 _slasherRun = best;
                                 BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
                                 yield return K(best);
@@ -14284,7 +14288,10 @@ namespace AnodyneSharp.Recording
                             var nc2 = BotNav.CentreOf(goalPath[0]) + new Vector2(5, 6);
                             var me2 = Pos + new Vector2(5, 6);
                             float qx = nc2.X - me2.X, qy = nc2.Y - me2.Y;
-                            yield return K(Math.Abs(qx) > 2f ? (qx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (qy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                            var gk = Math.Abs(qx) > 2f ? (qx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (qy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                            // (the exact check above found standing here clear: a step that it finds walks into a cut is no step, and taking it
+                            // anyway dithered a step each way every frame, in a dead end beside two stacked Slashers, until the cut came)
+                            yield return slStepClear != null && !slStepClear(gk) ? K() : K(gk);
                             continue;
                         }
                         var kx = ddx >= 0 ? KeyFunctions.Right : KeyFunctions.Left;
@@ -14293,7 +14300,7 @@ namespace AnodyneSharp.Recording
                             ? new[] { kx, ky, ddx >= 0 ? KeyFunctions.Left : KeyFunctions.Right, ddy >= 0 ? KeyFunctions.Up : KeyFunctions.Down }
                             : new[] { ky, kx, ddy >= 0 ? KeyFunctions.Up : KeyFunctions.Down, ddx >= 0 ? KeyFunctions.Left : KeyFunctions.Right };
                         var pick = order.FirstOrDefault(k => WalkableAhead(k, 4));
-                        yield return pick == default ? K() : K(pick);
+                        yield return pick == default || slStepClear != null && !slStepClear(pick) ? K() : K(pick);
                         continue;
                     }
                     // striking: walk the path to it (it can be stuck behind a corner while we stand in a straight line to it)

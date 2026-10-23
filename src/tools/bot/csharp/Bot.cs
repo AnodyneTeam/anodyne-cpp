@@ -579,6 +579,10 @@ namespace AnodyneSharp.Recording
             held = BotScript.BulletHop(held);
             held = BotScript.ContactEscape(held);
             held = BotScript.SteamBrace(held);
+            if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt2 && int.TryParse(kt2, out int kfrom2) && Frame >= kfrom2 && Frame < kfrom2 + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
+            {
+                System.Console.Error.WriteLine($"  guarded f{Frame} [{string.Join("+", held)}]");
+            }
             if (Player != null && Player.reversed)
             {
                 // a Gas Guy cloud swaps the d-pad for a moment: press the mirrored keys so the scripts keep meaning the way they want to go
