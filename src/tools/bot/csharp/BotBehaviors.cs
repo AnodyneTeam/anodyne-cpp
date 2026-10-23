@@ -6684,8 +6684,9 @@ namespace AnodyneSharp.Recording
                             yield return K(faceKey);
                         }
                         // (a Frog a pixel past the broom's reach: drift that way the pixel first, it does not move)
-                        for (int nudge = 0; nudge < 8 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
-                                && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f && !e.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant))); nudge++)
+                        var frogFoe = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
+                            && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f);
+                        for (int nudge = 0; nudge < 8 && frogFoe != null && frogFoe.exists && !frogFoe.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant)); nudge++)
                         {
                             yield return K(faceKey);
                         }
