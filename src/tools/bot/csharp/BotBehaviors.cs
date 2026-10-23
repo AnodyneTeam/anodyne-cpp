@@ -6654,9 +6654,12 @@ namespace AnodyneSharp.Recording
                     // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
                     // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
                     if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime" or "GasGuy")
-                        .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering)) // (even one the fight passed over)
                         .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
-                        .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
+                        .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f))
+                        // (a Frog the moment it is in the broom's reach: it spits at anything within 64px, stalled or not)
+                        .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering) // (even one the fight passed over)
+                            .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
+                            .Where(v => Math.Max(Math.Abs(v.X), Math.Abs(v.Y)) < 30f && Math.Min(Math.Abs(v.X), Math.Abs(v.Y)) < 10f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
                         raftSwings++;
                         var faceKey = Math.Abs(foe.X) > Math.Abs(foe.Y) ? (foe.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (foe.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down);
@@ -6664,6 +6667,12 @@ namespace AnodyneSharp.Recording
                         if (Player.facing != faceWant)
                         {
                             // (turning nudges the raft a pixel that way: every swing a turn would walk us ashore beside the foe)
+                            yield return K(faceKey);
+                        }
+                        // (a Frog a pixel past the broom's reach: drift that way the pixel first, it does not move)
+                        for (int nudge = 0; nudge < 4 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
+                                && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f && !e.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant))); nudge++)
+                        {
                             yield return K(faceKey);
                         }
                         yield return Tap(KeyFunctions.Accept);
