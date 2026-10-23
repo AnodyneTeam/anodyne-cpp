@@ -169,7 +169,9 @@ namespace AnodyneSharp.Recording
                 bool here = screen.X / 10 == grid.X && screen.Y / 10 == grid.Y;
                 // The enemies of that screen still to kill: the live ones when it is loaded, else the presets.
                 var foes = here
-                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToVector2())).ToList()
+                    // (clamped into the screen: an Annoyer whose swoop ran into the edge sits parked a few pixels past it, still to kill)
+                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToVector2()))
+                        .Select(p => new Point(Math.Clamp(p.X, screen.Left, screen.Right - 1), Math.Clamp(p.Y, screen.Top, screen.Bottom - 1))).ToList()
                     : presets.Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
                         .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
                 // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
@@ -201,7 +203,9 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    if (need <= 0 || foes.Count(seen.Contains) >= need)
+                    // (one over a wall tile at the edge of this side counts for it: an Annoyer parked there is struck from the floor beside it)
+                    if (need <= 0 || foes.Count(f => seen.Contains(f) || (CurrentMap.GetTileClass(f).Item1 == Touching.ANY
+                        && new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => seen.Contains(new Point(f.X + o.X, f.Y + o.Y))))) >= need)
                     {
                         entries.Add(side);
                     }
