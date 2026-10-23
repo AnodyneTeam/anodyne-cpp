@@ -1476,6 +1476,9 @@ namespace AnodyneSharp.Recording
                 turnAt = (int)(dt * 60f); // bursts then: the pieces fly ~40px/s every way
                 v = Vector2.Zero;
             }
+            // (it bounces off walls and the screen's edge only: it drifts on over water and conveyors, where we cannot follow)
+            var scr = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
+            bool BouncerFree(Rectangle q) => scr.Contains(q) && WallFree(q);
             float fx = 0, fy = 0;
             for (int f = 0; f <= Horizon; f++)
             {
@@ -1495,7 +1498,7 @@ namespace AnodyneSharp.Recording
                 fy -= my;
                 var nx = r;
                 nx.Offset(mx, 0);
-                if (mx != 0 && !CornersWalkable(nx))
+                if (mx != 0 && !BouncerFree(nx))
                 {
                     v.X = -v.X;
                     fx = 0;
@@ -1506,7 +1509,7 @@ namespace AnodyneSharp.Recording
                 }
                 var ny = r;
                 ny.Offset(0, my);
-                if (my != 0 && !CornersWalkable(ny))
+                if (my != 0 && !BouncerFree(ny))
                 {
                     v.Y = -v.Y;
                     fy = 0;
@@ -6647,9 +6650,11 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                     lastRideKey = rideKey;
+                    // (and a Frog beside the current: waiting by it for a safe moment only lets it spit again and again)
                     // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
                     // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
                     if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime" or "GasGuy")
+                        .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering)) // (even one the fight passed over)
                         .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
                         .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
@@ -9811,6 +9816,12 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> BouncerFight(Func<Entity, bool> only, int timeoutFrames = 5400)
         {
             int lastSwing = -100;
+            Entity planT = null;
+            Vector2? prevClear = null;
+            int unreach = 0;
+            Vector2 planSpot = Vector2.Zero;
+            Facing planFace = Facing.DOWN;
+            long planAt = 0;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -9831,7 +9842,9 @@ namespace AnodyneSharp.Recording
                     BotNav.AllowJump = GlobalState.inventory.CanJump;
                     bool reach = big.Any(c => BotNav.FindPath(me0, new Point(c.Hitbox.Center.X / 16, c.Hitbox.Center.Y / 16)) != null);
                     BotNav.AllowJump = oldJump;
-                    if (!reach)
+                    // (one only drifting over water or a conveyor for a while comes back: leave only those walled off for good)
+                    unreach = reach ? 0 : unreach + 1;
+                    if (unreach >= 10)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
@@ -9852,7 +9865,49 @@ namespace AnodyneSharp.Recording
                 Facing face = Player.facing;
                 bool strike = false;
                 Entity target = null;
-                foreach (var tg in targets.Where(e => !e._flickering))
+                // Is standing at sp facing fc, swinging as it comes, good against tg arriving at frame f? (body clear of everything from
+                // when we get there until a little after the swing has landed)
+                bool StrikeOk(Entity tg, Threat tt, Vector2 sp, Facing fc, int f, int arrive)
+                {
+                    var box = new Rectangle((int)sp.X, (int)sp.Y, pb.Width, pb.Height);
+                    if (!StandsSafe(box))
+                    {
+                        return false;
+                    }
+                    foreach (var t in threats)
+                    {
+                        for (int k = arrive; k <= Math.Min(Horizon, t == tt ? f + 8 : f + 4); k++)
+                        {
+                            if (t.At[k] is Rectangle r)
+                            {
+                                r.Inflate(t == tt ? 1 : t.Margin, t == tt ? 1 : t.Margin);
+                                if (r.Intersects(box))
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                // The plan we made before, while it still holds: replanning every frame for the earliest strike chased a spot that slid
+                // along ahead of us as the bot walked.
+                if (planT != null && planT.exists && !planT._flickering && targets.Contains(planT) && threats.FirstOrDefault(t => t.Source == planT) is Threat ptt)
+                {
+                    int pf = (int)(planAt - BotRunner.Frame);
+                    var bro = BroomBoxAt(planSpot, planFace);
+                    float need = Math.Max(Math.Abs(planSpot.X - here.X), Math.Abs(planSpot.Y - here.Y));
+                    int arrive = (int)(need / Math.Max(0.1f, WalkPxPerFrame));
+                    if (pf >= 2 && pf <= 60 && arrive <= pf - 1 && Enumerable.Range(Math.Max(1, pf - 3), 7).Any(k => k <= Horizon && ptt.At[k] is Rectangle pr && pr.Intersects(bro))
+                        && StrikeOk(planT, ptt, planSpot, planFace, pf, arrive))
+                    {
+                        goal = planSpot;
+                        face = planFace;
+                        strike = true;
+                        target = planT;
+                    }
+                }
+                foreach (var tg in strike ? Enumerable.Empty<Entity>() : targets.Where(e => !e._flickering))
                 {
                     var tt = threats.FirstOrDefault(t => t.Source == tg);
                     if (tt == null)
@@ -9861,13 +9916,19 @@ namespace AnodyneSharp.Recording
                     }
                     for (int f = 4; f <= 60 && !strike; f += 2)
                     {
-                        if (tt.At[f] is not Rectangle R)
+                        if (tt.At[f] is not Rectangle R || tt.At[f - 1] is not Rectangle R0)
                         {
                             continue;
                         }
                         var rc = R.Center.ToVector2();
+                        int vx = Math.Sign(R.X - R0.X), vy = Math.Sign(R.Y - R0.Y);
                         foreach (var fc in new[] { Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                         {
+                            // (from the side it is moving away from: it drifts on past the broom, not on into us once it is hit)
+                            if (fc == Facing.RIGHT && vx < 0 || fc == Facing.LEFT && vx > 0 || fc == Facing.DOWN && vy < 0 || fc == Facing.UP && vy > 0)
+                            {
+                                continue;
+                            }
                             // 3px off its box along the way we face (the broom reaches 12px past that), centred on it across
                             var sp = fc switch
                             {
@@ -9878,35 +9939,22 @@ namespace AnodyneSharp.Recording
                             };
                             sp = new Vector2(MathF.Round(sp.X), MathF.Round(sp.Y));
                             float need = Math.Max(Math.Abs(sp.X - here.X), Math.Abs(sp.Y - here.Y));
-                            if (need > WalkPxPerFrame * (f - 3))
+                            // (with time to spare: the planner's way round other threats is longer than a straight line, and we turn on the spot)
+                            if (need + 6f > WalkPxPerFrame * 0.8f * (f - 3))
                             {
                                 continue;
                             }
-                            var box = new Rectangle((int)sp.X, (int)sp.Y, pb.Width, pb.Height);
-                            if (!StandsSafe(box))
-                            {
-                                continue;
-                            }
-                            // body clear of everything from when we get there until the swing has landed
                             int arrive = Math.Max(0, (int)(need / Math.Max(0.1f, WalkPxPerFrame)));
-                            bool ok = true;
-                            foreach (var t in threats)
-                            {
-                                for (int k = arrive; k <= Math.Min(Horizon, t == tt ? f : f + 4) && ok; k++)
-                                {
-                                    if (t.At[k] is Rectangle r)
-                                    {
-                                        r.Inflate(t == tt ? 1 : t.Margin, t == tt ? 1 : t.Margin);
-                                        ok = !r.Intersects(box);
-                                    }
-                                }
-                            }
-                            if (ok)
+                            if (StrikeOk(tg, tt, sp, fc, f, arrive))
                             {
                                 goal = sp;
                                 face = fc;
                                 strike = true;
                                 target = tg;
+                                planT = tg;
+                                planSpot = sp;
+                                planFace = fc;
+                                planAt = BotRunner.Frame + f;
                                 break;
                             }
                         }
@@ -9915,6 +9963,10 @@ namespace AnodyneSharp.Recording
                     {
                         break;
                     }
+                }
+                if (!strike)
+                {
+                    planT = null;
                 }
                 bool atGoal = strike && Math.Abs(here.X - goal.X) <= 2f && Math.Abs(here.Y - goal.Y) <= 2f;
                 BotRunner.Status = $"bouncers: {targets.Count} up, {(strike ? $"strike {target.GetType().Name} from {goal - new Vector2(Grid.X * 160, Grid.Y * 160)} facing {face}" : "keep clear")}{(atGoal ? " (there)" : "")}";
@@ -9928,7 +9980,8 @@ namespace AnodyneSharp.Recording
                     var bro = BroomBoxAt(here, Player.facing);
                     bool due = targets.Any(tg => !tg._flickering && threats.FirstOrDefault(t => t.Source == tg) is Threat tt2
                         && Enumerable.Range(1, 4).Any(k => tt2.At[k] is Rectangle r2 && r2.Intersects(bro)));
-                    if (due && SafeAtExactThreats(here, threats, 4))
+                    // (and safe a while after: one hit while it drifts on into us, still hurting as it flickers, costs a heart)
+                    if (due && SafeAtExactThreats(here, threats, 12))
                     {
                         lastSwing = i;
                         yield return K(KeyFunctions.Accept);
@@ -9948,7 +10001,45 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                 }
-                var keys = strike ? SpaceTimeMove(goal, threats, useCache: false) : null;
+                if (!strike)
+                {
+                    // Keep clear in the open: the floor spot near us that stays clear longest, with room about it (in a one-tile pocket
+                    // a bouncer drifting in leaves nowhere to go, and it hurts by touch while it flickers too)
+                    float bestScore = float.MinValue;
+                    var room = new Vector2(Grid.X * 160, Grid.Y * 160);
+                    for (int gx = 4; gx < 160 - pb.Width; gx += 8)
+                    {
+                        for (int gy = 4; gy < 160 - pb.Height; gy += 8)
+                        {
+                            var c = room + new Vector2(gx, gy);
+                            if ((c - here).Length() > 64 || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 30))
+                            {
+                                continue;
+                            }
+                            int open8 = 0;
+                            foreach (var (ox, oy) in new[] { (16, 0), (-16, 0), (0, 16), (0, -16), (16, 16), (-16, 16), (16, -16), (-16, -16) })
+                            {
+                                var oc = new Rectangle((int)c.X + ox, (int)c.Y + oy, pb.Width, pb.Height);
+                                if (oc.Left >= room.X && oc.Right <= room.X + 160 && oc.Top >= room.Y && oc.Bottom <= room.Y + 160 && StandsSafe(oc))
+                                {
+                                    open8++;
+                                }
+                            }
+                            float score = 5f * open8 - 0.3f * (c - here).Length() + (prevClear is Vector2 pc && (pc - c).Length() < 6f ? 6f : 0f);
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                goal = c;
+                            }
+                        }
+                    }
+                    prevClear = goal;
+                }
+                else
+                {
+                    prevClear = null;
+                }
+                var keys = SpaceTimeMove(goal, threats, useCache: false);
                 if (keys == null)
                 {
                     keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
