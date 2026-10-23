@@ -2600,7 +2600,9 @@ namespace AnodyneSharp.Recording
                                 yield return K(dir);
                             }
                             dodgeWaits = 0;
-                            continue;
+                            // (plan on from where we landed: the step's tile was the line's own, now behind us, and walking back at its
+                            // centre jumped an Apartments (5,6) bot back over the line, and over again, till the trap caught a landing)
+                            goto replan;
                         }
                         if (Dodged)
                         {

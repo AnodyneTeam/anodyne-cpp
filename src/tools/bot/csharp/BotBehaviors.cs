@@ -8374,11 +8374,12 @@ namespace AnodyneSharp.Recording
 
         /// <summary>
         /// Short of the take-off for TrapLineToJump by a few pixels, and that far is safe to walk (still out of the line after a step):
-        /// creep up to it. A dodge held a bot 3-4px back from (5,6)'s trap line, a jump too short from there, till it gave up.
+        /// creep up to it. A dodge held a bot 3-4px back from (5,6)'s trap line, a jump too short from there, till it gave up (and 14px back
+        /// after it had jumped across and back).
         /// </summary>
         protected static bool TrapLineCreep(KeyFunctions dir)
         {
-            if (TrapLineToJump(dir) || !TrapLineToJump(dir, 6))
+            if (TrapLineToJump(dir) || !TrapLineToJump(dir, 16))
             {
                 return false;
             }
@@ -8387,14 +8388,16 @@ namespace AnodyneSharp.Recording
             foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
             {
                 var tb = t.Hitbox;
-                float gap = dir switch
+                // (the box after one more step, as the game rounds it: touching its band's edge is not in it)
+                const float step = 1.2f;
+                int after = dir switch
                 {
-                    KeyFunctions.Up => p.Y - tb.Bottom,
-                    KeyFunctions.Down => tb.Top - (p.Y + pb.Height),
-                    KeyFunctions.Left => p.X - tb.Right,
-                    _ => tb.Left - (p.X + pb.Width),
+                    KeyFunctions.Up => tb.Bottom - (int)Math.Floor(p.Y - step),
+                    KeyFunctions.Down => (int)Math.Floor(p.Y + step) + pb.Height - tb.Top,
+                    KeyFunctions.Left => tb.Right - (int)Math.Floor(p.X - step),
+                    _ => (int)Math.Floor(p.X + step) + pb.Width - tb.Left,
                 };
-                if (gap > -1f && gap < 7f && gap <= 1.5f)
+                if (after > 0 && after < 8)
                 {
                     return false; // (a step on would be in its line)
                 }
@@ -8418,7 +8421,8 @@ namespace AnodyneSharp.Recording
                 };
                 int side = horiz ? Math.Max(0, Math.Max(tb.Top - pb.Bottom, pb.Top - tb.Bottom)) : Math.Max(0, Math.Max(tb.Left - pb.Right, pb.Left - tb.Right));
                 int across = gap + (horiz ? tb.Width + pb.Width : tb.Height + pb.Height) + 2;
-                if (gap < 0 || gap > 4 + slack || side > 40 || across > 27 + slack)
+                // (with slack, a creep closes the gap to the take-off first: only the line's own width has to be in one jump's reach)
+                if (gap < 0 || gap > 4 + slack || side > 40 || across - (slack > 0 ? gap : 0) > 27)
                 {
                     continue;
                 }
