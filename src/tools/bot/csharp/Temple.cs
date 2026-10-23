@@ -391,6 +391,30 @@ namespace AnodyneSharp.Recording
     }
 
     /// <summary>The Circus, last half: the rat puzzle, key 4, the top key gate and the Lion card.</summary>
+    /// <summary>
+    /// The cards the ending's 36 still lacks after the Circus: Red Cave (0,0), Crowd (8,2), the Terminal's Sage card, then the Hotel's
+    /// Dustmaid (3,6) (a dust-powered lift), Dasher (1,8) (sight traps) and Burst Plant (9,3) (a hop into the chasm's current, a
+    /// Dustmaid kited, the dust rafted north over two screens and down the current to the chest).
+    /// </summary>
+    public class Cards2 : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Cards to 36: Red Cave, Crowd, Terminal and the Hotel's three");
+            yield return Section("red cave (0,0) card", () => Exec("O1 X1 viaREDCAVE W30 g6 + W30 g4 O1 X1 +K W30 + W30"));
+            yield return Section("crowd (8,2) card", () => Exec("g4 O1 X1 viaCROWD W30 + W30 g4 O1 X1 H3,3 oCROWD@560,512 W30 >838,352 U30 W90 O1 X1 F3000 W60 >1190,330 >1189,262 >1240,246 G1250,246,kr W20 H8,1 F3000 W30 >1350,300 H8,2 t13 I1408,432,d W60 T W30"));
+            yield return Section("terminal sage card", () => Exec("g4 O1 X1 viaFIELDS W30 H5,4 H5,5 H4,5 H4,4 H3,4 H3,3 H2,3 H2,2 H1,2 H1,1 oTERMINAL W60 + W30"));
+            yield return Section("hotel dustmaid card", () => Exec("g4 O1 X1 viaHOTEL W30 >520,980 W20 G500,984 ed988 W30 G500,1045 er511 W30 J35,65,d+ el536 W30 G500,1064 ed1068 W200 u1 u5 W20 UC14 W190 U24 u5 W30 T W30"));
+            yield return Section("hotel floor 3 key", () => Exec("g4 O1 X1 >440,872 W30 lift3 W30 H3,10 W20 >555,1675 G553,1676 W20 I608,1616,d W60 T W30"));
+            yield return Section("hotel dasher card", () => Exec("g4 O1 X1 H2,9 W20 >339,1458 G339,1458,kl W30 g0 O1 X0 G300,1458 sight243,1458 W10 U30 W30 g2 O1 X0 W5 sight291,1314 J18,82,u W60 T W30"));
+            yield return Section("hotel back from the dasher", () => Exec("g2 O1 X0 sight243,1412 D20 W5 sight307,1458 W10"));
+            yield return Section("hotel to the burst plant chasm", () => Exec("g3 O1 X1 viaHOTEL W30 lift3 W30 door27 W30 H8,1 W30 H8,2 W30"));
+            string wade = string.Concat(System.Linq.Enumerable.Repeat("D2 RD4 ", 18));
+            yield return Section("hotel burst plant chasm", () => Exec("D16 er1327 R60 +k W10 G1408,452 L7 " + wade + "R20 >1456,560"));
+            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F W20 +s W60"));
+        }
+    }
+
     public class Circus3 : BotScript
     {
         public override IEnumerable<object> Run()

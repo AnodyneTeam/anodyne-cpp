@@ -41,10 +41,10 @@ namespace AnodyneSharp.Recording
                     yield return SightTrapWalk(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
                     continue;
                 }
-                if (System.Text.RegularExpressions.Regex.Match(tok, @"^([UDLR])([UDLR])(\d+)$") is { Success: true } two)
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^([UDLRC])([UDLRC])(\d+)$") is { Success: true } two)
                 {
-                    // RD30: hold two directions at once for n frames (wading across a current, leaning into it)
-                    static KeyFunctions Dir(char c) => c switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    // RD30: hold two directions at once for n frames (wading across a current, leaning into it); UC20: jump holding Up
+                    static KeyFunctions Dir(char c) => c switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, 'C' => KeyFunctions.Cancel, _ => KeyFunctions.Right };
                     yield return Hold(int.Parse(two.Groups[3].Value), Dir(two.Groups[1].Value[0]), Dir(two.Groups[2].Value[0]));
                     continue;
                 }
