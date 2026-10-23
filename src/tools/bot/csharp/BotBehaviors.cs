@@ -8767,6 +8767,19 @@ namespace AnodyneSharp.Recording
                     r.Inflate(3, 3);
                     return r;
                 }).ToList();
+            // (and where the bouncing dash traps will be as we come down, off the walls and back: Beach (1,1)'s pair, hopped back along
+            // their lane, came back off the wall onto the landing)
+            foreach (var pt in PredictThreats(null).Where(t => t.Source != null && t.Source.GetType().Name is "BounceDashTrap" or "Shieldy"))
+            {
+                for (int f = 20; f <= 34 && f <= Horizon; f++)
+                {
+                    if (pt.At[f] is Rectangle tr)
+                    {
+                        tr.Inflate(3, 3);
+                        bodies.Add(tr);
+                    }
+                }
+            }
             // (and the Slime shots still flying as we come down: hopping along one's line lands us on it)
             foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
             {
