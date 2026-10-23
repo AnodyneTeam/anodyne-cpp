@@ -1682,7 +1682,7 @@ namespace AnodyneSharp.Recording
         private static readonly HashSet<Point> _solidNpcTiles = new();
 
         /// <summary>Tiles covered by rocks and statues (fixed NPCs that push us back): solid as walls, though the tile data shows floor.</summary>
-        private static HashSet<Point> SolidNpcTiles()
+        internal static HashSet<Point> SolidNpcTiles()
         {
             if (_solidNpcFrame == BotRunner.Frame)
             {

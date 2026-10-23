@@ -140,6 +140,14 @@ namespace AnodyneSharp.Recording
                     ExactHolds = tok == "!1";
                     continue;
                 }
+                if (tok.StartsWith("dig") && tok.Length > 3 && char.IsDigit(tok[3]))
+                {
+                    // dig<x>,<y>: to tile x,y with the swap broom, swapping the walls in the way for floor (after the credits it works
+                    // anywhere a map's swapper regions allow)
+                    var a = tok.Substring(3).Split(',');
+                    yield return DigTo(new Point(int.Parse(a[0]), int.Parse(a[1])));
+                    continue;
+                }
                 if (tok == "goswap")
                 {
                     // goswap: solve this screen's GO tile puzzle with the swap broom
@@ -2343,9 +2351,13 @@ namespace AnodyneSharp.Recording
                     spot = new Vector2(tb.Center.X - 5, off.Y > 0 ? tb.Bottom + 3 : tb.Top - 3 - 12);
                     face = off.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
                 }
-                if (!StandsSafe(new Rectangle((int)spot.X, (int)spot.Y, 10, 12)))
+                var lanes = BotNav.LaneTiles();
+                bool InBeam(Rectangle r) => lanes.Count > 0 && new[] { new Vector2(r.Left, r.Top), new Vector2(r.Right - 1, r.Top), new Vector2(r.Left, r.Bottom - 1), new Vector2(r.Right - 1, r.Bottom - 1) }
+                    .Any(c => lanes.Contains(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
+                if (!StandsSafe(new Rectangle((int)spot.X, (int)spot.Y, 10, 12)) || InBeam(new Rectangle((int)spot.X, (int)spot.Y, 10, 12)))
                 {
-                    // That side is wall (we stood beside it, below a wall, for 300 frames): the nearest side we can stand on.
+                    // That side is wall (we stood beside it, below a wall, for 300 frames), or in a PewLaser's beam (the whole fight is
+                    // spent standing there: Hotel (4,0)'s took ten hearts): the nearest side we can stand on, out of the beams if any is.
                     var sides = new (Vector2 at, KeyFunctions f)[]
                     {
                         (new Vector2(tb.Right + 3, tb.Center.Y - 6), KeyFunctions.Left),
@@ -2353,7 +2365,8 @@ namespace AnodyneSharp.Recording
                         (new Vector2(tb.Center.X - 5, tb.Bottom + 3), KeyFunctions.Up),
                         (new Vector2(tb.Center.X - 5, tb.Top - 15), KeyFunctions.Down),
                     };
-                    var ok = sides.Where(sd => StandsSafe(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12))).OrderBy(sd => (sd.at - me).Length()).ToList();
+                    var ok = sides.Where(sd => StandsSafe(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12)))
+                        .OrderBy(sd => InBeam(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12)) ? 1 : 0).ThenBy(sd => (sd.at - me).Length()).ToList();
                     if (ok.Count > 0)
                     {
                         spot = ok[0].at;
@@ -6368,6 +6381,177 @@ namespace AnodyneSharp.Recording
             System.Console.Error.WriteLine($"  go puzzle: solved={!det.exists}");
             // back to the broom we fought with (the menu's rows: plain, extend, widen)
             yield return MenuEquipBroom(was == AnodyneSharp.Entities.BroomType.Long ? 1 : was == AnodyneSharp.Entities.BroomType.Wide ? 2 : 0);
+        }
+
+        private static readonly System.Reflection.FieldInfo _mapTileObjects = typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>The collision of BG tile id `id` (what a tile becomes when a swap brings that id to it).</summary>
+        private static (Touching, AnodyneSharp.MapData.Tiles.CollisionEventType) ClassOfTileId(int id)
+        {
+            var tiles = (System.Collections.IList)_mapTileObjects.GetValue(BotNav.CurrentMap);
+            var t = (AnodyneSharp.MapData.Tiles.Tile)tiles[id];
+            return (t.allowCollisions, t.collisionEventType);
+        }
+
+        private static bool SwapAllowed(Point t)
+        {
+            var st = GlobalState.Map.CheckSwapper(t);
+            if (st == AnodyneSharp.MapData.SwapperControl.State.Disallow || st == AnodyneSharp.MapData.SwapperControl.State.DisallowSilently)
+            {
+                return false;
+            }
+            return GlobalState.events.GetEvent("SeenCredits") != 0 || st == AnodyneSharp.MapData.SwapperControl.State.Allow;
+        }
+
+        /// <summary>A wall (or hole) the swap broom can turn to floor: its own layer is the whole of it (no overlay on top) and swapping is
+        /// allowed there.</summary>
+        private static bool Diggable(Point t)
+        {
+            if (t.X < 0 || t.Y < 0 || t.X >= BotNav.CurrentMap.WidthInTiles || t.Y >= BotNav.CurrentMap.HeightInTiles)
+            {
+                return false;
+            }
+            if (GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t) != 0 || !SwapAllowed(t) || BotNav.SolidNpcTiles().Contains(t))
+            {
+                return false;
+            }
+            var (al, ev) = ClassOfTileId(GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, t));
+            return al != Touching.NONE || ev == AnodyneSharp.MapData.Tiles.CollisionEventType.HOLE;
+        }
+
+        /// <summary>Plain floor to trade for a wall: walkable, nothing on top, no event.</summary>
+        private static bool SpareFloor(Point t)
+        {
+            if (GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t) != 0 || !SwapAllowed(t) || !BotNav.Walkable(t))
+            {
+                return false;
+            }
+            var (al, ev) = ClassOfTileId(GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, t));
+            return al == Touching.NONE && ev == AnodyneSharp.MapData.Tiles.CollisionEventType.NONE;
+        }
+
+        /// <summary>
+        /// To tile `goal` through the walls: the cheapest way by tiles, where walking a floor tile costs 1 and digging a wall 6. Each wall
+        /// on the way is swapped, from the floor beside it, with a floor tile beside us off the way (the wall goes there instead).
+        /// </summary>
+        protected static IEnumerable<object> DigTo(Point goal)
+        {
+            var was = GlobalState.inventory.EquippedBroom;
+            if (was != AnodyneSharp.Entities.BroomType.Transformer)
+            {
+                yield return MenuEquipBroom(3);
+            }
+            int fails = 0;
+            for (int dig = 0; dig < 120; dig++)
+            {
+                var here = BotNav.TileOf(Pos);
+                if (here == goal)
+                {
+                    break;
+                }
+                var path = DigPath(here, goal);
+                if (path == null)
+                {
+                    throw new InvalidOperationException($"bot: no way to dig from {here} to {goal} on {Map}");
+                }
+                int k = path.FindIndex(q => !BotNav.Walkable(q));
+                if (k < 0)
+                {
+                    var gc = BotNav.CentreOf(goal);
+                    yield return GoTo(gc.X, gc.Y);
+                    yield return WalkTo(gc.X, gc.Y, tol: 2f);
+                    break;
+                }
+                var c = k == 0 ? here : path[k - 1];
+                var w = path[k];
+                BotRunner.Status = $"dig: swap the wall {w.X},{w.Y} away (to {goal.X},{goal.Y})";
+                var cc = BotNav.CentreOf(c);
+                if (c != here)
+                {
+                    yield return GoTo(cc.X, cc.Y);
+                }
+                yield return WalkTo(cc.X, cc.Y, tol: 1f);
+                static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                var ahead = path.Skip(k).ToHashSet();
+                var spare = new[] { new Point(c.X + 1, c.Y), new Point(c.X - 1, c.Y), new Point(c.X, c.Y + 1), new Point(c.X, c.Y - 1) }
+                    .Where(f => f != w && !ahead.Contains(f) && SpareFloor(f))
+                    .OrderBy(f => k >= 2 && f == path[k - 2] ? 1 : 0).Cast<Point?>().FirstOrDefault();
+                if (spare == null)
+                {
+                    throw new InvalidOperationException($"bot: dig: no floor beside {c} to trade for the wall {w}");
+                }
+                System.Console.Error.WriteLine($"  dig f{BotRunner.Frame}: from {c} swap the wall {w} with the floor {spare}");
+                yield return Hold(2, Toward(c, w));
+                yield return Wait(4);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+                yield return Hold(2, Toward(c, spare.Value));
+                yield return Wait(4);
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(20);
+                BotNav.ResetDustCache();
+                if (!BotNav.Walkable(w))
+                {
+                    System.Console.Error.WriteLine($"  dig: the swap at {w} did not take");
+                    if (++fails >= 3)
+                    {
+                        throw new InvalidOperationException($"bot: dig: the wall {w} would not swap");
+                    }
+                }
+            }
+            if (was != AnodyneSharp.Entities.BroomType.Transformer)
+            {
+                yield return MenuEquipBroom(was == AnodyneSharp.Entities.BroomType.Long ? 1 : was == AnodyneSharp.Entities.BroomType.Wide ? 2 : 0);
+            }
+        }
+
+        /// <summary>Tiles from (not counting) `from` to `goal`, floor at 1 and diggable walls at 6 (Dijkstra over the map).</summary>
+        private static List<Point> DigPath(Point from, Point goal)
+        {
+            int W = BotNav.CurrentMap.WidthInTiles, H = BotNav.CurrentMap.HeightInTiles;
+            var dist = new Dictionary<Point, int> { [from] = 0 };
+            var prev = new Dictionary<Point, Point>();
+            var open = new PriorityQueue<Point, int>();
+            open.Enqueue(from, 0);
+            while (open.TryDequeue(out var p, out int d))
+            {
+                if (p == goal)
+                {
+                    var path = new List<Point>();
+                    for (var q = goal; q != from; q = prev[q])
+                    {
+                        path.Add(q);
+                    }
+                    path.Reverse();
+                    return path;
+                }
+                if (d > dist[p])
+                {
+                    continue;
+                }
+                foreach (var q in new[] { new Point(p.X + 1, p.Y), new Point(p.X - 1, p.Y), new Point(p.X, p.Y + 1), new Point(p.X, p.Y - 1) })
+                {
+                    if (q.X < 0 || q.Y < 0 || q.X >= W || q.Y >= H)
+                    {
+                        continue;
+                    }
+                    int step = BotNav.Walkable(q) ? 1 : Diggable(q) ? 6 : -1;
+                    if (step < 0)
+                    {
+                        continue;
+                    }
+                    int nd = d + step;
+                    if (!dist.TryGetValue(q, out int od) || nd < od)
+                    {
+                        dist[q] = nd;
+                        prev[q] = p;
+                        open.Enqueue(q, nd);
+                    }
+                }
+            }
+            return null;
         }
 
         /// <summary>Stands on a walkable tile beside tile t (the nearest by path) and turns to face it.</summary>

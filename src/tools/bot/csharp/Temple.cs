@@ -417,6 +417,21 @@ namespace AnodyneSharp.Recording
         }
     }
 
+    /// <summary>
+    /// After the credits (a save that has seen them, so the swap broom works almost anywhere): the cards behind walls the swap digs
+    /// through (token dig).
+    /// </summary>
+    public class Postgame : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("The post-game cards");
+            // Hotel (5,0) City Man: from the roof (the Hotel's menu warp lands there), dig east into the Teleguy room, clear it for its
+            // kill gate and open the chest.
+            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 g6 F W60 g0 I928,80,d W60 T W30"));
+        }
+    }
+
     public class Endgame : BotScript
     {
         public override IEnumerable<object> Run()

@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: chain.sh [first-part]  : runs the parts in order, each from the end state of the one before (the first from a new game)
 cd /home/user/anodyne-cpp/src/tools/bot && source cloud/headless.sh >/dev/null
-PARTS=(nexus roadway overworld1 temple temple1 forest2 fields beach beach2 beach3 redsea redcave redcave2 redcave3 redcave4 cliff crowd windmill temple2 suburb apartment hotel hotel2 hotel3 hotel4 hotel5 hotel6 cards circus circusb circus2 circus3 cards2 endgame)
+PARTS=(nexus roadway overworld1 temple temple1 forest2 fields beach beach2 beach3 redsea redcave redcave2 redcave3 redcave4 cliff crowd windmill temple2 suburb apartment hotel hotel2 hotel3 hotel4 hotel5 hotel6 cards circus circusb circus2 circus3 cards2 endgame postgame)
 start=${1:-nexus}; go=0; prev=""
 for i in "${!PARTS[@]}"; do
   p=${PARTS[$i]}
