@@ -15621,8 +15621,23 @@ namespace AnodyneSharp.Recording
             // (only one we can walk to on this screen: one beyond a wall - HAPPY (3,1) seen from its button nook - is kept off for good
             // and timed the fight out)
             var lionFloor = BotNav.DistMap(BotNav.TileOf(Pos), false, new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10));
-            bool LionNear(Entity e) => new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }
-                .Any(o => lionFloor.ContainsKey(new Point((int)(e.Hitbox.Center.X / 16) + o.X, (int)(e.Hitbox.Center.Y / 16) + o.Y)));
+            // (any tile its box is over, or one beside those: a lion pacing along a wall has its middle on the wall's tile, and the plain
+            // fight walked into it there, two hearts in Circus (5,2))
+            bool LionNear(Entity e)
+            {
+                var hb = e.Hitbox;
+                for (int ty = (int)Math.Floor(hb.Top / 16f) - 1; ty <= (int)Math.Floor((hb.Bottom - 1) / 16f) + 1; ty++)
+                {
+                    for (int tx = (int)Math.Floor(hb.Left / 16f) - 1; tx <= (int)Math.Floor((hb.Right - 1) / 16f) + 1; tx++)
+                    {
+                        if (lionFloor.ContainsKey(new Point(tx, ty)))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
             if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e)) && LionNear(e)))
             {
                 var onlyLion = only;
