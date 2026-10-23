@@ -8219,6 +8219,11 @@ namespace AnodyneSharp.Recording
         /// <summary>Until this frame the scripted keys go out as they are: no reflex may change a move planned frame by frame.</summary>
         internal static long ExactKeysUntil = -1;
 
+        private static readonly System.Reflection.FieldInfo SpringDist =
+            typeof(AnodyneSharp.Entities.Gadget.SpringPad).GetField("distance", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo SpringTime =
+            typeof(AnodyneSharp.Entities.Gadget.SpringPad).GetField("time", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
         private static readonly System.Reflection.FieldInfo SightTrapHome =
             typeof(AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap).GetField("_idlepos", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
@@ -8232,6 +8237,7 @@ namespace AnodyneSharp.Recording
             var scr = new Rectangle(grid.X * 160, grid.Y * 160, 160, 160);
             for (int attempt = 0; attempt < 8; attempt++)
             {
+                yield return Until(() => !GlobalState.ScreenTransition && Player.state == PlayerState.GROUND, 120, "the ground under us");
                 if ((Player.Position - goal).Length() <= 3f)
                 {
                     yield break;
@@ -8254,6 +8260,20 @@ namespace AnodyneSharp.Recording
                 Func<Rectangle, bool> walk = r => OnScreen(r) && CornersWalkable(r);
                 Func<Rectangle, bool> airOk = r => OnScreen(r) && WallFree(r);
                 Func<Rectangle, bool> trapFree = r => OnScreen(r) && WallFree(r) && !HoleUnder(r);
+                // Spring pads: landing a jump on one throws us down over the wall below
+                SightTrapPlanner.Springs = BotRunner.Entities().OfType<AnodyneSharp.Entities.Gadget.SpringPad>().Where(e => e.exists && e.Hitbox.Intersects(scr))
+                    .Select(e => (e.Hitbox, SpringDist?.GetValue(e) is int d ? d : 32, (int)Math.Round((SpringTime?.GetValue(e) is float tm ? tm : 0.3f) * 60f))).ToList();
+                var springFrom = new Dictionary<Point, List<Point>>(); // landing tile -> the spring tiles that throw us onto it
+                foreach (var (box, d, _) in SightTrapPlanner.Springs)
+                {
+                    var stile = new Point(box.Center.X / 16, box.Center.Y / 16);
+                    var land = new Point(stile.X, stile.Y + d / 16);
+                    if (!springFrom.TryGetValue(land, out var lst))
+                    {
+                        springFrom[land] = lst = new List<Point>();
+                    }
+                    lst.Add(stile);
+                }
                 // (frames to the goal round the walls: a walk over the screen's tiles from the goal's, a hole tile crossed by a jump)
                 var gt = BotNav.TileOf(goal);
                 var dist = new Dictionary<Point, int> { [gt] = 0 };
@@ -8262,6 +8282,14 @@ namespace AnodyneSharp.Recording
                 while (q.Count > 0)
                 {
                     var c = q.Dequeue();
+                    if (springFrom.TryGetValue(c, out var froms))
+                    {
+                        foreach (var sp in froms.Where(sp => !dist.ContainsKey(sp)))
+                        {
+                            dist[sp] = dist[c] + 2;
+                            q.Enqueue(sp);
+                        }
+                    }
                     foreach (var (dx, dy) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
                     {
                         for (int k = 1; k <= 2; k++)

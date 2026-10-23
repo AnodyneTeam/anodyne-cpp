@@ -433,6 +433,74 @@ namespace AnodyneSharp.Recording
             return hit;
         }
 
+        /// <summary>
+        /// Spring pads on the screen (box, how far down they throw us, in how many frames): landing a jump on one throws us that far
+        /// down over the walls, on the ground as far as a trap is concerned (the game's AUTO_JUMP is not AIR).
+        /// </summary>
+        public static List<(Rectangle box, int dist, int frames)> Springs = new();
+
+        /// <summary>One action from (x,y), every frame simulated: false if a trap touches us on the ground or the move is no move at all.</summary>
+        private static bool RunAction(int a, ref float x, ref float y, SightTrap[] tr, int pw, int ph, Func<Rectangle, bool> walkable, Func<Rectangle, bool> airOk,
+            Func<Rectangle, bool> trapFree, int block, int margin, List<string> log, out int frames)
+        {
+            bool jump = a >= SpaceTime.Actions.Length;
+            var (ax, ay) = jump ? SpaceTime.Jumps[a - SpaceTime.Actions.Length] : SpaceTime.Actions[a];
+            float sp = jump ? SpaceTime.Walk * 0.83f : (ax != 0 && ay != 0) ? SpaceTime.Walk * 0.7f : SpaceTime.Walk;
+            frames = jump ? AirFrames : block;
+            int moveFrames = frames;
+            bool ok = true;
+            for (int f = 1; f <= moveFrames; f++)
+            {
+                float px0 = x, py0 = y;
+                bool air = jump && f < moveFrames;
+                Move(ref x, ref y, ax * sp, ay * sp, pw, ph, air ? airOk : walkable);
+                if (log == null && !air && !jump && (ax != 0 || ay != 0) && x == px0 && y == py0)
+                {
+                    return false; // (walking into a wall: the same as standing, which is its own action)
+                }
+                bool hit = StepTraps(tr, px0, py0, x, y, pw, ph, air, trapFree, margin);
+                log?.Add($"a{a} me {x:0.0},{y:0.0}{(air ? " air" : "")}{(hit ? " HIT" : "")} | " + string.Join(" ", tr.Select(t => $"{t.X:0.0},{t.Y:0.0}/m{t.Mode}")));
+                if (hit)
+                {
+                    ok = false;
+                    if (log == null)
+                    {
+                        return false;
+                    }
+                }
+                if (jump && f == moveFrames)
+                {
+                    var me = Cover(x, y, pw, ph);
+                    foreach (var (box, dist, sf) in Springs)
+                    {
+                        if (box.Intersects(me))
+                        {
+                            // (thrown: a straight line down to dist below, through anything)
+                            float y0 = y;
+                            for (int k = 1; k <= sf; k++)
+                            {
+                                float qx = x, qy = y;
+                                y = y0 + dist * k / (float)sf;
+                                bool h2 = StepTraps(tr, qx, qy, x, y, pw, ph, false, trapFree, margin);
+                                log?.Add($"a{a} me {x:0.0},{y:0.0} spring{(h2 ? " HIT" : "")} | " + string.Join(" ", tr.Select(t => $"{t.X:0.0},{t.Y:0.0}/m{t.Mode}")));
+                                if (h2)
+                                {
+                                    ok = false;
+                                    if (log == null)
+                                    {
+                                        return false;
+                                    }
+                                }
+                            }
+                            frames += sf;
+                            break;
+                        }
+                    }
+                }
+            }
+            return ok && (!jump || walkable(Cover(x, y, pw, ph)));
+        }
+
         /// <summary>Debug: the frame-by-frame states a plan predicts (our top-left, then each trap's), for comparing with the game.</summary>
         public static List<string> Replay(Rectangle start, Vector2 startPos, SightTrap[] traps, List<Step> plan, Func<Rectangle, bool> walkable, Func<Rectangle, bool> airOk,
             Func<Rectangle, bool> trapFree)
@@ -442,17 +510,7 @@ namespace AnodyneSharp.Recording
             var tr = traps.Select(t => t.Copy()).ToArray();
             foreach (var st in plan)
             {
-                bool jump = st.Action >= SpaceTime.Actions.Length;
-                var (ax, ay) = jump ? SpaceTime.Jumps[st.Action - SpaceTime.Actions.Length] : SpaceTime.Actions[st.Action];
-                float sp = jump ? SpaceTime.Walk * 0.83f : (ax != 0 && ay != 0) ? SpaceTime.Walk * 0.7f : SpaceTime.Walk;
-                for (int f = 1; f <= st.Frames; f++)
-                {
-                    float px0 = x, py0 = y;
-                    bool air = jump && f < st.Frames;
-                    Move(ref x, ref y, ax * sp, ay * sp, start.Width, start.Height, air ? airOk : walkable);
-                    bool hit = StepTraps(tr, px0, py0, x, y, start.Width, start.Height, air, trapFree, 0);
-                    outp.Add($"a{st.Action} me {x:0.0},{y:0.0}{(air ? " air" : "")}{(hit ? " HIT" : "")} | " + string.Join(" ", tr.Select(t => $"{t.X:0.0},{t.Y:0.0}/m{t.Mode}")));
-                }
+                RunAction(st.Action, ref x, ref y, tr, start.Width, start.Height, walkable, airOk, trapFree, st.Frames, 0, outp, out _);
             }
             return outp;
         }
@@ -489,29 +547,9 @@ namespace AnodyneSharp.Recording
                 int nActions = SpaceTime.Actions.Length + (canJump ? 5 : 0);
                 for (int a = 0; a < nActions; a++)
                 {
-                    bool jump = a >= SpaceTime.Actions.Length;
-                    var (ax, ay) = jump ? SpaceTime.Jumps[a - SpaceTime.Actions.Length] : SpaceTime.Actions[a];
-                    float sp = jump ? SpaceTime.Walk * 0.83f : (ax != 0 && ay != 0) ? SpaceTime.Walk * 0.7f : SpaceTime.Walk;
-                    int frames = jump ? AirFrames : block;
                     float x = n.X, y = n.Y;
                     var tr = n.Traps.Select(t => t.Copy()).ToArray();
-                    bool ok = true;
-                    for (int f = 1; f <= frames && ok; f++)
-                    {
-                        float px0 = x, py0 = y;
-                        bool air = jump && f < frames;
-                        Move(ref x, ref y, ax * sp, ay * sp, pw, ph, air ? airOk : walkable);
-                        if (!air && (ax != 0 || ay != 0) && x == px0 && y == py0)
-                        {
-                            ok = false; // (walking into a wall: the same as standing, which is its own action)
-                            break;
-                        }
-                        if (StepTraps(tr, px0, py0, x, y, pw, ph, air, trapFree, margin))
-                        {
-                            ok = false;
-                        }
-                    }
-                    if (!ok || (jump && !walkable(Cover(x, y, pw, ph))))
+                    if (!RunAction(a, ref x, ref y, tr, pw, ph, walkable, airOk, trapFree, block, margin, null, out int frames))
                     {
                         continue;
                     }
