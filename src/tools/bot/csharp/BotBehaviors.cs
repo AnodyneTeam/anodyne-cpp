@@ -9131,15 +9131,17 @@ namespace AnodyneSharp.Recording
                                 var perp = new Vector2(-away.Y, away.X);
                                 foreach (var sgn in new[] { 1f, -1f })
                                 {
-                                    var sc = c + perp * 22f * sgn;
+                                    var sc = c + perp * 26f * sgn;
                                     if (StandsSafe(new Rectangle((int)sc.X, (int)sc.Y, pb.Width, pb.Height)))
                                     {
                                         score += 12f;
                                     }
                                 }
-                                if (ld < 60f)
+                                // (it covers 1.8px a frame to our 1.2: sidestepping its 13-20px body takes ~12 frames, so 40px off is the least
+                                // that works, with some to spare)
+                                if (ld < 72f)
                                 {
-                                    score -= 2f * (60f - ld);
+                                    score -= 3f * (72f - ld);
                                 }
                             }
                             if (prevGoal is Vector2 pg && (pg - c).Length() < 6f)
