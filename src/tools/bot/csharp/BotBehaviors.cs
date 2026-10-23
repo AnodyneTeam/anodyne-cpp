@@ -2416,53 +2416,81 @@ namespace AnodyneSharp.Recording
                 var here = BotNav.TileOf(Pos);
                 var others = PredictThreats(rat); // the rest of the room (traps, bullets, other rats) must leave the spot alone too
                 (int f, Vector2 tl, KeyFunctions face)? pick = null;
+                var ratTiles = new HashSet<Point>();
+                for (int g = 0; g <= 380; g += 2)
+                {
+                    var bite = RatBite(path[g].pos);
+                    bite.Inflate(3, 3);
+                    for (int ty = bite.Top / 16; ty <= (bite.Bottom - 1) / 16; ty++)
+                    {
+                        for (int tx = bite.Left / 16; tx <= (bite.Right - 1) / 16; tx++)
+                        {
+                            ratTiles.Add(new Point(tx, ty));
+                        }
+                    }
+                }
+                ratTiles.Remove(here);
                 for (int f = 40; f <= 380 && pick == null; f += 4)
                 {
                     var v = path[f].v;
-                    if (v == Vector2.Zero || path[f + 30].v != v)
+                    if (v == Vector2.Zero)
                     {
-                        continue; // it turns before it reaches us
+                        continue;
                     }
                     var dir = Vector2.Normalize(v);
                     var rc = path[f].pos + new Vector2(size / 2f, size / 2f);
-                    var tl = rc + dir * 24 - new Vector2(5, 6);
-                    var box = new Rectangle((int)tl.X, (int)tl.Y, 10, 12);
-                    if (!StandsSafe(box))
+                    // Ahead of it, facing back along its way (when it keeps on straight that far); else beside its way, facing across
+                    // (a rat shuttling up and down a dead-end corridor, CELL (1,8), walks over every spot ahead of it: the spot at the
+                    // corridor's mouth beside its turn is the one it never walks onto).
+                    var perp = new Vector2(-dir.Y, dir.X);
+                    foreach (var (tl, faceDir) in new[] { (rc + dir * 24 - new Vector2(5, 6), dir), (rc + perp * 18 - new Vector2(5, 6), perp), (rc - perp * 18 - new Vector2(5, 6), -perp) })
                     {
-                        continue;
-                    }
-                    bool crossed = false;
-                    for (int g = 0; g < f && !crossed; g++)
-                    {
-                        var bite = RatBite(path[g].pos);
-                        bite.Inflate(3, 3);
-                        crossed = bite.Intersects(box);
-                    }
-                    if (crossed)
-                    {
-                        continue; // it walks over the spot on the way there
-                    }
-                    bool unsafeSpot = false;
-                    var wide = box;
-                    wide.Inflate(2, 2);
-                    foreach (var th in others)
-                    {
-                        for (int g = 0; g <= Horizon && !unsafeSpot; g += 3)
+                        if (faceDir == dir && path[f + 30].v != v)
                         {
-                            unsafeSpot = th.At[g] is Rectangle tr && tr.Intersects(wide);
+                            continue; // it turns before it reaches us
                         }
+                        var box = new Rectangle((int)tl.X, (int)tl.Y, 10, 12);
+                        if (!StandsSafe(box))
+                        {
+                            continue;
+                        }
+                        bool crossed = false;
+                        for (int g = 0; g < f && !crossed; g++)
+                        {
+                            var bite = RatBite(path[g].pos);
+                            bite.Inflate(3, 3);
+                            crossed = bite.Intersects(box);
+                        }
+                        if (crossed)
+                        {
+                            continue; // it walks over the spot on the way there
+                        }
+                        bool unsafeSpot = false;
+                        var wide = box;
+                        wide.Inflate(2, 2);
+                        foreach (var th in others)
+                        {
+                            for (int g = 0; g <= Horizon && !unsafeSpot; g += 3)
+                            {
+                                unsafeSpot = th.At[g] is Rectangle tr && tr.Intersects(wide);
+                            }
+                        }
+                        if (unsafeSpot)
+                        {
+                            continue;
+                        }
+                        // (not through the rats' own corridor on the way: the walk would meet the bite we are lying in wait for)
+                        BotNav.HardAvoid = ratTiles;
+                        var route = BotNav.FindPath(here, t => t == BotNav.TileOf(tl), BotNav.TileOf(tl));
+                        BotNav.HardAvoid = null;
+                        if (route == null || (route.Count + 1) * 16 / WalkPxPerFrame + 20 > f)
+                        {
+                            continue;
+                        }
+                        var face = Math.Abs(faceDir.X) > Math.Abs(faceDir.Y) ? (faceDir.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (faceDir.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                        pick = (f, tl, face);
+                        break;
                     }
-                    if (unsafeSpot)
-                    {
-                        continue;
-                    }
-                    var route = BotNav.FindPath(here, t => t == BotNav.TileOf(tl), BotNav.TileOf(tl));
-                    if (route == null || (route.Count + 1) * 16 / WalkPxPerFrame + 20 > f)
-                    {
-                        continue;
-                    }
-                    var face = Math.Abs(dir.X) > Math.Abs(dir.Y) ? (dir.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dir.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
-                    pick = (f, tl, face);
                 }
                 if (pick == null)
                 {
@@ -5978,7 +6006,7 @@ namespace AnodyneSharp.Recording
             }
             string here = GlobalState.CURRENT_MAP_NAME;
             var door = AnodyneSharp.Entities.EntityManager.GetMapEntities(here)
-                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && pr.Type.Name != "NexusPad" && pr.Type.Name != "NexusDoor")
+                .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && pr.Type.Name != "NexusPad" && pr.Type.Name != "NexusDoor")
                 .Where(pr => string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, map, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(pr => near.HasValue ? (new Vector2(pr.Position.X, pr.Position.Y) - near.Value).Length() : 0f)
                 .FirstOrDefault();
@@ -6041,47 +6069,66 @@ namespace AnodyneSharp.Recording
             int bestLen = int.MaxValue;
             bool jumpOk = GlobalState.inventory.CanJump;
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && !pr.Type.Name.Contains("Nexus") && !skip.Contains(pr.Frame)
+                .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && !pr.Type.Name.Contains("Nexus") && !skip.Contains(pr.Frame)
                     && string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, GlobalState.CURRENT_MAP_NAME, StringComparison.OrdinalIgnoreCase)))
             {
-                var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
-                string kind = pr.Type.Name;
-                var stand = kind.StartsWith("Up") ? new Point(dt.X, dt.Y - 1) : kind.StartsWith("Left") ? new Point(dt.X + 1, dt.Y)
-                    : kind.StartsWith("Right") ? new Point(dt.X - 1, dt.Y) : new Point(dt.X, dt.Y + 1);
-                if (Math.Abs(stand.X - here.X) + Math.Abs(stand.Y - here.Y) > 40)
+                foreach (var (_, stand, _) in DoorApproaches(pr))
                 {
-                    continue;
-                }
-                BotNav.AllowJump = jumpOk;
-                var p = stand == here ? new List<Point>() : BotNav.FindPath(here, q => q == stand, stand, strict: true);
-                BotNav.AllowJump = false;
-                if (p != null && p.Count < bestLen)
-                {
-                    bestLen = p.Count;
-                    best = pr.Frame;
+                    if (Math.Abs(stand.X - here.X) + Math.Abs(stand.Y - here.Y) > 40)
+                    {
+                        continue;
+                    }
+                    BotNav.AllowJump = jumpOk;
+                    var p = stand == here ? new List<Point>() : BotNav.FindPath(here, q => q == stand, stand, strict: true);
+                    BotNav.AllowJump = false;
+                    if (p != null && p.Count < bestLen)
+                    {
+                        bestLen = p.Count;
+                        best = pr.Frame;
+                    }
                 }
             }
             return best;
+        }
+
+        /// <summary>
+        /// Where to stand to go through a door and the way to push from there: a directional door from its open side; a white portal (BLANK,
+        /// CELL: it warps us when we walk onto it) from any floor beside it, spikes and all round it in CELL (1,2).
+        /// </summary>
+        static IEnumerable<(AnodyneSharp.Entities.EntityPreset pr, Point stand, KeyFunctions push)> DoorApproaches(AnodyneSharp.Entities.EntityPreset pr)
+        {
+            var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
+            string kind = pr.Type.Name;
+            if (kind == "BlankPortal")
+            {
+                foreach (var (st, push) in new[] { (new Point(dt.X, dt.Y + 1), KeyFunctions.Up), (new Point(dt.X, dt.Y - 1), KeyFunctions.Down),
+                    (new Point(dt.X + 1, dt.Y), KeyFunctions.Left), (new Point(dt.X - 1, dt.Y), KeyFunctions.Right) })
+                {
+                    if (BotNav.Walkable(st))
+                    {
+                        yield return (pr, st, push);
+                    }
+                }
+                yield break;
+            }
+            yield return kind.StartsWith("Up") ? (pr, new Point(dt.X, dt.Y - 1), KeyFunctions.Down)
+                : kind.StartsWith("Left") ? (pr, new Point(dt.X + 1, dt.Y), KeyFunctions.Left)
+                : kind.StartsWith("Right") ? (pr, new Point(dt.X - 1, dt.Y), KeyFunctions.Right)
+                : (pr, new Point(dt.X, dt.Y + 1), KeyFunctions.Up);
         }
 
         protected static IEnumerable<object> TakeDoor(int pair)
         {
             var here = BotNav.TileOf(Pos);
             var ends = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && pr.Frame == pair).ToList();
+                .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && pr.Frame == pair).ToList();
             AnodyneSharp.Entities.EntityPreset best = null;
             Point bestStand = default;
             KeyFunctions bestPush = KeyFunctions.Up;
             int bestLen = int.MaxValue;
             bool jumpOk = GlobalState.inventory.CanJump;
-            foreach (var pr in ends)
+            foreach (var (pr, stand, push) in ends.SelectMany(DoorApproaches))
             {
-                var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
-                string kind = pr.Type.Name;
-                var (stand, push) = kind.StartsWith("Up") ? (new Point(dt.X, dt.Y - 1), KeyFunctions.Down)
-                    : kind.StartsWith("Left") ? (new Point(dt.X + 1, dt.Y), KeyFunctions.Left)
-                    : kind.StartsWith("Right") ? (new Point(dt.X - 1, dt.Y), KeyFunctions.Right)
-                    : (new Point(dt.X, dt.Y + 1), KeyFunctions.Up);
                 BotNav.AllowJump = jumpOk;
                 var p = BotNav.FindPath(here, q => q == stand, stand);
                 BotNav.AllowJump = false;
@@ -6101,7 +6148,8 @@ namespace AnodyneSharp.Recording
             // in line with the door (its middle), then push into it
             float x = bestPush is KeyFunctions.Up or KeyFunctions.Down ? best.Position.X + 3 : sc.X;
             float y = bestPush is KeyFunctions.Left or KeyFunctions.Right ? best.Position.Y + 2 : sc.Y;
-            yield return GoTo(x, y);
+            // (an end on another screen, CELL's portal a screen west and north of the pad: across screens first)
+            yield return bestStand.X / 10 == Grid.X && bestStand.Y / 10 == Grid.Y ? GoTo(x, y) : GoGlobal(x, y);
             yield return WalkTo(x, y);
             var before = Pos;
             string map = Map;
@@ -18990,6 +19038,7 @@ namespace AnodyneSharp.Recording
         {
             _chaserWalkOk = false;
             var grid = Grid;
+            int noWayWaits = 0; // (a way shut by a gate, not by the Chasers, never opens with waiting: a few looks only)
             for (int i = 0; i < timeoutFrames;)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -19013,13 +19062,33 @@ namespace AnodyneSharp.Recording
                     i++;
                     continue;
                 }
-                var plan = PlanPastChasers(here, goal, ChasersOnScreen());
+                var cs = ChasersOnScreen();
+                var plan = PlanPastChasers(here, goal, cs);
                 if (plan == null)
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
                         System.Console.Error.WriteLine($"  chasers: no timed way from {here} to {goal} on {Grid}; reached {_chaserPlanReach}; layers{_chaserPlanTrace}; chasers "
-                            + string.Join(" ", ChasersOnScreen().Select(c => $"{c.Idle}{(c.Horiz ? "H" : "V")}{(c.Track != null ? "moving" : $"idle +{c.TrackPos[120]}/{c.TrackPos[600]} -{c.TrackNeg[120]}/{c.TrackNeg[600]}")}")));
+                            + string.Join(" ", cs.Select(c => $"{c.Idle}{(c.Horiz ? "H" : "V")}{(c.Track != null ? "moving" : $"idle +{c.TrackPos[120]}/{c.TrackPos[600]} -{c.TrackNeg[120]}/{c.TrackNeg[600]}")}")));
+                    }
+                    // None within the horizon from here and now; but where we stand is off every Chaser's way, the walk without the timing
+                    // is what meets them (Cell (2,8): four in step in four columns, the way through opens only as they drift apart). Wait
+                    // there a while and look again.
+                    var meBox = new Rectangle((int)Pos.X - 3, (int)Pos.Y - 3, 16, 18);
+                    bool standSafe = cs.All(c => Enumerable.Range(0, 60).All(f =>
+                    {
+                        var q = c.Track != null ? c.Track[Math.Min(f, c.Track.Length - 1)] : c.Idle;
+                        return !meBox.Intersects(new Rectangle((int)q.X, (int)q.Y, 8, 8));
+                    }));
+                    if (standSafe && i < timeoutFrames - 40 && noWayWaits++ < 12)
+                    {
+                        BotRunner.Status = $"chasers: no way yet, wait at {here} (for {goal})";
+                        BotRunner.NotStuck();
+                        for (int w = 0; w < 20; w++, i++)
+                        {
+                            yield return K();
+                        }
+                        continue;
                     }
                     yield break;
                 }
