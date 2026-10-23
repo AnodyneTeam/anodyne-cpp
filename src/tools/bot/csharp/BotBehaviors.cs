@@ -5128,7 +5128,8 @@ namespace AnodyneSharp.Recording
                             BotNav.PillarRoute(here, b);
                             return BotNav.LastRouteReached && BotNav.LastRouteRespected;
                         }
-                        var button = BotNav.Buttons().Where(b => b.X / 10 == gs2.X && b.Y / 10 == gs2.Y && (b == here || CanGet(b)))
+                        // (not one already down for good: a gate with two buttons was sent back to the nearer one, already pressed, every time)
+                        var button = BotNav.Buttons().Where(b => b.X / 10 == gs2.X && b.Y / 10 == gs2.Y && !ButtonDown(b) && (b == here || CanGet(b)))
                             .OrderBy(b => Math.Abs(b.X - here.X) + Math.Abs(b.Y - here.Y)).Select(b => (Point?)b).FirstOrDefault();
                         BotNav.AllowJump = false;
                         if (button is Point bt)
@@ -5352,9 +5353,17 @@ namespace AnodyneSharp.Recording
             throw new TimeoutException($"bot: GoGlobal({gx},{gy}) gave up on {Map}");
         }
 
+        private static readonly System.Reflection.FieldInfo ButtonIncField =
+            typeof(AnodyneSharp.Entities.Gadget.Button).GetField("incremented", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>A button on the loaded screen that is pressed and counted (a permanent one stays so).</summary>
+        private static bool ButtonDown(Point b) => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button
+            && BotNav.TileOf(e.Position + new Vector2(8, 8)) == b && ButtonIncField?.GetValue(e) is true);
+
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
         private static readonly HashSet<System.Guid> _failedChests = new();
         private static readonly HashSet<System.Guid> _pressedButtons = new();
+        private static bool _chestsNoneReachable;
 
         /// <summary>
         /// Token i: the Health Cicada of this map (a HealthCicadaSentinel preset that has not been used): walk to it at once (it flies off
@@ -5943,9 +5952,15 @@ namespace AnodyneSharp.Recording
                 BotNav.ResetDustCache();
                 bool jumpOk = GlobalState.inventory.CanJump;
                 var hereT = BotNav.TileOf(Pos);
-                // Buttons whose gates are still shut come first.
+                // Buttons whose gates are still shut come first: those in a room with a chest still to open (the gate they open is most
+                // likely that chest's), and any other only once no chest can be got to at all (a press on the far side of the map on
+                // the way spent a key on a key block the route after it needed).
+                var chestScreens = new HashSet<Point>(chests.Select(c => new Point((int)c.Position.X / 160, (int)c.Position.Y / 160)));
+                bool anyButton = n > 0 && _chestsNoneReachable;
+                _chestsNoneReachable = false;
                 var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
                     .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID)
+                        && (anyButton || chestScreens.Contains(new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160)))
                         && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen))
                     .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
                     .Where(x => x.rp != null).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
@@ -5954,6 +5969,14 @@ namespace AnodyneSharp.Recording
                     _pressedButtons.Add(btn.EntityID);
                     BotRunner.Status = $"to the button at {btn.Position.X:0},{btn.Position.Y:0}";
                     yield return GoGlobal(btn.Position.X + 3, btn.Position.Y + 2);
+                    // (a route that leaps over it, or lands on it in the air, never presses it: stand on it until it is down)
+                    var bt = new Point((int)(btn.Position.X + 8) / 16, (int)(btn.Position.Y + 8) / 16);
+                    for (int tries = 0; tries < 3 && !ButtonDown(bt) && bt.X / 10 == Grid.X && bt.Y / 10 == Grid.Y; tries++)
+                    {
+                        var bc = BotNav.CentreOf(bt);
+                        yield return WalkTo(bc.X, bc.Y, tol: 1.5f, timeout: 90);
+                        yield return Wait(20);
+                    }
                     yield return Wait(90);
                     continue;
                 }
@@ -5978,6 +6001,11 @@ namespace AnodyneSharp.Recording
                         best = (pr, t);
                         bestLeap = leapOnly;
                     }
+                }
+                if (best == null && !anyButton && chests.Count > 0)
+                {
+                    _chestsNoneReachable = true; // (look again with every button on the map in play)
+                    continue;
                 }
                 if (best == null)
                 {
@@ -6661,6 +6689,18 @@ namespace AnodyneSharp.Recording
                     {
                         float dx = wc.X - Pos.X, dy = wc.Y - Pos.Y;
                         yield return K(Math.Abs(dx) > 2f ? (dx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    }
+                    if (!HasRaft())
+                    {
+                        // The dust never became a raft under us (not put down, or swept off): out of the water before we sink, and try
+                        // again (riding on without one drowned us over and over, the entrance we come back to being out on the water).
+                        RaftLog($"launch at {wt} left us without a raft at {BotNav.TileOf(Pos)}: back ashore");
+                        if (OnConveyor(BotNav.TileOf(Pos)) && BotNav.WadePath(BotNav.TileOf(Pos), t => !OnConveyor(t)) is List<Point> ashore && ashore.Count > 0)
+                        {
+                            var ac = BotNav.CentreOf(ashore[ashore.Count - 1]);
+                            yield return GoTo(ac.X - BotNav.HalfW, ac.Y - BotNav.HalfH);
+                        }
+                        continue;
                     }
                 }
                 // Ride / walk the water route one step at a time until back on land.
@@ -12766,10 +12806,11 @@ namespace AnodyneSharp.Recording
                 // knock-back at the edge): starting it once more only goes round again. Leave it to the route.
                 yield break;
             }
-            if (soft && only == null && _fightDepth > 0)
+            if (soft && _fightDepth > 0)
             {
                 // (a fight walking back onto its screen arrives through GoScreenTo, whose own auto-fight would start this one again inside
-                // itself, round and round for ever: the outer fight is already on it)
+                // itself, round and round for ever: the outer fight is already on it; so would the "shooter on the way" one, for the very
+                // plant the outer fight was routing over a gap to, 7000 times over)
                 yield break;
             }
             _fightKey = key;
