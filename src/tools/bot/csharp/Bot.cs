@@ -714,8 +714,15 @@ namespace AnodyneSharp.Recording
         /// <summary>Dev: snapshot the game now as <ANODYNE_BOT_SECSAVE>/<index>_<name> (token `<name>), so the later sections can be rerun from it.</summary>
         public static void SnapshotNow(string name)
         {
-            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir && BotRunner.Player != null)
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir1 && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir1
+                && (GlobalState.GameState as AnodyneSharp.AnodyneGame)?.CurrentState is AnodyneSharp.States.MainMenu.TitleState)
             {
+                // (back at the title after the credits: the game saved itself on the way out, at its own checkpoint)
+                CopyDir(saveDir1, System.IO.Path.Combine(secDir1, name));
+            }
+            else if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir2 && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir2 && BotRunner.Player != null)
+            {
+                var (secDir, saveDir) = (secDir2, saveDir2);
                 GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
                 GlobalState.SaveGame();
                 CopyDir(saveDir, System.IO.Path.Combine(secDir, name));
@@ -1126,6 +1133,25 @@ namespace AnodyneSharp.Recording
         /// The end of the game: the last cutscene wants us to walk up into the light (and read what is said on the way), then the
         /// credits roll. Holds Up and reads until the credits are on.
         /// </summary>
+        protected static IEnumerable<object> WatchCredits(int timeoutFrames = 30000)
+        {
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                var state = (GlobalState.GameState as AnodyneSharp.AnodyneGame)?.CurrentState;
+                if (state is AnodyneSharp.States.MainMenu.TitleState)
+                {
+                    BotRunner.Status = "title";
+                    System.Console.Error.WriteLine($"CREDITS DONE: saved after the credits (SeenCredits={GlobalState.events.GetEvent("SeenCredits")}, f{BotRunner.Frame}, {GlobalState.inventory.CardCount} cards)");
+                    yield break;
+                }
+                BotRunner.Status = "credits";
+                // Accept held runs the credits at 8x; let go now and then, as a press ends them and then answers Yes to saving (the
+                // popup's default), which is what sets SeenCredits.
+                yield return i % 20 < 17 ? K(KeyFunctions.Accept) : K();
+            }
+            throw new TimeoutException("bot: the credits never got to the save popup");
+        }
+
         protected static IEnumerable<object> WatchEnding(int timeoutFrames = 20000)
         {
             bool hidden = false;

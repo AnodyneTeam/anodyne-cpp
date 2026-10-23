@@ -54,6 +54,11 @@ namespace AnodyneSharp.Recording
                     yield return WatchEnding(); // ending: walk on through the last cutscene (it needs us to walk up and read) to the credits
                     continue;
                 }
+                if (tok == "credits")
+                {
+                    yield return WatchCredits(); // credits: sit through them (sped up) and save on the way out, which unlocks swapping anywhere
+                    continue;
+                }
                 if (tok == "heal")
                 {
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
@@ -13026,6 +13031,8 @@ namespace AnodyneSharp.Recording
         /// A woken Dustmaid walks straight at us at 20px/s and can only be hurt between its 1s blinks: stand still facing it and swing
         /// the moment it is in the broom's box, then back off while it blinks (it would walk onto us), lining up again as it comes on.
         /// </summary>
+        private static int _maidBroomOut;
+
         private static KeyFunctions[] MaidKeys(Entity maid)
         {
             ExactKeysUntil = BotRunner.Frame + 1; // our own dodging: the contact/swing guards would undo it
@@ -13042,7 +13049,16 @@ namespace AnodyneSharp.Recording
                 : (dy < 0 ? (Facing.UP, KeyFunctions.Up) : (Facing.DOWN, KeyFunctions.Down));
             if (Player.broom != null && Player.broom.exists)
             {
-                return K(); // a swing holds us still anyway
+                _maidBroomOut++;
+                if (_maidBroomOut < 45)
+                {
+                    return K(); // a swing holds us still anyway
+                }
+                // (a broom out for longer is no swing: a HAPPY (1,0) bot waited on one for 3000 frames, the maid parked at its tip)
+            }
+            else
+            {
+                _maidBroomOut = 0;
             }
             bool blinking = maid._flickering;
             var screen = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);

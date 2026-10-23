@@ -436,7 +436,7 @@ namespace AnodyneSharp.Recording
             yield return Section("blue back to go", () => Exec("g6 O1 X1 >36,84 W5 L40 W200 g6 O1 X1 >40,408 W30 L60 W100"));
             yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,60 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
             yield return Section("happy back to go", () => Exec("g6 O1 X1 W30 >764,244 W10 R40 W150 >392,300 W30"));
-            yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending"));
+            yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending credits"));
         }
 
         /// <summary>Up the pixel seam between (4,0)'s pits, with steam pushing off it (a fall puts us back at the bottom: again), then west along the top.</summary>
