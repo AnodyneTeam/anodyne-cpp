@@ -464,6 +464,16 @@ namespace AnodyneSharp.Recording
             yield return Section("space east path", () => Exec("O1 X1 g8 viaSPACE W30 ;0 W5 X0 dig54,48,40 W10 X1 H6,5 W10 F4000 W20 X0 H7,5 W2 dust:72,55 dust:73,55"
                 + " kd1 X1 F3000 kd0 W20 X0 ;1 W5 H7,6 plant1187,978,lr,900 plant1187,1074,lr,900 ;0 W5 X1 F W20 X0 H6,6 W10 >950,1044 W10 X1 F W30 X0 n0 W120 heal W30"));
             yield return Section("space entities card", () => Exec("O1 X1 viaSPACE W30 X0 dig54,48,40 W10 I872,1202,d W60 T W30"));
+            // Cell (5,8) Torchlight: dig into the sealed portal room for the door into the gauntlet along the bottom. Every broom swing
+            // speeds every moving Chaser up 1.6x (one sets off once we are in its row or column), so each room's foes die before its
+            // Chasers move: (1,8)'s Rats, struck from the door as they come round; (2,8)'s Annoyers from off the Chasers' columns, then its button; (3,8)'s button from its very edge
+            // just short of the Chaser's column, its Silverfish (the kill gate) with that Chaser still; (4,8)'s button sets its Chasers off,
+            // so out and back in (its gate to the Slimes stays open) to fight those with the Chasers still, then set them going from the
+            // top row and dash over the spikes between their beats.
+            yield return Section("cell torchlight card", () => Exec("O1 X1 viaCELL W30 dig12,28 W10 door92 W60 >147,1314 W5 R12 plant163,1316,rw,1500 W10 X0 H2,8 W10 ca1 d1500 ca0 W10"
+                + " b448,1296 W10 d1500 W30 H3,8 W10 >595,1298 W5 ex600.5,1298 W20 ca1 }3000 ca0 W10 >611,1298 W30 H4,8 W10 >760,1298 W5 ex762,1298 W20"
+                + " H3,8 W10 H4,8 W30 >659,1378 W5 plant659,1378,dwb,2400 W10 >659,1298 W5 ex750,1298 ex721,1298 W60 >643,1346 W5 ex643,1346 W5 dashrun800 W20"
+                + " I896,1344,d W60 T W30"));
         }
     }
 

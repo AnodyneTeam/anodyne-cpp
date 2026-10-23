@@ -92,7 +92,7 @@ namespace AnodyneSharp.Recording
                         new Vector2(float.Parse(stk.Groups[4].Value), float.Parse(stk.Groups[5].Value)));
                     continue;
                 }
-                if (System.Text.RegularExpressions.Regex.Match(tok, @"^plant(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),([udlrw]+),(\d+)$") is { Success: true } pst)
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^plant(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),([udlrwb]+),(\d+)$") is { Success: true } pst)
                 {
                     // plant<x>,<y>,<faces>,<frames>: stand on (x,y) and swing, turning to each of faces in turn, at every foe beside us there
                     // (a long broom between two Frogs and their fire pillars) until none is left in reach, or frames run out; w: until none is
@@ -129,6 +129,47 @@ namespace AnodyneSharp.Recording
                                     System.Console.Error.WriteLine($"  dd: from {here} toward {t}: me {Pos} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}"))}");
                                 }
                                 break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^ex(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$") is { Success: true } exw)
+                {
+                    // ex<x>,<y>: walk straight to that exact spot (to within a pixel: onto the edge of a button just short of a Chaser's line)
+                    yield return ExactWalk(new Vector2(float.Parse(exw.Groups[1].Value), float.Parse(exw.Groups[2].Value)), 180);
+                    continue;
+                }
+                if (System.Text.RegularExpressions.Regex.Match(tok, @"^dashrun(\d+)$") is { Success: true } drn)
+                {
+                    // dashrun<x>: from where we stand, run right over the row's dash pads to x, hopping each run of spikes, setting off
+                    // when the Chasers' beats leave the row clear for the whole run
+                    yield return ChaserDashRun(float.Parse(drn.Groups[1].Value));
+                    continue;
+                }
+                if (tok is "ca0" or "ca1")
+                {
+                    // ca1: keep off every tile that would set an idle Cell Chaser going (its row or column: a broom swing speeds every
+                    // moving one up 1.6x, so the screen's other foes are fought first, from off their lines); ca0: walk anywhere again
+                    BotNav.HardAvoid = null;
+                    if (tok == "ca1")
+                    {
+                        BotNav.HardAvoid = new HashSet<Point>();
+                        foreach (var c in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser && e.velocity == Vector2.Zero))
+                        {
+                            bool horiz = ChaserHorizField?.GetValue(c) is true;
+                            for (int k = 0; k < 10; k++)
+                            {
+                                for (int j = 0; j < 10; j++)
+                                {
+                                    var t = new Point(Grid.X * 10 + k, Grid.Y * 10 + j);
+                                    bool on = horiz ? t.Y * 16 + 4 > c.Position.Y - 14 && t.Y * 16 - 2 < c.Position.Y + 8
+                                                    : t.X * 16 + 8 > c.Position.X - 10 && t.X * 16 - 2 < c.Position.X + 8;
+                                    if (on)
+                                    {
+                                        BotNav.HardAvoid.Add(t);
+                                    }
+                                }
                             }
                         }
                     }
@@ -7376,7 +7417,21 @@ namespace AnodyneSharp.Recording
             for (int i = 0; i < frames; i++)
             {
                 BotRunner.NotStuck();
-                var open = faces.Where(c => c != 'w').Select(FaceOf).Where(f => Enemies().Any(e => e.Hitbox.Intersects(Reach(f)))).ToList();
+                // b: step back off the spot while a foe we just struck sits on it flickering (a Slime crowding the one way in: it hurts on
+                // touch, and cannot be struck again until the flicker ends)
+                var near = me;
+                near.Inflate(4, 4);
+                if (faces.Contains('b') && Enemies().Any(e => e._flickering && e.Hitbox.Intersects(near)))
+                {
+                    BotRunner.Status = $"plant: back off {at.X:0},{at.Y:0}";
+                    var away = faces[0] switch { 'u' => KeyFunctions.Down, 'd' => KeyFunctions.Up, 'l' => KeyFunctions.Right, _ => KeyFunctions.Left };
+                    for (int w = 0; w < 10; w++, i++)
+                    {
+                        yield return K(away);
+                    }
+                    continue;
+                }
+                var open = faces.Where(c => c != 'w' && c != 'b').Select(FaceOf).Where(f => Enemies().Any(e => e.Hitbox.Intersects(Reach(f)))).ToList();
                 if (open.Count == 0 && (!faces.Contains('w') || Enemies().Count == 0))
                 {
                     yield break;
@@ -10349,6 +10404,10 @@ namespace AnodyneSharp.Recording
                 if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < (e is AnodyneSharp.Entities.Enemy.Crowd.Rotator ? 72 : 48)))
                 {
                     yield break; // not off a raft, nor into whatever dropped it (a Gas Guy's cloud): a heart is not worth more hits
+                }
+                if (ChasersOnScreen().Count > 0)
+                {
+                    yield break; // (nor across a Cell Chaser's beat: the walk to it is not timed against them, and one costs five hearts)
                 }
                 BotRunner.Status = "collect heart";
                 var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
@@ -19210,6 +19269,113 @@ namespace AnodyneSharp.Recording
             return track;
         }
 
+        /// <summary>
+        /// Run right along our row to xEnd over its dash pads (70px/s, 1.3x on the first pad, 1.77x on the next, kept while Right is held,
+        /// in the air too), jumping just before each run of spikes; set off after the wait (up to 20s) that the screen's Chasers, played
+        /// along their beats, leave the run untouched. Cell (4,8): two pads, then three spikes, a tile of floor, three spikes, with six
+        /// Chasers on the field.
+        /// </summary>
+        protected static IEnumerable<object> ChaserDashRun(float xEnd)
+        {
+            var y = Pos.Y;
+            var row = BotNav.TileOf(Pos).Y;
+            var pads = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && e.facing == AnodyneSharp.Entities.Facing.RIGHT
+                && Math.Abs(e.Position.Y - row * 16) < 8).Select(e => e.Hitbox).OrderBy(r => r.X).ToList();
+            var spikeStarts = new List<int>();
+            for (int tx = BotNav.TileOf(Pos).X + 1; tx * 16 < xEnd; tx++)
+            {
+                if (BotNav.IsSpike(new Point(tx, row)) && !BotNav.IsSpike(new Point(tx - 1, row)))
+                {
+                    spikeStarts.Add(tx * 16);
+                }
+            }
+            var cs = ChasersOnScreen();
+            List<float> Run()
+            {
+                // the player's x per frame from setting off
+                var xs = new List<float>();
+                float x = Pos.X, mul = 1f;
+                int padsHit = 0;
+                while (x < xEnd && xs.Count < 300)
+                {
+                    if (padsHit < pads.Count && pads[padsHit].Contains(new Point((int)(x + 5), (int)(y + 6))))
+                    {
+                        mul = padsHit == 0 ? 1.3f : 1.77f;
+                        padsHit++;
+                    }
+                    x += 70f * mul / 60f;
+                    xs.Add(x);
+                }
+                return xs;
+            }
+            var path = Run();
+            bool ClearAfter(int d)
+            {
+                for (int f = 0; f < path.Count; f++)
+                {
+                    var me = new Rectangle((int)path[f] - 2, (int)y - 2, 14, 16);
+                    foreach (var c in cs)
+                    {
+                        var q = c.Track != null ? c.Track[Math.Min(d + f, c.Track.Length - 1)] : c.Idle;
+                        if (me.Intersects(new Rectangle((int)q.X, (int)q.Y, 8, 8)))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+            // Standing on the first pad, it fires each time it comes back on (once a second) and the dash is lost again as Right is
+            // not held: set off a few frames before it next comes back on, so it fires with Right down.
+            int first = 0, every = 1;
+            var onPad = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && e.Hitbox.Contains(new Point((int)(Pos.X + 5), (int)(Pos.Y + 6))));
+            if (onPad != null && typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(onPad) is float dis)
+            {
+                first = (int)Math.Ceiling((1f - dis) * 60f) - 3;
+                while (first < 0)
+                {
+                    first += 60;
+                }
+                every = 60;
+            }
+            int wait = -1;
+            for (int d = first; d < 1200; d += every)
+            {
+                if (ClearAfter(d))
+                {
+                    wait = d;
+                    break;
+                }
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  dash run: from {Pos} to x {xEnd}, {path.Count} frames, pads {pads.Count}, spikes at {string.Join(",", spikeStarts)}: set off in {wait}; chasers {string.Join(" ", cs.Select(c => c.Track != null ? "moving" : "idle"))}");
+            }
+            if (wait < 0)
+            {
+                throw new Exception($"dash run: the Chasers never leave the row clear from {Pos}");
+            }
+            BotRunner.Status = $"dash run: wait {wait} frames";
+            for (int i = 0; i < wait; i++)
+            {
+                yield return K();
+            }
+            BotRunner.Status = "dash run";
+            int next = 0;
+            for (int i = 0; i < 300 && Pos.X < xEnd; i++)
+            {
+                // (take off with the box 3px short of the first spike's sharp middle, x+6..x+11, which only hurts on the ground: the hop is
+                // ~57px at the doubled pad speed, and three spikes' middles span 47)
+                if (next < spikeStarts.Count && Pos.X >= spikeStarts[next] - 7 && Player.state == AnodyneSharp.Entities.PlayerState.GROUND)
+                {
+                    next++;
+                    yield return K(KeyFunctions.Right, KeyFunctions.Cancel);
+                    continue;
+                }
+                yield return K(KeyFunctions.Right);
+            }
+        }
+
         private static List<ChaserPlan> ChasersOnScreen()
         {
             var screen = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
@@ -19262,7 +19428,7 @@ namespace AnodyneSharp.Recording
             }
             _chaserPlanTrace = "";
             _laterJumps.Clear(); // (a plan that found its way returns with jumps still pending)
-            var layer = new List<(Point t, int mask, int[] when, int[] dir, (Point, int)? first)>
+            var layer = new List<(Point t, int mask, int[] when, int[] dir, ChaserMove first)>
             {
                 (from, 0, new int[n], new int[n], null)
             };
@@ -19299,13 +19465,18 @@ namespace AnodyneSharp.Recording
             }
             for (int step = 0; step < ChaserHorizonSteps && layer.Count > 0; step++)
             {
-                var next = new List<(Point, int, int[], int[], (Point, int)?)>();
+                var next = new List<(Point, int, int[], int[], ChaserMove)>();
                 int f0 = step * ChaserStepFrames;
                 foreach (var (t, mask, when, dir, first) in layer)
                 {
                     if (t == goal)
                     {
-                        return first;
+                        _chaserPlanSteps = new List<(Point, int)>();
+                        for (var m = first; m != null; m = m.Prev)
+                        {
+                            _chaserPlanSteps.Insert(0, (m.To, m.Frames));
+                        }
+                        return first == null ? null : _chaserPlanSteps[0];
                     }
                     var moves = new List<(Point to, int steps)> { (t, 1) };
                     foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
@@ -19360,7 +19531,7 @@ namespace AnodyneSharp.Recording
                         {
                             continue;
                         }
-                        var f = first ?? (to, frames);
+                        var f = new ChaserMove(to, frames, first);
                         if (steps == 1)
                         {
                             next.Add((to, m2, w2, d2, f));
@@ -19866,7 +20037,18 @@ namespace AnodyneSharp.Recording
 
         private static string _chaserPlanReach = "", _chaserPlanTrace = "";
 
-        private static readonly List<(int, (Point, int, int[], int[], (Point, int)?))> _laterJumps = new();
+        private static readonly List<(int, (Point, int, int[], int[], ChaserMove))> _laterJumps = new();
+
+        /// <summary>A step of a plan past the Chasers (the tile it ends on, its frames), back to the plan's first.</summary>
+        private sealed class ChaserMove
+        {
+            public readonly Point To;
+            public readonly int Frames;
+            public readonly ChaserMove Prev;
+            public ChaserMove(Point to, int frames, ChaserMove prev) { To = to; Frames = frames; Prev = prev; }
+        }
+
+        private static List<(Point to, int frames)> _chaserPlanSteps;
         private static bool _chaserWalkOk;
 
         /// <summary>
@@ -19878,6 +20060,10 @@ namespace AnodyneSharp.Recording
             _chaserWalkOk = false;
             var grid = Grid;
             int noWayWaits = 0; // (a way shut by a gate, not by the Chasers, never opens with waiting: a few looks only)
+            List<(Point to, int frames)> steps = null;
+            int si = 0, movingAtPlan = 0;
+            long expectFrame = 0;
+            var expect = Point.Zero;
             for (int i = 0; i < timeoutFrames;)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -19902,7 +20088,28 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var cs = ChasersOnScreen();
-                var plan = PlanPastChasers(here, goal, cs);
+                int movingNow = cs.Count(c => c.Track != null);
+                // (a found plan is followed while it runs to time, on the tiles and with the Chasers it was made with: planning is costly)
+                (Point next, int frames)? plan;
+                if (steps != null && si < steps.Count && here == expect && movingNow == movingAtPlan && Math.Abs(BotRunner.Frame - expectFrame) <= 6)
+                {
+                    plan = steps[si];
+                }
+                else
+                {
+                    plan = PlanPastChasers(here, goal, cs);
+                    BotRunner.Thinking = true; // (a stop to look the room over, the game held meanwhile: not the bot's steady cost)
+                    steps = plan == null ? null : _chaserPlanSteps;
+                    si = 0;
+                    expectFrame = BotRunner.Frame;
+                    movingAtPlan = movingNow;
+                }
+                if (plan != null)
+                {
+                    si++;
+                    expect = plan.Value.next;
+                    expectFrame += plan.Value.frames;
+                }
                 if (plan == null)
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -19937,7 +20144,7 @@ namespace AnodyneSharp.Recording
                 if (to == here)
                 {
                     BotRunner.Status = $"chasers: wait at {here} (for {goal})";
-                    for (int w = 0; w < 4; w++, i++)
+                    for (int w = 0; w < (steps != null ? Math.Max(1, (int)(expectFrame - BotRunner.Frame)) : 4); w++, i++)
                     {
                         yield return K();
                     }
