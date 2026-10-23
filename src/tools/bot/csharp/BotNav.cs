@@ -1693,7 +1693,7 @@ namespace AnodyneSharp.Recording
             foreach (var e in BotRunner.Entities())
             {
                 // (only the ones nothing is ever fetched from: an NPC we go and talk to must stay a tile a route can end on)
-                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue) || e.width <= 0 || e.height <= 0)
+                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue or AnodyneSharp.Entities.Enemy.Crowd.Rotator) || e.width <= 0 || e.height <= 0)
                 {
                     continue;
                 }

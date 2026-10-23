@@ -572,14 +572,17 @@ namespace AnodyneSharp.Recording
                     _stack.Push(nestedEnum);
                 }
             }
-            held = BotScript.SpikeGuard(held);
-            held = BotScript.HoleGuard(held);
-            held = BotScript.SwingGuard(held);
-            held = BotScript.DoorGuard(held);
-            held = BotScript.FightEdgeGuard(held);
-            held = BotScript.BulletHop(held);
-            held = BotScript.ContactEscape(held);
-            held = BotScript.SteamBrace(held);
+            if (Frame > BotScript.ExactKeysUntil)
+            {
+                held = BotScript.SpikeGuard(held);
+                held = BotScript.HoleGuard(held);
+                held = BotScript.SwingGuard(held);
+                held = BotScript.DoorGuard(held);
+                held = BotScript.FightEdgeGuard(held);
+                held = BotScript.BulletHop(held);
+                held = BotScript.ContactEscape(held);
+                held = BotScript.SteamBrace(held);
+            }
             if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt2 && int.TryParse(kt2, out int kfrom2) && Frame >= kfrom2 && Frame < kfrom2 + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
             {
                 System.Console.Error.WriteLine($"  guarded f{Frame} [{string.Join("+", held)}]");

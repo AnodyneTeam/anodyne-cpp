@@ -34,6 +34,13 @@ namespace AnodyneSharp.Recording
                     yield return TakeDoor(pair);
                     continue;
                 }
+                if (tok.StartsWith("sight") && tok.Length > 5 && char.IsDigit(tok[5]))
+                {
+                    // sight<x>,<y>: across this screen's sight-triggered dash traps to world point x,y (hitbox top-left), planned with the traps
+                    var a = tok.Substring(5).Split(',');
+                    yield return SightTrapWalk(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
+                    continue;
+                }
                 if (tok == "heal")
                 {
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
@@ -8207,6 +8214,139 @@ namespace AnodyneSharp.Recording
                 }
             }
             return false;
+        }
+
+        /// <summary>Until this frame the scripted keys go out as they are: no reflex may change a move planned frame by frame.</summary>
+        internal static long ExactKeysUntil = -1;
+
+        private static readonly System.Reflection.FieldInfo SightTrapHome =
+            typeof(AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap).GetField("_idlepos", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// Across a room of sight-triggered dash traps to `goal` (hitbox top-left): plan with every trap's charge, bounce and way home
+        /// simulated against the path (SightTrapPlanner), then play it frame by frame, re-planning whenever we or a trap are off the plan.
+        /// </summary>
+        protected static IEnumerable<object> SightTrapWalk(Vector2 goal)
+        {
+            var grid = Grid;
+            var scr = new Rectangle(grid.X * 160, grid.Y * 160, 160, 160);
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                if ((Player.Position - goal).Length() <= 3f)
+                {
+                    yield break;
+                }
+                var live = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>()
+                    .Where(e => e.exists && e.Hitbox.Intersects(scr)).ToList();
+                var traps = live.Select(e =>
+                {
+                    var home = SightTrapHome?.GetValue(e) is Vector2 h ? h : e.Position;
+                    float sp = e.velocity.Length();
+                    int mode = sp < 1f ? ((home - e.Position).Length() < 2f ? 0 : 2) : sp > 60f ? 1 : 2;
+                    var v = e.velocity;
+                    if (mode == 2 && sp < 1f)
+                    {
+                        v = Vector2.Normalize(home - e.Position) * 40f;
+                    }
+                    return new SightTrap { X = e.Position.X, Y = e.Position.Y, Vx = v.X, Vy = v.Y, Mode = mode, HomeX = home.X, HomeY = home.Y, W = e.width, H = e.height };
+                }).ToArray();
+                bool OnScreen(Rectangle r) => r.Left >= scr.Left && r.Right <= scr.Right && r.Top >= scr.Top && r.Bottom <= scr.Bottom;
+                Func<Rectangle, bool> walk = r => OnScreen(r) && CornersWalkable(r);
+                Func<Rectangle, bool> airOk = r => OnScreen(r) && WallFree(r);
+                Func<Rectangle, bool> trapFree = r => OnScreen(r) && WallFree(r) && !HoleUnder(r);
+                // (frames to the goal round the walls: a walk over the screen's tiles from the goal's, a hole tile crossed by a jump)
+                var gt = BotNav.TileOf(goal);
+                var dist = new Dictionary<Point, int> { [gt] = 0 };
+                var q = new Queue<Point>();
+                q.Enqueue(gt);
+                while (q.Count > 0)
+                {
+                    var c = q.Dequeue();
+                    foreach (var (dx, dy) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
+                    {
+                        for (int k = 1; k <= 2; k++)
+                        {
+                            var nb = new Point(c.X + dx * k, c.Y + dy * k);
+                            if (nb.X / 10 != grid.X || nb.Y / 10 != grid.Y || dist.ContainsKey(nb))
+                            {
+                                break;
+                            }
+                            var mid = new Point(c.X + dx, c.Y + dy);
+                            if (BotNav.Walkable(nb) && (k == 1 || (GlobalState.inventory.CanJump && BotNav.IsHole(mid))))
+                            {
+                                dist[nb] = dist[c] + k;
+                                q.Enqueue(nb);
+                                break;
+                            }
+                            if (k == 1 && !BotNav.IsHole(nb))
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+                float ToGoal(float x, float y) => dist.TryGetValue(BotNav.TileOf(new Vector2(x, y)), out int d) ? d * 16f / SpaceTime.Walk : 9999f;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                // (a wide berth first: our steps and its start can each be a frame or a pixel off the game's; closer only if nothing else goes)
+                List<SightTrapPlanner.Step> plan = null;
+                foreach (int margin in new[] { 3, 2, 1 })
+                {
+                    plan = SightTrapPlanner.Plan(Player.Hitbox, Player.Position, goal, traps, walk, airOk, trapFree, GlobalState.inventory.CanJump, margin: margin,
+                        maxNodes: margin == 1 ? 40000 : 15000, framesToGoal: ToGoal);
+                    if (plan != null)
+                    {
+                        break;
+                    }
+                }
+                System.Console.Error.WriteLine($"  sight traps: plan from {Player.Position} to {goal}: {(plan == null ? "none" : plan.Count + " steps, " + plan.Sum(st => st.Frames) + " frames")} " +
+                    $"({SightTrapPlanner.Nodes} nodes, {sw.ElapsedMilliseconds}ms; traps {string.Join(" ", traps.Select(t => $"{t.X:0},{t.Y:0}/m{t.Mode}"))})");
+                if (plan == null)
+                {
+                    throw new InvalidOperationException($"bot: no way past the sight traps to {goal}");
+                }
+                bool off = false;
+                var predicted = Environment.GetEnvironmentVariable("ANODYNE_SIGHT_TRACE") != null ? SightTrapPlanner.Replay(Player.Hitbox, Player.Position, traps, plan, walk, airOk, trapFree) : null;
+                int pf = 0;
+                foreach (var st in plan)
+                {
+                    bool jump = st.Action >= SpaceTime.Actions.Length;
+                    KeyFunctions[] keys;
+                    if (jump)
+                    {
+                        var (jx, jy) = SpaceTime.Jumps[st.Action - SpaceTime.Actions.Length];
+                        keys = jx < 0 ? new[] { KeyFunctions.Left } : jx > 0 ? new[] { KeyFunctions.Right } : jy < 0 ? new[] { KeyFunctions.Up } : jy > 0 ? new[] { KeyFunctions.Down } : new KeyFunctions[0];
+                    }
+                    else
+                    {
+                        keys = StActions[st.Action];
+                    }
+                    for (int f = 0; f < st.Frames; f++)
+                    {
+                        BotRunner.Status = "sight traps: planned way";
+                        BotRunner.NotStuck();
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        if (predicted != null && pf > 0 && pf <= predicted.Count)
+                        {
+                            System.Console.Error.WriteLine($"  sight f{BotRunner.Frame} pred {predicted[pf - 1]}");
+                            System.Console.Error.WriteLine($"  sight f{BotRunner.Frame} real    me {Player.Position.X:0.0},{Player.Position.Y:0.0} {Player.state} | " + string.Join(" ", live.Select(e => $"{e.Position.X:0.0},{e.Position.Y:0.0}")));
+                        }
+                        pf++;
+                        yield return jump && f == 0 ? keys.Append(KeyFunctions.Cancel).ToArray() : keys;
+                    }
+                    if ((Player.Position - new Vector2(st.X, st.Y)).Length() > 1.5f)
+                    {
+                        System.Console.Error.WriteLine($"  sight traps: off the plan at {Player.Position} (meant {st.X:0.0},{st.Y:0.0}): plan again");
+                        off = true;
+                        break;
+                    }
+                }
+                ExactKeysUntil = -1;
+                if (!off)
+                {
+                    yield break;
+                }
+            }
+            throw new InvalidOperationException($"bot: kept falling off the sight-trap plan to {goal}");
         }
 
         internal static KeyFunctions[] BulletHop(KeyFunctions[] held)

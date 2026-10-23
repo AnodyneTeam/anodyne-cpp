@@ -1,6 +1,7 @@
 ﻿using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AnodyneSharp.Recording
 {
@@ -253,6 +254,281 @@ namespace AnodyneSharp.Recording
                 return a;
             }
             return -1;
+        }
+    }
+    /// <summary>A dash trap that charges on sight (the Hotel's and Apartments' OnSightDashTrap), as the planner simulates it.</summary>
+    public sealed class SightTrap
+    {
+        public float X, Y, Vx, Vy; // hitbox top-left, px/s
+        public int Mode; // 0 idle, 1 charging, 2 going home
+        public float HomeX, HomeY;
+        public int W = 14, H = 14;
+        public bool Touching; // stopped by a wall or hole this frame: turns back on its next update
+
+        public SightTrap Copy() => (SightTrap)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// Pure planner for a room of sight-triggered dash traps (the room's answer depends on where we go: a trap charges when we cross its
+    /// row or column, 80px/s straight at us, bounces off the first wall, hole or other trap at half speed and goes home). The search
+    /// carries the traps' whole state along each candidate path, so it can bait one out and slip past while it goes home, or be in the
+    /// air (a trap only hurts on the ground) as one passes. Returns blocks of (action, frames): actions 0-8 as SpaceTime.Actions, 9-13
+    /// a jump as SpaceTime.Jumps 0-4 (take-off, then the way held for the whole air time).
+    /// </summary>
+    public static class SightTrapPlanner
+    {
+        public const int AirFrames = 30;
+        public static int Nodes;
+
+        public sealed class Step
+        {
+            public int Action, Frames;
+            public float X, Y; // where we should be when it is done
+        }
+
+        private sealed class Node
+        {
+            public float X, Y;
+            public int T;
+            public SightTrap[] Traps;
+            public Node Parent;
+            public int Action, Frames;
+        }
+
+        /// <summary>The pixels a box at (x,y) covers (a fraction past a pixel edge covers that pixel too).</summary>
+        private static Rectangle Cover(float x, float y, int w, int h)
+        {
+            int l = (int)Math.Floor(x), t = (int)Math.Floor(y);
+            return new Rectangle(l, t, (int)Math.Ceiling(x + w) - l, (int)Math.Ceiling(y + h) - t);
+        }
+
+        /// <summary>A walk (or air drift) of one frame, x then y, as the game resolves it: a way into a wall stops flush against it.</summary>
+        private static void Move(ref float x, ref float y, float dx, float dy, int w, int h, Func<Rectangle, bool> can)
+        {
+            if (dx != 0)
+            {
+                float nx = x + dx;
+                if (can(Cover(nx, y, w, h)))
+                {
+                    x = nx;
+                }
+                else
+                {
+                    float flush = dx > 0 ? (float)Math.Floor(nx + w) - w : (float)Math.Ceiling(nx);
+                    if ((dx > 0 ? flush > x : flush < x) && can(Cover(flush, y, w, h)))
+                    {
+                        x = flush;
+                    }
+                }
+            }
+            if (dy != 0)
+            {
+                float ny = y + dy;
+                if (can(Cover(x, ny, w, h)))
+                {
+                    y = ny;
+                }
+                else
+                {
+                    float flush = dy > 0 ? (float)Math.Floor(ny + h) - h : (float)Math.Ceiling(ny);
+                    if ((dy > 0 ? flush > y : flush < y) && can(Cover(x, flush, w, h)))
+                    {
+                        y = flush;
+                    }
+                }
+            }
+        }
+
+        private static bool Overlap(int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh) =>
+            ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+
+        private static void Bounce(SightTrap t)
+        {
+            if (t.Mode == 1)
+            {
+                t.Vx = -t.Vx / 2;
+                t.Vy = -t.Vy / 2;
+                t.Mode = 2;
+            }
+        }
+
+        /// <summary>
+        /// One frame of every trap, in the game's order: each looks at where we were (it updates before we move), then moves; then the
+        /// frame's collisions (a wall or hole it runs into, or only reaches on its right or bottom edge, turns it back on its next
+        /// update; two traps that meet both turn back at once, and one that meets us on the ground hurts). Boxes are whole pixels,
+        /// cut down from the positions, as the game's hitboxes are. True if one touches us on the ground.
+        /// </summary>
+        private static bool StepTraps(SightTrap[] ts, float prevX, float prevY, float pxf, float pyf, int pw, int ph, bool air, Func<Rectangle, bool> trapFree, int margin)
+        {
+            int qx = (int)prevX, qy = (int)prevY;
+            foreach (var t in ts)
+            {
+                if (t.Touching)
+                {
+                    t.Touching = false;
+                    Bounce(t);
+                }
+                if (t.Mode == 0)
+                {
+                    int tx = (int)t.X, ty = (int)t.Y;
+                    bool seeX = qx <= tx + t.W && qx + pw >= tx;
+                    bool seeY = qy <= ty + t.H && qy + ph >= ty;
+                    if (seeX || seeY)
+                    {
+                        // (the game's FaceTowards: from its top-left to our centre, the longer axis wins)
+                        float dx = prevX + pw / 2f - t.X, dy = prevY + ph / 2f - t.Y;
+                        if (Math.Abs(dx) > Math.Abs(dy))
+                        {
+                            t.Vx = dx > 0 ? 80 : -80;
+                            t.Vy = 0;
+                        }
+                        else
+                        {
+                            t.Vx = 0;
+                            t.Vy = dy > 0 ? 80 : -80;
+                        }
+                        t.Mode = 1;
+                    }
+                }
+                else if (t.Mode == 2)
+                {
+                    float hx = t.HomeX - t.X, hy = t.HomeY - t.Y;
+                    if (hx * hx + hy * hy < 4)
+                    {
+                        t.X = t.HomeX;
+                        t.Y = t.HomeY;
+                        t.Vx = t.Vy = 0;
+                        t.Mode = 0;
+                    }
+                }
+                t.X += t.Vx / 60f;
+                t.Y += t.Vy / 60f;
+                if ((t.Vx != 0 || t.Vy != 0) && !trapFree(new Rectangle((int)t.X, (int)t.Y, t.W + 1, t.H + 1)))
+                {
+                    t.Touching = true; // (the game lets it into the wall a pixel and turns it back on its next update)
+                }
+            }
+            for (int i = 0; i < ts.Length; i++)
+            {
+                for (int j = i + 1; j < ts.Length; j++)
+                {
+                    var a = ts[i];
+                    var b = ts[j];
+                    if (Overlap((int)a.X, (int)a.Y, a.W, a.H, (int)b.X, (int)b.Y, b.W, b.H))
+                    {
+                        Bounce(a);
+                        Bounce(b);
+                    }
+                }
+            }
+            int px = (int)pxf, py = (int)pyf;
+            bool hit = false;
+            foreach (var t in ts)
+            {
+                if (!air && Overlap(px, py, pw, ph, (int)t.X - margin, (int)t.Y - margin, t.W + 2 * margin, t.H + 2 * margin))
+                {
+                    hit = true;
+                }
+            }
+            return hit;
+        }
+
+        /// <summary>Debug: the frame-by-frame states a plan predicts (our top-left, then each trap's), for comparing with the game.</summary>
+        public static List<string> Replay(Rectangle start, Vector2 startPos, SightTrap[] traps, List<Step> plan, Func<Rectangle, bool> walkable, Func<Rectangle, bool> airOk,
+            Func<Rectangle, bool> trapFree)
+        {
+            var outp = new List<string>();
+            float x = startPos.X, y = startPos.Y;
+            var tr = traps.Select(t => t.Copy()).ToArray();
+            foreach (var st in plan)
+            {
+                bool jump = st.Action >= SpaceTime.Actions.Length;
+                var (ax, ay) = jump ? SpaceTime.Jumps[st.Action - SpaceTime.Actions.Length] : SpaceTime.Actions[st.Action];
+                float sp = jump ? SpaceTime.Walk * 0.83f : (ax != 0 && ay != 0) ? SpaceTime.Walk * 0.7f : SpaceTime.Walk;
+                for (int f = 1; f <= st.Frames; f++)
+                {
+                    float px0 = x, py0 = y;
+                    bool air = jump && f < st.Frames;
+                    Move(ref x, ref y, ax * sp, ay * sp, start.Width, start.Height, air ? airOk : walkable);
+                    bool hit = StepTraps(tr, px0, py0, x, y, start.Width, start.Height, air, trapFree, 0);
+                    outp.Add($"a{st.Action} me {x:0.0},{y:0.0}{(air ? " air" : "")}{(hit ? " HIT" : "")} | " + string.Join(" ", tr.Select(t => $"{t.X:0.0},{t.Y:0.0}/m{t.Mode}")));
+                }
+            }
+            return outp;
+        }
+
+        public static List<Step> Plan(Rectangle start, Vector2 startPos, Vector2 goal, SightTrap[] traps, Func<Rectangle, bool> walkable, Func<Rectangle, bool> airOk,
+            Func<Rectangle, bool> trapFree, bool canJump, int block = 4, int maxNodes = 40000, float tol = 2.5f, int margin = 1, int maxT = 1800,
+            Func<float, float, float> framesToGoal = null)
+        {
+            int pw = start.Width, ph = start.Height;
+            var open = new PriorityQueue<Node, float>();
+            var seen = new HashSet<long>();
+            // (how far the goal is, in frames: the caller's estimate round the walls when it has one, else straight there)
+            float H(float x, float y) => (goal - new Vector2(x, y)).Length() <= tol ? 0f
+                : Math.Max((goal - new Vector2(x, y)).Length() / SpaceTime.Walk, framesToGoal?.Invoke(x, y) ?? 0f);
+            open.Enqueue(new Node { X = startPos.X, Y = startPos.Y, Traps = traps.Select(t => t.Copy()).ToArray(), Action = -1 }, 1.5f * H(start.X, start.Y));
+            Nodes = 0;
+            while (open.TryDequeue(out var n, out _) && Nodes < maxNodes)
+            {
+                Nodes++;
+                if ((goal - new Vector2(n.X, n.Y)).Length() <= tol)
+                {
+                    var steps = new List<Step>();
+                    for (var c = n; c.Parent != null; c = c.Parent)
+                    {
+                        steps.Add(new Step { Action = c.Action, Frames = c.Frames, X = c.X, Y = c.Y });
+                    }
+                    steps.Reverse();
+                    return steps;
+                }
+                if (n.T > maxT)
+                {
+                    continue;
+                }
+                int nActions = SpaceTime.Actions.Length + (canJump ? 5 : 0);
+                for (int a = 0; a < nActions; a++)
+                {
+                    bool jump = a >= SpaceTime.Actions.Length;
+                    var (ax, ay) = jump ? SpaceTime.Jumps[a - SpaceTime.Actions.Length] : SpaceTime.Actions[a];
+                    float sp = jump ? SpaceTime.Walk * 0.83f : (ax != 0 && ay != 0) ? SpaceTime.Walk * 0.7f : SpaceTime.Walk;
+                    int frames = jump ? AirFrames : block;
+                    float x = n.X, y = n.Y;
+                    var tr = n.Traps.Select(t => t.Copy()).ToArray();
+                    bool ok = true;
+                    for (int f = 1; f <= frames && ok; f++)
+                    {
+                        float px0 = x, py0 = y;
+                        bool air = jump && f < frames;
+                        Move(ref x, ref y, ax * sp, ay * sp, pw, ph, air ? airOk : walkable);
+                        if (!air && (ax != 0 || ay != 0) && x == px0 && y == py0)
+                        {
+                            ok = false; // (walking into a wall: the same as standing, which is its own action)
+                            break;
+                        }
+                        if (StepTraps(tr, px0, py0, x, y, pw, ph, air, trapFree, margin))
+                        {
+                            ok = false;
+                        }
+                    }
+                    if (!ok || (jump && !walkable(Cover(x, y, pw, ph))))
+                    {
+                        continue;
+                    }
+                    long key = ((long)(int)(x / 2) << 48) ^ ((long)(int)(y / 2) << 36);
+                    foreach (var t in tr)
+                    {
+                        key = key * 1000003 + (t.Mode * 7919 + (int)(t.X / 4) * 131 + (int)(t.Y / 4));
+                    }
+                    if (!seen.Add(key))
+                    {
+                        continue;
+                    }
+                    var m = new Node { X = x, Y = y, T = n.T + frames, Traps = tr, Parent = n, Action = a, Frames = frames };
+                    open.Enqueue(m, m.T + 1.5f * H(x, y));
+                }
+            }
+            return null;
         }
     }
 }
