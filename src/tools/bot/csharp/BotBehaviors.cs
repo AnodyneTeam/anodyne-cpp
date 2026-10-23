@@ -1913,6 +1913,19 @@ namespace AnodyneSharp.Recording
                     result.Add(dt);
                     continue;
                 }
+                if (d is AnodyneSharp.Entities.Enemy.Crowd.Dog && DogAlertLeft(d) is int alertLeft)
+                {
+                    // barking (it has seen us): in a second it dashes at a point ~44px past us and 8 up, then twice more about us; taken
+                    // from where we stand now (the later two are rolled at random: roughly)
+                    var dp = DogPath(d, -Math.Clamp(alertLeft, 1, 59), Player.Position);
+                    var dt = new Threat { Name = "Dog", Source = d, Margin = 4 };
+                    for (int f = 0; f <= Horizon; f++)
+                    {
+                        dt.At[f] = dp(f);
+                    }
+                    result.Add(dt);
+                    continue;
+                }
                 if (d is AnodyneSharp.Entities.Enemy.Circus.Contort or AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall)
                 {
                     result.Add(PredictBouncer(d));
@@ -7530,6 +7543,27 @@ namespace AnodyneSharp.Recording
                 return null;
             }
             return ((int)Math.Ceiling((due - now) * 60f - 0.001f), phase, targets);
+        }
+
+        /// <summary>Frames until a barking Dog (its Alert state) sets off on its attack, or null when it is not barking.</summary>
+        private static int? DogAlertLeft(Entity dog)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var tt = typeof(AnodyneSharp.FSM.TimerState);
+            if (top == null || top.GetType().Name == "AttackState" || tt.GetField("current", F)?.GetValue(top) is not float now
+                || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            {
+                return null;
+            }
+            var first = timers[0];
+            if (first.GetType().GetField("name")?.GetValue(first) as string != "AlertTimer" || first.GetType().GetField("current")?.GetValue(first) is not float due)
+            {
+                return null;
+            }
+            return (int)Math.Ceiling((due - now) * 60f - 0.001f);
         }
 
         /// <summary>Whether a Dog is in its Attack state (its three dashes), or null when that cannot be read.</summary>
@@ -13376,7 +13410,10 @@ namespace AnodyneSharp.Recording
                     // barking or pacing: close in to a standoff ~5px short of its box (touching it hurts), line up, face it and swing
                     var pbs = Player.Hitbox;
                     float sdx = dg.Center.X - pbs.Center.X, sdy = dg.Center.Y - pbs.Center.Y;
-                    if (Math.Sqrt(sdx * sdx + sdy * sdy) < 60 && OpenLine(pbs.Center.ToVector2(), dg.Center.ToVector2()))
+                    // (close by it is the standoff even when the line reads shut: a dog in a one-tile corridor hangs half into the wall
+                    // beside it, and walking at it as if it were far off walks into it)
+                    double sdist = Math.Sqrt(sdx * sdx + sdy * sdy);
+                    if (sdist < 60 && (sdist < 32 || OpenLine(pbs.Center.ToVector2(), dg.Center.ToVector2())))
                     {
                         bool vert = Math.Abs(sdy) >= Math.Abs(sdx);
                         var faceKey = vert ? (sdy > 0 ? KeyFunctions.Down : KeyFunctions.Up) : (sdx > 0 ? KeyFunctions.Right : KeyFunctions.Left);

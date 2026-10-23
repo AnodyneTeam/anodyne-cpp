@@ -1848,6 +1848,24 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // A Dog hurts by touch and stands (or paces) in the way: a route that passes right by it takes its dashes as it wakes, so one a
+            // tile or two off its spot is worth a few steps more.
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Crowd.Dog)
+                {
+                    continue;
+                }
+                var dt = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dy = -1; dy <= 1; dy++)
+                    {
+                        var t = new Point(dt.X + dx, dt.Y + dy);
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int zd) ? zd : 0, dx == 0 && dy == 0 ? 12 : 6);
+                    }
+                }
+            }
             // An idle on-sight dash trap charges whoever lines up with it at 80px/s: crossing its line far from it is safe (we are across
             // before it arrives), next to it is a hit. Close-by tiles of its lines cost more, so the route crosses where it is far.
             foreach (var e in BotRunner.Entities())
