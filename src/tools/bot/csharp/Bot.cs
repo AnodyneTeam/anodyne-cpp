@@ -173,6 +173,7 @@ namespace AnodyneSharp.Recording
             catch { return false; }
         }
 
+        private static DateTime? _heldSince;
         private static void CheckStuck()
         {
             var p = Player;
@@ -192,6 +193,23 @@ namespace AnodyneSharp.Recording
             else
             {
                 _busyFrames = 0;
+            }
+            // An event that holds the player still until its sound has played (HAPPY's quake): the sound runs on the wall clock, which
+            // an uncapped frame rate outruns by far, so give it wall-clock time rather than frames.
+            if (p != null && p.dontMove && string.IsNullOrEmpty(GlobalState.Dialogue) && !PlayBusy)
+            {
+                if (_heldSince == null)
+                {
+                    _heldSince = DateTime.UtcNow;
+                }
+                if ((DateTime.UtcNow - _heldSince.Value).TotalSeconds < 60)
+                {
+                    _stuckSince = _botFrame;
+                }
+            }
+            else
+            {
+                _heldSince = null;
             }
             if (sig != _stuckSig)
             {
@@ -1557,7 +1575,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -2190,6 +2208,16 @@ namespace AnodyneSharp.Recording
                         var kfrom = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
                         yield return OpenCardGate(cardGate, kfrom.Y > tile.Y);
                     }
+                    if (BotNav.IsShutKillGate(tile) && gateFights < 2 && GlobalState.inventory.HasBroom && !OnWater())
+                    {
+                        // The next step is a gate of this screen that opens on kills (the route counts it open from a side with enough
+                        // enemies): walking into it only bumps the bars, so earn it first.
+                        gateFights++;
+                        BotRunner.Status = $"kill gate {tile}: fight for it";
+                        yield return FightForKillGate();
+                        yield return Wait(20);
+                        goto replan;
+                    }
                     var c = BotNav.CentreOf(tile);
                     Vector2 last = Pos;
                     int still = 0;
@@ -2203,8 +2231,14 @@ namespace AnodyneSharp.Recording
                             yield return BotScript.AdvanceKeys(i);
                             continue;
                         }
-                        if (GlobalState.ScreenTransition)
+                        if (GlobalState.ScreenTransition || Player.dontMove)
                         {
+                            if (Player.dontMove)
+                            {
+                                // An event holds us still (HAPPY's quake, until its rumble has played on the wall clock): that is
+                                // no step taken; the stuck watchdog keeps the wait finite.
+                                i--;
+                            }
                             still = 0;
                             yield return K();
                             continue;

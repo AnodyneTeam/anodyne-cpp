@@ -5148,6 +5148,7 @@ namespace AnodyneSharp.Recording
             List<Point> plan = null;
             var fruitless = new Dictionary<Point, int>(); // screen -> enemies left there after our last fight on it
             var killFights = new Dictionary<Point, int>(); // kill gate -> fights had to open it
+            int gateGrace = 0;
             long healAt = -100000; // when this walk last went off to heal
             int killTrips = 0; // trips round to the enemies of a kill gate on the far side
             bool warped = false; // went back to the Nexus pad to plan from there
@@ -5421,6 +5422,16 @@ namespace AnodyneSharp.Recording
                 if (route.FirstOrDefault(BotNav.IsShutKillGate) is var kg && BotNav.IsShutKillGate(kg) && route.TakeWhile(t => t != kg).All(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y))
                 {
                     // The way out is a gate of this screen that opens on kills: fight for it first.
+                    if (Enemies().Count == 0 && gateGrace < 120)
+                    {
+                        // (nothing left to fight: the last one is still dying, and the gate opens when it is gone)
+                        gateGrace++;
+                        BotRunner.NotStuck();
+                        yield return K();
+                        plan = null;
+                        lastHere = new Point(-1, -1);
+                        continue;
+                    }
                     if (killFights.TryGetValue(kg, out int tries) && tries >= 2)
                     {
                         throw new InvalidOperationException($"bot: the kill gate {kg} on the way to {goal} stays shut after {tries} fights on {Map}");
@@ -5430,7 +5441,7 @@ namespace AnodyneSharp.Recording
                     {
                         System.Console.Error.WriteLine($"  gates: the way to {goal} is through the kill gate {kg}: fighting the {Enemies().Count} enemies here first");
                     }
-                    yield return Fight(3600);
+                    yield return FightForKillGate();
                     yield return Wait(20);
                     plan = null;
                     lastHere = new Point(-1, -1);
@@ -6490,9 +6501,24 @@ namespace AnodyneSharp.Recording
             return p != null;
         }
 
+        /// <summary>Fights this screen's enemies for its kill gate, first waking any Dustmaids with a dust of the screen.</summary>
+        protected static IEnumerable<object> FightForKillGate()
+        {
+            bool OnScreen(Entity e) => new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid;
+            yield return Fight(7200); // (a long one: the gate is the only way on, and a slow fight is no failure)
+            if (GlobalState.inventory.HasBroom && BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && OnScreen(e))
+                && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && OnScreen(e)))
+            {
+                // Dustmaids count for the gate, but only one that has seen us hold dust can be hurt: the rest beaten, wake them with
+                // it (and beat them, one slow walker at a time being far easier than among the others).
+                yield return PickUpDust(optional: true, keep: false);
+                yield return Fight(7200); // (a long one: the gate is the only way on, and a slow fight is no failure)
+            }
+        }
+
         /// <summary>Sweeps up the nearest loose Dust that is on dry land and reachable (the broom then carries it).</summary>
         /// <param name="outrun">the dust is wanted somewhere close by (a raft launch): Dustmaids walk at 20px/s, so carry it there and leave them behind rather than fight</param>
-        protected static IEnumerable<object> PickUpDust(bool optional = false, bool outrun = false)
+        protected static IEnumerable<object> PickUpDust(bool optional = false, bool outrun = false, bool keep = true)
         {
             yield return PickUpDustCore(optional);
             bool Maids() => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid);
@@ -6523,7 +6549,10 @@ namespace AnodyneSharp.Recording
                 }
             }
             yield return Fight(3600, only: e => e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid);
-            yield return PickUpDustCore(optional);
+            if (keep)
+            {
+                yield return PickUpDustCore(optional);
+            }
         }
 
         private static IEnumerable<object> PickUpDustCore(bool optional)
@@ -10123,6 +10152,9 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100, jumpAt = -100;
             Entity target = null;
             Vector2? prevGoal = null;
+            // (keeping off at about this far, rather than as far as it goes: from 90px off a strike never got there inside the 24+ frames
+            // its pace leaves, and a lion in HAPPY's cramped kill-gate room outlasted the fight; 0 = the old as-far-as-it-goes)
+            float keepNear = Environment.GetEnvironmentVariable("ANODYNE_LION_KEEP") is string lk ? float.Parse(lk) : 50f;
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || GlobalState.ScreenTransition)
@@ -10358,7 +10390,7 @@ namespace AnodyneSharp.Recording
                                 }
                                 float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
                                 // (while it spits, near enough to be in for the strike the moment it can be hit)
-                                float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
+                                float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : keepNear > 0 ? -Math.Abs(ld - keepNear) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
                                 // (and in the open: in a corner or against a wall there is nowhere to sidestep its pounce, or its fire, to)
                                 int open8 = 0;
                                 foreach (var (ox, oy) in new[] { (16, 0), (-16, 0), (0, 16), (0, -16), (16, 16), (-16, 16), (16, -16), (-16, -16), (32, 0), (-32, 0), (0, 32), (0, -32) })
@@ -11963,7 +11995,7 @@ namespace AnodyneSharp.Recording
                 {
                     var v = (e.Position - was.pos) * 60f;
                     // (a velocity that agrees with the move is the truer one: it is not rounded by a frame's step)
-                    var use = (e.velocity - v).Length() < 20f ? e.velocity : v;
+                    var use = (e.velocity - v).Length() < Math.Min(20f, Math.Max(4f, 0.5f * e.velocity.Length())) ? e.velocity : v; // (a slow walker held by a wall reads near its whole speed off)
                     _seenMove[e] = (now, e.Position, use);
                     return use;
                 }
@@ -12069,9 +12101,79 @@ namespace AnodyneSharp.Recording
                 }
             }
             bool reach = BroomBoxAt(Pos, face).Intersects(tb);
-            if (SeenVelocity(maid).Length() < 6f)
+            // (over half a second, not a frame: one held by a wall jitters back and forth on the spot)
+            if (!_maidTrail.TryGetValue(maid, out var trail) || trail.Count > 0 && trail.Last().f < BotRunner.Frame - 2)
             {
-                gap += 10; // caught on a wall corner, not closing in: no hurry, swing from wherever the broom reaches it
+                _maidTrail[maid] = trail = new List<(long f, Vector2 p)>();
+            }
+            if (trail.Count == 0 || trail.Last().f != BotRunner.Frame)
+            {
+                trail.Add((BotRunner.Frame, maid.Position));
+            }
+            if (trail.Count > 30)
+            {
+                trail.RemoveAt(0);
+            }
+            bool stuck = trail.Count >= 30 && (trail.Last().p - trail[0].p).Length() < 3f;
+            if (stuck && !blinking && gap > 4)
+            {
+                // It is not coming (caught on a wall corner, or its 18px box stuck in a one-tile corridor): go to a spot just beside it,
+                // round the walls (and off the dust), and swing from close in (from the edge of the broom's box it only fanned the air).
+                bool Open(Rectangle r) => screen.Contains(r) && CornersWalkable(r) && !OnConveyor(BotNav.TileOf(new Vector2(r.X, r.Y))) && !BotNav.IsHole(BotNav.TileOf(new Vector2(r.X, r.Y)));
+                bool Step(Rectangle r) => Open(r) && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(r) && !e.Hitbox.Intersects(pb));
+                var spots = new (Rectangle r, Facing f, KeyFunctions k)[]
+                {
+                    (new Rectangle(tb.Left - 3 - pb.Width, tb.Center.Y - pb.Height / 2, pb.Width, pb.Height), Facing.RIGHT, KeyFunctions.Right),
+                    (new Rectangle(tb.Right + 3, tb.Center.Y - pb.Height / 2, pb.Width, pb.Height), Facing.LEFT, KeyFunctions.Left),
+                    (new Rectangle(tb.Center.X - pb.Width / 2, tb.Top - 3 - pb.Height, pb.Width, pb.Height), Facing.DOWN, KeyFunctions.Down),
+                    (new Rectangle(tb.Center.X - pb.Width / 2, tb.Bottom + 3, pb.Width, pb.Height), Facing.UP, KeyFunctions.Up),
+                };
+                var here = BotNav.TileOf(Pos);
+                var reachable = spots.Where(sp => Free(sp.r)).Select(sp => (sp, path: BotNav.FindPath(here, BotNav.TileOf(new Vector2(sp.r.X, sp.r.Y)))))
+                    .Where(x => x.path != null).OrderBy(x => x.path.Count * 16 + Math.Abs(x.sp.r.X - pb.X) + Math.Abs(x.sp.r.Y - pb.Y)).ToList();
+                if (reachable.Count > 0)
+                {
+                    var (sp, path) = reachable[0];
+                    float ox = sp.r.X - pb.X, oy = sp.r.Y - pb.Y;
+                    if (Math.Abs(ox) <= 1 && Math.Abs(oy) <= 1)
+                    {
+                        if (Player.facing != sp.f)
+                        {
+                            return K(sp.k);
+                        }
+                    }
+                    else
+                    {
+                        // toward the next tile of the way there, or (on its tile) the spot itself; an axis at a time where both do not fit
+                        float tx = ox, ty = oy;
+                        if (path.Count > 0 && path[0] != here)
+                        {
+                            tx = path[0].X * 16 + 8 - pb.Width / 2f - pb.X;
+                            ty = path[0].Y * 16 + 8 - pb.Height / 2f - pb.Y;
+                        }
+                        var keys = new List<KeyFunctions>();
+                        if (tx > 1) { keys.Add(KeyFunctions.Right); } else if (tx < -1) { keys.Add(KeyFunctions.Left); }
+                        if (ty > 1) { keys.Add(KeyFunctions.Down); } else if (ty < -1) { keys.Add(KeyFunctions.Up); }
+                        foreach (var ks in new[] { keys.ToArray(), keys.Take(1).ToArray(), keys.Skip(1).ToArray() })
+                        {
+                            if (ks.Length == 0)
+                            {
+                                continue;
+                            }
+                            var mv = ks.Aggregate(Vector2.Zero, (acc, k2) => acc + DirVector(k2)) * 2;
+                            var mr = pb;
+                            mr.Offset((int)Math.Round(mv.X), (int)Math.Round(mv.Y));
+                            if (Step(mr) && !mr.Intersects(tb))
+                            {
+                                return K(ks);
+                            }
+                        }
+                    }
+                }
+            }
+            if (stuck)
+            {
+                gap += 10; // no hurry: swing from wherever the broom reaches it
             }
             // A swing holds us still ~20 frames while it walks ~7px: swing from 8px off at least (else it is on us as the broom goes),
             // and turn to face it from 10px off (the turn steps us ~1px at it).
@@ -12168,6 +12270,7 @@ namespace AnodyneSharp.Recording
         }
 
         private static KeyFunctions _maidRetreat = KeyFunctions.Accept;
+        private static readonly Dictionary<Entity, List<(long f, Vector2 p)>> _maidTrail = new();
 
         private static Rectangle BroomBoxAt(Vector2 p, Facing f)
         {
@@ -14544,9 +14647,15 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
             }
-            if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e))))
+            // (only one we can walk to on this screen: one beyond a wall - HAPPY (3,1) seen from its button nook - is kept off for good
+            // and timed the fight out)
+            var lionFloor = BotNav.DistMap(BotNav.TileOf(Pos), false, new Rectangle(Grid.X * 10, Grid.Y * 10, 10, 10));
+            bool LionNear(Entity e) => new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }
+                .Any(o => lionFloor.ContainsKey(new Point((int)(e.Hitbox.Center.X / 16) + o.X, (int)(e.Hitbox.Center.Y / 16) + o.Y)));
+            if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && (only == null || only(e)) && LionNear(e)))
             {
-                yield return LionFight(only);
+                var onlyLion = only;
+                yield return LionFight(e => (onlyLion == null || onlyLion(e)) && LionNear(e));
                 if (Enemies().Count(e => only == null || only(e)) == 0)
                 {
                     yield break;
@@ -15042,8 +15151,19 @@ namespace AnodyneSharp.Recording
                     {
                         var theirs = FloodRegion(tTile, 900);
                         BotNav.AllowJump = GlobalState.inventory.CanJump;
-                        bool canGoRound = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t)) != null;
+                        var roundPath = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t));
+                        bool canGoRound = roundPath != null;
                         BotNav.AllowJump = false;
+                        if (soft && canGoRound && (roundPath.Count > 20 || roundPath.Any(t => t.X / 10 != Grid.X || t.Y / 10 != Grid.Y)))
+                        {
+                            // (a fight on the way is no reason for a long way round by the next screens: HAPPY (3,1)'s lion, seen from the
+                            // button nook, sent the bot round and back for good)
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  fight: the {target.GetType().Name} is walled off and the way round is long ({roundPath.Count} tiles): leaving it");
+                            }
+                            yield break;
+                        }
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
                             System.Console.Error.WriteLine($"  fight: {target.GetType().Name} at {tTile} walled off from {BotNav.TileOf(Pos)} (region {mine.Count} tiles, theirs {theirs.Count}): way round {canGoRound}");
@@ -15259,9 +15379,9 @@ namespace AnodyneSharp.Recording
                             }
                             return (true, q, 99);
                         }
-                        // (Apartments only: in Red Cave's narrow ledges a straight run is rarely clear, and the path-planned spot off both
+                        // (Apartments and HAPPY only: in Red Cave's narrow ledges a straight run is rarely clear, and the path-planned spot off both
                         // strips below costs fewer hits there; TODO: one way that does well in both)
-                        if ((winding.Count > 0 || cutsNow.Count > 0) && Map == "APARTMENT")
+                        if ((winding.Count > 0 || cutsNow.Count > 0) && (Map == "APARTMENT" || Map == "HAPPY"))
                         {
                             slStepClear = k => Sim(new[] { k }, 12).clear;
                             // How much floor is round a spot (walkable tiles of the 5x5 block on it, on this screen): Slashers track us and cut
@@ -15283,7 +15403,29 @@ namespace AnodyneSharp.Recording
                                 }
                                 return n;
                             }
-                            bool stayOk = Sim(StActions[0]).clear;
+                            var stayRes = Sim(StActions[0]);
+                            bool stayOk = stayRes.clear;
+                            if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && (stayOk || stayRes.hitAt > 22))
+                            {
+                                // One in the broom's reach now, and no cut gets us before a swing is done: hit it (with two about, the dodge
+                                // alone ran from cut to cut until the fight timed out, the last one on a single heart).
+                                Facing? hitFace = null;
+                                foreach (var hf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
+                                {
+                                    var bx = BroomBoxAt(Player.Position, hf);
+                                    if (slList.Any(e => !e._flickering && e.Hitbox.Intersects(bx)))
+                                    {
+                                        hitFace = hf;
+                                        break;
+                                    }
+                                }
+                                if (hitFace is Facing hfc)
+                                {
+                                    BotRunner.Status = "fight/slasher: in reach, hit it";
+                                    yield return hfc == Player.facing ? K(KeyFunctions.Accept) : K(KeyOf(hfc));
+                                    continue;
+                                }
+                            }
                             // (the one we are after: towards it while it still floats a while, else away)
                             bool strikeable = SlasherCutIn(target) > 64;
                             if (!stayOk)
