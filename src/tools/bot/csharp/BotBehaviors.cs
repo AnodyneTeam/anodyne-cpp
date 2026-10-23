@@ -1242,6 +1242,9 @@ namespace AnodyneSharp.Recording
                     case "ChargeWarnState":
                         if (anim.StartsWith("pounce"))
                         {
+                            // (in the air it keeps the way it faced as it set off, so its box is the one it has, not both: the
+                            // union of the two left no room to sidestep it, and the bot froze in its path)
+                            r = d.Hitbox;
                             r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
                             break;
                         }
@@ -7515,28 +7518,35 @@ namespace AnodyneSharp.Recording
                 away = new Vector2(0, 1);
             }
             away = Vector2.Normalize(away);
+            // Every way out (eight of them, along walls too), scored by how many of them we would still touch 6px on, then by how
+            // straight away it is: pinned between two of them and a wall, "straight away" pointed into the other one.
             var keys = new List<KeyFunctions>();
-            var horiz = away.X < 0 ? KeyFunctions.Left : KeyFunctions.Right;
-            var vert = away.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down;
             bool Ok(KeyFunctions k) => WalkableAhead(k, 4) && !OnConveyor(BotNav.TileOf(Pos + DirVector(k) * 6));
-            if (Math.Abs(away.X) > 0.38f && Ok(horiz))
+            float bestOut = float.MaxValue;
+            foreach (var (hx, vy) in new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1) })
             {
-                keys.Add(horiz);
-            }
-            if (Math.Abs(away.Y) > 0.38f && Ok(vert))
-            {
-                keys.Add(vert);
-            }
-            if (keys.Count == 0)
-            {
-                // the way out is a wall: slide along it (the perpendicular with floor)
-                foreach (var k in Math.Abs(away.X) >= Math.Abs(away.Y) ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Left, KeyFunctions.Right })
+                var cand = new List<KeyFunctions>();
+                if (hx != 0)
                 {
-                    if (Ok(k))
-                    {
-                        keys.Add(k);
-                        break;
-                    }
+                    cand.Add(hx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
+                }
+                if (vy != 0)
+                {
+                    cand.Add(vy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
+                }
+                if (!cand.All(Ok))
+                {
+                    continue;
+                }
+                var dv = Vector2.Normalize(new Vector2(hx, vy));
+                var nb = Player.Hitbox;
+                nb.Offset((int)Math.Round(dv.X * 6), (int)Math.Round(dv.Y * 6));
+                nb.Inflate(1, 1);
+                float sc = 10f * on.Count(e => e.Hitbox.Intersects(nb)) - Vector2.Dot(dv, away);
+                if (sc < bestOut)
+                {
+                    bestOut = sc;
+                    keys = cand;
                 }
             }
             if (keys.Count == 0)
@@ -9081,11 +9091,69 @@ namespace AnodyneSharp.Recording
                 bool still = state == "ShootState" && dist < (Environment.GetEnvironmentVariable("ANODYNE_LION_STILL") is string ls ? float.Parse(ls) : 20f);
                 bool spitting = state == "ShootWarningState" || state == "ShootState";
                 bool open = !lion._flickering && (state == "PaceState" && left >= 24 || state == "ChargeWalkState" && left >= 30 || still);
+                // A fireball about to reach us that the broom can meet first: put it out (the broom stops them), rather than dodge in a
+                // fan of them with nowhere left to step. Only where nothing else gets us while the swing roots us.
+                if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
+                {
+                    var balls = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion).SelectMany(e => e.SubEntities())
+                        .Where(b => b.exists && b.CurAnimName != "poof").ToList();
+                    Rectangle BallAt(Entity b, int t) { var r = b.Hitbox; r.Offset((int)(b.velocity.X * t / 60f), (int)(b.velocity.Y * t / 60f)); return r; }
+                    var meBox = pb;
+                    meBox.Inflate(1, 1);
+                    int touch = int.MaxValue;
+                    for (int t = 0; t <= 14 && touch == int.MaxValue; t++)
+                    {
+                        if (balls.Any(b => BallAt(b, t).Intersects(meBox)))
+                        {
+                            touch = t;
+                        }
+                    }
+                    var bodies = threats.Where(t => t.Name != "Lion fire" && !(t.Source is AnodyneSharp.Entities.Enemy.Circus.Lion.Fireball)).ToList();
+                    if (touch <= 14 && SafeAtExactThreats(here, bodies, 18))
+                    {
+                        Facing? popFace = null;
+                        foreach (var f in new[] { Player.facing, Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                        {
+                            var bro = BroomBoxAt(Player.Position, f);
+                            // (turning costs a frame first)
+                            int from = f == Player.facing ? 0 : 1;
+                            bool meets = false;
+                            for (int t = from; t <= Math.Min(touch, from + 6); t++)
+                            {
+                                if (balls.Any(b => BallAt(b, t).Intersects(bro)))
+                                {
+                                    meets = true;
+                                    break;
+                                }
+                            }
+                            if (meets)
+                            {
+                                popFace = f;
+                                break;
+                            }
+                        }
+                        if (popFace is Facing pf)
+                        {
+                            if (pf == Player.facing)
+                            {
+                                lastSwing = i;
+                                BotRunner.Status = "Lion: put out a fireball";
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            BotRunner.Status = "Lion: turn to a fireball";
+                            yield return K(KeyOf(pf));
+                            continue;
+                        }
+                    }
+                }
                 // Any lion in the broom's reach right now (this way, or one turn away): hit it, whatever the plan was (a hit costs us nothing,
                 // and four end it). Facing the wrong way: turn this frame, swing the next.
                 // (not while the other lion's fire or anything else is about to reach where we stand: a swing roots us for its frames)
                 if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16
-                    && SafeAtExactThreats(here, others.Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Circus.Lion && t.Name == "Lion")).ToList(), 18))
+                    && SafeAtExactThreats(here, others.Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Circus.Lion && t.Name == "Lion")).ToList(), 18)
+                    // (nor while one is in the air at us: a hit does not stop a pounce, and the swing roots us in its way)
+                    && !threats.Any(t => t.Name == "Lion" && t.Source.CurAnimName.StartsWith("pounce") && !SafeAtExactThreats(here, new List<Threat> { t }, 18)))
                 {
                     Facing? reachFace = null;
                     foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
@@ -9194,62 +9262,76 @@ namespace AnodyneSharp.Recording
                     float bestScore = float.MinValue;
                     var room = new Vector2(Grid.X * 160, Grid.Y * 160);
                     bool pounceSoon = !lion.CurAnimName.StartsWith("pounce") && (state == "ChargeWarnState" || state == "ChargeWalkState" && left < 50);
-                    for (int gx = 4; gx < 160 - pb.Width; gx += 8)
+                    // (nowhere near both clear and out of every fan: look further off, and take a fan spot only as a last resort, rather
+                    // than stand where we are in it)
+                    for (int pass = 0; pass < 2 && bestScore == float.MinValue; pass++)
                     {
-                        for (int gy = 4; gy < 160 - pb.Height; gy += 8)
+                        for (int gx = 4; gx < 160 - pb.Width; gx += 8)
                         {
-                            var c = room + new Vector2(gx, gy);
-                            if ((c - here).Length() > 72 || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 40) || !OutOfFan(c))
+                            for (int gy = 4; gy < 160 - pb.Height; gy += 8)
                             {
-                                continue;
-                            }
-                            float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
-                            // (while it spits, near enough to be in for the strike the moment it can be hit)
-                            float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
-                            // (and in the open: in a corner or against a wall there is nowhere to sidestep its pounce, or its fire, to)
-                            int open8 = 0;
-                            foreach (var (ox, oy) in new[] { (16, 0), (-16, 0), (0, 16), (0, -16), (16, 16), (-16, 16), (16, -16), (-16, -16), (32, 0), (-32, 0), (0, 32), (0, -32) })
-                            {
-                                var oc = new Rectangle((int)c.X + ox, (int)c.Y + oy, pb.Width, pb.Height);
-                                if (oc.Left >= room.X && oc.Right <= room.X + 160 && oc.Top >= room.Y && oc.Bottom <= room.Y + 160 && StandsSafe(oc))
+                                var c = room + new Vector2(gx, gy);
+                                if ((c - here).Length() > (pass == 0 ? 72 : 140) || !StandsSafe(new Rectangle((int)c.X, (int)c.Y, pb.Width, pb.Height)) || !SafeAtExactThreats(c, threats, 40))
                                 {
-                                    open8++;
+                                    continue;
                                 }
-                            }
-                            score += 4f * open8;
-                            if (pounceSoon)
-                            {
-                                // (its pounce goes for wherever we stand as it sets off: stand far enough off to see it come and step aside,
-                                // with floor to step onto on either side of its line, not against a wall it pins us to)
-                                var away = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2();
-                                if (away != Vector2.Zero)
+                                bool inFan = !OutOfFan(c);
+                                if (inFan && pass == 0)
                                 {
-                                    away.Normalize();
+                                    continue;
                                 }
-                                var perp = new Vector2(-away.Y, away.X);
-                                foreach (var sgn in new[] { 1f, -1f })
+                                float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
+                                // (while it spits, near enough to be in for the strike the moment it can be hit)
+                                float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
+                                // (and in the open: in a corner or against a wall there is nowhere to sidestep its pounce, or its fire, to)
+                                int open8 = 0;
+                                foreach (var (ox, oy) in new[] { (16, 0), (-16, 0), (0, 16), (0, -16), (16, 16), (-16, 16), (16, -16), (-16, -16), (32, 0), (-32, 0), (0, 32), (0, -32) })
                                 {
-                                    var sc = c + perp * 26f * sgn;
-                                    if (StandsSafe(new Rectangle((int)sc.X, (int)sc.Y, pb.Width, pb.Height)))
+                                    var oc = new Rectangle((int)c.X + ox, (int)c.Y + oy, pb.Width, pb.Height);
+                                    if (oc.Left >= room.X && oc.Right <= room.X + 160 && oc.Top >= room.Y && oc.Bottom <= room.Y + 160 && StandsSafe(oc))
                                     {
-                                        score += 12f;
+                                        open8++;
                                     }
                                 }
-                                // (it covers 1.8px a frame to our 1.2: sidestepping its 13-20px body takes ~12 frames, so 40px off is the least
-                                // that works, with some to spare)
-                                if (ld < 72f)
+                                score += 4f * open8;
+                                if (inFan)
                                 {
-                                    score -= 3f * (72f - ld);
+                                    score -= 200f;
                                 }
-                            }
-                            if (prevGoal is Vector2 pg && (pg - c).Length() < 6f)
-                            {
-                                score += 8f; // (and the spot we were making for, unless another is clearly better: a near tie flipped the goal every frame)
-                            }
-                            if (score > bestScore)
-                            {
-                                bestScore = score;
-                                goal = c;
+                                if (pounceSoon)
+                                {
+                                    // (its pounce goes for wherever we stand as it sets off: stand far enough off to see it come and step aside,
+                                    // with floor to step onto on either side of its line, not against a wall it pins us to)
+                                    var away = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2();
+                                    if (away != Vector2.Zero)
+                                    {
+                                        away.Normalize();
+                                    }
+                                    var perp = new Vector2(-away.Y, away.X);
+                                    foreach (var sgn in new[] { 1f, -1f })
+                                    {
+                                        var sc = c + perp * 26f * sgn;
+                                        if (StandsSafe(new Rectangle((int)sc.X, (int)sc.Y, pb.Width, pb.Height)))
+                                        {
+                                            score += 12f;
+                                        }
+                                    }
+                                    // (it covers 1.8px a frame to our 1.2: sidestepping its 13-20px body takes ~12 frames, so 40px off is the least
+                                    // that works, with some to spare)
+                                    if (ld < 72f)
+                                    {
+                                        score -= 3f * (72f - ld);
+                                    }
+                                }
+                                if (prevGoal is Vector2 pg && (pg - c).Length() < 6f)
+                                {
+                                    score += 8f; // (and the spot we were making for, unless another is clearly better: a near tie flipped the goal every frame)
+                                }
+                                if (score > bestScore)
+                                {
+                                    bestScore = score;
+                                    goal = c;
+                                }
                             }
                         }
                     }
@@ -9277,7 +9359,7 @@ namespace AnodyneSharp.Recording
                     yield return K();
                     continue;
                 }
-                if (open && still && state == "ShootState" && (goal - here).Length() < 24)
+                if (open && still && state == "ShootState" && (goal - here).Length() < 24 && SafeAtExactThreats(here, others, 10))
                 {
                     // Into its fire: straight at it, swinging as we go (the broom puts out what flies at us), until the hit that stops it.
                     var dk = new List<KeyFunctions>();
