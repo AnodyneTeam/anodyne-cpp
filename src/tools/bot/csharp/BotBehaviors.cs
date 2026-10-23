@@ -8270,11 +8270,28 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> MoverOnButton(int seconds)
         {
-            int attempt = 0;
+            int attempt = 0, respawns = 0;
             for (int f = 0; f < seconds * 60 && GlobalState.PUZZLES_SOLVED < 2; attempt++)
             {
                 var buttons = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Button").ToList();
-                var mover = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Mover");
+                var mover = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Mover" && e.CurAnimName != "Die");
+                if (buttons.Count >= 2 && mover == null && respawns < 2 && _cameFrom is Point back && back != Grid
+                    && Math.Abs(back.X - Grid.X) + Math.Abs(back.Y - Grid.Y) == 1)
+                {
+                    // The Mover strayed into the steam on its way to us and died: the screen's enemies come back once we leave it, so
+                    // step out the way we came and back in, and lure the new one.
+                    respawns++;
+                    var home = Grid;
+                    BotRunner.Status = "buttons: the Mover died, out and back in for a new one";
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  buttons: the Mover died: out to {back} and back for a new one");
+                    }
+                    yield return Wait(60); // (its death plays out first)
+                    yield return GoScreenTo(back.X, back.Y);
+                    yield return GoScreenTo(home.X, home.Y);
+                    continue;
+                }
                 if (buttons.Count < 2 || mover == null)
                 {
                     yield break;
@@ -12067,6 +12084,7 @@ namespace AnodyneSharp.Recording
         private static long _frogGroundCommit = -1;
         private static long _frogVolleyWaitFrom = -1000, _frogVolleyWaitLast = -1000;
         private static int _frogGroundStall;
+        private static long _frogBaitUntil = -1;
 
         /// <summary>
         /// A spot on our side of the floor: walk in, strike and back off by a plan checked frame by frame against the bullets flying and the
@@ -12148,6 +12166,35 @@ namespace AnodyneSharp.Recording
                 _frogGroundStall = 0;
                 BotRunner.Status = "fight/frog: in to strike (planned)";
                 return K(Towards(spot));
+            }
+            if (walk > 30 && safeExact(here, 1, 8))
+            {
+                // A long way in: the volleys on the way back never all line up. Wait closer, just out of every frog's 64px reach (it does
+                // not spit at us there), so the way in and out is short.
+                var frogCs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToVector2()).ToList();
+                var halfBox = new Vector2(pb.Width / 2f, pb.Height / 2f);
+                var outDir = Vector2.Normalize(here - spot);
+                float far = (here - spot).Length();
+                for (float d = 0; d < far - 4f; d += 1f)
+                {
+                    var at = spot + outDir * d;
+                    if (frogCs.All(fc => (at + halfBox - fc).Length() >= 68f))
+                    {
+                        BotRunner.Status = "fight/frog: closer in, just out of its reach";
+                        return K(Towards(at));
+                    }
+                }
+            }
+            if (BotRunner.Frame < _frogBaitUntil)
+            {
+                BotRunner.Status = "fight/frog: bait its volley";
+                return K(Towards(spot));
+            }
+            if (_frogGroundStall % 150 == 149 && safeExact(here, 1, 8))
+            {
+                // Still no clear way in from just out of reach: step into its reach for a moment so it spits now, while we are far
+                // enough off to dodge, and go in while that volley is still flying (a frog never spits again before it is done).
+                _frogBaitUntil = BotRunner.Frame + 8;
             }
             if (++_frogGroundStall > 400)
             {
@@ -13079,6 +13126,10 @@ namespace AnodyneSharp.Recording
                 return null;
             }
             var path = BotNav.FindPath(BotNav.TileOf(Pos), t => SpotIn(t) != null);
+            if (path != null && ThroughShutGate(path))
+            {
+                path = null;
+            }
             var goal = path == null ? (SpotIn(BotNav.TileOf(Pos)) != null ? BotNav.TileOf(Pos) : (Point?)null) : path.Count > 0 ? path[path.Count - 1] : BotNav.TileOf(Pos);
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
@@ -13137,7 +13188,14 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"  fight: the Annoyer at {a.Hitbox.X},{a.Hitbox.Y} sleeps on: waking it from {(wake == null || wake.Count == 0 ? "nowhere" : wake[wake.Count - 1].ToString())}");
             }
-            return wake != null && wake.Count > 0 ? wake : null;
+            return wake != null && wake.Count > 0 && !ThroughShutGate(wake) ? wake : null;
+        }
+
+        // (a shut gate on the way: waking or striking what is behind it is not ours to do yet)
+        private static bool ThroughShutGate(List<Point> path)
+        {
+            var shut = BotRunner.Entities().Where(e => e.exists && e.Solid && (e.GetType().Name.Contains("Gate") || e.GetType().Name.Contains("KeyBlock"))).Select(e => BotNav.TileOf(e.Hitbox.Center.ToVector2() - new Vector2(BotNav.HalfW, BotNav.HalfH))).ToHashSet();
+            return path.Any(shut.Contains);
         }
         private static string _fightKey, _fightLeftKey;
         private static int _fightLeftCount;
