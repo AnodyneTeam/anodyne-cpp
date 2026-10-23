@@ -16132,7 +16132,9 @@ namespace AnodyneSharp.Recording
                 }
                 var tracks = SweeperTracks(SweepStep * (SweepSteps + 3));
                 // (a short look ahead first: most ways turn up within a few dozen moves, and the long search is the bot's dearest frame)
+                long planT0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var plan = PlanPastSweepers(here, goal, tracks, 40) ?? PlanPastSweepers(here, goal, tracks);
+                double planMs = (System.Diagnostics.Stopwatch.GetTimestamp() - planT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 if (plan == null && noPlan < 120)
                 {
                     // No timed way from here just now (a bar about to reach us, say): don't hand over to the plain walk, which walks into it.
@@ -16204,9 +16206,12 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         BotRunner.Status = $"sweepers: no way yet from {here} (for {goal}): wait";
-                        for (int w = 0; w < 6; w++, i++, noPlan++)
+                        // (plan again in a few frames: the search is dear, so the wait grows with what this one cost, to keep the
+                        // bot's own time per frame at ~5ms over the wait)
+                        int waitFor = Math.Clamp((int)Math.Ceiling(planMs / 5.0), 6, 30);
+                        for (int w = 0; w < waitFor; w++, i++, noPlan++)
                         {
-                            yield return K(); // (plan again in a few frames: the search is dear)
+                            yield return K();
                         }
                     }
                     continue;
