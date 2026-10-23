@@ -451,6 +451,8 @@ namespace AnodyneSharp.Recording
             yield return Section("suburb card", () => Exec("O1 X1 viaSUBURB W30 dig24,48 W10 dig24,50 W10 >456,824 W10 >456,936 W10 >344,824 W10 >400,952 W30"
                 + " >400,976 lure397,1000,1040 >400,1000 kg1 @x397,d D120 W30 X0 D20 L20 U6 strike366.5,1136,l,369,1136 R36 strike423.5,1136,r,421,1136"
                 + " L16 @x397,u D90 @x424,u strike424,1236,r,420,1236 X1 kg0 I384,1232,d W60 T W30"));
+            // Red Cave (3,1) Mover: the any% route leaves its gates shut; dig to the chest.
+            yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 dig34,12 W10 I544,176,d W60 T W30"));
         }
     }
 
