@@ -2553,6 +2553,7 @@ namespace AnodyneSharp.Recording
             {
                 throw new Exception($"rat on button: needs rats and two buttons here ({rats.Count} rats, {buttons.Count} buttons)");
             }
+            BotRunner.Thinking = true;
             var dustEs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
             var pswitch = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch);
             bool anyPillar = BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.SwitchPillar);

@@ -62,6 +62,7 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Shown by the realtime overlay: the bot's current goal.</summary>
         public static string Status = "";
+        public static bool Thinking; // set by a one-off planner for the frame it runs in (see NextFrame)
         private static string _traceStatus;
         private static Microsoft.Xna.Framework.Point _traceTile;
 
@@ -441,7 +442,10 @@ namespace AnodyneSharp.Recording
             AnodyneSharp.Recording.SpaceTime.NodesThisFrame = 0;
             var result = NextFrameCore();
             double ms = sw.Elapsed.TotalMilliseconds;
-            _winMs += ms;
+            // (a puzzle solved in one go before we touch anything, the rat-and-button rooms' plan, is the player stopping to think: the
+            // frame is still reported below, but it is not the steady cost the window guards)
+            _winMs += Thinking ? Math.Min(ms, SlowFrameMs) : ms;
+            Thinking = false;
             var stKey = Status ?? "";
             int cut = stKey.IndexOf('(');
             stKey = cut > 0 ? stKey.Substring(0, cut) : stKey; // (the doing, not where)
