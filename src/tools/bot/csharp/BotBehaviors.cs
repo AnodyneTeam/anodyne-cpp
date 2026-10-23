@@ -12224,6 +12224,8 @@ namespace AnodyneSharp.Recording
             return r;
         }
 
+        private static (Point from, Point to, long at) _lastJumpTrip = (new Point(-1, -1), new Point(-1, -1), -100000);
+
         private static IEnumerable<object> FightCore(int timeoutFrames, bool soft, Func<Entity, bool> only)
         {
             int beamPushes = 0, ambushWaited = 0, jumpTrips = 0;
@@ -14057,7 +14059,8 @@ namespace AnodyneSharp.Recording
                     {
                         path = BotNav.FindPathTo(BotNav.TileOf(Pos), tt);
                     }
-                    if (path == null && GlobalState.inventory.CanJump && jumpTrips < 3 && target.GetType().Name != "Annoyer" && !OnConveyor(BotNav.TileOf(Pos)))
+                    if (path == null && GlobalState.inventory.CanJump && jumpTrips < 3 && target.GetType().Name != "Annoyer" && !OnConveyor(BotNav.TileOf(Pos))
+                        && !(_lastJumpTrip.from == BotNav.TileOf(Pos) && _lastJumpTrip.to == tt && BotRunner.Frame - _lastJumpTrip.at < 600))
                     {
                         // No way on foot, but one over a gap: let the route walker (which knows how to take a jump) bring us near it.
                         BotNav.AllowJump = true;
@@ -14072,7 +14075,11 @@ namespace AnodyneSharp.Recording
                                 System.Console.Error.WriteLine($"  fight: the {target.GetType().Name} at {tt} is over a gap: route there with jumps ({jp.Count} steps)");
                             }
                             BotRunner.Status = $"fight: over the gap to the {target.GetType().Name}";
+                            // (one that leaves us on the same tile is not tried again for a while: a fight started over and over
+                            // would otherwise send us on it again and again within the one frame)
+                            _lastJumpTrip = (BotNav.TileOf(Pos), tt, BotRunner.Frame);
                             yield return GoToWhere(q => Math.Abs(q.X - tgo.X) + Math.Abs(q.Y - tgo.Y) <= 2, "near the " + target.GetType().Name);
+                            yield return K();
                             continue;
                         }
                     }
