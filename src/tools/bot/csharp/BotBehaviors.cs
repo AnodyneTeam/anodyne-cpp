@@ -718,8 +718,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: no checkpoint to heal at from {here}: back to the pad");
                         }
-                        yield return MenuReturnToPad(0);
-                        yield return Wait(60);
+                        yield return BackToMapPad();
                     }
                     else
                     {
@@ -1339,6 +1338,24 @@ namespace AnodyneSharp.Recording
                 list.Add(t);
             }
             return list;
+        }
+
+        // (debug) the entity's active state chain, by name
+        private static string FsmPath(Entity d)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var names = new List<string>();
+            object st = d.GetType().GetField("_state", F)?.GetValue(d);
+            for (int k = 0; st != null && abs != null && k < 4; k++)
+            {
+                st = (abs.GetField("activeChildren", F)?.GetValue(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+                if (st != null)
+                {
+                    names.Add(st.GetType().GetProperty("Name")?.GetValue(st) as string ?? st.GetType().Name);
+                }
+            }
+            return string.Join("/", names) + $" exists={d.exists} solid={d.Solid} vel={d.velocity}";
         }
 
         private static (string, int)? FsmStateLeft(Entity d)
@@ -4152,10 +4169,16 @@ namespace AnodyneSharp.Recording
         /// Where to hold against Annoyers (they come to us): null if nothing else reaches where we stand over the horizon, else the
         /// nearest tile of this screen (8 steps at most) that nothing but the Annoyers reaches, or null if there is none.
         /// </summary>
+        // (a Frog spits a burst at us whenever we are within 64px of it)
+        private static bool FrogsReach(Vector2 at) =>
+            BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToVector2() - at).LengthSquared() < 72 * 72);
+
         private static Point? QuietHoldTile(Entity except)
         {
-            // (only what sweeps the floor on a fixed beat, a spike bar or a fire pillar: shots are aimed at us wherever we hold)
-            if (!BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller or AnodyneSharp.Entities.Enemy.Circus.FirePillar or AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap))
+            // (only what sweeps the floor on a fixed beat, a spike bar or a fire pillar: shots are aimed at us wherever we hold;
+            // and a Frog's reach: it spits a burst at us whenever we are within 64px of it, an Annoyer circling us or not)
+            var frogs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToVector2()).ToList();
+            if (frogs.Count == 0 && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller or AnodyneSharp.Entities.Enemy.Circus.FirePillar or AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap))
             {
                 return null;
             }
@@ -4163,6 +4186,11 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             bool Quiet(Vector2 at)
             {
+                var mid = at + new Vector2(pb.Width / 2f, pb.Height / 2f);
+                if (frogs.Any(f => (f - mid).LengthSquared() < 72 * 72))
+                {
+                    return false;
+                }
                 var box = new Rectangle((int)at.X - 2, (int)at.Y - 2, pb.Width + 4, pb.Height + 4);
                 foreach (var th in others)
                 {
@@ -5269,8 +5297,7 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    yield return MenuReturnToPad(0);
-                    yield return Wait(60);
+                    yield return BackToMapPad();
                     plan = null;
                     lastHere = new Point(-1, -1);
                     continue;
@@ -6033,14 +6060,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Shut in a dead end (a pocket behind a one-way leap): back to the map's Nexus pad and look again from there.
                         warped = true;
-                        string chestMap = GlobalState.CURRENT_MAP_NAME;
-                        yield return MenuReturnToPad(0);
-                        yield return Wait(60);
-                        if (GlobalState.CURRENT_MAP_NAME != chestMap)
-                        {
-                            // (the warp can put us in the Nexus itself: back in by the map's portal, which leaves us at its pad)
-                            yield return ViaNexus(chestMap);
-                        }
+                        yield return BackToMapPad();
                         continue;
                     }
                     yield break;
@@ -6176,6 +6196,21 @@ namespace AnodyneSharp.Recording
             if (GlobalState.CURRENT_MAP_NAME != map.ToUpperInvariant())
             {
                 throw new InvalidOperationException($"bot: the Nexus portal did not take us to {map} (on {GlobalState.CURRENT_MAP_NAME})");
+            }
+        }
+
+        /// <summary>
+        /// The pause menu's warp to this map's Nexus pad, and if it puts us in the Nexus itself instead (it does from the Fields), back in
+        /// by the map's portal, which leaves us at its pad.
+        /// </summary>
+        protected static IEnumerable<object> BackToMapPad()
+        {
+            string map = GlobalState.CURRENT_MAP_NAME;
+            yield return MenuReturnToPad(0);
+            yield return Wait(60);
+            if (GlobalState.CURRENT_MAP_NAME != map)
+            {
+                yield return ViaNexus(map);
             }
         }
 
@@ -6515,6 +6550,35 @@ namespace AnodyneSharp.Recording
             var off = v * 3f * WalkPxPerFrame;
             var next = new Rectangle(box.X + (int)Math.Round(off.X), box.Y + (int)Math.Round(off.Y), box.Width, box.Height);
             return lanes.Any(l => l.Intersects(next));
+        }
+
+        /// <summary>The way that gets our whole box off the floor spikes in the fewest pixels (over walkable floor), or null.</summary>
+        private static KeyFunctions? OffSpikesKey()
+        {
+            for (int px = 1; px <= 20; px++)
+            {
+                foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
+                {
+                    var d = DirVector(k) * px;
+                    var r = Player.Hitbox;
+                    r.Offset((int)d.X, (int)d.Y);
+                    var corners = new[] { new Point(r.Left, r.Top), new Point(r.Right - 1, r.Top), new Point(r.Left, r.Bottom - 1), new Point(r.Right - 1, r.Bottom - 1) }
+                        .Select(c => new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))).ToList();
+                    if (corners.All(t => !BotNav.IsSpike(t) && BotNav.CurrentMap.GetTileClass(t).Item1 == Touching.NONE && !BotNav.IsHole(t) && !OnConveyor(t)))
+                    {
+                        return k;
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>True when any part of our box is over a floor spike tile.</summary>
+        private static bool SpikeUnderUs()
+        {
+            var hb = Player.Hitbox;
+            return new[] { new Point(hb.Left, hb.Top), new Point(hb.Right - 1, hb.Top), new Point(hb.Left, hb.Bottom - 1), new Point(hb.Right - 1, hb.Bottom - 1) }
+                .Any(c => BotNav.IsSpike(new Point((int)Math.Floor(c.X / 16f), (int)Math.Floor(c.Y / 16f))));
         }
 
         /// <summary>True when a flying Four Shooter bullet meets our box within `frames` frames (straight on at its speed).</summary>
@@ -6989,6 +7053,12 @@ namespace AnodyneSharp.Recording
                     if (wet && HasRaft() && RaftBouncerDodge(rideKey, cur) is KeyFunctions[] bd)
                     {
                         moveKeys = bd;
+                    }
+                    if (wet && HasRaft() && moveKeys.Length == 1 && moveKeys[0] == rideKey && Math.Abs(side) > 5f)
+                    {
+                        // Well off the lane's centre line (a current or a bump left us there), past the hitbox's slack: our box hangs
+                        // over the bank and a pixel more drift puts us ashore, raft lost. Drift back in as we go.
+                        moveKeys = K(rideKey, alongY ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     }
                     var rideKeys = wet ? KeepOnWater(moveKeys, rideKey) : moveKeys;
                     if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
@@ -8176,8 +8246,9 @@ namespace AnodyneSharp.Recording
             if (IgnoredEnemies.Count > 0 && BotRunner.Player != null)
             {
                 // One given up on as out of reach that has come to us (an Annoyer leaving its perch, a Gas Guy drifting over the water at us) is a target again.
+                // (not one asleep on its perch in the wall beside us: given up on and taken up again every frame, the fight stood there for ever)
                 var pc = Player.Hitbox.Center;
-                IgnoredEnemies.RemoveWhere(e => e.exists && e.GetType().Name is "Annoyer" or "GasGuy" && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
+                IgnoredEnemies.RemoveWhere(e => e.exists && (e.GetType().Name is "GasGuy" || (e.GetType().Name is "Annoyer" && AnnoyerAwake(e))) && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
             }
             // (the Hotel boss's death marker is an invisible "enemy" at 0,0 that only keeps the gates shut: the boss itself is the target)
             return BotRunner.Entities().Where(e => e.exists && (e.GetType().IsDefined(typeof(EnemyAttribute), false) || IsEyeBoss(e)) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)
@@ -12975,6 +13046,99 @@ namespace AnodyneSharp.Recording
         }
 
         private static int _fightDepth, _nestedSoft;
+        private static readonly HashSet<Entity> _annoyerWakeTried = new();
+
+        private static readonly HashSet<Entity> _parkedTried = new();
+
+        // (its "Wait" state, asleep on its perch: the only TimerState under its Active one)
+        private static bool AnnoyerWaiting(Entity a) => FsmPath(a).StartsWith("ActiveState/TimerState");
+
+        /// <summary>
+        /// An enemy parked where we cannot walk up to it (an Annoyer whose swoop ran it into the room's edge stays in its swoop for good,
+        /// over a wall): find floor from where the broom's sweep meets its box, go there and swing at it.
+        /// </summary>
+        private static IEnumerable<object> StrikeParked(Entity e)
+        {
+            var eb = e.Hitbox;
+            var ec = eb.Center.ToVector2();
+            (Vector2 p, Facing f)? SpotIn(Point t)
+            {
+                if (!BotNav.Walkable(t) || BotNav.IsSpike(t))
+                {
+                    return null;
+                }
+                // (our box kept inside the tile, as near the enemy as it goes)
+                var p = new Vector2(Math.Clamp(ec.X - BotNav.HalfW, t.X * 16, t.X * 16 + 6), Math.Clamp(ec.Y - BotNav.HalfH, t.Y * 16, t.Y * 16 + 4));
+                foreach (var f in new[] { Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
+                {
+                    if (BroomBoxAt(p, f).Intersects(eb))
+                    {
+                        return (p, f);
+                    }
+                }
+                return null;
+            }
+            var path = BotNav.FindPath(BotNav.TileOf(Pos), t => SpotIn(t) != null);
+            var goal = path == null ? (SpotIn(BotNav.TileOf(Pos)) != null ? BotNav.TileOf(Pos) : (Point?)null) : path.Count > 0 ? path[path.Count - 1] : BotNav.TileOf(Pos);
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  fight: {e.GetType().Name} parked at {eb.X},{eb.Y}: striking it from {(goal?.ToString() ?? "nowhere")}");
+            }
+            if (goal is not Point g || SpotIn(g) is not var (spot, face))
+            {
+                yield break;
+            }
+            BotRunner.Status = "fight: strike a parked enemy";
+            // (walked step by step, not with GoTo: that stops to fight whatever is about, this one included, and gives up on it again)
+            for (int k = 0; k < 240 && e.exists; k++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield break;
+                }
+                var here = BotNav.TileOf(Pos);
+                if (here != g)
+                {
+                    var wp = BotNav.FindPath(here, t => t == g, g);
+                    if (wp == null || wp.Count == 0)
+                    {
+                        yield break;
+                    }
+                    var nc = BotNav.CentreOf(wp[0]) - Pos;
+                    yield return K(Math.Abs(nc.X) > 2f ? (nc.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (nc.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    continue;
+                }
+                var d = spot - Player.Position;
+                if (!BroomBoxAt(Player.Position, face).Intersects(eb) && d.Length() > 0.6f)
+                {
+                    yield return K(Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (d.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
+                    continue;
+                }
+                if (Player.facing != face)
+                {
+                    yield return K(KeyOf(face));
+                    continue;
+                }
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(20);
+                eb = e.Hitbox;
+            }
+        }
+
+        // A sleeping Annoyer only wakes with us within 64px of it. Path (jumping spikes if we can) to the nearest floor that close.
+        private static List<Point> AnnoyerWakePath(Entity a)
+        {
+            var ac = a.Hitbox.Center.ToVector2();
+            bool oldJ = BotNav.AllowJump;
+            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            var wake = BotNav.FindPath(BotNav.TileOf(Pos), t => (BotNav.CentreOf(t) + new Vector2(BotNav.HalfW, BotNav.HalfH) - ac).Length() < 44 && !BotNav.IsSpike(t) && BotNav.Walkable(t));
+            BotNav.AllowJump = oldJ;
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                System.Console.Error.WriteLine($"  fight: the Annoyer at {a.Hitbox.X},{a.Hitbox.Y} sleeps on: waking it from {(wake == null || wake.Count == 0 ? "nowhere" : wake[wake.Count - 1].ToString())}");
+            }
+            return wake != null && wake.Count > 0 ? wake : null;
+        }
         private static string _fightKey, _fightLeftKey;
         private static int _fightLeftCount;
 
@@ -12987,6 +13151,10 @@ namespace AnodyneSharp.Recording
                 if (threats.Count == 0)
                 {
                     yield break;
+                }
+                if (FrogsReach(Player.Hitbox.Center.ToVector2()))
+                {
+                    yield break; // a live Frog in reach keeps spitting: waiting here never ends, the walk on (dodging as it goes) gets us out
                 }
                 var pb = Player.Hitbox;
                 bool safe = !threats.Any(t => Enumerable.Range(1, 20).Any(k => t.At[k] is Rectangle r && RectInflated(r, t.Margin).Intersects(pb)));
@@ -13420,10 +13588,24 @@ namespace AnodyneSharp.Recording
                 lastPos = Pos;
                 if (stillFrames > 100 && lastTarget != null && lastTarget.GetType().Name == "Annoyer" && !ignoredTargets.Contains(lastTarget))
                 {
+                    if (!AnnoyerWaiting(lastTarget) && _parkedTried.Add(lastTarget))
+                    {
+                        yield return StrikeParked(lastTarget);
+                        stillFrames = 0;
+                        continue;
+                    }
+                    if (!AnnoyerAwake(lastTarget) && _annoyerWakeTried.Add(lastTarget) && AnnoyerWakePath(lastTarget) is { } wakeP)
+                    {
+                        var wc = BotNav.CentreOf(wakeP[wakeP.Count - 1]);
+                        BotRunner.Status = "fight/annoyer: wake it";
+                        yield return GoTo(wc.X, wc.Y);
+                        stillFrames = 0;
+                        continue;
+                    }
                     // Walking up to a sleeping Annoyer and not getting anywhere (something between us): it is not worth it, leave it asleep.
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
-                        System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {lastTarget.Hitbox.X},{lastTarget.Hitbox.Y}: leaving it");
+                        System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {lastTarget.Hitbox.X},{lastTarget.Hitbox.Y}: leaving it ({FsmPath(lastTarget)})");
                     }
                     ignoredTargets.Add(lastTarget);
                     committed = null;
@@ -13552,7 +13734,8 @@ namespace AnodyneSharp.Recording
                     var tTile = BotNav.TileOf(new Vector2(target.Hitbox.Center.X - 5, target.Hitbox.Center.Y - 6));
                     var mine = FloodRegion(BotNav.TileOf(Pos), 900);
                     bool reachableHere = mine.Contains(tTile) || new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(tTile.X + o.X, tTile.Y + o.Y)));
-                    if (!reachableHere && only == null && target.GetType().Name == "Slime")
+                    // (not for what flies over the walls to us, an Annoyer or a Gas Guy: walled off or not, it comes)
+                    if (!reachableHere && only == null && target.GetType().Name is not ("Annoyer" or "GasGuy"))
                     {
                         var theirs = FloodRegion(tTile, 900);
                         BotNav.AllowJump = GlobalState.inventory.CanJump;
@@ -13648,12 +13831,13 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if (target.GetType().Name != "Slasher" && Map == "APARTMENT" && enemies.Any(e => e.GetType().Name == "Slasher"))
+                if (target.GetType().Name != "Slasher" && Enemies().Any(e => e.GetType().Name == "Slasher"))
                 {
-                    // Whatever we are after, a Slasher near us about to cut comes first: the dodge below plans round it.
+                    // Whatever we are after, a Slasher near us about to cut comes first: the dodge below plans round it. (Any map, and in
+                    // a fight for something else only: holding still for the Fields (2,6) Annoyers sat in its long cut.)
                     SlasherThreats(); // (keeps each one's phase up to date)
                     var pcNow = Player.Center;
-                    if (enemies.Where(e => e.GetType().Name == "Slasher" && (e.Center - pcNow).Length() < 72)
+                    if (Enemies().Where(e => e.GetType().Name == "Slasher" && (e.Center - pcNow).Length() < 72)
                             .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.SubEntities().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
                     {
                         target = soon;
@@ -14756,11 +14940,31 @@ namespace AnodyneSharp.Recording
                     // Not getting anywhere towards a sleeping Annoyer (something between us)? Leave it asleep.
                     annoyerStill = Pos == annoyerLastPos && target.velocity == Vector2.Zero ? annoyerStill + 1 : 0;
                     annoyerLastPos = Pos;
+                    if (annoyerStill > 45 && distSq > 52 * 52 && _annoyerWakeTried.Add(target))
+                    {
+                        // Asleep on its perch: it only wakes with us within 64px (a spike-ringed pen in Fields (2,6)). Go to the nearest floor
+                        // that close to it, jumping the spikes if need be, and hold there.
+                        var wake = AnnoyerWakePath(target);
+                        if (wake != null)
+                        {
+                            var wc = BotNav.CentreOf(wake[wake.Count - 1]);
+                            BotRunner.Status = "fight/annoyer: wake it";
+                            yield return GoTo(wc.X, wc.Y);
+                            annoyerStill = 0;
+                            continue;
+                        }
+                    }
+                    if (annoyerStill > 90 && !AnnoyerWaiting(target) && _parkedTried.Add(target))
+                    {
+                        yield return StrikeParked(target);
+                        annoyerStill = 0;
+                        continue;
+                    }
                     if (annoyerStill > 90)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {target.Hitbox.X},{target.Hitbox.Y}: leaving it");
+                            System.Console.Error.WriteLine($"  fight: cannot get to the Annoyer at {target.Hitbox.X},{target.Hitbox.Y}: leaving it ({FsmPath(target)})");
                         }
                         ignoredTargets.Add(target);
                         committed = null;
@@ -14769,7 +14973,18 @@ namespace AnodyneSharp.Recording
                     }
                     if (i % 6 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
-                        System.Console.Error.WriteLine($"  annoyer f{i} me={me} ann={c} d=({dx:0},{dy:0}) facing={Player.facing}");
+                        System.Console.Error.WriteLine($"  annoyer f{i} me={me} ann={c} d=({dx:0},{dy:0}) facing={Player.facing} hb={Player.Hitbox} spike={SpikeUnderUs()} st={Player.state}");
+                    }
+                    if (Player.state == PlayerState.GROUND && SpikeUnderUs())
+                    {
+                        // Never hold on floor spikes (a knock off a jump over them put us down on them): off them first, the nearest way
+                        // (our whole box: standing with a corner over one is what hurts).
+                        if (OffSpikesKey() is KeyFunctions offKey)
+                        {
+                            BotRunner.Status = "fight/annoyer hold: off the spikes";
+                            yield return K(offKey);
+                            continue;
+                        }
                     }
                     var holdLanes = BotNav.LaneTiles();
                     if (holdLanes.Count > 0)
@@ -14799,6 +15014,22 @@ namespace AnodyneSharp.Recording
                     {
                         quietCheckAt = i + 15;
                         quietTile = QuietHoldTile(target);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                        {
+                            System.Console.Error.WriteLine($"  annoyer hold f{i}: quiet tile {quietTile?.ToString() ?? "none"} from {BotNav.TileOf(Pos)}");
+                        }
+                        if (soft && quietTile == null && FrogsReach(Player.Hitbox.Center.ToVector2()))
+                        {
+                            // Only passing through, with Frogs spitting at wherever on this screen we could stand to take it on: not worth
+                            // it, walk on out (it does not follow us off the screen).
+                            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                            {
+                                System.Console.Error.WriteLine($"  fight: the Annoyer at {target.Hitbox.X},{target.Hitbox.Y} is under Frog fire wherever we hold: passing it by");
+                            }
+                            ignoredTargets.Add(target);
+                            committed = null;
+                            continue;
+                        }
                     }
                     if (quietTile is Point qt && BotNav.TileOf(Pos) != qt)
                     {
