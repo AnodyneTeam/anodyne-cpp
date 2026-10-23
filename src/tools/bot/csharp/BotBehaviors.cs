@@ -5073,6 +5073,7 @@ namespace AnodyneSharp.Recording
             int killTrips = 0; // trips round to the enemies of a kill gate on the far side
             bool warped = false; // went back to the Nexus pad to plan from there
             int flips = 0, buttonsPressed = 0;
+            var doorsTaken = new HashSet<int>(); // door pairs taken to get out of a room with no other way out
             var lookedAt = new HashSet<Point>(); // screens gone to for a look at a shut gate with no button
             for (int hop = 0; hop < 80; hop++)
             {
@@ -5286,6 +5287,20 @@ namespace AnodyneSharp.Recording
                     var fg = Grid;
                     yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == fg);
                     fruitless[fg] = Enemies().Count;
+                    plan = null;
+                    lastHere = new Point(-1, -1);
+                    continue;
+                }
+                if (route == null && doorsTaken.Count < 3 && NearestDoorHere(doorsTaken) is int doorPair)
+                {
+                    // Shut in a room whose only way out is a door of this map (the Circus card room behind Arthur and Javiera's stage):
+                    // the planner does not walk through doors, so take it and plan again from the other side.
+                    doorsTaken.Add(doorPair);
+                    if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                    {
+                        System.Console.Error.WriteLine($"  no route from {here} to {goal}: through door {doorPair} first");
+                    }
+                    yield return TakeDoor(doorPair);
                     plan = null;
                     lastHere = new Point(-1, -1);
                     continue;
@@ -5875,6 +5890,37 @@ namespace AnodyneSharp.Recording
         /// Goes through door pair `pair` (the door preset frame) from its nearest reachable end. A door is a tile you walk into from the side
         /// it lets you out on (below for the usual DownDoor): stand there and push into it until the warp moves us.
         /// </summary>
+        /// <summary>The pair number of the door of this map whose end we can walk to from here (nearest first), not counting `skip`.</summary>
+        protected static int? NearestDoorHere(HashSet<int> skip)
+        {
+            var here = BotNav.TileOf(Pos);
+            int? best = null;
+            int bestLen = int.MaxValue;
+            bool jumpOk = GlobalState.inventory.CanJump;
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door") && !pr.Type.Name.Contains("Nexus") && !skip.Contains(pr.Frame)
+                    && string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, GlobalState.CURRENT_MAP_NAME, StringComparison.OrdinalIgnoreCase)))
+            {
+                var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
+                string kind = pr.Type.Name;
+                var stand = kind.StartsWith("Up") ? new Point(dt.X, dt.Y - 1) : kind.StartsWith("Left") ? new Point(dt.X + 1, dt.Y)
+                    : kind.StartsWith("Right") ? new Point(dt.X - 1, dt.Y) : new Point(dt.X, dt.Y + 1);
+                if (Math.Abs(stand.X - here.X) + Math.Abs(stand.Y - here.Y) > 40)
+                {
+                    continue;
+                }
+                BotNav.AllowJump = jumpOk;
+                var p = stand == here ? new List<Point>() : BotNav.FindPath(here, q => q == stand, stand, strict: true);
+                BotNav.AllowJump = false;
+                if (p != null && p.Count < bestLen)
+                {
+                    bestLen = p.Count;
+                    best = pr.Frame;
+                }
+            }
+            return best;
+        }
+
         protected static IEnumerable<object> TakeDoor(int pair)
         {
             var here = BotNav.TileOf(Pos);
@@ -6231,8 +6277,18 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> MenuReturnToPad(int tab)
         {
-            yield return Tap(KeyFunctions.Pause);
-            yield return Wait(20);
+            // (a press in the first moments after a load, or during a screen's scroll, is not taken: press again until the menu is up)
+            for (int tries = 0; tries < 4; tries++)
+            {
+                yield return Until(() => !GlobalState.ScreenTransition, 300, "screen settled for the menu");
+                yield return Tap(KeyFunctions.Pause);
+                yield return Wait(20);
+                if (BotRunner.PlayBusyName.Contains("Pause"))
+                {
+                    break;
+                }
+                yield return Wait(30);
+            }
             for (int i = 0; i < 8; i++)
             {
                 yield return Tap(KeyFunctions.Up);
