@@ -16056,8 +16056,10 @@ namespace AnodyneSharp.Recording
                         var roundPath = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t));
                         bool canGoRound = roundPath != null;
                         BotNav.AllowJump = false;
-                        if (soft && canGoRound && (roundPath.Count > 20 || roundPath.Any(t => t.X / 10 != Grid.X || t.Y / 10 != Grid.Y)))
+                        if (soft && canGoRound && (roundPath.Count > 20 || roundPath.Any(t => t.X / 10 != Grid.X || t.Y / 10 != Grid.Y)) && !BotNav.KillGateShutHere())
                         {
+                            // (but not when this screen's kill gate wants it dead: the Temple's (2,1) north gate waits on the Slime in the
+                            // nook only (3,1) leads into)
                             // (a fight on the way is no reason for a long way round by the next screens: HAPPY (3,1)'s lion, seen from the
                             // button nook, sent the bot round and back for good)
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
