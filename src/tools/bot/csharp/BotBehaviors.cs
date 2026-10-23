@@ -11679,6 +11679,808 @@ namespace AnodyneSharp.Recording
             throw new InvalidOperationException($"bot: Sage fight timed out at {Pos}");
         }
 
+        private static readonly Dictionary<Entity, (long born, Vector2 at)> _briarThornBorn = new();
+
+        /// <summary>
+        /// What hurts in the Briar's arena, frame by frame: its body (always), the bullets it rains (on the ground only; they fall
+        /// faster and faster), the floor thorns it raises along our row (on the ground only, from their 10th to 16th frames), the
+        /// fire eye's fireballs (on the ground only) and the ice crystal (in the air too).
+        /// </summary>
+        /// <summary>
+        /// Whether we carry a dust. (The broom can keep hold of one it has set down, when that dust touched something while it unpoofed:
+        /// then it picks up nothing, and its next swing moves that dust to the tile ahead of us.)
+        /// </summary>
+        private static readonly Dictionary<(Point, Facing), int> _briarSpotSwings = new Dictionary<(Point, Facing), int>();
+        private static (Point, Facing) _briarSwingSpot;
+
+        private static bool BriarCarrying => Player.broom.dust != null && !Player.broom.dust.exists;
+
+        private static List<Threat> BriarThreats(AnodyneSharp.Entities.Entity fight, int phase)
+        {
+            var threats = new List<Threat>();
+            var subs = fight.SubEntities().ToList();
+            var body = subs[0];
+            var bt = new Threat { Name = "Briar body", Source = body, Stationary = true, HurtsInAir = true, Margin = 2 };
+            for (int k = 0; k <= Horizon; k++)
+            {
+                bt.At[k] = body.Hitbox;
+            }
+            threats.Add(bt);
+            foreach (var g in BotRunner.Entities().Where(g => g.exists && g.GetType().Name == "ThornGate"))
+            {
+                // (the thorns that shut the arena's door hurt to touch)
+                var gt = new Threat { Name = "Briar thorn gate", Source = g, Stationary = true, HurtsInAir = true, Margin = 2 };
+                for (int k = 0; k <= Horizon; k++)
+                {
+                    gt.At[k] = g.Hitbox;
+                }
+                threats.Add(gt);
+            }
+            long now = BotRunner.Frame;
+            foreach (var e in body.SubEntities().Where(e => e.exists))
+            {
+                if (e is AnodyneSharp.Entities.Enemy.Go.BriarBossBody.Bullet)
+                {
+                    var t = new Threat { Name = "Briar bullet", Source = e, Margin = 0 }; // (exact: one lane is a pixel off the column we stand on)
+                    var p = e.Position;
+                    var v = e.velocity;
+                    for (int k = 0; k <= Horizon; k++)
+                    {
+                        if (p.Y - Grid.Y * 160 > 150)
+                        {
+                            break;
+                        }
+                        t.At[k] = new Rectangle((int)p.X, (int)p.Y, e.width, e.height);
+                        v += e.acceleration / 60f;
+                        p += v / 60f;
+                    }
+                    threats.Add(t);
+                }
+                else if (e is AnodyneSharp.Entities.Enemy.Go.BriarBossBody.Thorn)
+                {
+                    if (!_briarThornBorn.TryGetValue(e, out var b) || b.at != e.Position || b.born > now)
+                    {
+                        _briarThornBorn[e] = b = (now, e.Position);
+                    }
+                    int age = (int)(now - b.born);
+                    float fpsA = 12 + phase;
+                    int from = (int)(10 * 60 / fpsA) - 2, to = (int)(16 * 60 / fpsA) + 2;
+                    var t = new Threat { Name = "Briar thorn", Source = e, Margin = 0 };
+                    for (int k = 0; k <= Horizon; k++)
+                    {
+                        if (age + k >= from && age + k <= to)
+                        {
+                            t.At[k] = e.Hitbox;
+                        }
+                    }
+                    threats.Add(t);
+                }
+            }
+            foreach (var arm in subs.Skip(2))
+            {
+                foreach (var e in arm.SubEntities().Where(e => e.exists))
+                {
+                    if (e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye eye)
+                    {
+                        foreach (var m in eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist))
+                        {
+                            // (its mist is harmless but in the way: we cannot walk into it)
+                            var t = new Threat { Name = "Briar mist", Source = m, Stationary = true, HurtsInAir = true, Margin = 0 };
+                            for (int k = 0; k <= Horizon; k++)
+                            {
+                                t.At[k] = m.Hitbox;
+                            }
+                            threats.Add(t);
+                        }
+                        foreach (var f in eye.SubEntities().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
+                        {
+                            var t = new Threat { Name = "Briar fireball", Source = f, Margin = 1 };
+                            for (int k = 0; k <= Horizon; k++)
+                            {
+                                var r = f.Hitbox;
+                                r.Offset((int)(f.velocity.X * k / 60f), (int)(f.velocity.Y * k / 60f));
+                                t.At[k] = r;
+                            }
+                            threats.Add(t);
+                        }
+                    }
+                    else if (e is AnodyneSharp.Entities.Enemy.Go.HappyThorn.IceCrystal && e.velocity != Vector2.Zero)
+                    {
+                        var t = new Threat { Name = "Briar ice", Source = e, Margin = 2, HurtsInAir = true };
+                        for (int k = 0; k <= Horizon; k++)
+                        {
+                            var r = e.Hitbox;
+                            r.Offset((int)(e.velocity.X * k / 60f), (int)(e.velocity.Y * k / 60f));
+                            t.At[k] = r;
+                        }
+                        threats.Add(t);
+                    }
+                }
+            }
+            return threats;
+        }
+
+        /// <summary>
+        /// The Briar (GO): three hits on each of its arms. Between its arms' turns its body raises floor thorns along our row and rains
+        /// bullets down four lanes: there is one pixel column (hitbox x = 395) that is clear of both, so we stand on it. When the left
+        /// arm attacks, the right one's fire eye shoots at us and a dust its fireball meets blows up: we set a dust where the blast
+        /// reaches the arm, stand so the next shot meets the dust on its way, and hit the arm while it reels. When the right arm
+        /// attacks, it throws an ice crystal at us that the broom sends to the left arm; after a few rallies that arm reels: hit it.
+        /// </summary>
+        protected static IEnumerable<object> BriarFight(int timeoutFrames = 40000)
+        {
+            BotRunner.BossDamageBudget = 6; // TODO: tune down once the fight is clean over a few seeds
+            int lastSwing = -100;
+            int lastHearts = GlobalState.CUR_HEALTH;
+            BriarBomb bomb = null;
+            bool wasCarrying = false;
+            _briarSpotSwings.Clear();
+            int planAt = -100;
+            for (int i = 0; i < timeoutFrames; i++)
+            {
+                if (Talking || GlobalState.ScreenTransition)
+                {
+                    yield return AdvanceKeys(i);
+                    continue;
+                }
+                var main = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BriarBossMain);
+                var fight = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BriarBossFight);
+                var tl = new Vector2(Grid.X * 160, Grid.Y * 160);
+                BotRunner.NotStuck();
+                if (main == null)
+                {
+                    BotRunner.BossDamageBudget = 0;
+                    yield break;
+                }
+                var pb = Player.Hitbox;
+                var here = new Vector2(pb.X, pb.Y);
+                if (fight == null)
+                {
+                    if (main.GetType().GetField("state", AnyInst)?.GetValue(main)?.ToString() == "Post")
+                    {
+                        BotRunner.BossDamageBudget = 0;
+                        yield break;
+                    }
+                    // the intro: up into the arena until it starts (under 6 tiles from the top of the screen)
+                    BotRunner.Status = "Briar: walk in";
+                    yield return K(KeyFunctions.Up);
+                    continue;
+                }
+                var subs = fight.SubEntities().ToList();
+                var body = (AnodyneSharp.Entities.Enemy.Go.BriarBossBody)subs[0];
+                var blue = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[2];
+                var happy = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[3];
+                var solids = new List<Rectangle> { body.Hitbox, blue.Hitbox, happy.Hitbox }; // (the arms are solid to us)
+                int phase = Math.Clamp(6 - happy.Health - blue.Health, 0, 5);
+                var threats = BriarThreats(fight, phase);
+                if (GlobalState.CUR_HEALTH < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                {
+                    System.Console.Error.WriteLine($"  BRIAR HURT f{i} by {GlobalState.DamageDealer} P={pb} {Player.state} threats={string.Join(",", threats.Where(t => t.At[0] is Rectangle r && Math.Abs(r.Center.X - pb.Center.X) < 30 && Math.Abs(r.Center.Y - pb.Center.Y) < 30).Select(t => $"{t.Name}@{t.At[0]}"))}");
+                }
+                lastHearts = GlobalState.CUR_HEALTH;
+                var crystal = happy.SubEntities().FirstOrDefault(e => e.exists); // (it flickers in: invisible every other moment)
+                var eye = blue.SubEntities().FirstOrDefault(e => e.exists && e.Position != Vector2.Zero) as AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye; // (it exists from the start, at 0,0, until its first turn)
+                bool grounded = Player.state == PlayerState.GROUND;
+                bool broomOut = Player.broom != null && Player.broom.exists;
+                if (BriarCarrying != wasCarrying)
+                {
+                    // (a pick-up or a set-down worked: every spot gets a fresh go)
+                    wasCarrying = BriarCarrying;
+                    _briarSpotSwings.Clear();
+                }
+                KeyFunctions[] keys = null;
+                string mode;
+                // An arm reeling: up under it and hit it.
+                var reeling = new[] { blue, happy }.FirstOrDefault(a => a.CurAnimName == "hurt");
+                if (reeling != null)
+                {
+                    mode = $"hit the {(reeling == blue ? "right" : "left")} arm";
+                    var spot = new Vector2(reeling.Hitbox.Center.X - pb.Width / 2, reeling.Hitbox.Bottom + 1);
+                    if (grounded && !broomOut && i - lastSwing > 20 && BroomBoxAt(Player.Position, Facing.UP).Intersects(reeling.Hitbox))
+                    {
+                        if (Player.facing != Facing.UP)
+                        {
+                            yield return K(KeyFunctions.Up);
+                            continue;
+                        }
+                        lastSwing = i;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    keys = SpaceTimeMove(spot, threats, useCache: false);
+                    if ((here - spot).Length() < 3 && (keys == null || keys.Length == 0))
+                    {
+                        keys = new[] { KeyFunctions.Up };
+                    }
+                }
+                else if (crystal != null)
+                {
+                    // The ice crystal: meet it with the broom on its way to us (it goes off to the left arm), facing where it comes from.
+                    mode = "ice rally";
+                    var cb = crystal.Hitbox;
+                    var toMe = new Vector2(pb.Center.X - cb.Center.X, pb.Center.Y - cb.Center.Y);
+                    bool coming = crystal.velocity != Vector2.Zero && Vector2.Dot(crystal.velocity, toMe) > 0;
+                    var face = Math.Abs(toMe.X) >= Math.Abs(toMe.Y) ? (toMe.X > 0 ? Facing.LEFT : Facing.RIGHT) : (toMe.Y > 0 ? Facing.UP : Facing.DOWN);
+                    if (!coming)
+                    {
+                        // (on its way back to the left arm, or still flickering in at the right one: face where it will come from next)
+                        face = crystal.velocity == Vector2.Zero ? (cb.Center.X > pb.Center.X ? Facing.RIGHT : Facing.LEFT) : Facing.LEFT;
+                    }
+                    bool meets = false;
+                    for (int k = 0; k <= 5 && coming; k++)
+                    {
+                        var r = cb;
+                        r.Offset((int)(crystal.velocity.X * k / 60f), (int)(crystal.velocity.Y * k / 60f));
+                        if (r.Intersects(BroomBoxAt(Player.Position, face)))
+                        {
+                            meets = true;
+                            break;
+                        }
+                    }
+                    if (grounded && meets && Player.facing == face && !broomOut && i - lastSwing > 12)
+                    {
+                        lastSwing = i;
+                        yield return K(KeyFunctions.Accept);
+                        continue;
+                    }
+                    if (Player.facing != face && !broomOut && (coming || (here - (tl + new Vector2(75, 234 - 160))).Length() < 3))
+                    {
+                        // (a turn is a step: only on the spot, or with it on its way to us; else holding it walks us at the right arm)
+                        yield return K(KeyOf(face));
+                        continue;
+                    }
+                    // between the two arms, at the height they throw from
+                    var spot = tl + new Vector2(75, 234 - 160);
+                    keys = (here - spot).Length() < 3 ? new KeyFunctions[0] : SpaceTimeMove(spot, threats.Where(t => t.Source != crystal).ToList(), useCache: false);
+                }
+                else if (eye != null && blue.CurAnimName != "hurt" && happy.CurAnimName == "active")
+                {
+                    // The fire eye: a dust where its blast reaches the right arm, and us where its next shot meets that dust first.
+                    mode = "dust bomb";
+                    var dusts = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
+                    var mists = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(e => e.Hitbox).ToList();
+                    if (bomb != null && !BriarBombStillOn(bomb, dusts))
+                    {
+                        bomb = null;
+                    }
+                    if (bomb == null && i - planAt >= 30)
+                    {
+                        planAt = i;
+                        bomb = BriarBombPlan(tl, eye, blue, mists, solids);
+                        if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                        {
+                            System.Console.Error.WriteLine($"  briar bomb plan: {(bomb == null ? "none" : $"{(bomb.Burn ? "burn " : "")}moves {string.Join(" ", bomb.Moves.Select(m => $"{m.from}->{m.to}"))} trigger {bomb.Trigger} stand {bomb.Stand}")} eye {eye.Position} mists {string.Join(" ", mists)}");
+                        }
+                    }
+                    if (bomb != null)
+                    {
+                        var ss = bomb.Stand;
+                        if (Player.broom.dust is AnodyneSharp.Entities.Dust held && held.exists)
+                        {
+                            // the broom still holds one we set down: set it down again where it is, to let go of it
+                            var ht = new Point((int)held.Position.X / 16, (int)held.Position.Y / 16);
+                            var (hk, hswing) = BriarCarryKeys(ht, dusts.Where(d => d != held).ToList(), threats, solids, null, true);
+                            BotRunner.Status = $"Briar: dust bomb, let go of the dust at {ht}";
+                            if (hswing && grounded && !broomOut && i - lastSwing > 16)
+                            {
+                                lastSwing = i;
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            ExactKeysUntil = BotRunner.Frame + 1;
+                            yield return hk ?? SpaceTimeMove(here, threats, useCache: false, survive: true) ?? K();
+                            continue;
+                        }
+                        var move = bomb.Moves.Where(m => !dusts.Any(d => (d.Position - new Vector2(m.to.X * 16, m.to.Y * 16)).Length() < 2)).Select(m => ((Vector2, Point)?)m).FirstOrDefault();
+                        if (move is (Vector2 from, Point dsp))
+                        {
+                            // carry one there, a frame at a time round the fire (the plain dust walker does not dodge)
+                            var (ck, swing) = BriarCarryKeys(dsp, dusts, threats, solids, from);
+                            if (swing && grounded && !broomOut && i - lastSwing > 16)
+                            {
+                                lastSwing = i;
+                                _briarSpotSwings[_briarSwingSpot] = _briarSpotSwings.GetValueOrDefault(_briarSwingSpot) + 1;
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            BotRunner.Status = $"Briar: dust bomb, {(!BriarCarrying ? $"pick up the dust at {from}" : "set it down")} at {dsp}";
+
+                            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                            {
+                                System.Console.Error.WriteLine($"  briar f{i} carry: {BotRunner.Status} keys=[{(ck == null ? "none" : string.Join("+", ck))}] swing={swing} g={grounded} bo={broomOut} ls={i - lastSwing} st={Player.state} dm={Player.dontMove} v={Player.velocity} pos={Player.Position} P={pb} face={Player.facing} dusts={string.Join(" ", dusts.Select(d => d.Position))}");
+                            }
+                            ExactKeysUntil = BotRunner.Frame + 1; // (the plan is round this fight's own exact threats: the global guards only fight it)
+                            ck = ck ?? SpaceTimeMove(here, threats, useCache: false, survive: true);
+                            if (ck == null && grounded && threats.Any(t => t.Name == "Briar fireball" && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(pb))))
+                            {
+                                // no way off a shot about to reach us: over it
+                                ck = new[] { KeyFunctions.Cancel };
+                            }
+                            yield return ck ?? K();
+                            continue;
+                        }
+                        // (within a px each way: the plan holds for a px off the spot every way)
+                        var exact = Player.Position;
+                        bool atStand = Math.Abs(exact.X - ss.X) <= 0.9f && Math.Abs(exact.Y - ss.Y) <= 0.9f;
+                        keys = atStand ? new KeyFunctions[0] : SpaceTimeMove(ss, threats, useCache: false);
+                        if (keys != null && keys.Length == 0 && !atStand)
+                        {
+                            keys = null;
+                        }
+                        if (keys == null && (here - ss).Length() < 12)
+                        {
+                            // the last px exactly (the line to the dust is narrow): a step at a time, diagonals under a pixel
+                            var kk = new List<KeyFunctions>();
+                            if (ss.X - exact.X > 0.6f) { kk.Add(KeyFunctions.Right); } else if (ss.X - exact.X < -0.6f) { kk.Add(KeyFunctions.Left); }
+                            if (ss.Y - exact.Y > 0.6f) { kk.Add(KeyFunctions.Down); } else if (ss.Y - exact.Y < -0.6f) { kk.Add(KeyFunctions.Up); }
+                            ExactKeysUntil = BotRunner.Frame + 1;
+                            keys = kk.ToArray();
+                        }
+                        if (grounded && (here - ss).Length() < 3 && threats.Any(t => t.Name == "Briar fireball" && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(pb))))
+                        {
+                            // a shot about to reach us where we wait: over it (it flies on to the dust behind, or on past)
+                            keys = new[] { KeyFunctions.Cancel };
+                        }
+                    }
+                    else
+                    {
+                        // no bomb to set up (yet): keep off the eye, which shoots at us all the while, and over its shots
+                        keys = SpaceTimeMove(tl + new Vector2(130, 128), threats, useCache: false);
+                        if (grounded && threats.Any(t => t.Name == "Briar fireball" && Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(pb))))
+                        {
+                            keys = new[] { KeyFunctions.Cancel };
+                        }
+                    }
+                }
+                else
+                {
+                    // The body's turn (or nothing on): on the one pixel column between its thorns and its bullet lanes.
+                    mode = body.State != null ? "thorns and bullets" : "wait";
+                    bomb = null;
+                    float wantX = tl.X + 75; // (hitbox x 395 in an arena at x 320)
+                    var spot = new Vector2(wantX, tl.Y + 100);
+                    int hx = pb.X;
+                    if (Math.Abs(here.Y - spot.Y) < 20 && Math.Abs(hx - wantX) <= 6)
+                    {
+                        // onto the column exactly: diagonal steps are under a pixel, so they cannot step over it
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        if (hx == (int)wantX)
+                        {
+                            keys = new KeyFunctions[0];
+                        }
+                        else
+                        {
+                            var side = here.Y < spot.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                            keys = new[] { hx > wantX ? KeyFunctions.Left : KeyFunctions.Right, side };
+                        }
+                        // (only if that is safe this frame and the next few: else let the planner dodge)
+                        if (!SafeAtExactThreats(here, threats, 6))
+                        {
+                            keys = null;
+                        }
+                    }
+                    if (keys == null)
+                    {
+                        keys = SpaceTimeMove(spot, threats, useCache: false);
+                    }
+                }
+                if (keys == null)
+                {
+                    keys = SpaceTimeMove(here, threats, useCache: false, survive: true);
+                }
+                BotRunner.Status = $"Briar: {mode} (arms {happy.Health}/{blue.Health})";
+                if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
+                {
+                    System.Console.Error.WriteLine($"  briar f{i} {mode} arms={happy.Health}/{blue.Health} {happy.CurAnimName}/{blue.CurAnimName} P={pb} {Player.state} keys=[{(keys == null ? "none" : string.Join("+", keys))}] threats={threats.Count} fb={string.Join(" ", threats.Where(t => t.Name == "Briar fireball").Select(t => $"{t.At[0].Value.X},{t.At[0].Value.Y}"))}");
+                }
+                ExactKeysUntil = BotRunner.Frame + 1; // (the plan is round this fight's own exact threats: the global guards only fight it)
+                yield return keys ?? K();
+            }
+            throw new InvalidOperationException($"bot: Briar fight timed out at {Pos}");
+        }
+
+        /// <summary>
+        /// One frame of carrying a dust onto tile d in the Briar's arena: to beside the nearest loose dust and sweep it up, then to the
+        /// middle of a tile next to d, facing d, and set it down (it lands on the tile ahead of our middle). (keys, swing now).
+        /// </summary>
+        private static (KeyFunctions[], bool) BriarCarryKeys(Point d, List<Entity> dusts, List<Threat> threats, List<Rectangle> solids, Vector2? from = null, bool setDown = false)
+        {
+            var pb = Player.Hitbox;
+            var here = new Vector2(pb.X, pb.Y);
+            var spots = new List<(Vector2 p, Facing f)>();
+            if (!BriarCarrying && !setDown)
+            {
+                var dust = dusts.Where(e => !(e.Position == new Vector2(d.X * 16, d.Y * 16))).OrderBy(e => from is Vector2 fp ? (e.Position - fp).Length() : (e.Position - here).Length()).FirstOrDefault();
+                if (dust == null)
+                {
+                    return (null, false);
+                }
+                var db = dust.Hitbox;
+                spots.Add((new Vector2(db.X - 12, db.Y + 2), Facing.RIGHT));
+                spots.Add((new Vector2(db.Right + 2, db.Y + 2), Facing.LEFT));
+                spots.Add((new Vector2(db.X + 3, db.Y - 14), Facing.DOWN));
+                spots.Add((new Vector2(db.X + 3, db.Bottom + 2), Facing.UP));
+            }
+            else
+            {
+                foreach (var f in new[] { Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
+                {
+                    var step = FacingStep(f);
+                    var st = new Point(d.X - step.X, d.Y - step.Y);
+                    if (BotNav.Walkable(st))
+                    {
+                        spots.Add((new Vector2(st.X * 16 + 8 - pb.Width / 2f, st.Y * 16 + 8 - pb.Height / 2f), f));
+                    }
+                }
+            }
+            var mists = threats.Where(t => t.Name == "Briar mist").Select(t => t.At[0].Value).ToList();
+            spots = spots.Where(sp => new Rectangle((int)sp.p.X, (int)sp.p.Y, pb.Width, pb.Height) is var sr && CornersWalkable(sr) && !mists.Any(m => m.Intersects(sr)) && !solids.Any(b => b.Intersects(sr)) && !dusts.Any(o => o.Hitbox.Intersects(sr)))
+                .Where(sp => !_briarSpotSwings.TryGetValue((sp.p.ToPoint(), sp.f), out int n) || n < 3) // (a spot whose swings got nowhere: another side)
+                .OrderBy(sp => (sp.p - here).Length()).ToList();
+            if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && BotRunner.Frame % 10 == 0)
+            {
+                System.Console.Error.WriteLine($"  briar carry spots: {string.Join(" ", spots.Select(sp => $"{sp.p}/{sp.f}"))} here {here}");
+            }
+            KeyFunctions[] partial = null;
+            foreach (var (sp, f) in spots)
+            {
+                // (a step is over a pixel, and turning to face the dust takes one towards it: a few px past the spot that way still reach)
+                var ahead = FacingStep(f);
+                float along = (here.X - sp.X) * ahead.X + (here.Y - sp.Y) * ahead.Y;
+                float across = Math.Abs((here.X - sp.X) * ahead.Y) + Math.Abs((here.Y - sp.Y) * ahead.X);
+                bool reach;
+                if (BriarCarrying || setDown)
+                {
+                    // (it lands on the tile ahead of our middle: that has to be d now and after the step a turn takes)
+                    var c = Player.Center;
+                    Point TileAt(Vector2 v) => new Point((int)Math.Floor(v.X / 16), (int)Math.Floor(v.Y / 16));
+                    var want = new Point(d.X - ahead.X, d.Y - ahead.Y);
+                    reach = TileAt(c) == want && (Player.facing == f || TileAt(c + new Vector2(ahead.X, ahead.Y) * 1.5f) == want);
+                }
+                else
+                {
+                    reach = along <= 8f;
+                }
+                if (along >= -2.5f && reach && across <= 2.5f)
+                {
+                    if (Player.facing != f)
+                    {
+                        return (new[] { KeyOf(f) }, false);
+                    }
+                    // (a swing holds us still for about 15 frames, and the eye's shots come at where we stand back to back: swing only
+                    // with none due by then, else off and back, which sends the next ones wide)
+                    if (!SafeAtExactThreats(here, threats, 16))
+                    {
+                        return (null, false);
+                    }
+                    _briarSwingSpot = (sp.ToPoint(), f);
+                    return (new KeyFunctions[0], true);
+                }
+                var k = (sp - here).Length() < 4 && SafeAtExactThreats(here, threats, 3) ? new KeyFunctions[0] : SpaceTimeMove(sp, threats, useCache: false);
+                if (k != null && ((sp - here).Length() < 4 || SpaceTime.Reached))
+                {
+                    // (the last few px exactly: the planner's grid is coarser than the spot)
+                    if (k.Length == 0 && (sp - here).Length() < 10)
+                    {
+                        var kk = new List<KeyFunctions>();
+                        if (sp.X - here.X > 1f) { kk.Add(KeyFunctions.Right); } else if (sp.X - here.X < -1f) { kk.Add(KeyFunctions.Left); }
+                        if (sp.Y - here.Y > 1f) { kk.Add(KeyFunctions.Down); } else if (sp.Y - here.Y < -1f) { kk.Add(KeyFunctions.Up); }
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        return (kk.ToArray(), false);
+                    }
+                    return (k, false);
+                }
+                if (k != null && k.Length > 0 && partial == null)
+                {
+                    partial = k;
+                }
+            }
+            // (none in the planner's reach: on towards the nearest)
+            return (partial, false);
+        }
+
+        /// <summary>A Briar dust bomb: dusts to carry (from where, onto which tile), the one the eye's shot must meet first, and where we stand.</summary>
+        private class BriarBomb
+        {
+            public List<(Vector2 from, Point to)> Moves = new List<(Vector2 from, Point to)>();
+            public Vector2 Trigger;
+            public Vector2 Stand;
+            public bool Burn; // (only to end the attack: its blast misses the arm)
+        }
+
+        /// <summary>Whether a bomb plan still fits the dusts there are: each move's dust where it was or where it goes (or in hand), and the one the shot meets.</summary>
+        private static bool BriarBombStillOn(BriarBomb bomb, List<Entity> dusts)
+        {
+            bool At(Vector2 p) => dusts.Any(d => (d.Position - p).Length() < 2);
+            int inHand = BriarCarrying ? 1 : 0;
+            foreach (var (from, to) in bomb.Moves)
+            {
+                if (!At(from) && !At(new Vector2(to.X * 16, to.Y * 16)) && inHand-- <= 0)
+                {
+                    return false;
+                }
+            }
+            return At(bomb.Trigger) || bomb.Moves.Any(m => new Vector2(m.to.X * 16, m.to.Y * 16) == bomb.Trigger);
+        }
+
+        /// <summary>
+        /// Where to carry up to two dusts (onto tiles) and where to stand (hitbox top-left) so the fire eye's next shot, aimed at us, meets a
+        /// dust first (no mist on the way) whose blast (48px round it), or a blast down the chain its four fireballs set off, reaches the
+        /// right arm. Fewest dusts to carry, then nearest, first. Null if there is none.
+        /// </summary>
+        private static BriarBomb BriarBombPlan(Vector2 tl, Entity eye, Entity arm, List<Rectangle> mists, List<Rectangle> solids)
+        {
+            var dustPos = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position).ToList();
+            if (BriarCarrying)
+            {
+                dustPos.Add(new Vector2(-1000, -1000)); // (the one in hand: carried from here)
+            }
+            var eyeC = eye.Hitbox.Center.ToVector2();
+            var pb = Player.Hitbox;
+            var here = new Vector2(pb.X, pb.Y);
+            var start = eye.Position + new Vector2(4, 4);
+            var arena = new Rectangle((int)tl.X, (int)tl.Y, 160, 160);
+            Rectangle Box(Vector2 p) => new Rectangle((int)p.X, (int)p.Y, 16, 16);
+            // (a dust's own box, as the broom and our feet meet it)
+            var dustOne = eye.SubEntities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Dust);
+            var dustOff = dustOne == null ? new Rectangle(0, 0, 16, 16) : new Rectangle(dustOne.Hitbox.X - (int)dustOne.Position.X, dustOne.Hitbox.Y - (int)dustOne.Position.Y, dustOne.Hitbox.Width, dustOne.Hitbox.Height);
+            Rectangle DustBox(Vector2 p) => new Rectangle((int)p.X + dustOff.X, (int)p.Y + dustOff.Y, dustOff.Width, dustOff.Height);
+
+            // the tiles a dust can be set down on
+            var tiles = new List<Point>();
+            for (int ty = 3; ty <= 8; ty++)
+            {
+                for (int tx = 1; tx <= 8; tx++)
+                {
+                    var dt = new Point((int)tl.X / 16 + tx, (int)tl.Y / 16 + ty);
+                    var dbox = new Rectangle(dt.X * 16, dt.Y * 16, 16, 16);
+                    bool sideOk = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => BotNav.Walkable(new Point(dt.X + o.X, dt.Y + o.Y))
+                        && new Rectangle((dt.X + o.X) * 16 + 3, (dt.Y + o.Y) * 16 + 2, 10, 12) is var sr && !mists.Any(m => m.Intersects(sr)) && !solids.Any(b => b.Intersects(sr)));
+                    if (BotNav.Walkable(dt) && !dbox.Intersects(eye.Hitbox) && !mists.Any(m => m.Intersects(dbox)) && sideOk)
+                    {
+                        tiles.Add(dt);
+                    }
+                }
+            }
+
+            // (a shot that only grazes a mist's edge stops all the same: the ways from a px off where we stand are checked too)
+            var mistsWide = mists;
+            // the shot's way to a spot we stand on: the 16px cells it crosses in order (and whether past us), up to a mist
+            List<(Point cell, bool through)> Way(int px, int py)
+            {
+                var me = new Rectangle(px, py, pb.Width, pb.Height);
+                var way = new List<(Point, bool)>();
+                var dir = new Vector2(px, py) - start;
+                if (dir.Length() < 1)
+                {
+                    return way;
+                }
+                dir.Normalize();
+                bool through = false;
+                for (float d = 0; d < 220; d += 1f)
+                {
+                    var q = start + dir * d;
+                    var fb = new Rectangle((int)q.X, (int)q.Y, 6, 6);
+                    if (mistsWide.Any(m => m.Intersects(fb)) || !arena.Intersects(fb))
+                    {
+                        break;
+                    }
+                    if (fb.Intersects(me))
+                    {
+                        // (it is aimed at us: with the boots we jump and it flies on under us, to a dust behind)
+                        if (!GlobalState.inventory.CanJump)
+                        {
+                            break;
+                        }
+                        through = true;
+                        continue;
+                    }
+                    for (int cx = fb.Left >> 4; cx <= (fb.Right - 1) >> 4; cx++)
+                    {
+                        for (int cy = fb.Top >> 4; cy <= (fb.Bottom - 1) >> 4; cy++)
+                        {
+                            if (!way.Any(w => w.Item1 == new Point(cx, cy)))
+                            {
+                                way.Add((new Point(cx, cy), through));
+                            }
+                        }
+                    }
+                }
+                return way;
+            }
+            // each spot with the ways from a px off it every way too (we never stand to the px, nor do the shots fly to it)
+            var stands = new List<(Rectangle me, List<List<(Point cell, bool through)>> ways)>();
+            for (int py = (int)tl.Y + 46; py <= (int)tl.Y + 140; py += 2)
+            {
+                for (int px = (int)tl.X + 18; px <= (int)tl.X + 140; px += 2)
+                {
+                    var me = new Rectangle(px, py, pb.Width, pb.Height);
+                    if (!CornersWalkable(me) || mists.Any(m => m.Intersects(me)) || solids.Any(b => b.Intersects(me)) || (me.Center.ToVector2() - eyeC).Length() < 36)
+                    {
+                        continue;
+                    }
+                    stands.Add((me, new[] { (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1) }.Select(o => Way(px + o.Item1, py + o.Item2)).ToList()));
+                }
+            }
+
+            // which dusts go off once one does: each blast sends four fireballs out from the dust's corner, to the next dust in line or a mist
+            HashSet<Vector2> Chain(Vector2 first, List<Vector2> all)
+            {
+                var done = new HashSet<Vector2>();
+                var todo = new Stack<Vector2>();
+                todo.Push(first);
+                while (todo.Count > 0)
+                {
+                    var c = todo.Pop();
+                    if (!done.Add(c))
+                    {
+                        continue;
+                    }
+                    foreach (var f in new[] { Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
+                    {
+                        // (the first box in line along the lane: a dust sets it off, a mist or the arena's edge ends it)
+                        var step = FacingStep(f);
+                        float Dist(Rectangle r)
+                        {
+                            if (step.X != 0 ? (r.Bottom <= c.Y || r.Top >= c.Y + 6) : (r.Right <= c.X || r.Left >= c.X + 6))
+                            {
+                                return float.MaxValue;
+                            }
+                            float d = step.X > 0 ? r.Left - (c.X + 6) : step.X < 0 ? c.X - r.Right : step.Y > 0 ? r.Top - (c.Y + 6) : c.Y - r.Bottom;
+                            return d < 0 ? float.MaxValue : d;
+                        }
+                        float wall = mists.Select(Dist).DefaultIfEmpty(float.MaxValue).Min();
+                        var next = all.Where(o => o != c).Select(o => (o, d: Dist(Box(o)))).Where(x => x.d < wall && x.d < 170).OrderBy(x => x.d).Select(x => (Vector2?)x.o).FirstOrDefault();
+                        if (next is Vector2 h)
+                        {
+                            todo.Push(h);
+                        }
+                    }
+                }
+                return done;
+            }
+
+            BriarBomb best = null;
+            float bestCost = float.MaxValue;
+            bool burn = false;
+            void Try(List<(Vector2 from, Point to)> moves)
+            {
+                var all = dustPos.Where(p => !moves.Any(m => m.from == p)).Concat(moves.Select(m => new Vector2(m.to.X * 16, m.to.Y * 16))).ToList();
+                if (all.Count != all.Distinct().Count())
+                {
+                    return;
+                }
+                // each move has to be doable in turn: a side of the dust to sweep it up from, and a tile beside its spot to set it down from,
+                // clear of walls, mists, the boss and the other dusts there are then
+                var now = new List<Vector2>(dustPos);
+                foreach (var (from, to) in moves)
+                {
+                    bool Clear(Rectangle r, Vector2 skip) => CornersWalkable(r) && !mists.Any(m => m.Intersects(r)) && !solids.Any(b => b.Intersects(r))
+                        && !now.Any(o => o != skip && DustBox(o).Intersects(r));
+                    if (from.X > -500)
+                    {
+                        var db = DustBox(from);
+                        if (!new[] { new Rectangle(db.X - 12, db.Y + 2, pb.Width, pb.Height), new Rectangle(db.Right + 2, db.Y + 2, pb.Width, pb.Height),
+                                new Rectangle(db.X + 3, db.Y - 14, pb.Width, pb.Height), new Rectangle(db.X + 3, db.Bottom + 2, pb.Width, pb.Height) }.Any(r => Clear(r, from)))
+                        {
+                            return;
+                        }
+                    }
+                    now.Remove(from);
+                    if (!new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => BotNav.Walkable(new Point(to.X + o.X, to.Y + o.Y))
+                        && Clear(new Rectangle((to.X + o.X) * 16 + 8 - pb.Width / 2, (to.Y + o.Y) * 16 + 8 - pb.Height / 2, pb.Width, pb.Height), new Vector2(-2000, -2000))))
+                    {
+                        return;
+                    }
+                    now.Add(new Vector2(to.X * 16, to.Y * 16));
+                }
+                var triggers = all.Where(t => burn || Chain(t, all).Any(c => new Rectangle((int)c.X - 16, (int)c.Y - 16, 48, 48).Intersects(arm.Hitbox))).ToList();
+                if (triggers.Count == 0)
+                {
+                    return;
+                }
+                float carry = 0;
+                var at = here;
+                foreach (var (from, to) in moves)
+                {
+                    var tp = new Vector2(to.X * 16, to.Y * 16);
+                    carry += (from.X < -500 ? 0 : (from - at).Length()) + (tp - (from.X < -500 ? at : from)).Length();
+                    at = tp;
+                }
+                var cells = all.ToDictionary(p => new Point((int)p.X >> 4, (int)p.Y >> 4), p => p);
+                foreach (var (me, ways) in stands)
+                {
+                    if (all.Any(p => Box(p).Intersects(me)))
+                    {
+                        continue;
+                    }
+                    // the first dust on its way is the one it meets (dusts sit on whole tiles): the same one on every way
+                    var firsts = ways.Select(way => way.Where(w => cells.ContainsKey(w.cell)).Select(w => ((Vector2, bool)?)(cells[w.cell], w.through)).FirstOrDefault()).ToList();
+                    if (!(firsts[0] is (Vector2 hitDust, bool _)) || !triggers.Contains(hitDust) || firsts.Any(f => f == null || f.Value.Item1 != hitDust))
+                    {
+                        continue;
+                    }
+                    bool through = firsts.Any(f => f.Value.Item2);
+                    float cost = 2000 * moves.Count + carry + (new Vector2(me.X, me.Y) - at).Length();
+                    if (through)
+                    {
+                        cost += 60f;
+                    }
+                    // (on one of the lanes the first blast's fireballs fly out along: we have to jump those too)
+                    if (me.Right > hitDust.X - 3 && me.Left < hitDust.X + 9 || me.Bottom > hitDust.Y - 3 && me.Top < hitDust.Y + 9)
+                    {
+                        cost += 40f;
+                    }
+                    if (cost < bestCost)
+                    {
+                        bestCost = cost;
+                        best = new BriarBomb { Moves = moves, Trigger = hitDust, Stand = new Vector2(me.X, me.Y) };
+                    }
+                }
+            }
+
+            Try(new List<(Vector2 from, Point to)>());
+            // (the dust in hand has to be set down first)
+            var movable = BriarCarrying ? dustPos.Where(p => p.X < -500).ToList() : dustPos;
+            if (best == null)
+            {
+                foreach (var f in movable)
+                {
+                    foreach (var t in tiles)
+                    {
+                        Try(new List<(Vector2 from, Point to)> { (f, t) });
+                    }
+                }
+            }
+            if (best == null)
+            {
+                foreach (var f in movable)
+                {
+                    foreach (var t in tiles)
+                    {
+                        var tp = new Vector2(t.X * 16, t.Y * 16);
+                        if (dustPos.Contains(tp))
+                        {
+                            continue;
+                        }
+                        foreach (var g in dustPos.Where(g => g != f && g.X > -500))
+                        {
+                            foreach (var u in tiles)
+                            {
+                                if (u != t)
+                                {
+                                    Try(new List<(Vector2 from, Point to)> { (f, t), (g, u) });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (best == null)
+            {
+                // No way to reach the arm with these mists: just set the dusts off where they are. The attack ends after four blasts,
+                // and the next may be the other arm's (whose hits clear the mists from this one's later attacks).
+                burn = true;
+                Try(new List<(Vector2 from, Point to)>());
+                if (best == null)
+                {
+                    // (one the shots cannot reach: carry it out)
+                    foreach (var f in movable)
+                    {
+                        foreach (var t in tiles)
+                        {
+                            Try(new List<(Vector2 from, Point to)> { (f, t) });
+                        }
+                    }
+                }
+                if (best != null)
+                {
+                    best.Burn = true;
+                }
+            }
+            return best;
+        }
+
         protected static IEnumerable<object> SeerFight(int timeoutFrames = 9000)
         {
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Bedroom.Seer).GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -14387,6 +15189,11 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
+            if (only == null && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BriarBossMain))
+            {
+                yield return BriarFight();
+                yield break;
+            }
             if (!soft && only == null)
             {
                 IgnoredEnemies.Clear(); // an explicit fight is for every enemy here, also the ones a soft fight on the way gave up on
