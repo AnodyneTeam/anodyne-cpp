@@ -7705,6 +7705,7 @@ namespace AnodyneSharp.Recording
         /// arrive did worse: the landings came down on the Slimes or other shots.) ANODYNE_NO_BULLETHOP turns it off.
         /// </summary>
         private static KeyFunctions? _hopDir;
+        private static long _trapHopFrame = -10;
         private static long _hopUntil;
 
         private static int _contactFrames;
@@ -7746,7 +7747,21 @@ namespace AnodyneSharp.Recording
             // Every way out (eight of them, along walls too), scored by how many of them we would still touch 6px on, then by how
             // straight away it is: pinned between two of them and a wall, "straight away" pointed into the other one.
             var keys = new List<KeyFunctions>();
-            bool Ok(KeyFunctions k) => WalkableAhead(k, 4) && !OnConveyor(BotNav.TileOf(Pos + DirVector(k) * 6));
+            // (a tile under one of them counts as the floor it is: stuck inside a Frog, its own tile is the only way out of it)
+            var under = new HashSet<Point>(on.SelectMany(e => new[] { new Point(e.Hitbox.Left / 16, e.Hitbox.Top / 16), new Point((e.Hitbox.Right - 1) / 16, e.Hitbox.Top / 16),
+                new Point(e.Hitbox.Left / 16, (e.Hitbox.Bottom - 1) / 16), new Point((e.Hitbox.Right - 1) / 16, (e.Hitbox.Bottom - 1) / 16) }));
+            bool Ok(KeyFunctions k)
+            {
+                var v = DirVector(k) * WalkPxPerFrame * 4;
+                var r = new Rectangle((int)(Player.Hitbox.X + v.X), (int)(Player.Hitbox.Y + v.Y), Player.Hitbox.Width, Player.Hitbox.Height);
+                bool Floor(int x, int y)
+                {
+                    var t = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+                    return BotNav.Walkable(t) || (under.Contains(t) && BotNav.CurrentMap.GetTileClass(t).Item1 == Touching.NONE && !BotNav.IsHole(t));
+                }
+                return Floor(r.Left, r.Top) && Floor(r.Right - 1, r.Top) && Floor(r.Left, r.Bottom - 1) && Floor(r.Right - 1, r.Bottom - 1)
+                    && !OnConveyor(BotNav.TileOf(Pos + DirVector(k) * 6));
+            }
             float bestOut = float.MaxValue;
             foreach (var (hx, vy) in new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1) })
             {
@@ -7826,6 +7841,38 @@ namespace AnodyneSharp.Recording
                     if (hop != null)
                     {
                         return hop;
+                    }
+                }
+            }
+            // A dash trap on its way into us (one that charges on sight down the corridor we walk, Fields (7,8)): it only hurts on the
+            // ground, so hop it, across its line where there is floor to land on, else where we stand.
+            if (GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
+            {
+                foreach (var dt in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.DashTrap>().Where(e => e.exists && e.velocity != Vector2.Zero))
+                {
+                    // (relative to us: walking into the back of one going home at half speed is as much a hit as one coming at us)
+                    var rel = dt.velocity - Player.velocity;
+                    bool soon = Enumerable.Range(1, 9).Any(f =>
+                    {
+                        var r = dt.Hitbox;
+                        r.Offset((int)Math.Round(rel.X * f / 60f), (int)Math.Round(rel.Y * f / 60f));
+                        return r.Intersects(pb);
+                    });
+                    if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && (dt.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length() < 48)
+                    {
+                        System.Console.Error.WriteLine($"  traphop f{BotRunner.Frame} trap={dt.Hitbox} v={dt.velocity} me={Player.Hitbox} st={Player.state} soon={soon} held={string.Join("+", held)}");
+                    }
+                    if (soon)
+                    {
+                        BotRunner.Status = "hop the dash trap";
+                        if (_trapHopFrame == BotRunner.Frame - 1)
+                        {
+                            // (still on the ground a frame after pressing: the jump key was already down, let go of it so the next press counts)
+                            _trapHopFrame = -10;
+                            return held.Where(k => k != KeyFunctions.Cancel).ToArray();
+                        }
+                        _trapHopFrame = BotRunner.Frame;
+                        return HopAcross(dt.velocity) ?? new[] { KeyFunctions.Cancel };
                     }
                 }
             }

@@ -522,14 +522,14 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Alive && pr.Type?.Name == "Frog")
                 {
-                    // (and the water right beside a Frog: its body snags a raft going by, sat in its spit)
+                    // (and the tiles right beside a Frog: its body snags a raft going by, sat in its spit)
                     var ft = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
                     for (int ox = -1; ox <= 1; ox++)
                     {
                         for (int oy = -1; oy <= 1; oy++)
                         {
                             var n = new Point(ft.X + ox, ft.Y + oy);
-                            if (IsConveyor(n) && n != from && n != goal)
+                            if (n != from && n != goal) // (the bank beside one too: the Fields lake's west landing sits by a Frog)
                             {
                                 lanes.Add(n);
                             }
