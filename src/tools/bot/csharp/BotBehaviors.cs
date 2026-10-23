@@ -14111,8 +14111,10 @@ namespace AnodyneSharp.Recording
                 return true;
             }
             var here = new Vector2(pb.X, pb.Y);
-            if (Player.state == PlayerState.AIR && _frogStJumpKeys != null && BotRunner.Frame <= _frogStJumpAt + 40)
+            if (Player.state == PlayerState.AIR && _frogStJumpKeys != null && BotRunner.Frame <= _frogStJumpAt + 150)
             {
+                // (for the whole flight: past 40 frames the pit jump's steering took over, aimed at an old pit jump's landing, and flew an
+                // Apartments (5,6) bot back across the room into the next volley, every time)
                 // A jump the space-time move made (over a bullet): hold its way till we land, not a pit jump's old landing point.
                 BotRunner.Status = "fight/frog: jump (space-time)";
                 return _frogStJumpKeys;
