@@ -4194,6 +4194,11 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Waiting in place is only fine if no danger will reach us: otherwise step to a neighbouring spot where none will.</summary>
+        private static KeyFunctions[] _guardKeys;
+        private static int _guardLeft;
+        private static long _guardFrame;
+        private static Entity _guardFor;
+
         protected static KeyFunctions[] StandSafe(Entity except, bool ignoreAnnoyers = false)
         {
             var threats = PredictThreats(except);
@@ -14366,12 +14371,26 @@ namespace AnodyneSharp.Recording
                 }
                 // On the way to (or stuck short of) it: a shot or another enemy about to reach where we stand comes first. (Not up close:
                 // there the close fight's own dodging knows the target's moves, this would step into them.)
-                if (DodgeEnabled && distSq > 48 * 48 && StandSafe(target) is var guard && guard.Length > 0)
+                // (a dodge found is kept up for a couple of frames before the next search: a crowded room made every frame's search
+                // cost more than the frame)
+                if (DodgeEnabled && distSq > 48 * 48 && (_guardLeft > 0 && _guardFor == target && BotRunner.Frame == _guardFrame + 1 ? _guardKeys : StandSafe(target)) is var guard && guard.Length > 0)
                 {
+                    if (_guardLeft > 0 && _guardKeys == guard)
+                    {
+                        _guardLeft--;
+                    }
+                    else
+                    {
+                        _guardKeys = guard;
+                        _guardLeft = 2;
+                        _guardFor = target;
+                    }
+                    _guardFrame = BotRunner.Frame;
                     BotRunner.Status = $"fight {target.GetType().Name}: out of a shot's way";
                     yield return guard;
                     continue;
                 }
+                _guardLeft = 0;
                 // Close but not getting closer (a wall or water between us and a shooter): plan a tile route instead of pushing at it.
                 bool blockedClose = DodgeEnabled && noProgress > 40 && target.GetType().Name is not ("Annoyer" or "GasGuy"); // (a Gas Guy comes to us: walking at it is walking into it)
                 if (distSq > 30 * 30 || blockedClose)
