@@ -6033,8 +6033,14 @@ namespace AnodyneSharp.Recording
                     {
                         // Shut in a dead end (a pocket behind a one-way leap): back to the map's Nexus pad and look again from there.
                         warped = true;
+                        string chestMap = GlobalState.CURRENT_MAP_NAME;
                         yield return MenuReturnToPad(0);
                         yield return Wait(60);
+                        if (GlobalState.CURRENT_MAP_NAME != chestMap)
+                        {
+                            // (the warp can put us in the Nexus itself: back in by the map's portal, which leaves us at its pad)
+                            yield return ViaNexus(chestMap);
+                        }
                         continue;
                     }
                     yield break;
