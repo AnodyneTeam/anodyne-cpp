@@ -6111,10 +6111,20 @@ namespace AnodyneSharp.Recording
                 }
                 yield break;
             }
-            yield return kind.StartsWith("Up") ? (pr, new Point(dt.X, dt.Y - 1), KeyFunctions.Down)
-                : kind.StartsWith("Left") ? (pr, new Point(dt.X + 1, dt.Y), KeyFunctions.Left)
-                : kind.StartsWith("Right") ? (pr, new Point(dt.X - 1, dt.Y), KeyFunctions.Right)
-                : (pr, new Point(dt.X, dt.Y + 1), KeyFunctions.Up);
+            var side = kind.StartsWith("Up") ? (new Point(dt.X, dt.Y - 1), KeyFunctions.Down)
+                : kind.StartsWith("Left") ? (new Point(dt.X + 1, dt.Y), KeyFunctions.Left)
+                : kind.StartsWith("Right") ? (new Point(dt.X - 1, dt.Y), KeyFunctions.Right)
+                : (new Point(dt.X, dt.Y + 1), KeyFunctions.Up);
+            // (the door takes us on a touch from any side; its usual side can be a wall: OVERWORLD's door 85 up a corridor at (14,7) is
+            // only open below)
+            var back = (new Point(2 * dt.X - side.Item1.X, 2 * dt.Y - side.Item1.Y),
+                side.Item2 == KeyFunctions.Down ? KeyFunctions.Up : side.Item2 == KeyFunctions.Up ? KeyFunctions.Down
+                : side.Item2 == KeyFunctions.Left ? KeyFunctions.Right : KeyFunctions.Left);
+            if (!BotNav.Walkable(side.Item1) && BotNav.Walkable(back.Item1))
+            {
+                side = back;
+            }
+            yield return (pr, side.Item1, side.Item2);
         }
 
         protected static IEnumerable<object> TakeDoor(int pair)
@@ -6652,6 +6662,10 @@ namespace AnodyneSharp.Recording
         private static List<Point> DigPath(Point from, Point goal, int wallCost)
         {
             int W = BotNav.CurrentMap.WidthInTiles, H = BotNav.CurrentMap.HeightInTiles;
+            // (no way over a door: a dig across OVERWORLD walked into the Bedroom's door 1 on the way)
+            var doors = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal" || pr.Type.Name == "NexusPad"))
+                .Select(pr => BotNav.TileOf(pr.Position + new Vector2(3, 2))).Where(t => t != goal && t != from).ToHashSet();
             var dist = new Dictionary<Point, int> { [from] = 0 };
             var prev = new Dictionary<Point, Point>();
             var open = new PriorityQueue<Point, int>();
@@ -6678,7 +6692,7 @@ namespace AnodyneSharp.Recording
                     {
                         continue;
                     }
-                    int step = BotNav.Walkable(q) ? 1 : Diggable(q) ? wallCost : -1;
+                    int step = doors.Contains(q) ? -1 : BotNav.Walkable(q) ? 1 : Diggable(q) ? wallCost : -1;
                     if (step < 0)
                     {
                         continue;
@@ -15744,6 +15758,19 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> Fight(int timeoutFrames = 2400, bool soft = false, Func<Entity, bool> only = null)
         {
+            if (GlobalState.inventory.EquippedBroom == AnodyneSharp.Entities.BroomType.Transformer && Enemies().Count > 0)
+            {
+                // (the swap broom hits nothing, and a dig holds Accept back: a Slime met in a dug shaft took hit after hit, BEDROOM (4,1).
+                // The plain broom for the fight, the swap broom back after.)
+                bool noAccept = BotRunner.NoAccept;
+                BotRunner.NoAccept = false;
+                yield return MenuEquipBroom(0);
+                yield return Fight(timeoutFrames, soft, only);
+                yield return MenuEquipBroom(3);
+                Player.transformer.Reset();
+                BotRunner.NoAccept = noAccept;
+                yield break;
+            }
             if (only == null && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BriarBossMain))
             {
                 yield return BriarFight();
