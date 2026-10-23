@@ -1392,7 +1392,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -2053,6 +2053,17 @@ namespace AnodyneSharp.Recording
                             annoyerFights++;
                             BotRunner.Status = "clear Annoyer(s) on the way";
                             yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");
+                            goto replan;
+                        }
+                        if (AutoFight && lionFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().FirstOrDefault(e => (e is AnodyneSharp.Entities.Enemy.Circus.Lion || e is AnodyneSharp.Entities.Enemy.Circus.Contort)
+                            && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 96) is Entity hunter)
+                        {
+                            // A Lion (it pounces at us and spits fire across the room) or a Contort drifting about: walking through past one
+                            // takes hit after hit. Fight it the way its fight knows, then replan.
+                            lionFights++;
+                            BotRunner.Status = $"clear {hunter.GetType().Name} on the way";
+                            var kind = hunter.GetType();
+                            yield return Fight(3600, soft: true, only: e => e.GetType() == kind || e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall);
                             goto replan;
                         }
                         if (AutoFight && slimeFights < 8 && !OnWater() && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
