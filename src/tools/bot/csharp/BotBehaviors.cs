@@ -9190,13 +9190,17 @@ namespace AnodyneSharp.Recording
                 {
                     // Beside it, a few px off its box, facing it: the nearest such spot we can stand on that nothing else threatens.
                     const int gap = 5;
-                    var spots = new List<(Vector2 p, Facing f)>
+                    // (not only square on to the middle of a side: against a wall or a rock that one is often not floor, and the bot kept
+                    // off a lion pacing in a corner until the fight timed out; any spot along a side the broom still meets it from will do)
+                    var spots = new List<(Vector2 p, Facing f)>();
+                    foreach (int sl in new[] { 0, -8, 8, -14, 14 })
                     {
-                        (new Vector2(bb.Left - pb.Width - gap, bb.Center.Y - pb.Height / 2), Facing.RIGHT),
-                        (new Vector2(bb.Right + gap, bb.Center.Y - pb.Height / 2), Facing.LEFT),
-                        (new Vector2(bb.Center.X - pb.Width / 2, bb.Top - pb.Height - gap), Facing.DOWN),
-                        (new Vector2(bb.Center.X - pb.Width / 2, bb.Bottom + gap), Facing.UP),
-                    };
+                        spots.Add((new Vector2(bb.Left - pb.Width - gap, bb.Center.Y - pb.Height / 2 + sl), Facing.RIGHT));
+                        spots.Add((new Vector2(bb.Right + gap, bb.Center.Y - pb.Height / 2 + sl), Facing.LEFT));
+                        spots.Add((new Vector2(bb.Center.X - pb.Width / 2 + sl, bb.Top - pb.Height - gap), Facing.DOWN));
+                        spots.Add((new Vector2(bb.Center.X - pb.Width / 2 + sl, bb.Bottom + gap), Facing.UP));
+                    }
+                    spots = spots.Where(sp => BroomBoxAt(sp.p, sp.f).Intersects(bb)).ToList();
                     var best = spots.Where(sp => StandsSafe(new Rectangle((int)sp.p.X, (int)sp.p.Y, pb.Width, pb.Height)) && SafeAtExactThreats(sp.p, others, 20))
                         .OrderBy(sp => (sp.p - here).Length()).Select(sp => ((Vector2, Facing)?)sp).FirstOrDefault();
                     if (best is var (bp, bf))
@@ -10203,6 +10207,9 @@ namespace AnodyneSharp.Recording
                     // a bouncer drifting in leaves nowhere to go, and it hurts by touch while it flickers too)
                     float bestScore = float.MinValue;
                     var room = new Vector2(Grid.X * 160, Grid.Y * 160);
+                    // (but not far off: a small one turns every 0.8s, so it can only be planned for from near it, and keeping clear from
+                    // across the room let the last one hop about until the fight timed out)
+                    var stalk = targets.FirstOrDefault(e => !e._flickering) ?? targets.FirstOrDefault();
                     for (int gx = 4; gx < 160 - pb.Width; gx += 8)
                     {
                         for (int gy = 4; gy < 160 - pb.Height; gy += 8)
@@ -10222,6 +10229,11 @@ namespace AnodyneSharp.Recording
                                 }
                             }
                             float score = 5f * open8 - 0.3f * (c - here).Length() + (prevClear is Vector2 pc && (pc - c).Length() < 6f ? 6f : 0f);
+                            if (stalk != null)
+                            {
+                                float sd = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - stalk.Hitbox.Center.ToVector2()).Length();
+                                score -= 0.5f * Math.Max(0f, sd - 40f);
+                            }
                             if (score > bestScore)
                             {
                                 bestScore = score;
