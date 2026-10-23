@@ -4576,6 +4576,15 @@ namespace AnodyneSharp.Recording
                 _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
                 return K(wanted);
             }
+            // (something that never moves, a Frog beside the next tile, is only in the way if the step itself reaches it: the slack
+            // frames past the step walked into it, and the bot stood there being spat at for ever)
+            int runExact = Math.Max(1, (int)Math.Ceiling(dist / WalkPxPerFrame));
+            if (threats.Any(t => t.Stationary) && PlanHitFrame(wanted, 0, wanted, runExact, threats.Where(t => t.Stationary).ToList()) == int.MaxValue
+                && PlanHitFrame(wanted, 0, wanted, Run, threats.Where(t => !t.Stationary).ToList()) == int.MaxValue)
+            {
+                _dodgeStreak = Math.Max(0, _dodgeStreak - 2);
+                return K(wanted);
+            }
             if (_lastHitThreat != null && !_lastHitThreat.Stationary && Environment.GetEnvironmentVariable("ANODYNE_NO_SPACETIME") == null)
             {
                 // The straight way would be hit by something that moves: search for a way through (diagonals, waiting, going round).
