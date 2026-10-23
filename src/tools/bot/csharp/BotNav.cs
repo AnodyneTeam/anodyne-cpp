@@ -1694,11 +1694,28 @@ namespace AnodyneSharp.Recording
             {
                 // (only the ones nothing is ever fetched from: an NPC we go and talk to must stay a tile a route can end on; HAPPY's
                 // pacing NPCs are pushy walls that walking into only starts their chatter)
-                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue or AnodyneSharp.Entities.Enemy.Crowd.Rotator or AnodyneSharp.Entities.Interactive.Npc.Happy.HappyNPC) || e.width <= 0 || e.height <= 0)
+                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Decorations.RedCaveEntrance or AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue or AnodyneSharp.Entities.Enemy.Crowd.Rotator or AnodyneSharp.Entities.Interactive.Npc.Happy.HappyNPC) || e.width <= 0 || e.height <= 0)
                 {
                     continue;
                 }
                 var hb = e.Hitbox;
+                if (e is AnodyneSharp.Entities.Decorations.RedCaveEntrance)
+                {
+                    // (Red Sea's cave mouths are solid, but sit off the tile grid: the tiles whose middles they cover, bar the door
+                    // tucked under the middle one's lip - a raft route through (3,5)'s mouth walked into it for good)
+                    var doors = BotRunner.Entities().Where(d => d.exists && d.GetType().Name.Contains("Door")).Select(d => d.Hitbox).ToList();
+                    for (int ty = (int)Math.Floor(hb.Top / 16f); ty <= (int)Math.Floor((hb.Bottom - 1) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor(hb.Left / 16f); tx <= (int)Math.Floor((hb.Right - 1) / 16f); tx++)
+                        {
+                            if (hb.Contains(tx * 16 + 8, ty * 16 + 8) && !doors.Any(d => d.Intersects(new Rectangle(tx * 16, ty * 16, 16, 16))))
+                            {
+                                _solidNpcTiles.Add(new Point(tx, ty));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 for (int ty = (int)Math.Floor(hb.Top / 16f); ty <= (int)Math.Floor((hb.Bottom - 1) / 16f); ty++)
                 {
                     for (int tx = (int)Math.Floor(hb.Left / 16f); tx <= (int)Math.Floor((hb.Right - 1) / 16f); tx++)
@@ -1713,7 +1730,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Entity-made floor hazards (cracked tiles that collapse, holes) the tile data doesn't show.</summary>
         private static bool _crossCracked;
 
-        private static HashSet<Point> Hazards()
+        internal static HashSet<Point> Hazards()
         {
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
@@ -1734,10 +1751,14 @@ namespace AnodyneSharp.Recording
                 }
             }
             // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
+            var liveDoors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).Select(e => e.Position).ToList();
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
             {
-                if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor")
+                if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor"
+                    && !liveDoors.Any(lp => Vector2.Distance(lp, pr.Position) < 16))
                 {
+                    // (a loaded one's own box is the one above: Red Sea (3,5)'s cave door is a small box well up in its preset's tile, and
+                    // the preset's box closed the only way along under it to the gate button)
                     set.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
                     if (pr.Type.Name.StartsWith("Wide"))
                     {

@@ -7065,6 +7065,7 @@ namespace AnodyneSharp.Recording
                 if (path == null)
                 {
                     DumpTiles(here, goal);
+                    RaftLog($"hazards: {string.Join(" ", BotNav.Hazards().Where(t => Math.Abs(t.X - here.X) < 12 && Math.Abs(t.Y - here.Y) < 12))}");
                     throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map} (keys {GlobalState.inventory.GetCurrentMapKeys()})");
                 }
                 int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
