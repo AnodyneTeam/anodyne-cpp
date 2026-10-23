@@ -44,8 +44,6 @@ namespace AnodyneSharp.Recording
         private static long _debtSince;
         public static bool PlayBusy;
         private static string _lastBusyName = "";
-        public static long WalkerSwingAt = -1000;
-
         public static KeyFunctions[] LastHeld = Array.Empty<KeyFunctions>(); // the keys pressed last frame, after the guards
         public static string PlayBusyName = ""; // which child states of the play state are open (for the failure ring)
 
@@ -1669,7 +1667,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerSwings = 0, walkHp = GlobalState.CUR_HEALTH;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerWaits = 0, walkHp = GlobalState.CUR_HEALTH;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -2496,18 +2494,19 @@ namespace AnodyneSharp.Recording
                         {
                             dir = dy < 0 ? KeyFunctions.Up : KeyFunctions.Down; // crossing a steam jet: straight over it, the sidestep afterwards
                         }
-                        if (GlobalState.inventory.HasBroom && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !(Player.broom != null && Player.broom.exists)
-                            && BotRunner.Frame > BotRunner.WalkerSwingAt + 20 && walkerSwings < 3
-                            && BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "SuburbWalker" && BroomBoxAt(Player.Position, FacingOf(dir)).Intersects(e.Hitbox)
-                                // (lined up with it as the townsfolk hunt strikes: a swing off its line only starts its chatter)
-                                && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()) is Vector2 wd && wd.Length() < 20f
-                                && (dir is KeyFunctions.Left or KeyFunctions.Right ? Math.Abs(wd.Y) : Math.Abs(wd.X)) < 8f) is Entity townie)
+                        if (walkerWaits < 6 && i > 40 && i % 40 == 0 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "SuburbWalker" && e.CurAnimName is not ("die" or "dead")
+                            && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() < 26f))
                         {
-                            walkerSwings++;
-                            // A townsperson pacing in the way of a narrow way on: the broom moves them on for good (the route kills them anyway),
-                            // where walking round one in Suburb (3,3)'s corridor swapped between two routes through it till the walk gave up.
-                            BotRunner.WalkerSwingAt = BotRunner.Frame;
-                            yield return Player.facing == FacingOf(dir) ? K(KeyFunctions.Accept) : K(dir);
+                            // A townsperson pacing in a narrow way on, held up against: give them a second to wander off. (Not the broom: a
+                            // body stays where it falls, solid for good - one struck in Suburb (3,3)'s corridor mouth walled it up. Walking
+                            // round a live one there swapped between two routes through it till the walk gave up.)
+                            walkerWaits++;
+                            for (int w = 0; w < 60; w++)
+                            {
+                                yield return K();
+                            }
+                            BotRunner.NotStuck();
+                            still = 0;
                             continue;
                         }
                         var safe = SafeMove(dir, null, Math.Abs(dx) > 2f ? Math.Abs(dx) : Math.Abs(dy), stopForBlockers: true, look: path.Skip(pi).Take(4).Select(BotNav.CentreOf).ToList());

@@ -1694,6 +1694,20 @@ namespace AnodyneSharp.Recording
             {
                 // (only the ones nothing is ever fetched from: an NPC we go and talk to must stay a tile a route can end on; HAPPY's
                 // pacing NPCs are pushy walls that walking into only starts their chatter)
+                if (e.exists && e.GetType().Name == "SuburbWalker" && e.CurAnimName is "die" or "dead")
+                {
+                    // (a townsperson's body stays where it fell and shoves us off like a wall: Suburb (3,3)'s corridor mouth had one in it)
+                    // (every tile it reaches 4px into: off the grid as it fell, it narrows the tiles round it past our 10x12 box)
+                    var cb = e.Hitbox;
+                    for (int ty = (int)Math.Floor((cb.Top + 4) / 16f); ty <= (int)Math.Floor((cb.Bottom - 5) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor((cb.Left + 4) / 16f); tx <= (int)Math.Floor((cb.Right - 5) / 16f); tx++)
+                        {
+                            _solidNpcTiles.Add(new Point(tx, ty));
+                        }
+                    }
+                    continue;
+                }
                 if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Decorations.RedCaveEntrance or AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue or AnodyneSharp.Entities.Enemy.Crowd.Rotator or AnodyneSharp.Entities.Interactive.Npc.Happy.HappyNPC) || e.width <= 0 || e.height <= 0)
                 {
                     continue;
