@@ -27,6 +27,8 @@ namespace AnodyneSharp.Recording
         public static readonly bool Full100 = Environment.GetEnvironmentVariable("ANODYNE_ROUTE") == "100";
         /// <summary>Token p1: do not fetch dust to plug beams on the way (the way on is through them, at a documented cost in hearts).</summary>
         public static bool NoAutoPlug;
+        /// <summary>Set while walking with the swap broom out (digging): no Accept gets through, as each press is a step of a swap.</summary>
+        public static bool NoAccept;
         /// <summary>Hearts to be won back after a hit (-1 = no debt); see RecoverFrames.</summary>
         public static int DebtBaseline = -1;
         /// <summary>Set while the bot walks to a checkpoint to heal: the hearts owed are on their way back.</summary>
@@ -601,6 +603,10 @@ namespace AnodyneSharp.Recording
                 held = BotScript.BulletHop(held);
                 held = BotScript.ContactEscape(held);
                 held = BotScript.SteamBrace(held);
+            }
+            if (NoAccept && held.Contains(KeyFunctions.Accept))
+            {
+                held = held.Where(k => k != KeyFunctions.Accept).ToArray();
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt2 && int.TryParse(kt2, out int kfrom2) && Frame >= kfrom2 && Frame < kfrom2 + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
             {

@@ -142,10 +142,11 @@ namespace AnodyneSharp.Recording
                 }
                 if (tok.StartsWith("dig") && tok.Length > 3 && char.IsDigit(tok[3]))
                 {
-                    // dig<x>,<y>: to tile x,y with the swap broom, swapping the walls in the way for floor (after the credits it works
-                    // anywhere a map's swapper regions allow)
+                    // dig<x>,<y>[,<cost>]: to tile x,y with the swap broom, swapping the walls in the way for floor (after the credits it
+                    // works anywhere a map's swapper regions allow); a wall costs <cost> floor tiles of walking (6 by default: more keeps
+                    // to the ways there are)
                     var a = tok.Substring(3).Split(',');
-                    yield return DigTo(new Point(int.Parse(a[0]), int.Parse(a[1])));
+                    yield return DigTo(new Point(int.Parse(a[0]), int.Parse(a[1])), a.Length > 2 ? int.Parse(a[2]) : 6);
                     continue;
                 }
                 if (tok == "goswap")
@@ -6403,8 +6404,8 @@ namespace AnodyneSharp.Recording
             return GlobalState.events.GetEvent("SeenCredits") != 0 || st == AnodyneSharp.MapData.SwapperControl.State.Allow;
         }
 
-        /// <summary>A wall (or hole) the swap broom can turn to floor: its own layer is the whole of it (no overlay on top) and swapping is
-        /// allowed there.</summary>
+        /// <summary>A tile we cannot walk that the swap broom can turn to floor: its own layer is the whole of it (no overlay on top) and
+        /// swapping is allowed there.</summary>
         private static bool Diggable(Point t)
         {
             if (t.X < 0 || t.Y < 0 || t.X >= BotNav.CurrentMap.WidthInTiles || t.Y >= BotNav.CurrentMap.HeightInTiles)
@@ -6415,11 +6416,10 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
-            var (al, ev) = ClassOfTileId(GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, t));
-            return al != Touching.NONE || ev == AnodyneSharp.MapData.Tiles.CollisionEventType.HOLE;
+            return !BotNav.Walkable(t); // (a wall, a hole, deep water or a current: whatever the tile, the swap brings floor)
         }
 
-        /// <summary>Plain floor to trade for a wall: walkable, nothing on top, no event.</summary>
+        /// <summary>Floor to trade for a wall: walkable, nothing on top, not a hole.</summary>
         private static bool SpareFloor(Point t)
         {
             if (GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, t) != 0 || !SwapAllowed(t) || !BotNav.Walkable(t))
@@ -6427,14 +6427,14 @@ namespace AnodyneSharp.Recording
                 return false;
             }
             var (al, ev) = ClassOfTileId(GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, t));
-            return al == Touching.NONE && ev == AnodyneSharp.MapData.Tiles.CollisionEventType.NONE;
+            return al == Touching.NONE && ev != AnodyneSharp.MapData.Tiles.CollisionEventType.HOLE; // (grass, puddles: any floor will do)
         }
 
         /// <summary>
         /// To tile `goal` through the walls: the cheapest way by tiles, where walking a floor tile costs 1 and digging a wall 6. Each wall
         /// on the way is swapped, from the floor beside it, with a floor tile beside us off the way (the wall goes there instead).
         /// </summary>
-        protected static IEnumerable<object> DigTo(Point goal)
+        protected static IEnumerable<object> DigTo(Point goal, int wallCost = 6)
         {
             var was = GlobalState.inventory.EquippedBroom;
             if (was != AnodyneSharp.Entities.BroomType.Transformer)
@@ -6442,64 +6442,84 @@ namespace AnodyneSharp.Recording
                 yield return MenuEquipBroom(3);
             }
             int fails = 0;
-            for (int dig = 0; dig < 120; dig++)
+            BotRunner.NoAccept = true; // (a swing on the way, by a guard or a walker, is a swap step: it swapped a dug shaft shut behind us)
+            try
             {
-                var here = BotNav.TileOf(Pos);
-                if (here == goal)
+                for (int dig = 0; dig < 120; dig++)
                 {
-                    break;
-                }
-                var path = DigPath(here, goal);
-                if (path == null)
-                {
-                    throw new InvalidOperationException($"bot: no way to dig from {here} to {goal} on {Map}");
-                }
-                int k = path.FindIndex(q => !BotNav.Walkable(q));
-                if (k < 0)
-                {
-                    var gc = BotNav.CentreOf(goal);
-                    yield return GoTo(gc.X, gc.Y);
-                    yield return WalkTo(gc.X, gc.Y, tol: 2f);
-                    break;
-                }
-                var c = k == 0 ? here : path[k - 1];
-                var w = path[k];
-                BotRunner.Status = $"dig: swap the wall {w.X},{w.Y} away (to {goal.X},{goal.Y})";
-                var cc = BotNav.CentreOf(c);
-                if (c != here)
-                {
-                    yield return GoTo(cc.X, cc.Y);
-                }
-                yield return WalkTo(cc.X, cc.Y, tol: 1f);
-                static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
-                var ahead = path.Skip(k).ToHashSet();
-                var spare = new[] { new Point(c.X + 1, c.Y), new Point(c.X - 1, c.Y), new Point(c.X, c.Y + 1), new Point(c.X, c.Y - 1) }
-                    .Where(f => f != w && !ahead.Contains(f) && SpareFloor(f))
-                    .OrderBy(f => k >= 2 && f == path[k - 2] ? 1 : 0).Cast<Point?>().FirstOrDefault();
-                if (spare == null)
-                {
-                    throw new InvalidOperationException($"bot: dig: no floor beside {c} to trade for the wall {w}");
-                }
-                System.Console.Error.WriteLine($"  dig f{BotRunner.Frame}: from {c} swap the wall {w} with the floor {spare}");
-                yield return Hold(2, Toward(c, w));
-                yield return Wait(4);
-                yield return Tap(KeyFunctions.Accept);
-                yield return Wait(8);
-                yield return Tap(KeyFunctions.Accept);
-                yield return Wait(8);
-                yield return Hold(2, Toward(c, spare.Value));
-                yield return Wait(4);
-                yield return Tap(KeyFunctions.Accept);
-                yield return Wait(20);
-                BotNav.ResetDustCache();
-                if (!BotNav.Walkable(w))
-                {
-                    System.Console.Error.WriteLine($"  dig: the swap at {w} did not take");
-                    if (++fails >= 3)
+                    var here = BotNav.TileOf(Pos);
+                    if (here == goal)
                     {
-                        throw new InvalidOperationException($"bot: dig: the wall {w} would not swap");
+                        break;
+                    }
+                    var path = DigPath(here, goal, wallCost);
+                    if (path == null)
+                    {
+                        throw new InvalidOperationException($"bot: no way to dig from {here} to {goal} on {Map}");
+                    }
+                    int k = path.FindIndex(q => !BotNav.Walkable(q));
+                    if (k < 0)
+                    {
+                        var gc = BotNav.CentreOf(goal);
+                        yield return GoTo(gc.X, gc.Y);
+                        yield return WalkTo(gc.X, gc.Y, tol: 2f);
+                        break;
+                    }
+                    var c = k == 0 ? here : path[k - 1];
+                    var w = path[k];
+                    BotRunner.Status = $"dig: swap the wall {w.X},{w.Y} away (to {goal.X},{goal.Y})";
+                    var cc = BotNav.CentreOf(c);
+                    if (c != here)
+                    {
+                        yield return GoTo(cc.X, cc.Y);
+                    }
+                    yield return WalkTo(cc.X, cc.Y, tol: 1f);
+                    for (int st = 0; st < 60 && (BotNav.TileOf(Pos) != c || (Pos - cc).Length() > 1.5f); st++)
+                    {
+                        // (into a shaft just dug, a tile wide: the walkers stop short of its centre, and a swap from the tile before swaps
+                        // the wrong pair)
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        float ex = cc.X - Pos.X, ey = cc.Y - Pos.Y;
+                        var mk = new List<KeyFunctions>();
+                        if (Math.Abs(ex) > 0.7f) { mk.Add(ex < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                        if (Math.Abs(ey) > 0.7f) { mk.Add(ey < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                        yield return mk.ToArray();
+                    }
+                    if (BotNav.TileOf(Pos) != c)
+                    {
+                        throw new InvalidOperationException($"bot: dig: could not stand on {c} (at {Pos})");
+                    }
+                    static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                    var ahead = path.Skip(k).ToHashSet();
+                    var spare = new[] { new Point(c.X + 1, c.Y), new Point(c.X - 1, c.Y), new Point(c.X, c.Y + 1), new Point(c.X, c.Y - 1) }
+                        .Where(f => f != w && !ahead.Contains(f) && SpareFloor(f))
+                        .OrderBy(f => k >= 2 && f == path[k - 2] ? 1 : 0).Cast<Point?>().FirstOrDefault();
+                    if (spare == null)
+                    {
+                        foreach (var f in new[] { new Point(c.X + 1, c.Y), new Point(c.X - 1, c.Y), new Point(c.X, c.Y + 1), new Point(c.X, c.Y - 1) })
+                        {
+                            System.Console.Error.WriteLine($"    {f}: walkable={BotNav.Walkable(f)} bg2={GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG2, f)} swap={GlobalState.Map.CheckSwapper(f)} class={ClassOfTileId(GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, f))} live={BotNav.CurrentMap.GetTileClass(f)} ahead={ahead.Contains(f)}");
+                        }
+                        throw new InvalidOperationException($"bot: dig: no floor beside {c} to trade for the wall {w}");
+                    }
+                    System.Console.Error.WriteLine($"  dig f{BotRunner.Frame}: from {c} swap the wall {w} with the floor {spare}");
+                    BotRunner.NoAccept = false;
+                    yield return SwapTiles(c, w, spare.Value);
+                    BotRunner.NoAccept = true;
+                    BotNav.ResetDustCache();
+                    if (BotNav.CurrentMap.GetTileClass(w).Item1 != Touching.NONE)
+                    {
+                        System.Console.Error.WriteLine($"  dig: the swap at {w} did not take");
+                        if (++fails >= 3)
+                        {
+                            throw new InvalidOperationException($"bot: dig: the wall {w} would not swap");
+                        }
                     }
                 }
+            }
+            finally
+            {
+                BotRunner.NoAccept = false;
             }
             if (was != AnodyneSharp.Entities.BroomType.Transformer)
             {
@@ -6507,8 +6527,73 @@ namespace AnodyneSharp.Recording
             }
         }
 
-        /// <summary>Tiles from (not counting) `from` to `goal`, floor at 1 and diggable walls at 6 (Dijkstra over the map).</summary>
-        private static List<Point> DigPath(Point from, Point goal)
+        private static readonly System.Reflection.FieldInfo _tfSelector = typeof(AnodyneSharp.Entities.Transformer).GetField("selector", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo _tfSelected = typeof(AnodyneSharp.Entities.Transformer).GetField("selected_tile", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>
+        /// Standing on `c`, swap the tiles `a` and `b` (both beside it) with the swap broom: face a, Accept (the selector) and Accept (a is
+        /// marked), face b, Accept. Each press is checked against the broom's own state, so a press the game missed cannot leave a mark
+        /// behind that pairs the next swap with the wrong tile.
+        /// </summary>
+        protected static IEnumerable<object> SwapTiles(Point c, Point a, Point b)
+        {
+            static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
+            var tf = Player.transformer;
+            Entity Sel() => (Entity)_tfSelector.GetValue(tf);
+            Entity Marked() => (Entity)_tfSelected.GetValue(tf);
+            Point TileAt(Entity e) => new Point((int)Math.Floor((e.Position.X + 8) / 16f), (int)Math.Floor((e.Position.Y + 8) / 16f));
+            tf.Reset();
+            // One frame's press to turn (a second walked a box centred in a dug shaft a pixel into the wall below it, and the game's
+            // separation then pushed it right in, onto the tile it was to swap)
+            ExactKeysUntil = BotRunner.Frame + 1;
+            yield return K(Toward(c, a));
+            yield return Wait(4);
+            for (int t = 0; t < 4 && !Sel().exists; t++)
+            {
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+            }
+            for (int t = 0; t < 4 && !Marked().exists; t++)
+            {
+                yield return Tap(KeyFunctions.Accept);
+                yield return Wait(8);
+            }
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                string Cl(Point q) => BotNav.CurrentMap.GetTileClass(q).Item1 == Touching.NONE ? "." : "#";
+                System.Console.Error.WriteLine($"  swap f{BotRunner.Frame}: centre {Player.Center} tile {BotNav.TileOf(Pos)} facing {Player.facing} marked {(Marked().exists ? TileAt(Marked()).ToString() : "-")} round c: "
+                    + string.Join("|", Enumerable.Range(-1, 3).Select(dy => string.Concat(Enumerable.Range(-1, 3).Select(dx => Cl(new Point(c.X + dx, c.Y + dy)))))));
+            }
+            if (!Marked().exists || TileAt(Marked()) != a)
+            {
+                System.Console.Error.WriteLine($"  swap: marked {(Marked().exists ? TileAt(Marked()).ToString() : "nothing")}, not {a}");
+                tf.Reset();
+                yield break;
+            }
+            ExactKeysUntil = BotRunner.Frame + 1;
+            yield return K(Toward(c, b));
+            yield return Wait(4);
+            if (TileAt(Sel()) != b)
+            {
+                System.Console.Error.WriteLine($"  swap: the selector is on {TileAt(Sel())}, not {b}");
+                tf.Reset();
+                yield break;
+            }
+            yield return Tap(KeyFunctions.Accept);
+            yield return Wait(20);
+            if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+            {
+                string Cl(Point q) => BotNav.CurrentMap.GetTileClass(q).Item1 == Touching.NONE ? "." : "#";
+                System.Console.Error.WriteLine($"  swap f{BotRunner.Frame} done: at {BotNav.TileOf(Pos)}, round {c}: "
+                    + string.Join("|", Enumerable.Range(-1, 3).Select(dy => string.Concat(Enumerable.Range(-1, 3).Select(dx => Cl(new Point(c.X + dx, c.Y + dy)))))));
+            }
+            tf.Reset();
+        }
+
+        /// <summary>Tiles from (not counting) `from` to `goal`, floor at 1 and diggable walls at 6 (Dijkstra over the map). Leaving a screen
+        /// undoes the swaps made on it, so a shaft dug across a screen edge is shut behind us: it is taken only onto a tile with floor beside
+        /// it on the new screen, to trade for the next wall.</summary>
+        private static List<Point> DigPath(Point from, Point goal, int wallCost)
         {
             int W = BotNav.CurrentMap.WidthInTiles, H = BotNav.CurrentMap.HeightInTiles;
             var dist = new Dictionary<Point, int> { [from] = 0 };
@@ -6537,10 +6622,17 @@ namespace AnodyneSharp.Recording
                     {
                         continue;
                     }
-                    int step = BotNav.Walkable(q) ? 1 : Diggable(q) ? 6 : -1;
+                    int step = BotNav.Walkable(q) ? 1 : Diggable(q) ? wallCost : -1;
                     if (step < 0)
                     {
                         continue;
+                    }
+                    if ((p.X / 10 != q.X / 10 || p.Y / 10 != q.Y / 10) && !BotNav.Walkable(q)
+                        && !new[] { new Point(q.X + 1, q.Y), new Point(q.X - 1, q.Y), new Point(q.X, q.Y + 1), new Point(q.X, q.Y - 1) }
+                            .Any(r => r != p && r.X / 10 == q.X / 10 && r.Y / 10 == q.Y / 10 && SpareFloor(r)))
+                    {
+                        continue; // (a screen change puts the swapped tiles we leave behind back: a dug way into the next screen needs a floor
+                                  // tile beside it there to trade for the next wall)
                     }
                     int nd = d + step;
                     if (!dist.TryGetValue(q, out int od) || nd < od)

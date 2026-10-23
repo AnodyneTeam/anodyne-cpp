@@ -429,6 +429,11 @@ namespace AnodyneSharp.Recording
             // Hotel (5,0) City Man: from the roof (the Hotel's menu warp lands there), dig east into the Teleguy room, clear it for its
             // kill gate and open the chest.
             yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 g6 F W60 g0 I928,80,d W60 T W30"));
+            // Street (1,6) Follower: dig down through the hedge to the chest.
+            yield return Section("street follower card", () => Exec("O1 X1 viaSTREET W30 dig17,64 W10 I272,1008,d W60 T W30"));
+            // Red Sea (0,6) Depressed Mushroom: a long dig down the west edge. Walls cost a lot so it walks where it can,
+            // and auto fight is off so it does not chase Annoyers into the dug corridor.
+            yield return Section("red sea mushroom card", () => Exec("O1 X1 viaREDSEA W30 X0 dig2,65,40 X1 W10 I32,1024,d W60 T W30"));
         }
     }
 
