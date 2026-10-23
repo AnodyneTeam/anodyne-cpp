@@ -12228,12 +12228,12 @@ namespace AnodyneSharp.Recording
                     // (its X slows by 20px/s each second between dashes, and walls stop it: it runs the map like we do)
                     vel.X = vel.X < 0 ? Math.Min(vel.X + 20f / 60f, 0f) : Math.Max(vel.X - 20f / 60f, 0f);
                     var nx = new Vector2(pos.X + vel.X / 60f, pos.Y);
-                    if (DogBoxClear(hb0, nx - start))
+                    if (DogBoxClearAt(nx, hb0.Width, hb0.Height))
                     {
                         pos = nx;
                     }
                     var ny = new Vector2(pos.X, pos.Y + vel.Y / 60f);
-                    if (DogBoxClear(hb0, ny - start))
+                    if (DogBoxClearAt(ny, hb0.Width, hb0.Height))
                     {
                         pos = ny;
                     }
@@ -12373,6 +12373,22 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Is the dog's hitbox, moved by `off`, clear of walls?</summary>
+        /// <summary>
+        /// Is a box at this float position (an entity's own, not its rounded hitbox) clear of walls? The game separates by the float box,
+        /// so a dog sliding along a wall a pixel into the next row stops dead at a corner the rounded box (1px in) let it slip past.
+        /// </summary>
+        private static bool DogBoxClearAt(Vector2 p, int w, int h)
+        {
+            foreach (var (x, y) in new[] { (p.X + 0.05f, p.Y + 0.05f), (p.X + w - 0.05f, p.Y + 0.05f), (p.X + 0.05f, p.Y + h - 0.05f), (p.X + w - 0.05f, p.Y + h - 0.05f) })
+            {
+                if (BotNav.IsBeamWall(new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f))))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         private static bool DogBoxClear(Rectangle hb, Vector2 off)
         {
             // (1px in from each side: the hitbox is the dog's float position rounded down, so one hugging a wall below it reads as in it)
@@ -13551,6 +13567,22 @@ namespace AnodyneSharp.Recording
                             _airSteer = JumpLandsOnFloor(offK) ? offK : null;
                             _airSteerUntil = BotRunner.Frame + 30;
                             yield return _airSteer is KeyFunctions ok2 ? K(KeyFunctions.Cancel, ok2) : K(KeyFunctions.Cancel);
+                            continue;
+                        }
+                        if (away != null && away.Contains(KeyFunctions.Cancel) && Player.state == PlayerState.GROUND)
+                        {
+                            // A planned jump over its dash: the game only jumps on a fresh press (held from last frame, the bot walked on into
+                            // the dog in a one-tile corridor), and the drift in the air is the plan's.
+                            var steer = away.Where(k => k != KeyFunctions.Cancel).ToArray();
+                            if (_jumpPressFrame == BotRunner.Frame - 1)
+                            {
+                                yield return K();
+                                continue;
+                            }
+                            _jumpPressFrame = BotRunner.Frame;
+                            _airSteer = steer.Length == 1 ? steer[0] : null;
+                            _airSteerUntil = BotRunner.Frame + 30;
+                            yield return K(away);
                             continue;
                         }
                         yield return away == null || away.Length == 0 ? K() : K(away);
