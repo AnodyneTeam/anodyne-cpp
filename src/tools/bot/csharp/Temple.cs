@@ -427,8 +427,11 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("The post-game cards");
             // Hotel (5,0) City Man: from the roof (the Hotel's menu warp lands there), dig east into the Teleguy room, clear it for its
-            // kill gate and open the chest.
-            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 g6 F W60 g0 I928,80,d W60 T W30"));
+            // kill gate and open the chest. (4,0) on the way is left alone: its Burst Plant sits in the ceiling between two Pew Lasers,
+            // and fighting it under them cost the whole health bar; walking straight through costs a bolt from each. The menu warp
+            // lands back on the roof, which has no way down to the portal, so out the way the endgame leaves.
+            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 X0 >800,100 W5 X1 g6 F W60"
+                + " g0 I928,80,d W60 T W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200 X1"));
             // Street (1,6) Follower: dig down through the hedge to the chest.
             yield return Section("street follower card", () => Exec("O1 X1 viaSTREET W30 dig17,64 W10 I272,1008,d W60 T W30"));
             // Red Sea (0,6) Depressed Mushroom: a long dig down the west edge. Walls cost a lot so it walks where it can,
@@ -443,26 +446,29 @@ namespace AnodyneSharp.Recording
             yield return Section("archives cards", () => Exec("O1 X1 viaOVERWORLD W30 dig14,8 W10 door85 W60 dig54,23,40 W10 door79 W60 door83 W60 dig47,78 W10 I768,1232,d W60 T W30 dig12,68 W10 door83 W60 door84 W60 dig27,13 W10 I432,192,d W60 T W30 n0 W120"));
             // Fields (11,9) Rank: dig from the pad down to the walled-in pool and through its north wall to the chest.
             yield return Section("fields rank card", () => Exec("O1 X1 viaFIELDS W30 dig116,95 W10 I1856,1504,d W60 T W30"));
-            // Crowd (7,6): the Extend broom, which the route walks past.
-            yield return Section("crowd extend broom", () => Exec("O1 X1 viaCROWD W30 dig75,62 W10 I1200,976,d W60 T W30"));
+            // Crowd (7,6): the Extend broom, which the route walks past. Dug to just short of its kill gate, which the Dog opens.
+            yield return Section("crowd extend broom", () => Exec("O1 X1 viaCROWD W30 dig75,63 W10 F W60 I1200,976,d W60 T W30"));
             // Black and White Town (2,7) Evil Suburbanite: dig down into the gauntlet. Its first room's three buttons; the dogs of the
             // second lured up one at a time between its two killers; the third's plants struck from beside their fire pillars while those
             // are out (the town only allows the knife, so no reach from further off).
             yield return Section("suburb card", () => Exec("O1 X1 viaSUBURB W30 dig24,48 W10 dig24,50 W10 >456,824 W10 >456,936 W10 >344,824 W10 >400,952 W30"
                 + " >400,976 lure397,1000,1040 >400,1000 kg1 @x397,d D120 W30 X0 D20 L20 U6 strike366.5,1136,l,369,1136 R36 strike423.5,1136,r,421,1136"
                 + " L16 @x397,u D90 @x424,u strike424,1236,r,420,1236 X1 kg0 I384,1232,d W60 T W30"));
-            // Red Cave (3,1) Mover: the any% route leaves its gates shut; dig to the chest.
-            yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 dig34,12 W10 I544,176,d W60 T W30"));
+            // Red Cave (3,1) Mover: the any% route leaves its gates shut; dig to the chest. The dig crosses (4,1) under its two steam
+            // jets, which start as the screen loads and are on by the time the dig gets there: wait at its east end for them to switch
+            // off, then on. (Out of the dig's last swap a nudge up, off the key block's sentinel, which snags the step west.)
+            yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 X0 dig48,13 W5 steamgap dig36,12 W5 U12 W5 X1 I544,176,d W60 T W30"));
             // Space (5,7) Entities: dig south off the pad's column into the walled-off south half; its chest is behind two gates, one
             // opened by a button at the end of the west path, the other by a kill on its screen at the end of the east path. West: the
             // Dustmaids (fought from their exit corridor with the long broom), the laser lane (no side tile to plug it from: run it at the
             // bolts' best gap), the Gas Guys and four buttons. Out by the menu.
             yield return Section("space west path", () => Exec("O1 X1 g8 viaSPACE W30 ;0 W5 X0 dig54,48,40 W10 X1 H3,5 W10 X0 ;1 W5 J36,54,l W2 >632,824 plant627,818,lw,1800 W10 dd ;0 W5 lane37,57/37,58/32,58/32,59 W10 X1 H3,6 W30"
                 + " >776,984 W10 >664,1096 W10 >776,1096 W30 X0 >824,1048 W30 X1 n0 W120 heal W30"));
-            // East: the Slashers, the Lion among fire pillars (two dusts put out two of them, kept by never sweeping them up), the frogs
+            // East: the Slashers, the Lion among fire pillars (two dusts put out two of them, kept by never sweeping them up; the Lion can
+            // take over 3000 frames, and walking on with it alive is fatal), the frogs
             // (a long broom from the one tile between their pillars) and the Slime that opens the chest's other gate.
             yield return Section("space east path", () => Exec("O1 X1 g8 viaSPACE W30 ;0 W5 X0 dig54,48,40 W10 X1 H6,5 W10 F4000 W20 X0 H7,5 W2 dust:72,55 dust:73,55"
-                + " kd1 X1 F3000 kd0 W20 X0 ;1 W5 H7,6 plant1187,978,lr,900 plant1187,1074,lr,900 ;0 W5 X1 F W20 X0 H6,6 W10 >950,1044 W10 X1 F W30 X0 n0 W120 heal W30"));
+                + " kd1 X1 F6000 kd0 W20 X0 ;1 W5 H7,6 plant1187,978,lr,900 plant1187,1074,lr,900 ;0 W5 X1 F W20 X0 H6,6 W10 >950,1044 W10 X1 F W30 X0 n0 W120 heal W30"));
             yield return Section("space entities card", () => Exec("O1 X1 viaSPACE W30 X0 dig54,48,40 W10 I872,1202,d W60 T W30"));
             // Cell (5,8) Torchlight: dig into the sealed portal room for the door into the gauntlet along the bottom. Every broom swing
             // speeds every moving Chaser up 1.6x (one sets off once we are in its row or column), so each room's foes die before its

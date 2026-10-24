@@ -124,6 +124,13 @@ namespace AnodyneSharp.Recording
                     yield return RollerHops(tiles, pick, tail, rk);
                     continue;
                 }
+                if (tok == "steamgap")
+                {
+                    // steamgap: wait for this screen's On-Off steam jets to switch off (they all start together as the screen loads): then
+                    // there are 2s of idle and the emerging flicker before they hurt again
+                    yield return SteamGap();
+                    continue;
+                }
                 if (tok.StartsWith("wig") && tok.Length > 4 && "UDLR".Contains(tok[3]))
                 {
                     // wig<U|D|L|R><n> / wig<U|D|L|R>@<p>: the wiggle glitch, n times or until our y (holding up or down) or x reaches p: back
@@ -19832,6 +19839,29 @@ namespace AnodyneSharp.Recording
         /// The wiggle glitch: on a screen's left or right edge, holding `vk` into a wall, cross the edge and back, `n` times. Each crossing
         /// puts us on the border line while the walls are not pushing us out, so the hold gains a pixel into the wall each time.
         /// </summary>
+        protected static IEnumerable<object> SteamGap()
+        {
+            BotRunner.Status = "wait for the steam jets to switch off";
+            var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
+            if (beams.Count == 0)
+            {
+                yield break;
+            }
+            bool seenOn = false;
+            for (int f = 0; f < 600; f++)
+            {
+                bool on = beams.Any(b => b.visible);
+                if (seenOn && !on)
+                {
+                    System.Console.Error.WriteLine($"  steam off f{BotRunner.Frame} after {f} frames");
+                    yield break;
+                }
+                seenOn |= on;
+                BotRunner.NotStuck();
+                yield return K();
+            }
+        }
+
         protected static IEnumerable<object> Wiggle(KeyFunctions vk, int n, float until = float.NaN)
         {
             ExactHolds = true;
