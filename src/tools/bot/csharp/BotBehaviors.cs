@@ -6497,8 +6497,9 @@ namespace AnodyneSharp.Recording
             // in line with the door (its middle), then push into it
             float x = bestPush is KeyFunctions.Up or KeyFunctions.Down ? best.Position.X + 3 : sc.X;
             float y = bestPush is KeyFunctions.Left or KeyFunctions.Right ? best.Position.Y + 2 : sc.Y;
-            // (an end on another screen, CELL's portal a screen west and north of the pad: across screens first)
-            yield return bestStand.X / 10 == Grid.X && bestStand.Y / 10 == Grid.Y ? GoTo(x, y) : GoGlobal(x, y);
+            // (a white portal on another screen, CELL's a screen west and north of the pad: across screens first; a plain door a screen
+            // off, the Hotel's floor-3 door 27 a screen west of the lift, is GoTo's walk: GoGlobal finds no way there)
+            yield return best.Type.Name == "BlankPortal" && (bestStand.X / 10 != Grid.X || bestStand.Y / 10 != Grid.Y) ? GoGlobal(x, y) : GoTo(x, y);
             yield return WalkTo(x, y);
             var before = Pos;
             string map = Map;
