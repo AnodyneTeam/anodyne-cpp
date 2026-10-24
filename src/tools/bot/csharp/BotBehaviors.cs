@@ -9875,6 +9875,7 @@ namespace AnodyneSharp.Recording
         private static long _hopUntil;
 
         private static int _contactFrames;
+        private static long _gasPolicyFrame = -1; // (the frame GasGuyKeys last steered: it answers its own contact)
 
         /// <summary>
         /// Last line of defence for any script: stuck touching something that hurts (pinned by slow solid chasers, walked into a resting
@@ -9893,7 +9894,7 @@ namespace AnodyneSharp.Recording
             pb.Inflate(1, 1);
             var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                 && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant" or "Mover") && e.Hitbox.Intersects(pb)).ToList(); // (those only hurt with their cuts / shots, or only push)
-            if (on.Count == 0)
+            if (on.Count == 0 || (_gasPolicyFrame == BotRunner.Frame && on.All(e => e is AnodyneSharp.Entities.Enemy.Apartment.GasGuy)))
             {
                 _contactFrames = 0;
                 return held;
@@ -15726,38 +15727,52 @@ namespace AnodyneSharp.Recording
             {
                 return null; // wading: get ashore first (the fight does that)
             }
-            Rectangle At(int f, Vector2 me)
+            _gasPolicyFrame = BotRunner.Frame;
+            // (every Gas Guy on the screen, not only the one we fight: Space (3,6) has three, and they bunch up on us as they come, so a
+            // swing that answers one leaves the others to hit us, over and over)
+            var all = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Apartment.GasGuy && e.exists).ToList();
+            if (!all.Contains(g))
+            {
+                all.Add(g);
+            }
+            Rectangle AtOf(Entity e, int f, Vector2 me)
             {
                 float step = 12f * f / 60f;
-                float ox = Math.Clamp(me.X - g.Position.X, -step, step) + g.velocity.X * f / 60f;
-                float oy = Math.Clamp(me.Y - g.Position.Y, -step, step) + g.velocity.Y * f / 60f;
-                var r = g.Hitbox;
+                float ox = Math.Clamp(me.X - e.Position.X, -step, step) + e.velocity.X * f / 60f;
+                float oy = Math.Clamp(me.Y - e.Position.Y, -step, step) + e.velocity.Y * f / 60f;
+                var r = e.Hitbox;
                 r.Offset((int)Math.Round(ox), (int)Math.Round(oy));
                 return r;
             }
+            Rectangle At(int f, Vector2 me) => AtOf(g, f, me);
             var gc = g.Hitbox.Center;
             float dx = gc.X - pb.Center.X, dy = gc.Y - pb.Center.Y;
             var face = Math.Abs(dx) >= Math.Abs(dy) ? (dx < 0 ? Facing.LEFT : Facing.RIGHT) : (dy < 0 ? Facing.UP : Facing.DOWN);
             bool rooted = Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK || (Player.broom != null && Player.broom.exists);
-            if (!rooted && !g._flickering)
+            if (!rooted)
             {
-                var broom = BroomBoxAt(Pos, face);
-                for (int f = 2; f <= 8; f++)
+                // (any of them about to come into the broom's reach, nearest first)
+                foreach (var e in all.Where(e => !e._flickering).OrderBy(e => Vector2.Distance(e.Hitbox.Center.ToVector2(), pb.Center.ToVector2())))
                 {
-                    if (broom.Intersects(At(f, Pos)))
+                    float ex = e.Hitbox.Center.X - pb.Center.X, ey = e.Hitbox.Center.Y - pb.Center.Y;
+                    var ef = Math.Abs(ex) >= Math.Abs(ey) ? (ex < 0 ? Facing.LEFT : Facing.RIGHT) : (ey < 0 ? Facing.UP : Facing.DOWN);
+                    var broom = BroomBoxAt(Pos, ef);
+                    for (int f = 0; f <= 8; f++)
                     {
-                        return K(KeyOf(face), KeyFunctions.Accept);
+                        if (broom.Intersects(AtOf(e, f, Pos)))
+                        {
+                            return K(KeyOf(ef), KeyFunctions.Accept);
+                        }
                     }
                 }
             }
             // Would it touch us within the next few frames (the swing above did not answer it)?
-            bool Touches(Vector2 me, Vector2 v, int frames)
+            bool TouchAt(Vector2 p, int f)
             {
-                for (int f = 1; f <= frames; f++)
+                var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                foreach (var e in all)
                 {
-                    var p = me + v * f;
-                    var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
-                    var r = At(f, p);
+                    var r = AtOf(e, f, p);
                     r.Inflate(2, 2);
                     if (mine.Intersects(r))
                     {
@@ -15766,8 +15781,21 @@ namespace AnodyneSharp.Recording
                 }
                 return false;
             }
+            bool Touches(Vector2 me, Vector2 v, int frames) => Enumerable.Range(1, frames).Any(f => TouchAt(me + v * f, f));
+            // A bounce dash trap's lane (Space (3,6) has three crossing the room): waiting in one, a hop answers the trap, but next to a
+            // wall it comes back off the wall onto where we land, a hit every pass.
+            var traps = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap).ToList();
+            bool InLane(Vector2 p)
+            {
+                var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
+                mine.Inflate(2, 2);
+                return traps.Any(t => t.velocity.X != 0 ? mine.Top < t.Hitbox.Bottom && mine.Bottom > t.Hitbox.Top : mine.Left < t.Hitbox.Right && mine.Right > t.Hitbox.Left);
+            }
             if (!rooted && Touches(Pos, Vector2.Zero, 14))
             {
+                // (already inside one, it sits on us (it heads for our position, its box twice ours): every way touches it for a while,
+                // so take the way that gets clear of them all soonest)
+                bool inside = TouchAt(Pos, 0);
                 KeyFunctions? best = null;
                 float bestD = -1;
                 foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
@@ -15776,11 +15804,32 @@ namespace AnodyneSharp.Recording
                     var end = Pos + v * 14;
                     // (not off the screen: that leaves the fight, and the Gas Guy, behind a gate that wants it dead)
                     bool onScreen = end.X >= Grid.X * 160 + 1 && end.X + pb.Width <= Grid.X * 160 + 159 && end.Y >= Grid.Y * 160 + 1 && end.Y + pb.Height <= Grid.Y * 160 + 159;
-                    if (!onScreen || !WalkableAhead(k, 10) || OnConveyor(BotNav.TileOf(Pos + v * 10)) || Touches(Pos, v, 14))
+                    if (!onScreen || !WalkableAhead(k, 10) || OnConveyor(BotNav.TileOf(Pos + v * 10)))
                     {
                         continue;
                     }
-                    float d = Vector2.Distance(end + new Vector2(5, 6), At(14, end).Center.ToVector2());
+                    float d;
+                    if (inside)
+                    {
+                        int clear = Enumerable.Range(1, 30).FirstOrDefault(f => !TouchAt(Pos + v * f, f) && WalkableAhead(k, f));
+                        if (clear == 0)
+                        {
+                            continue;
+                        }
+                        d = 100 - clear;
+                    }
+                    else if (Touches(Pos, v, 14))
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        d = all.Min(e => Vector2.Distance(end + new Vector2(5, 6), AtOf(e, 14, end).Center.ToVector2()));
+                    }
+                    if (InLane(end))
+                    {
+                        d -= 30;
+                    }
                     if (d > bestD)
                     {
                         bestD = d;
@@ -15792,6 +15841,26 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  gas f{BotRunner.Frame} step away {best} P={Pos} grid={Grid} gas={g.Hitbox}");
                 }
                 return best is KeyFunctions bk ? K(bk) : null;
+            }
+            // Out of a trap's lane while it is still coming (along it, not across: across is where the trap is).
+            if (!rooted && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && InLane(Pos))
+            {
+                // (the nearest way out first: in a pocket by a wall the lane-free floor can be a couple of tiles off)
+                for (int n = 14; n <= 50; n += 6)
+                {
+                    foreach (var k in new[] { KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up, KeyFunctions.Down })
+                    {
+                        var v = DirVector(k) * WalkPxPerFrame;
+                        var end = Pos + v * n;
+                        bool onScreen = end.X >= Grid.X * 160 + 1 && end.X + pb.Width <= Grid.X * 160 + 159 && end.Y >= Grid.Y * 160 + 1 && end.Y + pb.Height <= Grid.Y * 160 + 159;
+                        if (onScreen && !InLane(end) && Enumerable.Range(1, (n + 4) / 4).All(j => WalkableAhead(k, Math.Min(j * 4, n + 4)) && !OnConveyor(BotNav.TileOf(Pos + v * Math.Min(j * 4, n))))
+                            && !Touches(Pos, v, 14))
+                        {
+                            BotRunner.Status = "fight/gas guy: out of a dash trap's lane";
+                            return K(k);
+                        }
+                    }
+                }
             }
             if (!rooted && Player.facing != face && Math.Abs(dx) + Math.Abs(dy) > 28 && WalkableAhead(KeyOf(face), 2) && !OnConveyor(BotNav.TileOf(Pos + DirVector(KeyOf(face)) * 4)))
             {
@@ -15805,7 +15874,7 @@ namespace AnodyneSharp.Recording
                 var v = DirVector(k) * WalkPxPerFrame;
                 var end = Pos + v * 14;
                 bool onScreen = end.X >= Grid.X * 160 + 1 && end.X + pb.Width <= Grid.X * 160 + 159 && end.Y >= Grid.Y * 160 + 1 && end.Y + pb.Height <= Grid.Y * 160 + 159;
-                if (onScreen && WalkableAhead(k, 10) && !OnConveyor(BotNav.TileOf(Pos + v * 10)) && !Touches(Pos, v, 14))
+                if (onScreen && WalkableAhead(k, 10) && !OnConveyor(BotNav.TileOf(Pos + v * 10)) && !Touches(Pos, v, 14) && (InLane(Pos) || !InLane(end)))
                 {
                     return K(k);
                 }
@@ -19498,7 +19567,7 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = "fight/gas guy: let it come";
                     if (Environment.GetEnvironmentVariable("ANODYNE_GAS_TRACE") != null)
                     {
-                        System.Console.Error.WriteLine($"  gas f{BotRunner.Frame} keys={string.Join("+", gasKeys)} P={Pos} hb={Player.Hitbox} face={Player.facing} rev={Player.reversed} grid={Grid} gas={target.Hitbox}");
+                        System.Console.Error.WriteLine($"  gas f{BotRunner.Frame} keys={string.Join("+", gasKeys)} P={Pos} hb={Player.Hitbox} face={Player.facing} rev={Player.reversed} grid={Grid} gas={target.Hitbox} flick={target._flickering} anim={Player.ANIM_STATE} broom={Player.broom?.exists} st={Player.state}");
                     }
                     BotRunner.NotStuck(); // standing still on purpose
                     stillFrames = 0;
