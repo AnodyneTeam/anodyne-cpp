@@ -7517,9 +7517,33 @@ namespace AnodyneSharp.Recording
 
         private static IEnumerable<object> LureFightRounds(int x, int y0, int y1)
         {
+            int resets = 0;
             for (int round = 0; round < 8 && Enemies().Count > 0; round++)
             {
-                yield return Fight(1500, soft: true);
+                // (a dog's bite throws us 14px, which can land us in a killer's wake ring: once one is up and creeping, the fight on
+                // round it costs 6 a touch. Out the top and back in puts the room back as it was, killers asleep.)
+                yield return AbortWhen(Fight(1500, soft: true), () => KillerAwake());
+                if (KillerAwake() && resets < 3)
+                {
+                    resets++;
+                    round = -1;
+                    System.Console.Error.WriteLine($"  lure: a killer woke, out the top and back in f{BotRunner.Frame}");
+                    BotRunner.Status = "lure: a killer woke, out the top and back in";
+                    var g0 = Grid;
+                    yield return GoTo(x + 3, y0);
+                    for (int i = 0; i < 240 && Grid == g0; i++)
+                    {
+                        yield return K(KeyFunctions.Up);
+                    }
+                    yield return Until(() => !GlobalState.ScreenTransition, 300, "the screen above");
+                    yield return Wait(20);
+                    for (int i = 0; i < 120 && Grid != g0; i++)
+                    {
+                        yield return K(KeyFunctions.Down);
+                    }
+                    yield return Until(() => !GlobalState.ScreenTransition, 300, "back in");
+                    continue;
+                }
                 if (Enemies().Count == 0)
                 {
                     break;
@@ -7540,6 +7564,50 @@ namespace AnodyneSharp.Recording
                 for (int i = 0; i < 240 && Enemies().All(e => !(e.velocity.Length() > 40f) && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() > 40f); i++)
                 {
                     yield return K(); // (until one comes for us)
+                }
+            }
+        }
+
+        private static bool KillerAwake() => BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e) && _killerMoving?.GetValue(e) is true);
+
+        /// <summary>Runs `inner` (its nested steps flattened here, as the runner would) until `abort` holds before a frame.</summary>
+        protected static IEnumerable<object> AbortWhen(IEnumerable<object> inner, Func<bool> abort)
+        {
+            var st = new Stack<IEnumerator<object>>();
+            st.Push(inner.GetEnumerator());
+            try
+            {
+                while (st.Count > 0)
+                {
+                    if (abort())
+                    {
+                        yield break;
+                    }
+                    var top = st.Peek();
+                    if (!top.MoveNext())
+                    {
+                        st.Pop().Dispose();
+                        continue;
+                    }
+                    if (top.Current is IEnumerable<object> n)
+                    {
+                        st.Push(n.GetEnumerator());
+                    }
+                    else if (top.Current is IEnumerator<object> ne)
+                    {
+                        st.Push(ne);
+                    }
+                    else
+                    {
+                        yield return top.Current;
+                    }
+                }
+            }
+            finally
+            {
+                while (st.Count > 0)
+                {
+                    st.Pop().Dispose();
                 }
             }
         }
@@ -10507,6 +10575,10 @@ namespace AnodyneSharp.Recording
                 if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < (e is AnodyneSharp.Entities.Enemy.Crowd.Rotator ? 72 : 48)))
                 {
                     yield break; // not off a raft, nor into whatever dropped it (a Gas Guy's cloud): a heart is not worth more hits
+                }
+                if (KillerAwake())
+                {
+                    yield break; // (nor past a Black and White Town killer that is up and creeping: a touch is six hearts)
                 }
                 if (ChasersOnScreen().Count > 0)
                 {
