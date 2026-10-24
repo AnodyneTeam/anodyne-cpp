@@ -4,7 +4,7 @@
 
 #include "tonc.h"
 
-#include "../build/tools/sprite_registry.h"
+#include "sprite_registry.h"
 
 namespace
 {

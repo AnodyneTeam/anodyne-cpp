@@ -18,6 +18,7 @@
 
 build/
 src/build/
+src/build-sim/
 !Mods/
 # Build results
 [Dd]ebug/

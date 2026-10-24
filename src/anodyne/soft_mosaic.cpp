@@ -116,7 +116,13 @@ void CollectObjs()
 
 // The per-block sampling is the hot part (up to 255 blocks a frame, each testing a few layers): ARM code from IWRAM
 // rather than Thumb from ROM, like the audio decoder. Only the grid loop below is called from ROM.
+#ifdef ANODYNE_SIM
+#define MOSAIC_IWRAM
+#define MOSAIC_IWRAM_CALL __attribute__((noinline))
+#else
 #define MOSAIC_IWRAM __attribute__((section(".iwram.mosaic"), target("arm")))
+#define MOSAIC_IWRAM_CALL __attribute__((long_call, noinline, section(".iwram.mosaic"), target("arm")))
+#endif
 
 MOSAIC_IWRAM bool SampleObj(const Obj& o, int sx, int sy, uint16_t& colour)
 {
@@ -337,7 +343,7 @@ void Begin()
 }
 
 // Samples the screen at the top-left of every block into out[by * kMaxCols + bx].
-__attribute__((long_call, noinline, section(".iwram.mosaic"), target("arm")))
+MOSAIC_IWRAM_CALL
 void SampleGrid(int stride, int cols, int rows, int originX, int originY, uint16_t* out)
 {
     for (int by = 0; by < kMaxRows; by++)

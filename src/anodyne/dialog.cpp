@@ -5,8 +5,8 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
-#include "../build/tools/dialog_data.h"
-#include "../build/tools/title_data.h"
+#include "dialog_data.h"
+#include "title_data.h"
 
 // Read by the headless test driver (src/tools/bot/gba_drive.py).
 volatile int gDialogueOpen = 0;

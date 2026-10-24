@@ -19,19 +19,11 @@ set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 # ------------------------------------------------------------
 # Sources
 # ------------------------------------------------------------
+include(${CMAKE_CURRENT_SOURCE_DIR}/sources.cmake)
 set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
-    anodyne.cpp
-    dialog.cpp
-    audio_manager.cpp
-    audio_decode_core.cpp
-    sprite.cpp
-    entities.cpp
-    title.cpp
-    soft_mosaic.cpp
-    pixelate_test.cpp
-    world.cpp
+    ${ANODYNE_GAME_SOURCES}
 )
 
 # ------------------------------------------------------------
@@ -53,6 +45,7 @@ target_compile_options(first_lib PRIVATE
 )
 
 target_include_directories(first_lib PRIVATE
+    "${CMAKE_BINARY_DIR}/tools" # content-compiler output (map_registry.h, sprite_registry.h, ...)
     "${LIBTONC_DIR}/include"
     "${SOURCEDIR}/3rdParty/qoa"
 )

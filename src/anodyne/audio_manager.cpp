@@ -10,7 +10,7 @@
 // relying on AudioTrackData/AudioFrameRef already being defined (via
 // audio_manager.h, pulled in by audio_decode_core.hpp above - same
 // convention map_registry.h uses for MapEntry).
-#include "../build/tools/audio_registry.h"
+#include "audio_registry.h"
 
 // The linked-in audio_blob.bin pool (see anodyne/CMakeLists.txt's
 // AudioBlobObj custom command: `arm-none-eabi-ld -r -b binary audio_blob.bin`
@@ -111,8 +111,9 @@ static void RearmFifoDma(volatile u32* dmaCnt, volatile u32* dmaSad, volatile u3
                          volatile u32* fifo)
 {
     *dmaCnt = 0;
-    *dmaSad = (u32)src;
-    *dmaDad = (u32)fifo;
+    // Bus addresses are 32 bit (the simulator maps everything below 4GB too).
+    *dmaSad = static_cast<u32>(reinterpret_cast<uintptr_t>(src));
+    *dmaDad = static_cast<u32>(reinterpret_cast<uintptr_t>(fifo));
     *dmaCnt = DMA_DST_FIXED | DMA_REPEAT | DMA_32 | DMA_AT_FIFO | DMA_ENABLE;
 }
 

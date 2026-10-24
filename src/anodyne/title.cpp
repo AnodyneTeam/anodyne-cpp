@@ -8,7 +8,7 @@
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
 #include "sprite.h"
-#include "../build/tools/title_data.h"
+#include "title_data.h"
 
 namespace
 {
@@ -312,7 +312,8 @@ void LoadPage()
         }
         if (*p == ' ')
         {
-            if (col > 0)
+            // A space never goes past the last column: index kTextCols is the line's terminator.
+            if (col > 0 && col < kTextCols)
             {
                 gLines[gLineCount][col++] = ' ';
             }
@@ -434,11 +435,8 @@ void Title_Enter(ObjVramAllocator& vram)
     memset32(&tile_mem[kCbbText][0], 0, 8);
     memcpy32(&tile_mem[kCbbText][1], title::kFontTiles, sizeof(title::kFontTiles) / 4);
 
-    // Door map (SBB 29): the door's tiles in the top-left, the rest empty.
-    for (int i = 0; i < 32 * 64; i++)
-    {
-        se_mem[kSbDoor][i] = 0;
-    }
+    // Door map (SBB 29, 32x64: SBB 30 holds its lower half): the door's tiles in the top-left, the rest empty.
+    memset16(se_mem[kSbDoor], 0, 32 * 64);
     for (int y = 0; y < title::kDoorTilesH; y++)
     {
         for (int x = 0; x < title::kDoorTilesW; x++)

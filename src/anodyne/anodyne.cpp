@@ -19,7 +19,7 @@
 #include "title.h"
 #include "pixelate_test.hpp"
 
-#include "../build/tools/map_registry.h"
+#include "map_registry.h"
 
 // kMapCount is provided from map_registry_.h
 static uint32_t gCurrentMap = 0;
