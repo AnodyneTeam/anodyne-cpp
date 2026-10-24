@@ -72,7 +72,7 @@ static class Program
         while (lines[i].StartsWith("threat"))
         {
             var h = lines[i++].Split(' ');
-            var t = new StThreat { At = new Rectangle?[horizon + 1], Margin = int.Parse(h[2]), Stationary = h[3] == "1" };
+            var t = new StThreat { At = new Rectangle?[horizon + 1], Margin = int.Parse(h[2]), Stationary = h[3] == "1", HurtsInAir = h.Length > 4 && h[4] == "1" };
             for (int f = 0; f <= horizon; f++)
             {
                 var l = lines[i++];
@@ -84,14 +84,68 @@ static class Program
         int fx = int.Parse(fh[1]), fy = int.Parse(fh[2]), fw = int.Parse(fh[3]), fhh = int.Parse(fh[4]);
         var room = new Room();
         for (int y = 0; y < fhh; y++) { for (int x = 0; x < fw; x++) { if (lines[i + y][x] == '#') { room.Solid.Add((fx + x, fy + y)); } } }
+        i += fhh;
+        Func<Rectangle, bool> airOk = null;
+        if (i < lines.Length && lines[i].StartsWith("walls"))
+        {
+            var wh = lines[i++].Split(' ');
+            int wx = int.Parse(wh[1]), wy = int.Parse(wh[2]), ww = int.Parse(wh[3]), whh = int.Parse(wh[4]);
+            var walls = new HashSet<(int, int)>();
+            for (int y = 0; y < whh; y++) { for (int x = 0; x < ww; x++) { if (lines[i + y][x] == '#') { walls.Add((wx + x, wy + y)); } } }
+            i += whh;
+            bool jump = i < lines.Length && lines[i] == "jump 1";
+            if (jump)
+            {
+                airOk = r =>
+                {
+                    for (int ty = (int)Math.Floor(r.Top / 16f); ty <= (int)Math.Floor((r.Bottom - 1) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor(r.Left / 16f); tx <= (int)Math.Floor((r.Right - 1) / 16f); tx++)
+                        {
+                            if (walls.Contains((tx, ty))) { return false; }
+                        }
+                    }
+                    return true;
+                };
+            }
+        }
         Console.WriteLine($"--- {System.IO.Path.GetFileName(path)}: player {player} goal {goal}; threats: " + string.Join(", ", threats.ConvertAll(t => $"{t.name}(m{t.t.Margin})")));
         foreach (int m in new[] { -1, 0, 1, 2 })
         {
             var th = new List<StThreat>();
-            foreach (var (name, t) in threats) { th.Add(new StThreat { At = t.At, Margin = m < 0 ? t.Margin : m, Stationary = t.Stationary }); }
+            foreach (var (name, t) in threats) { th.Add(new StThreat { At = t.At, Margin = m < 0 ? t.Margin : m, Stationary = t.Stationary, HurtsInAir = t.HurtsInAir }); }
             var sw = Stopwatch.StartNew();
-            int a = SpaceTime.Plan(player, goal, th, room.Walkable, horizon, maxNodes: 20000, weight: W);
+            int a = SpaceTime.Plan(player, goal, th, room.Walkable, horizon, maxNodes: 20000, weight: W, airOk: airOk);
+            int a7 = SpaceTime.Plan(player, goal, th, room.Walkable, horizon, maxNodes: 700, weight: 2.5f, airOk: airOk);
+            int sv = SpaceTime.Plan(player, goal, th, room.Walkable, horizon, maxNodes: 700, weight: 2.5f, survive: true, airOk: airOk);
+            Console.WriteLine($"  (as the bot runs it: 700 nodes -> {a7}, survive -> {sv}; jumps {(airOk != null ? "on" : "off")})");
             Console.WriteLine($"  margin {(m < 0 ? "as recorded" : m.ToString())}: action {a} ({sw.Elapsed.TotalMilliseconds:0.0} ms, {SpaceTime.Nodes} nodes)");
+        }
+        if (Environment.GetEnvironmentVariable("PT_JUMPS") != null && airOk != null)
+        {
+            // each jump from the start: where (if anywhere) it fails
+            var th0 = threats.ConvertAll(t => t.t);
+            for (int j = 0; j < SpaceTime.Jumps.Length; j++)
+            {
+                var (jx, jy) = SpaceTime.Jumps[j];
+                float x = player.X, y = player.Y;
+                string why = "ok";
+                for (int f = 1; f <= 28 && why == "ok"; f++)
+                {
+                    if (f <= SpaceTime.JumpHold[j]) { x += jx * SpaceTime.Walk * 0.83f; y += jy * SpaceTime.Walk * 0.83f; }
+                    var mine = new Rectangle((int)x, (int)y, player.Width, player.Height);
+                    bool landing = f >= 26;
+                    if (!airOk(mine)) { why = $"f{f} wall {mine}"; break; }
+                    if (landing && !room.Walkable(mine)) { why = $"f{f} lands off floor {mine}"; break; }
+                    for (int q = 0; q < th0.Count; q++)
+                    {
+                        var t = th0[q];
+                        if (!landing && !t.HurtsInAir) { continue; }
+                        if (t.At[Math.Min(f, horizon)] is Rectangle r) { r.Inflate(t.Margin, t.Margin); if (mine.Intersects(r)) { why = $"f{f} hits {threats[q].name} {r} me {mine}"; break; } }
+                    }
+                }
+                Console.WriteLine($"  jump {j} ({jx},{jy}) hold {SpaceTime.JumpHold[j]}: {why} -> lands {x:0},{y:0}");
+            }
         }
         // Is the player already inside a danger (so nothing can save them)?
         for (int f = 1; f <= 6; f++)

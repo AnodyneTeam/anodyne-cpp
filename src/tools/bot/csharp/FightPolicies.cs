@@ -1,5 +1,6 @@
-using Microsoft.Xna.Framework;
+﻿using Microsoft.Xna.Framework;
 using System;
+using System.Linq;
 
 namespace AnodyneSharp.Recording
 {
@@ -14,6 +15,7 @@ namespace AnodyneSharp.Recording
         public bool Swinging;        // the broom is out (a swing in progress: pressing Accept now does nothing)
         public Rectangle T;          // target hitbox
         public Vector2 TV;           // target velocity (px/s)
+        public bool Fast;            // a bullet Slime (twice a Slime's speed)
         public Func<Rectangle, bool> Walk = _ => true; // is this player-sized rectangle on floor?
         public Func<Rectangle, bool> Hazard = _ => false; // is this player-sized rectangle in a beam lane (or otherwise a place not to loiter)?
         public System.Collections.Generic.IList<Rectangle> Others = new Rectangle[0]; // the other living enemies on the screen
@@ -347,9 +349,48 @@ namespace AnodyneSharp.Recording
         /// A slime drifts at under 10px/s and hurts on contact (its goo is harmless): line up on the broom's axis, stop with a gap and swing
         /// from there; back off if it drifts into reach.
         /// </summary>
-        public static PKey[] Slime(PCtx c, PolicyMem m)
+        public static PKey[] Slime(PCtx c, PolicyMem m) => OffOthers(c, SlimeKeys(c, m));
+
+        /// <summary>
+        /// Drops the steps of a plan for one enemy that would walk us into another (dealing with one Slime in a tight room is no
+        /// reason to brush the one resting beside it). Facing and swinging stay.
+        /// </summary>
+        private static PKey[] OffOthers(PCtx c, PKey[] keys)
+        {
+            if (keys == null || c.Others.Count == 0)
+            {
+                return keys;
+            }
+            return keys.Where(k =>
+            {
+                if (k == PKey.Accept)
+                {
+                    return true;
+                }
+                float v = 70f / 60f * 4;
+                var r = c.P;
+                r.Offset(k == PKey.Left ? (int)-v : k == PKey.Right ? (int)v : 0, k == PKey.Up ? (int)-v : k == PKey.Down ? (int)v : 0);
+                foreach (var o in c.Others)
+                {
+                    var oi = o;
+                    oi.Inflate(1, 1);
+                    if (r.Intersects(oi) && !c.P.Intersects(oi))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }).ToArray();
+        }
+
+        private static PKey[] SlimeKeys(PCtx c, PolicyMem m)
         {
             var sb = c.T;
+            if (c.Fast)
+            {
+                // A bullet Slime moves twice as fast: deal with where it will be in a few frames (its touch comes before we react otherwise).
+                sb.Offset((int)Math.Round(c.TV.X * 0.15f), (int)Math.Round(c.TV.Y * 0.15f));
+            }
             var pb = c.P;
             float dx = sb.Center.X - pb.Center.X, dy = sb.Center.Y - pb.Center.Y;
             int gx = Math.Max(sb.Left - pb.Right, pb.Left - sb.Right);
@@ -379,7 +420,7 @@ namespace AnodyneSharp.Recording
             }
             bool horiz = Math.Abs(dx) >= Math.Abs(dy);
             float along = horiz ? dx : dy, across = horiz ? dy : dx;
-            float gap = Math.Abs(along) - (horiz ? 13 : 14);
+            float gap = horiz ? gx : gy; // (edge to edge: a Gas Guy is 24px tall, not a Slime's 16)
             var face = horiz ? (dx < 0 ? PKey.Left : PKey.Right) : (dy < 0 ? PKey.Up : PKey.Down);
             var away = horiz ? (dx < 0 ? PKey.Right : PKey.Left) : (dy < 0 ? PKey.Down : PKey.Up);
             var side = horiz ? (dy < 0 ? PKey.Up : PKey.Down) : (dx < 0 ? PKey.Left : PKey.Right);
