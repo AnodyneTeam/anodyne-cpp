@@ -59,6 +59,14 @@ namespace AnodyneSharp.Recording
         public static bool ExpectDeath;
         /// <summary>Deaths the route asked for: sections count only the others.</summary>
         public static int ExpectedDeaths;
+        /// <summary>
+        /// A death is not the end of the run (default; ANODYNE_BOT_DEATH_FAILS=1 makes it fatal again): pick Continue on the death screen and
+        /// the respawn restarts the innermost Section, from the checkpoint it set as it started. Hearts not won back are then only logged.
+        /// A section that dies MaxSectionDeaths times is fatal.
+        /// </summary>
+        public static readonly bool RecoverDeaths = Environment.GetEnvironmentVariable("ANODYNE_BOT_DEATH_FAILS") == null;
+        public const int MaxSectionDeaths = 3;
+        private static int _deathMenuFrames;
 
         /// <summary>Dev: ANODYNE_BOT_STOP_BEFORE=<section name> abandons the route when that section is about to start and runs ANODYNE_BOT_KEYS instead.</summary>
         public static readonly string StopBefore = Environment.GetEnvironmentVariable("ANODYNE_BOT_STOP_BEFORE");
@@ -358,7 +366,7 @@ namespace AnodyneSharp.Recording
                 _lastDeaths = Deaths;
                 DebtBaseline = -1;
             }
-            else if (Deaths != _lastDeaths)
+            else if (Deaths != _lastDeaths && !RecoverDeaths)
             {
                 why = "game over (died)";
             }
@@ -384,6 +392,11 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  hit f{_botFrame}: HP {_hpSeen}->{hp}, back to {DebtBaseline} by f{_debtSince + RecoverFrames} or it is fatal ({Status}) by {GlobalState.DamageDealer} at {Player.Hitbox}" +
                         (GlobalState.DamageDealer == "Frog bullet" ? " bullets: " + string.Join(" ", Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).Select(e => $"{e.Hitbox} o{e.offset.Y:0} v{e.velocity.Length():0}")) : ""));
                 }
+                else if (hp == 0 && RecoverDeaths)
+                {
+                    System.Console.Error.WriteLine($"  DIED f{_botFrame}: HP {_hpSeen}->0 by {GlobalState.DamageDealer} at {Player.Hitbox} ({Status}): continuing from the section's checkpoint");
+                    DebtBaseline = -1;
+                }
                 else
                 {
                     why = $"took damage (HP {_hpSeen}->{hp})";
@@ -407,6 +420,12 @@ namespace AnodyneSharp.Recording
                         // A heart or two that never dropped: a small, documented allowance per part (resets at the start of every part).
                         ChipLeft -= missing;
                         System.Console.Error.WriteLine($"  chip damage accepted at f{_botFrame}: {missing} heart(s) not won back (allowance left {ChipLeft}) ({Status})");
+                        DebtBaseline = -1;
+                    }
+                    else if (RecoverDeaths)
+                    {
+                        // (a death is no longer the end of the run, so hearts let go are only worth a line)
+                        System.Console.Error.WriteLine($"  hearts not won back at f{_botFrame}: HP {DebtBaseline}->{hp}, chip allowance {ChipLeft} ({Status})");
                         DebtBaseline = -1;
                     }
                     else
@@ -551,6 +570,15 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            if (InDeathMenu && !ExpectDeath && RecoverDeaths)
+            {
+                // The "Continue?" menu: Up picks Yes, Accept confirms (it takes a few seconds to take keys).
+                NotStuck();
+                _deathMenuFrames++;
+                held = _deathMenuFrames % 60 == 20 ? new[] { KeyFunctions.Up } : _deathMenuFrames >= 200 && _deathMenuFrames % 60 == 35 ? new[] { KeyFunctions.Accept } : Array.Empty<KeyFunctions>();
+                goto keysReady;
+            }
+            _deathMenuFrames = 0;
             while (_stack.Count > 0)
             {
                 var top = _stack.Peek();
@@ -628,6 +656,7 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"  guarded f{Frame} [{string.Join("+", held)}]");
             }
+        keysReady:
             LastHeld = held;
             if (Player != null && Player.reversed)
             {
@@ -709,6 +738,7 @@ namespace AnodyneSharp.Recording
         private IEnumerator<object> _inner;
         private int _deathsAtStart;
         private int _tries;
+        private int _deaths;
 
         private readonly Func<IEnumerable<object>> _prereq;
 
@@ -781,6 +811,11 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine("secsave failed: " + e.Message);
                 }
             }
+            else if (_inner == null && BotRunner.RecoverDeaths && BotRunner.Player != null)
+            {
+                // (the respawn after a death puts us back here, where the section's steps start from)
+                GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+            }
             if (_inner == null && BotRunner.StopBefore == _name)
             {
                 BotRunner.JumpToKeys = true;
@@ -792,6 +827,10 @@ namespace AnodyneSharp.Recording
                 if (_inner != null && ++_tries > 40)
                 {
                     throw new BotFatalException($"bot: section '{_name}' failed {_tries} times");
+                }
+                if (_inner != null && BotRunner.Deaths - BotRunner.ExpectedDeaths != _deathsAtStart && ++_deaths >= BotRunner.MaxSectionDeaths)
+                {
+                    throw new BotFatalException($"bot: died {_deaths} times in section '{_name}'");
                 }
                 _failed = false;
                 _deathsAtStart = BotRunner.Deaths - BotRunner.ExpectedDeaths;
@@ -2862,7 +2901,9 @@ namespace AnodyneSharp.Recording
     {
         public override IEnumerable<object> Run()
         {
-            yield return Exec(Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS") ?? "");
+            // (ANODYNE_BOT_KEYS_SECTION=1: as a Section, so a death restarts the keys from the respawn, as in a route)
+            string keys = Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS") ?? "";
+            yield return Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS_SECTION") != null ? Section("keys", () => Exec(keys)) : Exec(keys);
             yield return Wait(30);
         }
     }
@@ -2880,7 +2921,8 @@ namespace AnodyneSharp.Recording
             {
                 yield return StartToNexus.Boot();
             }
-            yield return Exec(Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS") ?? "");
+            string keys = Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS") ?? "";
+            yield return Environment.GetEnvironmentVariable("ANODYNE_BOT_KEYS_SECTION") != null ? Section("keys", () => Exec(keys)) : Exec(keys);
             yield return Wait(30);
         }
     }
