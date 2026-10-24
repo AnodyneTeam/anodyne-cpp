@@ -124,6 +124,25 @@ namespace AnodyneSharp.Recording
                     yield return RollerHops(tiles, pick, tail, rk);
                     continue;
                 }
+                if (tok == "menutour")
+                {
+                    // menutour: the pause menu's pages no route opens (items' texts, cards, save, config and its sub-menus), every change put back
+                    yield return MenuTour();
+                    continue;
+                }
+                if (tok == "title")
+                {
+                    // title: save, out to the title and the file menu (a look round it), and load the game again
+                    yield return TitleAndBack();
+                    continue;
+                }
+                if (tok == "cheats")
+                {
+                    // cheats: the cheats line under the last page: every code (each toggle twice, so it ends as it began), then wrong codes
+                    // (2 hearts each) down to the death screen and on from the checkpoint
+                    yield return CheatsAndDeath();
+                    continue;
+                }
                 if (tok == "steamgap")
                 {
                     // steamgap: wait for this screen's On-Off steam jets to switch off (they all start together as the screen loads): then
@@ -7111,6 +7130,286 @@ namespace AnodyneSharp.Recording
             MenuKeys = true;
             yield return MenuEquipBroomPresses(k);
             MenuKeys = false;
+        }
+
+        private static readonly System.Reflection.FieldInfo ChildStatesField =
+            typeof(AnodyneSharp.States.PlayState).GetField("_childStates", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo PauseInSubField =
+            typeof(AnodyneSharp.States.PauseState).GetField("_inSubstate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo PauseSubField =
+            typeof(AnodyneSharp.States.PauseState).GetField("_substate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo PausePageField =
+            typeof(AnodyneSharp.States.PauseState).GetField("_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        private static readonly System.Reflection.PropertyInfo InDialogueModeProp =
+            typeof(AnodyneSharp.States.MenuSubstates.DialogueSubstate).GetProperty("InDialogueMode", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        /// <summary>The open pause menu, if any (the play state's child states hang off the delegate it hands out for adding them).</summary>
+        private static AnodyneSharp.States.PauseState OpenPause()
+        {
+            var ps = GlobalState.SetSubstate?.Target as AnodyneSharp.States.PlayState;
+            return ps == null ? null : (ChildStatesField.GetValue(ps) as List<AnodyneSharp.States.State>)?.OfType<AnodyneSharp.States.PauseState>().FirstOrDefault();
+        }
+
+        private static bool InPausePage => OpenPause() is { } p && (bool)PauseInSubField.GetValue(p);
+
+        /// <summary>Menu taps, n of them, a few frames apart (the menus act on a fresh press).</summary>
+        private static IEnumerable<object> MenuTaps(KeyFunctions k, int n = 1, int gap = 6)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                BotRunner.NotStuck();
+                yield return Tap(k);
+                yield return Wait(gap);
+            }
+        }
+
+        /// <summary>Accept through the text a menu page shows (an item's or a card's), until it is gone.</summary>
+        private static IEnumerable<object> MenuReadText()
+        {
+            for (int i = 0; i < 60; i++)
+            {
+                var sub = OpenPause() is { } p ? PauseSubField.GetValue(p) : null;
+                if (sub is not AnodyneSharp.States.MenuSubstates.DialogueSubstate ds || !(bool)InDialogueModeProp.GetValue(ds))
+                {
+                    yield break;
+                }
+                yield return MenuTaps(KeyFunctions.Accept, 1, 8);
+            }
+        }
+
+        /// <summary>Opens the pause menu on page `page` (0 map, 1 items, 2 cards, 3 save, 4 config), or null when it did not open.</summary>
+        private static IEnumerable<object> PauseOnPage(int page)
+        {
+            yield return Until(() => !GlobalState.ScreenTransition && !BotRunner.PlayBusy, 600, "settled for the menu");
+            for (int i = 0; i < 5 && OpenPause() == null; i++)
+            {
+                yield return Tap(KeyFunctions.Pause);
+                yield return Wait(20);
+                System.Console.Error.WriteLine($"  pause tap {i}: open {OpenPause() != null} busy '{BotRunner.PlayBusyName}'");
+            }
+            if (OpenPause() == null)
+            {
+                throw new InvalidOperationException($"bot: the pause menu did not open (busy '{BotRunner.PlayBusyName}', menu off {GlobalState.disable_menu}, map {GlobalState.CURRENT_MAP_NAME})");
+            }
+            yield return MenuTaps(KeyFunctions.Up, 8, 4);
+            yield return MenuTaps(KeyFunctions.Down, page, 4);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+        }
+
+        /// <summary>Leaves a page (Cancel until back on the page list: Cancel there would close the menu, which ClosePause does).</summary>
+        private static IEnumerable<object> LeavePage()
+        {
+            for (int i = 0; i < 10 && InPausePage; i++)
+            {
+                yield return MenuReadText();
+                yield return MenuTaps(KeyFunctions.Cancel, 1, 10);
+            }
+        }
+
+        private static IEnumerable<object> ClosePause()
+        {
+            yield return LeavePage();
+            if (OpenPause() != null)
+            {
+                yield return MenuTaps(KeyFunctions.Pause, 1, 20);
+            }
+            yield return Until(() => OpenPause() == null, 120, "pause menu shut");
+        }
+
+        /// <summary>
+        /// The pause menu's pages a route never opens: each item's text, every card page and a card's text, the save page (quick save,
+        /// save), config (the controls pages, both volumes, the gameplay and graphics settings, each changed and then put back).
+        /// </summary>
+        protected static IEnumerable<object> MenuTour()
+        {
+            MenuKeys = true;
+            var broom = GlobalState.inventory.EquippedBroom;
+            // Items: each broom equipped in turn (then the one we had again), the bottom row's things each say what they are.
+            yield return PauseOnPage(1);
+            for (int i = 0; i < 4; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept);
+                yield return MenuTaps(KeyFunctions.Down);
+            }
+            yield return MenuTaps(KeyFunctions.Up, 4);
+            int had = broom switch { AnodyneSharp.Entities.BroomType.Long => 1, AnodyneSharp.Entities.BroomType.Wide => 2, AnodyneSharp.Entities.BroomType.Transformer => 3, _ => 0 };
+            yield return MenuTaps(KeyFunctions.Down, had);
+            yield return MenuTaps(KeyFunctions.Accept);
+            yield return MenuTaps(KeyFunctions.Down, 4 - had);
+            for (int i = 0; i < 5; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+                yield return MenuReadText();
+                yield return MenuTaps(KeyFunctions.Right);
+            }
+            yield return MenuTaps(KeyFunctions.Up, 2);
+            yield return LeavePage();
+            // Cards: along the top row through all four pages, a card's text, down to the page arrows and back, the page keys.
+            yield return MenuTaps(KeyFunctions.Down, 1, 4);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuReadText();
+            yield return MenuTaps(KeyFunctions.Right, 11);
+            yield return MenuTaps(KeyFunctions.Down, 4);
+            yield return MenuTaps(KeyFunctions.Left, 2);
+            yield return MenuTaps(KeyFunctions.Up);
+            yield return MenuTaps(KeyFunctions.NextPage, 2);
+            yield return MenuTaps(KeyFunctions.PreviousPage, 3);
+            yield return MenuTaps(KeyFunctions.Left, 1);
+            yield return LeavePage();
+            // Save: quick save, then save (the lines below it go to the title or quit).
+            yield return MenuTaps(KeyFunctions.Down, 1, 4);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Down, 2);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Down, 5);
+            yield return MenuTaps(KeyFunctions.Up, 5);
+            yield return LeavePage();
+            // Config: controls (look through its pages, no rebinding), the volumes one step and back, the sub-menus' settings each
+            // changed and put back.
+            yield return MenuTaps(KeyFunctions.Down, 1, 4);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Right, 3);
+            yield return MenuTaps(KeyFunctions.Down, 3);
+            yield return MenuTaps(KeyFunctions.Up, 3);
+            yield return MenuTaps(KeyFunctions.Left, 3);
+            yield return MenuTaps(KeyFunctions.Cancel, 1, 10);
+            for (int v = 0; v < 2; v++)
+            {
+                yield return MenuTaps(KeyFunctions.Down);
+                yield return MenuTaps(KeyFunctions.Accept);
+                yield return MenuTaps(KeyFunctions.Left);
+                yield return MenuTaps(KeyFunctions.Right);
+                yield return MenuTaps(KeyFunctions.Accept);
+                yield return MenuTaps(KeyFunctions.Accept);
+                yield return MenuTaps(KeyFunctions.Right);
+                yield return MenuTaps(KeyFunctions.Cancel);
+            }
+            // gameplay: every checkbox twice; graphics: every selector one step and Cancel (it puts the value back), the flash test,
+            // the screen-shake box twice
+            yield return MenuTaps(KeyFunctions.Down);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            for (int i = 0; i < 6; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept, 2);
+                yield return MenuTaps(KeyFunctions.Down);
+            }
+            yield return MenuTaps(KeyFunctions.Cancel, 1, 10);
+            yield return MenuTaps(KeyFunctions.Down);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            for (int i = 0; i < 5; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept);
+                yield return MenuTaps(KeyFunctions.Right);
+                yield return MenuTaps(KeyFunctions.Cancel);
+                yield return MenuTaps(KeyFunctions.Down);
+            }
+            yield return MenuTaps(KeyFunctions.Accept, 1, 30);
+            yield return MenuTaps(KeyFunctions.Down);
+            yield return MenuTaps(KeyFunctions.Accept, 2);
+            yield return MenuTaps(KeyFunctions.Cancel, 1, 10);
+            yield return MenuTaps(KeyFunctions.Up, 6);
+            yield return LeavePage();
+            yield return ClosePause();
+            MenuKeys = false;
+            if (GlobalState.inventory.EquippedBroom != broom)
+            {
+                throw new InvalidOperationException($"bot: the menu tour left {GlobalState.inventory.EquippedBroom} equipped, not {broom}");
+            }
+            System.Console.Error.WriteLine($"menu tour done: music {GlobalState.settings.music_volume_scale} sfx {GlobalState.settings.sfx_volume_scale} autosave {GlobalState.settings.autosave_on} invincible {GlobalState.settings.invincible} scale {GlobalState.settings.scale} res {GlobalState.settings.resolution} fps {GlobalState.settings.fps}");
+        }
+
+        /// <summary>
+        /// Save and back to the title (the save page's fourth line), into the file menu: a look at every slot and at config there, the
+        /// file's own lines (new game, answered No; copy, to another slot), then load the game again and play on from the save.
+        /// </summary>
+        protected static IEnumerable<object> TitleAndBack()
+        {
+            MenuKeys = true;
+            int slot = int.TryParse(GlobalState.CurrentSaveGame, out int sv) ? sv - 1 : 0;
+            yield return PauseOnPage(3);
+            yield return MenuTaps(KeyFunctions.Down, 3);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 30);
+            static AnodyneSharp.States.State Cur() => (GlobalState.GameState as AnodyneSharp.AnodyneGame)?.CurrentState;
+            yield return Until(() => Cur() is AnodyneSharp.States.MainMenu.TitleState, 600, "the title");
+            for (int i = 0; i < 60 && Cur() is not AnodyneSharp.States.MainMenu.MainMenuState; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept, 1, 30);
+            }
+            if (Cur() is not AnodyneSharp.States.MainMenu.MainMenuState)
+            {
+                throw new InvalidOperationException("bot: the title never went on to the file menu");
+            }
+            yield return Wait(30);
+            yield return MenuTaps(KeyFunctions.Up, 4, 8);
+            yield return MenuTaps(KeyFunctions.Down, 3, 8);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Down, 2);
+            yield return MenuTaps(KeyFunctions.Cancel, 1, 10);
+            yield return MenuTaps(KeyFunctions.Up, 3 - slot, 8);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            // new game? No (the default); copy to the next slot along, then out of the copy list
+            yield return MenuTaps(KeyFunctions.Down);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Down);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 20);
+            yield return MenuTaps(KeyFunctions.Up);
+            yield return MenuTaps(KeyFunctions.Accept, 1, 20);
+            yield return MenuTaps(KeyFunctions.Cancel, 1, 20);
+            yield return MenuTaps(KeyFunctions.Up, 3);
+            System.Console.Error.WriteLine($"file menu: back on slot {slot + 1}, {Cur()?.GetType().Name}");
+            yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+            yield return Until(() => Cur() is AnodyneSharp.States.PlayState && BotRunner.Player != null && BotRunner.Player.exists && !BotRunner.PlayBusy && !GlobalState.ScreenTransition, 1200, "the game loaded again");
+            MenuKeys = false;
+            yield return Wait(60);
+            System.Console.Error.WriteLine($"loaded again: {GlobalState.CURRENT_MAP_NAME} {Pos} hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} cards {GlobalState.inventory.CardCount}");
+        }
+
+        /// <summary>
+        /// The cheats line (Down past the last page, 20 times): every code there is, each toggle twice so the game ends as it began (the
+        /// Konami code's hearts and items stay), then a wrong code (2 hearts) until the hearts run out: the death screen, Yes, and back
+        /// from the checkpoint.
+        /// </summary>
+        protected static IEnumerable<object> CheatsAndDeath()
+        {
+            MenuKeys = true;
+            yield return PauseOnPage(0);
+            yield return LeavePage();
+            yield return MenuTaps(KeyFunctions.Down, 30, 4);
+            var codes = new List<string> { "LRLR121212", "LRLR121212", "URLDURLD11", "URLDURLD11", "URDLURDLUR", "URDLURDLUR", "ULDRULDRUL", "ULDRULDRUL",
+                "UDUD121212", "12UULLRRDD", "UUDDLRLR21" };
+            foreach (var code in codes)
+            {
+                yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+                foreach (char c in code)
+                {
+                    yield return MenuTaps(c switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, 'R' => KeyFunctions.Right, '1' => KeyFunctions.Accept, _ => KeyFunctions.Cancel }, 1, 4);
+                }
+                yield return Wait(10);
+            }
+            System.Console.Error.WriteLine($"cheats done: hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} mode {GlobalState.GameMode} cell {GlobalState.AlwaysCellGraphics} fuckit {GlobalState.FUCK_IT_MODE_ON}");
+            BotRunner.ExpectDeath = true;
+            int deaths = BotRunner.Deaths;
+            for (int i = 0; i < 20 && OpenPause() != null; i++)
+            {
+                yield return MenuTaps(KeyFunctions.Accept, 1, 10);
+                yield return MenuTaps(KeyFunctions.Down, 10, 4);
+                yield return Wait(10);
+            }
+            MenuKeys = false;
+            yield return Until(() => BotRunner.InDeathMenu, 600, "death screen");
+            yield return Wait(200);
+            yield return Tap(KeyFunctions.Up);
+            yield return Wait(10);
+            yield return Tap(KeyFunctions.Accept);
+            yield return Until(() => BotRunner.Deaths != deaths && !BotRunner.PlayBusy && !GlobalState.ScreenTransition, 900, "back from the death screen");
+            yield return Wait(60);
+            BotRunner.ExpectDeath = false;
+            System.Console.Error.WriteLine($"died and back: {GlobalState.CURRENT_MAP_NAME} hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}");
         }
 
         private static IEnumerable<object> MenuEquipBroomPresses(int k)

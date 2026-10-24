@@ -421,6 +421,18 @@ namespace AnodyneSharp.Recording
     /// After the credits (a save that has seen them, so the swap broom works almost anywhere): the cards behind walls the swap digs
     /// through (token dig).
     /// </summary>
+    /// <summary>After all 49 cards: the bits of the game a route never needs (the menus' pages, the cheats, the death screen, the side talks).</summary>
+    public class Extras : BotScript
+    {
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Extras: menus, cheats, the death screen");
+            yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
+            yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
+            yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
+        }
+    }
+
     public class Postgame : BotScript
     {
         public override IEnumerable<object> Run()

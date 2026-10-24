@@ -54,6 +54,10 @@ namespace AnodyneSharp.Recording
 
         /// <summary>How many times the player has died (the respawn restarts the innermost Section).</summary>
         public static int Deaths;
+        /// <summary>A death the route asks for (the death screen, from the cheats menu's wrong codes): no failure, no section restart.</summary>
+        public static bool ExpectDeath;
+        /// <summary>Deaths the route asked for: sections count only the others.</summary>
+        public static int ExpectedDeaths;
 
         /// <summary>Dev: ANODYNE_BOT_STOP_BEFORE=<section name> abandons the route when that section is about to start and runs ANODYNE_BOT_KEYS instead.</summary>
         public static readonly string StopBefore = Environment.GetEnvironmentVariable("ANODYNE_BOT_STOP_BEFORE");
@@ -347,7 +351,13 @@ namespace AnodyneSharp.Recording
                 }
             }
             string why = null;
-            if (Deaths != _lastDeaths)
+            if (ExpectDeath)
+            {
+                ExpectedDeaths += Deaths - _lastDeaths;
+                _lastDeaths = Deaths;
+                DebtBaseline = -1;
+            }
+            else if (Deaths != _lastDeaths)
             {
                 why = "game over (died)";
             }
@@ -776,14 +786,14 @@ namespace AnodyneSharp.Recording
                 Current = Array.Empty<KeyFunctions>();
                 return true;
             }
-            if (_inner == null || _failed || BotRunner.Deaths != _deathsAtStart)
+            if (_inner == null || _failed || BotRunner.Deaths - BotRunner.ExpectedDeaths != _deathsAtStart)
             {
                 if (_inner != null && ++_tries > 40)
                 {
                     throw new BotFatalException($"bot: section '{_name}' failed {_tries} times");
                 }
                 _failed = false;
-                _deathsAtStart = BotRunner.Deaths;
+                _deathsAtStart = BotRunner.Deaths - BotRunner.ExpectedDeaths;
                 _inner = Restart().GetEnumerator();
             }
             if (!_inner.MoveNext())
@@ -2758,7 +2768,7 @@ namespace AnodyneSharp.Recording
     public static class BotScripts
     {
         /// <summary>The route in order; every part starts where the previous one ended.</summary>
-        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards", "circus", "circusb", "circus2", "circus3", "cards2", "endgame", "postgame" };
+        public static readonly string[] PartNames = { "nexus", "roadway", "overworld1", "temple", "temple1", "forest2", "fields", "beach", "beach2", "beach3", "redsea", "redcave", "redcave2", "redcave3", "redcave4", "cliff", "crowd", "windmill", "temple2", "suburb", "apartment", "hotel", "hotel2", "hotel3", "hotel4", "hotel5", "hotel6", "cards", "circus", "circusb", "circus2", "circus3", "cards2", "endgame", "postgame", "extras" };
 
         private static BotScript Part(string name) => name switch
         {
@@ -2797,6 +2807,7 @@ namespace AnodyneSharp.Recording
             "cards2" => new Cards2(),
             "endgame" => new Endgame(),
             "postgame" => new Postgame(),
+            "extras" => new Extras(),
             _ => throw new ArgumentException(name)
         };
 
