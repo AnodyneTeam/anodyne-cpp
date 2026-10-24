@@ -5,6 +5,7 @@ using AnodyneSharp.Registry;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AnodyneSharp.Recording
 {
@@ -46,12 +47,20 @@ namespace AnodyneSharp.Recording
 
         // Gates are entities laid over the tile data: an opened one is passable even if the tile beneath says wall,
         // a closed one blocks even if the tile says floor. Refreshed at the start of every search.
-        private static HashSet<Point> _gatesOpen = new(), _gatesClosed = new();
+        private static HashSet<Point> _gatesOpen = new(), _gatesClosed = new(), _edgeGates = new();
+        // (keyblocks we hold no key for: no route assumes they open on arrival, as a puzzle gate might)
+        private static HashSet<Point> _keyLocked = new();
 
         private static void RefreshGates()
         {
             _gatesOpen = new HashSet<Point>();
             _gatesClosed = new HashSet<Point>();
+            _edgeGates = new HashSet<Point>();
+            _keyLocked = new HashSet<Point>();
+            // (only the blocks still shut: an opened one stayed in here and KeyLimited, with no key left, then shut it for good)
+            _keyBlocks.Clear();
+            // A key block with a key in hand is a door we open on the way (the walker does, on reaching it): plan through it.
+            bool haveKey = GlobalState.inventory.GetCurrentMapKeys() > 0;
             foreach (var e in BotRunner.Entities())
             {
                 if (!e.exists || !e.GetType().Name.EndsWith("Gate"))
@@ -59,6 +68,24 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var t = new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16);
+                if (e is AnodyneSharp.Entities.Gadget.BigCardGate cg)
+                {
+                    // A card gate (two tiles wide) with enough cards in hand: the walker opens it on the way.
+                    var set = cg.Solid && GlobalState.inventory.CardCount < cg._preset.Frame ? _gatesClosed : _gatesOpen;
+                    set.Add(t);
+                    set.Add(new Point(t.X + 1, t.Y));
+                    continue;
+                }
+                if (haveKey && e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
+                {
+                    _keyBlocks.Add(t);
+                    (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
+                    continue;
+                }
+                if (e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
+                {
+                    _keyLocked.Add(t);
+                }
                 (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
@@ -70,13 +97,170 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                if (haveKey && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
+                {
+                    _keyBlocks.Add(t);
+                    (_keyDenied.Contains(t) ? _gatesClosed : _gatesOpen).Add(t);
+                    continue;
+                }
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
+                {
+                    _keyLocked.Add(t);
+                }
+                // A gate on the edge of another screen: entering that screen over the gate holds it open, so it is passable stepping in
+                // across the edge (Steps keeps it shut from inside its own screen).
+                int lx = t.X % 10, ly = t.Y % 10;
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Gate) && (lx == 0 || lx == 9 || ly == 0 || ly == 9))
+                {
+                    _gatesOpen.Add(t);
+                    _edgeGates.Add(t);
+                    continue;
+                }
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.BigCardGate) && GlobalState.inventory.CardCount >= pr.Frame)
+                {
+                    _gatesOpen.Add(t);
+                    _gatesOpen.Add(new Point(t.X + 1, t.Y));
+                    continue;
+                }
                 _gatesClosed.Add(t);
                 if (pr.Type.Name.StartsWith("Big"))
                 {
                     _gatesClosed.Add(new Point(t.X + 1, t.Y));
                 }
             }
+            RefreshKillGates();
         }
+
+        // Shut kill gates (Gate, preset frame 0-4 / 10-14: open once more than frame%5 of their screen's enemies are dead) and the tiles
+        // beside them they can be opened from: only enemies we can get at count, so a gate with its enemies all on its far side is a
+        // one-way wall from this side, even for the searches that assume shut gates open on arrival.
+        private static Dictionary<Point, HashSet<Point>> _killGateEntries = new();
+
+        private static void RefreshKillGates()
+        {
+            _killGateEntries = new Dictionary<Point, HashSet<Point>>();
+            var grid = GlobalState.CurrentMapGrid;
+            var presets = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME);
+            foreach (var pr in presets)
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.Gate) || !pr.Alive)
+                {
+                    continue;
+                }
+                var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                int needKills = pr.Frame % 5 + 1;
+                if (pr.Frame % 10 >= 5)
+                {
+                    // A puzzle gate opens on kills too where the puzzle is someone waiting for the room to be cleared: Javiera, on the
+                    // high wire, crosses over (and counts as solved) once two of the room's enemies are dead.
+                    var scr = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
+                    if (pr.Frame % 5 != 0 || !presets.Any(q => q.Alive && q.Type == typeof(AnodyneSharp.Entities.Interactive.Npc.Circus.JavieraDanger)
+                        && scr.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16))))
+                    {
+                        continue;
+                    }
+                    needKills = 2;
+                }
+                if (!_gatesClosed.Contains(t) && !_edgeGates.Contains(t))
+                {
+                    continue;
+                }
+                var screen = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
+                bool here = screen.X / 10 == grid.X && screen.Y / 10 == grid.Y;
+                // The enemies of that screen still to kill: the live ones when it is loaded, else the presets.
+                var foes = here
+                    // (clamped into the screen: an Annoyer whose swoop ran into the edge sits parked a few pixels past it, still to kill)
+                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToVector2()))
+                        .Select(p => new Point(Math.Clamp(p.X, screen.Left, screen.Right - 1), Math.Clamp(p.Y, screen.Top, screen.Bottom - 1))).ToList()
+                    : presets.Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                        .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
+                // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
+                int killed = here ? GlobalState.ENEMIES_KILLED : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+                    && screen.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)));
+                int need = needKills - killed;
+                var entries = new HashSet<Point>();
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var side = new Point(t.X + d.X, t.Y + d.Y);
+                    if (!screen.Contains(side) || _gatesClosed.Contains(side))
+                    {
+                        continue;
+                    }
+                    // Flood this side of the gate (within its screen, other shut gates holding) and count the enemies on it.
+                    var seen = new HashSet<Point> { side };
+                    var q = new Queue<Point>();
+                    q.Enqueue(side);
+                    while (q.Count > 0)
+                    {
+                        var c = q.Dequeue();
+                        foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                        {
+                            var n = new Point(c.X + o.X, c.Y + o.Y);
+                            if (screen.Contains(n) && !_gatesClosed.Contains(n) && !seen.Contains(n) && CurrentMap.GetTileClass(n).Item1 != Touching.ANY)
+                            {
+                                seen.Add(n);
+                                q.Enqueue(n);
+                            }
+                        }
+                    }
+                    // (one over a wall tile at the edge of this side counts for it: an Annoyer parked there is struck from the floor beside it)
+                    if (need <= 0 || foes.Count(f => seen.Contains(f) || (CurrentMap.GetTileClass(f).Item1 == Touching.ANY
+                        && new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => seen.Contains(new Point(f.X + o.X, f.Y + o.Y))))) >= need)
+                    {
+                        entries.Add(side);
+                    }
+                }
+                _killGateEntries[t] = entries;
+            }
+        }
+
+        /// <summary>True when stepping from c onto n would walk into a shut kill gate that cannot be opened from c's side.</summary>
+        public static bool KillGateBarred(Point c, Point n) => !_respectClosedGates && !_noKillBars && _killGateEntries.TryGetValue(n, out var ok) && !ok.Contains(c)
+            && c.X / 10 == n.X / 10 && c.Y / 10 == n.Y / 10; // (coming in over it from the next screen holds it open)
+
+        /// <summary>Set for PillarRoute's last pass: every shut gate counts as open whatever side its enemies are on (to learn which gate is in the way).</summary>
+        private static bool _noKillBars;
+
+        /// <summary>The enemies still alive (by preset) on the screen of the kill gate at t: what has to die for it to open. Tiles.</summary>
+        public static List<Point> KillGateFoes(Point t)
+        {
+            if (!_killGateEntries.ContainsKey(t))
+            {
+                return new List<Point>();
+            }
+            var screen = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
+            return AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                .Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
+                .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
+        }
+
+        /// <summary>Set by the raft planner: a shut kill gate counts as a way through from a side with enough enemies to kill for it.</summary>
+        private static bool _killGatesOk;
+
+        /// <summary>A shut gate that opens on kills, stepped into from c on a side where enough enemies are to kill (and floor or water under it).</summary>
+        private static bool KillGateOpenable(Point c, Point n)
+        {
+            if (!_killGatesOk || !_killGateEntries.TryGetValue(n, out var ok) || !ok.Contains(c))
+            {
+                return false;
+            }
+            bool old = _respectClosedGates;
+            _respectClosedGates = false;
+            bool under = Walkable(n) || IsConveyor(n);
+            _respectClosedGates = old;
+            return under;
+        }
+
+        /// <summary>A gate on this screen that is shut now and opens once enough enemies of the screen are dead.</summary>
+        /// <summary>Whether this screen has a shut gate that opens on kills made here.</summary>
+        public static bool KillGateShutHere()
+        {
+            RefreshGates();
+            var g = GlobalState.CurrentMapGrid;
+            return Enumerable.Range(0, 100).Any(k => IsShutKillGate(new Point(g.X * 10 + k % 10, g.Y * 10 + k / 10)));
+        }
+
+        public static bool IsShutKillGate(Point t) => _gatesClosed.Contains(t) && _killGateEntries.ContainsKey(t) && t.X / 10 == GlobalState.CurrentMapGrid.X && t.Y / 10 == GlobalState.CurrentMapGrid.Y;
 
         /// <summary>BFS step counts over walkable tiles from `from` (stays inside `bounds` if given).</summary>
         public static Dictionary<Point, int> DistMap(Point from, bool allowWater, Rectangle? bounds = null, bool allowJump = false)
@@ -178,6 +362,10 @@ namespace AnodyneSharp.Recording
                         dustTiles.Add(TileOf(e.Position + new Vector2(8, 8)));
                     }
                 }
+                if (BotRunner.Player?.broom.dust != null)
+                {
+                    dustTiles.Add(TileOf(BotRunner.Player.Position)); // the dust in the broom goes wherever the player goes
+                }
             }
             foreach (var dt in dustTiles)
             {
@@ -216,26 +404,236 @@ namespace AnodyneSharp.Recording
         /// </summary>
         public static List<Point> RaftPath(Point from, bool wet, Point goal, bool jump)
         {
+            if (!BotRunner.ProfOn)
+            {
+                return KeyLimited(() => RaftPathCore0(from, wet, goal, jump));
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return KeyLimited(() => RaftPathCore0(from, wet, goal, jump)); } finally { BotRunner.Prof("RaftPath", t0); }
+        }
+
+        // Key blocks a search may not plan through this time (see KeyLimited), and every key block it counted as open.
+        private static readonly HashSet<Point> _keyDenied = new(), _keyBlocks = new();
+        private static int _keyDepth;
+
+        /// <summary>
+        /// A key opens one key block, but the searches take every block as open while a key is in hand: a route through two on one key
+        /// gets as far as the second and stops. Run the search; while its route crosses more blocks than we hold keys, shut the blocks past
+        /// the ones the keys pay for and search again.
+        /// </summary>
+        private static List<Point> KeyLimited(Func<List<Point>> search)
+        {
+            bool outer = _keyDepth++ == 0;
+            try
+            {
+                for (int tries = 0; ; tries++)
+                {
+                    var path = search();
+                    if (path == null || tries >= 4)
+                    {
+                        return path;
+                    }
+                    int keys = GlobalState.inventory.GetCurrentMapKeys();
+                    var crossed = path.Where(t => _keyBlocks.Contains(t)).Distinct().ToList();
+                    if (crossed.Count <= keys)
+                    {
+                        return path;
+                    }
+                    foreach (var t in crossed.Skip(keys))
+                    {
+                        _keyDenied.Add(t);
+                    }
+                }
+            }
+            finally
+            {
+                _keyDepth--;
+                if (outer)
+                {
+                    _keyDenied.Clear();
+                }
+            }
+        }
+
+        public static List<Point> RaftPathCore0(Point from, bool wet, Point goal, bool jump)
+        {
+            var p = RaftPathCore1(from, wet, goal, jump);
+            if (p == null && !_crossCracked)
+            {
+                // Cracked tiles only give way after a second of standing on them: when they are the only way across, run over them.
+                _crossCracked = true;
+                try
+                {
+                    p = RaftPathCore1(from, wet, goal, jump);
+                }
+                finally
+                {
+                    _crossCracked = false;
+                }
+            }
+            if (p == null && jump && !_leaps)
+            {
+                // Stepping stones: jump from island to island when there is no other way.
+                _leaps = true;
+                try
+                {
+                    p = RaftPathCore1(from, wet, goal, jump);
+                }
+                finally
+                {
+                    _leaps = false;
+                }
+            }
+            return p;
+        }
+
+        private static List<Point> RaftPathCore1(Point from, bool wet, Point goal, bool jump)
+        {
+            // Round the dash traps when there is any other way (walking past one in a corridor is a hit more often than not).
+            var traps = new HashSet<Point>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e.GetType().Name is "BounceDashTrap" or "OnSightDashTrap")
+                {
+                    var t = TileOf(e.Position + new Vector2(8, 8));
+                    foreach (var o in new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                    {
+                        var n = new Point(t.X + o.X, t.Y + o.Y);
+                        if (n != from && n != goal)
+                        {
+                            traps.Add(n);
+                        }
+                    }
+                }
+            }
+            // And round what is chasing us (woken Hotel Dustmaids walk the water too): the tiles about them, while there is another way.
+            var chasers = new HashSet<Point>(traps);
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is true)
+                {
+                    var t = TileOf(new Vector2(e.Hitbox.Center.X - HalfW, e.Hitbox.Center.Y - HalfH));
+                    for (int ox = -1; ox <= 1; ox++)
+                    {
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            var n = new Point(t.X + ox, t.Y + oy);
+                            if (n != from && n != goal)
+                            {
+                                chasers.Add(n);
+                            }
+                        }
+                    }
+                }
+            }
+            // And off Four Shooters' lines of fire over the water (their bullets fly over it; a raft can only dodge so far, and the
+            // Fields (6,8) pool's currents all run in towards its two), and from beside Frogs: only when there is no other way does a ride
+            // go through them.
+            var lanes = new HashSet<Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Alive && pr.Type?.Name == "Frog")
+                {
+                    // (and the tiles right beside a Frog: its body snags a raft going by, sat in its spit)
+                    var ft = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    for (int ox = -1; ox <= 1; ox++)
+                    {
+                        for (int oy = -1; oy <= 1; oy++)
+                        {
+                            var n = new Point(ft.X + ox, ft.Y + oy);
+                            if (n != from && n != goal) // (the bank beside one too: the Fields lake's west landing sits by a Frog)
+                            {
+                                lanes.Add(n);
+                            }
+                        }
+                    }
+                }
+                if (pr.Alive && pr.Type?.Name == "Four_Shooter")
+                {
+                    var st = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    // (it fires four ways along the grid, then four along the diagonals)
+                    foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1), new Point(1, 1), new Point(-1, 1), new Point(1, -1), new Point(-1, -1) })
+                    {
+                        for (var n = st + d; n.X / 10 == st.X / 10 && n.Y / 10 == st.Y / 10 && !IsBeamWall(n); n += d)
+                        {
+                            if (IsConveyor(n) && n != from && n != goal)
+                            {
+                                lanes.Add(n);
+                            }
+                        }
+                    }
+                }
+            }
+            RaftUnderFire = false;
+            if (lanes.Count > 0)
+            {
+                lanes.UnionWith(chasers);
+                if (RaftPathCore(from, wet, goal, jump, lanes) is List<Point> clear)
+                {
+                    return clear;
+                }
+                RaftUnderFire = true; // (whatever comes back now, if anything, rides through a line of fire)
+                // Then as few tiles in them as it takes: straight across each line, not along it (the way in rode a Four Shooter's row
+                // right up to it).
+                lanes.ExceptWith(chasers);
+                var crossing = RaftPathCore(from, wet, goal, jump, chasers.Count > traps.Count ? chasers : traps.Count > 0 ? traps : null, lanes);
+                if (crossing != null)
+                {
+                    return crossing;
+                }
+            }
+            return (chasers.Count > traps.Count ? RaftPathCore(from, wet, goal, jump, chasers) : null)
+                ?? (traps.Count > 0 ? RaftPathCore(from, wet, goal, jump, traps) : null) ?? RaftPathCore(from, wet, goal, jump, null);
+        }
+
+        private static List<Point> RaftPathCore(Point from, bool wet, Point goal, bool jump, HashSet<Point> avoid, HashSet<Point> costly = null)
+        {
             RefreshGates();
+            RefreshShooterTiles(); // a Four_Shooter in the river is solid, and rafting into it is sitting in its crossfire
             var haz = Hazards();
+            if (avoid != null)
+            {
+                haz.UnionWith(avoid);
+            }
             bool oldJ = AllowJump, oldW = AllowWater;
             AllowJump = jump;
             AllowWater = false;
+            _killGatesOk = true;
             // State: tile, on a raft, and "the raft we just got off is lying here on this screen" (usable for the next crossing).
             var prev = new Dictionary<(Point, bool, bool), (Point, bool, bool)>();
-            var q = new Queue<(Point, bool, bool)>();
-            var start = (from, wet, false);
+            var dist = new Dictionary<(Point, bool, bool), int>();
+            // Dijkstra: a step is 1, and getting off the raft short of the goal costs 6 more (riding on beats a walk past whatever is on the bank,
+            // and a raft left behind is a raft lost)
+            var q = new PriorityQueue<(Point, bool, bool), int>();
+            var start = (from, wet, !wet && BotRunner.Player?.broom.dust != null); // a dust in the broom is a raft to hand
             prev[start] = start;
-            q.Enqueue(start);
+            dist[start] = 0;
+            q.Enqueue(start, 0);
+            var done = new HashSet<(Point, bool, bool)>();
             Point[] dirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
             (Point, bool, bool)? found = null;
             while (q.Count > 0 && found == null)
             {
-                var (c, w, carry) = q.Dequeue();
-                foreach (var d in dirs)
+                var cur0 = q.Dequeue();
+                if (!done.Add(cur0))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
-                    bool nw = IsConveyor(n) && !(jump && NarrowWater(n));
+                    continue;
+                }
+                var (c, w, carry) = cur0;
+                if (c == goal && cur0 != start)
+                {
+                    found = cur0;
+                    break;
+                }
+                int dc = dist[cur0];
+                var cameFrom = prev[(c, w, carry)].Item1;
+                foreach (var n in Steps(cameFrom, c))
+                {
+                    if (RaftBlocked.Contains((c, n)))
+                    {
+                        continue;
+                    }
+                    bool nw = IsConveyor(n) && !Wade && !(jump && NarrowWater(n) && !(RaftNarrow && w));
                     bool screenChanged = n.X / 10 != c.X / 10 || n.Y / 10 != c.Y / 10;
                     if (n != goal)
                     {
@@ -246,33 +644,32 @@ namespace AnodyneSharp.Recording
                         if (nw)
                         {
                             var (al, _) = CurrentMap.GetTileClass(n);
-                            if (al != Touching.NONE || _gatesClosed.Contains(n) || (!w && !carry && !DustReachableFrom(c)))
+                            if (al != Touching.NONE || (_gatesClosed.Contains(n) && !KillGateOpenable(c, n)) || _shooterTiles.Contains(n) || (!w && !carry && !DustReachableFrom(c)))
                             {
                                 continue;
                             }
                         }
-                        else if (!Walkable(n))
+                        else if (!(Walkable(n) || KillGateOpenable(c, n)) || KillGateBarred(c, n))
                         {
                             continue;
                         }
                     }
                     bool ncarry = nw ? false : (w ? true : (carry && !screenChanged));
                     var key = (n, nw, ncarry);
-                    if (prev.ContainsKey(key))
+                    int nd = dc + 1 + (w && !nw && n != goal ? 6 : 0) + (_gatesClosed.Contains(n) && !_gatesOpen.Contains(n) ? 20 : 0) // (a fight to open it)
+                        + (costly != null && costly.Contains(n) ? 12 : 0);
+                    if (dist.TryGetValue(key, out int old) && old <= nd)
                     {
                         continue;
                     }
+                    dist[key] = nd;
                     prev[key] = (c, w, carry);
-                    if (n == goal)
-                    {
-                        found = key;
-                        break;
-                    }
-                    q.Enqueue(key);
+                    q.Enqueue(key, nd);
                 }
             }
             AllowJump = oldJ;
             AllowWater = oldW;
+            _killGatesOk = false;
             if (found == null)
             {
                 return null;
@@ -288,8 +685,18 @@ namespace AnodyneSharp.Recording
             return path;
         }
 
+        /// <summary>Set by the last raft search: its route (if any) rides through a Four Shooter's line of fire, there being no other.</summary>
+        public static bool RaftUnderFire;
+
+        /// <summary>Raft steps (tile to tile) found impassable while riding, e.g. a screen edge the current keeps pushing back over.</summary>
+        public static readonly HashSet<(Point, Point)> RaftBlocked = new();
+
         /// <summary>Set while riding a dust raft: conveyor (river) tiles count as walkable then.</summary>
         public static bool AllowWater;
+        /// <summary>Water counts as floor (wading: half speed, and Red Cave water drowns you after 3s, so only for short stretches).</summary>
+        public static bool Wade;
+        /// <summary>On a raft, keep rafting along 1-2 tile wide rivers (which are otherwise only jumped across, with the boots).</summary>
+        public static bool RaftNarrow;
 
         /// <summary>Set once the boots are on: spike tiles count as walkable (they are jumped over).</summary>
         public static bool AllowJump;
@@ -299,6 +706,10 @@ namespace AnodyneSharp.Recording
         {
             bool Land(Point q)
             {
+                if (_gatesOpen.Contains(q))
+                {
+                    return true;
+                }
                 var (al, ev) = CurrentMap.GetTileClass(q);
                 return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.PUDDLE;
             }
@@ -318,10 +729,627 @@ namespace AnodyneSharp.Recording
             return false;
         }
 
-        public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t));
+        public static bool IsJumpable(Point t) => IsSpike(t) || (IsConveyor(t) && NarrowWater(t)) || (IsHole(t) && NarrowHole(t));
+
+        public static bool IsHole(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.HOLE;
+
+        /// <summary>A pit one tile across (in some straight line, with floor on both sides): a jump with the boots clears it (32px).</summary>
+        public static bool NarrowHole(Point t)
+        {
+            bool Floor(Point q)
+            {
+                if (_gatesOpen.Contains(q))
+                {
+                    return true;
+                }
+                var (al, ev) = CurrentMap.GetTileClass(q);
+                return al == Touching.NONE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.HOLE && ev != CollisionEventType.SPIKE;
+            }
+            return (Floor(new Point(t.X - 1, t.Y)) && Floor(new Point(t.X + 1, t.Y))) || (Floor(new Point(t.X, t.Y - 1)) && Floor(new Point(t.X, t.Y + 1)));
+        }
+
+        /// <summary>
+        /// A path may only cross a pit in a straight line (the jump goes on the way it started): from a hole tile the next tile is the one
+        /// straight on, and it must be floor on the far side.
+        /// </summary>
+        private static bool HoleStepOk(Point prev, Point c, Point n)
+        {
+            if (AllowJump && prev != c && IsSpike(c))
+            {
+                // A jump goes straight and clears one spike tile: no turning inside a spike bed, no second tile of one (in the air we
+                // drift at 0.83x walking pace for 0.46s, ~27px: from the edge of the floor that is one tile and a bit, never two).
+                if (n.X - c.X != c.X - prev.X || n.Y - c.Y != c.Y - prev.Y)
+                {
+                    return false;
+                }
+                if (IsSpike(prev) || IsSpike(n))
+                {
+                    return false;
+                }
+            }
+            if (!IsHole(c))
+            {
+                return true;
+            }
+            return n.X - c.X == c.X - prev.X && n.Y - c.Y == c.Y - prev.Y;
+        }
+
+        private static string _ledgeMap;
+        private static Dictionary<Point, Point> _ledges = new();
+
+        /// <summary>
+        /// Ledge drops (JumpTrigger, Jump_Trigger with no type value): walking down onto one jumps the player 32/48/64px down, over the ledge
+        /// face. From the map's presets, so the drops of screens not loaded yet are known too. Trigger tile -> landing tile.
+        /// </summary>
+        public static Dictionary<Point, Point> Ledges()
+        {
+            if (_ledgeMap == GlobalState.CURRENT_MAP_NAME)
+            {
+                return _ledges;
+            }
+            _ledgeMap = GlobalState.CURRENT_MAP_NAME;
+            _ledges = new Dictionary<Point, Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.JumpTrigger))
+                {
+                    continue;
+                }
+                int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
+                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                _ledges[t] = new Point(t.X, t.Y + dist / 16);
+            }
+            return _ledges;
+        }
+
+        private static string _springMap;
+        private static Dictionary<Point, Point> _springs = new();
+
+        /// <summary>Spring pads (Jump_Trigger type 1): landing on one (a jump onto it) bounces the player 32/48/64px down. Tile -> landing tile.</summary>
+        public static Dictionary<Point, Point> Springs()
+        {
+            if (_springMap == GlobalState.CURRENT_MAP_NAME)
+            {
+                return _springs;
+            }
+            _springMap = GlobalState.CURRENT_MAP_NAME;
+            _springs = new Dictionary<Point, Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.SpringPad))
+                {
+                    continue;
+                }
+                int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
+                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                _springs[t] = new Point(t.X, t.Y + dist / 16);
+            }
+            return _springs;
+        }
+
+        private static string _padMap;
+        private static Dictionary<Point, Point> _pads = new();
+
+        /// <summary>Dash pads (Dash_Pad): crossing one while holding its way speeds the walk up (x1.3, a second one x1.77) until that key
+        /// is let go, in the air too, so a jump off the end of a row of them carries much further. Tile -> its way.</summary>
+        public static Dictionary<Point, Point> DashPads()
+        {
+            if (_padMap == GlobalState.CURRENT_MAP_NAME)
+            {
+                return _pads;
+            }
+            _padMap = GlobalState.CURRENT_MAP_NAME;
+            _pads = new Dictionary<Point, Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.DashPad))
+                {
+                    continue;
+                }
+                // (by its middle: some sit off the grid, most of their 16px over the next tile)
+                var t = new Point((int)Math.Floor((pr.Position.X + 8f) / 16f), (int)Math.Floor((pr.Position.Y + 8f) / 16f));
+                _pads[t] = pr.Frame switch { 0 => new Point(0, -1), 1 => new Point(1, 0), 2 => new Point(0, 1), _ => new Point(-1, 0) };
+            }
+            return _pads;
+        }
+
+        /// <summary>How many pads of way d we cross running up to c along d (c itself and the two tiles before it).</summary>
+        public static int PadsBehind(Point c, Point d)
+        {
+            int n = 0;
+            for (int k = 0; k < 3; k++)
+            {
+                var t = new Point(c.X - d.X * k, c.Y - d.Y * k);
+                if (k > 0 && !Walkable(t))
+                {
+                    break;
+                }
+                if (DashPads().TryGetValue(t, out var w) && w == d)
+                {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        /// <summary>
+        /// The longest dash jump off c along d, in tiles from c to the landing: a jump lasts 0.46s, so 32px walking, 42px after one pad and
+        /// 57px after two; we take off with our middle at c's far edge and must come down with it a few px onto floor.
+        /// </summary>
+        public static int DashLeapTiles(Point c, Point d)
+        {
+            int pads = PadsBehind(c, d);
+            if (pads == 0)
+            {
+                return 0;
+            }
+            float reach = 70f * (pads >= 2 ? 1.77f : 1.3f) * 0.46f;
+            return 1 + (int)((reach - 5f) / 16f);
+        }
+
+        /// <summary>A straight jump of three or more tiles off a row of dash pads.</summary>
+        public static bool IsDashLeap(Point a, Point b)
+        {
+            int dx = b.X - a.X, dy = b.Y - a.Y;
+            if (dx != 0 && dy != 0)
+            {
+                // (one tile to the side at the far end: the side key drifts us over in the air)
+                if (Math.Min(Math.Abs(dx), Math.Abs(dy)) > 2 || Math.Max(Math.Abs(dx), Math.Abs(dy)) < 3)
+                {
+                    return false;
+                }
+                var dm = Math.Abs(dx) > Math.Abs(dy) ? new Point(Math.Sign(dx), 0) : new Point(0, Math.Sign(dy));
+                if (Math.Min(Math.Abs(dx), Math.Abs(dy)) == 2 && PadsBehind(a, dm) < 2)
+                {
+                    return false;
+                }
+                return DashLeapTiles(a, dm) >= Math.Max(Math.Abs(dx), Math.Abs(dy));
+            }
+            if (Math.Abs(dx + dy) < 3)
+            {
+                return false;
+            }
+            var d = new Point(Math.Sign(dx), Math.Sign(dy));
+            return DashLeapTiles(a, d) >= Math.Abs(dx + dy);
+        }
+
+        /// <summary>The spring a jump from a to b bounces off (a spring next to a whose landing is b), if any.</summary>
+        public static Point? SpringBetween(Point a, Point b)
+        {
+            foreach (var d in StepDirs)
+            {
+                var s = new Point(a.X + d.X, a.Y + d.Y);
+                if (Springs().TryGetValue(s, out var land) && land == b)
+                {
+                    return s;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>The tiles a search may step to from c (reached from prev): the four neighbours, or a ledge's landing (entered going down, that is the only way on).</summary>
+        private static IEnumerable<Point> Steps(Point prev, Point c)
+        {
+            var ledges = Ledges();
+            if (ledges.TryGetValue(c, out var land))
+            {
+                yield return land;
+                if (c.Y - prev.Y == 1)
+                {
+                    yield break; // walked down onto the trigger: the jump goes off
+                }
+            }
+            foreach (var d in StepDirs)
+            {
+                var n = new Point(c.X + d.X, c.Y + d.Y);
+                if (_edgeGates.Contains(n) && n.X / 10 == c.X / 10 && n.Y / 10 == c.Y / 10 && (_respectClosedGates ? !KillGateOpenable(c, n) : KillGateBarred(c, n)))
+                {
+                    continue; // a shut gate on its screen's edge gives way to someone coming in over it, from inside only once opened
+                }
+                if (HoleStepOk(prev, c, n))
+                {
+                    yield return n;
+                }
+            }
+            if (AllowJump && LeapFloor(c))
+            {
+                foreach (var d in StepDirs)
+                {
+                    if (Springs().TryGetValue(new Point(c.X + d.X, c.Y + d.Y), out var bounce))
+                    {
+                        yield return bounce; // jump onto the spring next to us (from any side): landing on it throws us on down
+                    }
+                }
+            }
+            if (AllowJump && LeapFloor(c) && DashPads().Count > 0)
+            {
+                // Off the end of a row of dash pads, run up along their way: a long jump over a gap no standing jump clears.
+                foreach (var d in StepDirs)
+                {
+                    // (whichever way we came to c: the leaper backs up along the pad row for its run-up, PadsBehind holds it walkable)
+                    int most = DashLeapTiles(c, d);
+                    for (int k = 2; k <= most; k++)
+                    {
+                        var t = new Point(c.X + d.X * k, c.Y + d.Y * k);
+                        var mid = new Point(t.X - d.X, t.Y - d.Y);
+                        if (CurrentMap.GetTileClass(mid).Item1 != Touching.NONE || LeapFloor(mid))
+                        {
+                            break; // a wall in the way, or floor (then it is no gap: walk)
+                        }
+                        if (k >= 3 && LeapFloor(t) && CurrentMap.GetTileClass(t).Item1 == Touching.NONE)
+                        {
+                            yield return t;
+                            break;
+                        }
+                    }
+                    // Or a tile to one side at the far end: in the air the side key drifts us ~27px across (a walk's worth) while the
+                    // dash carries us along, so a landing one row or column over is in reach too.
+                    // (two over too: lined up on the lane's side edge before take-off, the drift just carries us there)
+                    // (two over only off a double dash: the side drift costs a single dash its last tile, seen falling short (15,48)->(18,46))
+                    foreach (var l in PadsBehind(c, d) >= 2 ? new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X), new Point(2 * d.Y, 2 * d.X), new Point(-2 * d.Y, -2 * d.X) }
+                        : new[] { new Point(d.Y, d.X), new Point(-d.Y, -d.X) })
+                    {
+                        bool gap = false;
+                        var l1 = new Point(Math.Sign(l.X), Math.Sign(l.Y));
+                        for (int k = 1; k <= most; k++)
+                        {
+                            var on = new Point(c.X + d.X * k, c.Y + d.Y * k);
+                            var side = new Point(on.X + l.X, on.Y + l.Y);
+                            var mid = new Point(on.X + l1.X, on.Y + l1.Y);
+                            bool sideWall = CurrentMap.GetTileClass(side).Item1 != Touching.NONE || CurrentMap.GetTileClass(mid).Item1 != Touching.NONE;
+                            if (k >= 3 && gap && !sideWall && LeapFloor(side))
+                            {
+                                yield return side; // (the lane we left may end in a wall: we are over the side one by then)
+                                break;
+                            }
+                            if (sideWall || CurrentMap.GetTileClass(on).Item1 != Touching.NONE)
+                            {
+                                break; // a wall across the flight
+                            }
+                            if (LeapFloor(on) || LeapFloor(side) || LeapFloor(mid))
+                            {
+                                break; // floor on the way: no gap to leap, walk
+                            }
+                            gap = true;
+                        }
+                    }
+                }
+            }
+            if (_leaps && AllowJump && LeapFloor(c))
+            {
+                // Free jumps between islands of floor (stepping stones in a pit): a jump carries ~27px on each axis that has a key held, so
+                // any floor up to two tiles away on each axis, with only pit, water or spikes in between (no wall), is one step.
+                for (int dy = -2; dy <= 2; dy++)
+                {
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        if (Math.Abs(dx) + Math.Abs(dy) <= 1)
+                        {
+                            continue;
+                        }
+                        var n = new Point(c.X + dx, c.Y + dy);
+                        if (LeapFloor(n) && LeapClear(c, n) && LeapFits(c, n))
+                        {
+                            yield return n;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool _leaps;
+
+        /// <summary>Firm floor to jump from or land on (not pit, water or spikes).</summary>
+        private static bool LeapFloor(Point t)
+        {
+            if (_gatesOpen.Contains(t))
+            {
+                return true;
+            }
+            var (al, ev) = CurrentMap.GetTileClass(t);
+            return al == Touching.NONE && ev != CollisionEventType.HOLE && ev != CollisionEventType.CONVEYOR && ev != CollisionEventType.SPIKE;
+        }
+
+        /// <summary>Nothing solid in the box between a and b, and something there that cannot be walked (else it is no jump, just a walk).</summary>
+        private static bool LeapClear(Point a, Point b)
+        {
+            bool gap = false, floor = false;
+            for (int y = Math.Min(a.Y, b.Y); y <= Math.Max(a.Y, b.Y); y++)
+            {
+                for (int x = Math.Min(a.X, b.X); x <= Math.Max(a.X, b.X); x++)
+                {
+                    var t = new Point(x, y);
+                    if (t == a || t == b)
+                    {
+                        continue;
+                    }
+                    if (CurrentMap.GetTileClass(t).Item1 != Touching.NONE)
+                    {
+                        return false;
+                    }
+                    if (LeapFloor(t) && !_shooterTiles.Contains(t))
+                    {
+                        floor = true; // (a frog or plant on the tile between: jumped clean over, touching it hurts)
+                    }
+                    else
+                    {
+                        gap = true;
+                    }
+                }
+            }
+            return gap && !floor;
+        }
+
+        private static readonly Dictionary<(Point, Point), bool> _leapFits = new();
+        private static string _leapFitsMap;
+
+        /// <summary>A free spot to stand on (the player's 10x12 box): no wall, water or spikes under a corner, and clear of every pit's 6x4 core.</summary>
+        public static bool BoxStands(Rectangle r)
+        {
+            foreach (var (x, y) in new[] { (r.Left, r.Top), (r.Right - 1, r.Top), (r.Left, r.Bottom - 1), (r.Right - 1, r.Bottom - 1) })
+            {
+                var t = new Point((int)Math.Floor(x / 16f), (int)Math.Floor(y / 16f));
+                if (IsHole(t))
+                {
+                    if (new Rectangle(t.X * 16 + 5, t.Y * 16 + 5, 6, 4).Intersects(r))
+                    {
+                        return false;
+                    }
+                }
+                else if (!_gatesOpen.Contains(t) && (!Walkable(t) || IsConveyor(t) || IsSpike(t)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Px a jump carries with one direction key held (~29); with two, ~21 on each axis.</summary>
+        public const float LeapReach = 29f, LeapReachDiag = 21f;
+
+        /// <summary>
+        /// Is there a take-off spot on a from which a jump (keys towards b) lands clear on b, give or take 2px of carry? The search the
+        /// jump itself makes (Leap), done in the plan so it never offers a jump the physics cannot make.
+        /// </summary>
+        public static bool LeapFits(Point a, Point b)
+        {
+            if (_leapFitsMap != GlobalState.CURRENT_MAP_NAME)
+            {
+                _leapFits.Clear();
+                _leapFitsMap = GlobalState.CURRENT_MAP_NAME;
+            }
+            if (_leapFits.TryGetValue((a, b), out var known))
+            {
+                return known;
+            }
+            const int w = 10, h = 12;
+            bool ok = false;
+            foreach (int m in LeapSideFrames(a, b))
+            {
+                for (int y = a.Y * 16 - 6; y <= a.Y * 16 + 16 - h + 6 && !ok; y++)
+                {
+                    for (int x = a.X * 16 - 6; x <= a.X * 16 + 16 - w + 6 && !ok; x++)
+                    {
+                        var s = new Rectangle(x, y, w, h);
+                        if (new Point((x + w / 2) / 16, (y + h / 2) / 16) != a || !BoxStands(s))
+                        {
+                            continue;
+                        }
+                        ok = true;
+                        foreach (float slack in new[] { -2f, 0f, 2f })
+                        {
+                            var c = LeapCarry(a, b, m, slack);
+                            var l = new Rectangle((int)Math.Round(x + c.X), (int)Math.Round(y + c.Y), w, h);
+                            ok &= new Point((l.X + w / 2) / 16, (l.Y + h / 2) / 16) == b && BoxStands(l);
+                        }
+                    }
+                }
+                if (ok)
+                {
+                    break;
+                }
+            }
+            _leapFits[(a, b)] = ok;
+            return ok;
+        }
+
+        /// <summary>Why a free jump from a to b is or is not a search step (for the debug log).</summary>
+        public static string LeapWhy(Point a, Point b) => $"{a.X},{a.Y}>{b.X},{b.Y}: floor {LeapFloor(a)}/{LeapFloor(b)} clear {LeapClear(a, b)} fits {LeapFits(a, b)} walk {Walkable(b)}";
+
+        /// <summary>A jump's air time in frames, as LeapReach is walked in it.</summary>
+        public const int LeapFrames = 30;
+
+        /// <summary>
+        /// For a jump from a to b, how many frames the side key is held along with the main one (the air speed stops dead on an axis whose
+        /// key is let go): all of them for a straight or a true diagonal (LeapFrames), and for a lopsided one, like two across and one down,
+        /// a choice of shorter holds.
+        /// </summary>
+        public static int[] LeapSideFrames(Point a, Point b)
+        {
+            int dx = Math.Abs(b.X - a.X), dy = Math.Abs(b.Y - a.Y);
+            return dx == 0 || dy == 0 || dx == dy ? new[] { LeapFrames } : new[] { LeapFrames, 16, 12, 20, 8, 24 };
+        }
+
+        /// <summary>Where a jump from a towards b carries us, holding the side key for m frames (slack: px more or less on the main axis).</summary>
+        public static Vector2 LeapCarry(Point a, Point b, int m, float slack)
+        {
+            int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+            if (sx == 0 || sy == 0 || m >= LeapFrames)
+            {
+                float reach = (sx != 0 && sy != 0 ? LeapReachDiag : LeapReach) + slack;
+                return new Vector2(sx * reach, sy * reach);
+            }
+            float side = LeapReachDiag * m / LeapFrames;
+            float main = LeapReachDiag * m / LeapFrames + LeapReach * (LeapFrames - m) / LeapFrames + slack;
+            return Math.Abs(b.X - a.X) > Math.Abs(b.Y - a.Y) ? new Vector2(sx * main, sy * side) : new Vector2(sx * side, sy * main);
+        }
+
+        /// <summary>Consecutive path tiles that are not neighbours and not a ledge drop: a free jump (see Steps).</summary>
+        public static bool IsLeap(Point a, Point b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) > 1 && !(Ledges().TryGetValue(a, out var l) && l == b);
+
+        private static readonly Point[] StepDirs = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
 
         /// <summary>A solid wall tile: it stops bullets (holes, water and spikes do not, they fly over them).</summary>
         public static bool IsBeamWall(Point t) => CurrentMap == null || CurrentMap.GetTileClass(t).Item1 == Touching.ANY;
+
+        private static System.Reflection.FieldInfo _tileObjectsField;
+
+        /// <summary>Which way the water on t flows (Touching.NONE for still water or no water).</summary>
+        public static Touching FlowDir(Point t)
+        {
+            if (!IsConveyor(t))
+            {
+                return Touching.NONE;
+            }
+            _tileObjectsField ??= typeof(Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var tiles = _tileObjectsField?.GetValue(CurrentMap) as Tile[];
+            int id = CurrentMap.GetTile(Layer.BG, t);
+            var dir = tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
+            return dir is Touching.UP or Touching.DOWN or Touching.LEFT or Touching.RIGHT ? dir : Touching.NONE; // (still water says ANY)
+        }
+
+        /// <summary>The way a steam pipe on this screen blows over t (its lane: up to 4 tiles out in front of it), if one does.</summary>
+        public static Touching? SteamFlow(Point t)
+        {
+            // from the map's presets, so screens not loaded yet count too (frame: 0 down, 1 right, 2 up, 3 left)
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type != typeof(AnodyneSharp.Entities.Enemy.Hotel.SteamPipe))
+                {
+                    continue;
+                }
+                var pt = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                var (dx, dy, dir) = pr.Frame switch { 1 => (1, 0, Touching.RIGHT), 2 => (0, -1, Touching.UP), 3 => (-1, 0, Touching.LEFT), _ => (0, 1, Touching.DOWN) };
+                for (int k = 1; k <= 4; k++)
+                {
+                    if (t == new Point(pt.X + dx * k, pt.Y + dy * k))
+                    {
+                        return dir;
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Can a path's water be waded? Off a raft the player sinks for 3s and is then drowned back to the screen's entrance; walking in
+        /// water is 35px/s, plus the current's 35px/s along it (minus against it). So every unbroken run of water on the path must take
+        /// under ~2.4s (a run with the current is long, against it impossible).
+        /// </summary>
+        public static bool WadeOk(List<Point> path, Point from)
+        {
+            float secs = 0;
+            var prev = from;
+            foreach (var t in path)
+            {
+                if (!IsConveyor(t))
+                {
+                    secs = 0;
+                    prev = t;
+                    continue;
+                }
+                secs += WadeSecs(prev, t);
+                if (secs > WadeLimit)
+                {
+                    return false;
+                }
+                prev = t;
+            }
+            return true;
+        }
+
+        private const float WadeLimit = 2.4f;
+
+        /// <summary>Seconds to wade from `prev` into water tile `t` (infinite against a current we cannot make headway in).</summary>
+        private static float WadeSecs(Point prev, Point t)
+        {
+            var flow = FlowDir(t);
+            float push = 35f;
+            if (flow == Touching.NONE && SteamFlow(t) is Touching steam)
+            {
+                flow = steam; // a steam pipe blowing across still water shoves us over it (50px/s)
+                push = 50f;
+            }
+            int dx = t.X - prev.X, dy = t.Y - prev.Y;
+            float along = flow switch { Touching.DOWN => dy, Touching.UP => -dy, Touching.RIGHT => dx, Touching.LEFT => -dx, _ => 0 };
+            float speed = 35f + push * along;
+            return speed < 10f ? float.PositiveInfinity : 16f / speed;
+        }
+
+        /// <summary>
+        /// A route that wades only where each stretch of water is short enough to get out of before sinking: the shortest route may
+        /// wade a long channel where going round by the banks crosses two short ones. Searches (tile, time already spent in this
+        /// stretch of water); null when there is no such route.
+        /// </summary>
+        public static List<Point> WadePath(Point a, Func<Point, bool> isGoal, Point? forced = null)
+        {
+            bool water = AllowWater;
+            AllowWater = true;
+            try
+            {
+                RefreshGates();
+                var hazards = Hazards();
+                // (time quantised to 1/20s, so a tile reached a little later in its stretch of water is a different state)
+                var best = new Dictionary<(Point, int), int>();
+                var prev = new Dictionary<(Point, int), (Point, int)>();
+                var pq = new PriorityQueue<(Point, int), int>();
+                var start = (a, 0);
+                best[start] = 0;
+                prev[start] = start;
+                pq.Enqueue(start, 0);
+                while (pq.TryDequeue(out var st, out int cost))
+                {
+                    if (cost > best[st])
+                    {
+                        continue;
+                    }
+                    var (c, run) = st;
+                    if (c != a && !IsConveyor(c) && isGoal(c))
+                    {
+                        var path = new List<Point>();
+                        for (var s = st; s != start; s = prev[s])
+                        {
+                            path.Add(s.Item1);
+                        }
+                        path.Reverse();
+                        return path;
+                    }
+                    var from = prev[st].Item1;
+                    foreach (var n in Steps(from == c ? c : from, c))
+                    {
+                        if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n)))
+                        {
+                            continue;
+                        }
+                        int nrun = 0;
+                        int step = 1;
+                        if (IsConveyor(n))
+                        {
+                            float secs = run / 20f + WadeSecs(c, n);
+                            if (secs > WadeLimit)
+                            {
+                                continue;
+                            }
+                            nrun = (int)Math.Ceiling(secs * 20f);
+                            step = 3; // (wading is slow and every stretch a risk: a little way round on dry land is better)
+                        }
+                        var ns = (n, nrun);
+                        int nc = cost + step;
+                        if (!best.TryGetValue(ns, out int old) || nc < old)
+                        {
+                            best[ns] = nc;
+                            prev[ns] = st;
+                            pq.Enqueue(ns, nc);
+                        }
+                    }
+                }
+                return null;
+            }
+            finally
+            {
+                AllowWater = water;
+            }
+        }
 
         public static bool IsConveyor(Point t) => CurrentMap.GetTileClass(t).Item2 == CollisionEventType.CONVEYOR;
 
@@ -359,7 +1387,232 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // (and the ones on the other screens a route runs through, from their presets: a plan made a screen away must not ride into one)
+            if (BotRunner.Player != null)
+            {
+                var here = TileOf(BotRunner.Player.Position);
+                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                {
+                    if (pr.Alive && pr.Type?.Name is "Burst_Plant" or "Frog" or "Red_Pillar" or "Four_Shooter")
+                    {
+                        var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                        if (t.X / 10 != here.X / 10 || t.Y / 10 != here.Y / 10)
+                        {
+                            set.Add(t);
+                        }
+                    }
+                }
+            }
             _shooterTiles = set;
+        }
+
+        /// <summary>
+        /// The current screen as text (cheaper to read than a screenshot): one char per tile ('#' wall, '.' floor, 'h' hole, '~' water or
+        /// conveyor, '^' spikes, ',' puddle), each entity's letter on the tile under its centre and '@' for the player, then one line per entity
+        /// with its exact hitbox, velocity and facing.
+        /// </summary>
+        /// <summary>
+        /// Another screen of this map as text without going there: the tile grid as in RoomText, then the entities its presets would make
+        /// (type, tile, preset frame and type value, and whether it is still alive), lettered on their tiles.
+        /// </summary>
+        public static string ScreenText(Point grid)
+        {
+            var map = CurrentMap;
+            if (map == null)
+            {
+                return "SCREEN: no map";
+            }
+            var cells = new char[10, 10];
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 10; x++)
+                {
+                    var (al, ev) = map.GetTileClass(new Point(grid.X * 10 + x, grid.Y * 10 + y));
+                    cells[y, x] = ev switch
+                    {
+                        CollisionEventType.HOLE => 'h',
+                        CollisionEventType.CONVEYOR => '~',
+                        CollisionEventType.SPIKE => '^',
+                        CollisionEventType.PUDDLE => ',',
+                        _ => al == Touching.NONE ? '.' : '#',
+                    };
+                }
+            }
+            var lines = new List<string>();
+            char next = 'A';
+            foreach (var p in AnodyneSharp.Entities.EntityManager.GetGridEntities(GlobalState.CURRENT_MAP_NAME, grid))
+            {
+                var t = new Point((int)Math.Floor((p.Position.X + 8) / 16f), (int)Math.Floor((p.Position.Y + 8) / 16f));
+                char ch = next <= 'Z' ? next++ : '*';
+                int cx = t.X - grid.X * 10, cy = t.Y - grid.Y * 10;
+                if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
+                {
+                    cells[cy, cx] = ch;
+                }
+                lines.Add($"  {ch} {p.Type.Name} tile={t.X},{t.Y} f{p.Frame}" + (string.IsNullOrEmpty(p.TypeValue) ? "" : $" '{p.TypeValue}'") + (p.Alive ? "" : " DEAD"));
+            }
+            var sb = new System.Text.StringBuilder($"SCREEN {GlobalState.CURRENT_MAP_NAME} {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left)\n");
+            for (int y = 0; y < 10; y++)
+            {
+                sb.Append($"  {grid.Y * 10 + y,3} ");
+                for (int x = 0; x < 10; x++)
+                {
+                    sb.Append(cells[y, x]);
+                }
+                sb.Append('\n');
+            }
+            foreach (var l in lines)
+            {
+                sb.Append(l).Append('\n');
+            }
+            return sb.ToString();
+        }
+
+        public static string RoomText()
+        {
+            var map = CurrentMap;
+            var pl = BotRunner.Player;
+            if (map == null || pl == null)
+            {
+                return "ROOM: no map";
+            }
+            var grid = GlobalState.CurrentMapGrid;
+            var cells = new char[10, 10];
+            for (int y = 0; y < 10; y++)
+            {
+                for (int x = 0; x < 10; x++)
+                {
+                    var t = new Point(grid.X * 10 + x, grid.Y * 10 + y);
+                    var (al, ev) = map.GetTileClass(t);
+                    cells[y, x] = ev switch
+                    {
+                        CollisionEventType.HOLE => 'h',
+                        CollisionEventType.CONVEYOR => '~',
+                        CollisionEventType.SPIKE => '^',
+                        CollisionEventType.PUDDLE => ',',
+                        _ => al == Touching.NONE ? '.' : '#',
+                    };
+                }
+            }
+            var sb = new System.Text.StringBuilder();
+            var lines = new List<string>();
+            var letters = new Dictionary<string, char>();
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e == pl || e is Player || !e.visible && e.width == 0)
+                {
+                    continue;
+                }
+                string name = e.GetType().Name;
+                if (name is "Foot_Overlay" or "PlayerReflection" or "Lookahead" or "Entity")
+                {
+                    continue;
+                }
+                if (!letters.TryGetValue(name, out char ch))
+                {
+                    ch = (char)('A' + letters.Count % 26);
+                    if (letters.Count >= 26)
+                    {
+                        ch = (char)('a' + (letters.Count - 26) % 26);
+                    }
+                    letters[name] = ch;
+                }
+                var hb = e.Hitbox;
+                int cx = (int)Math.Floor(hb.Center.X / 16f) - grid.X * 10, cy = (int)Math.Floor(hb.Center.Y / 16f) - grid.Y * 10;
+                if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
+                {
+                    cells[cy, cx] = ch;
+                }
+                string v = e.velocity == Vector2.Zero ? "" : $" v=({e.velocity.X:0},{e.velocity.Y:0})";
+                string frame = "";
+                try
+                {
+                    frame = $" f{e.Frame}";
+                }
+                catch (NullReferenceException)
+                {
+                    // no sprite to have a frame
+                }
+                lines.Add($"  {ch} {name} box={hb.X},{hb.Y} {hb.Width}x{hb.Height}{v} {e.facing}{frame}" + (e.Solid ? " solid" : "")
+                        + (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr ? $" collide={sr.CollisionOn} visible={sr.visible} offY={sr.offset.Y:0}" : ""));
+            }
+            var pb = pl.Hitbox;
+            int px = (int)Math.Floor(pb.Center.X / 16f) - grid.X * 10, py = (int)Math.Floor(pb.Center.Y / 16f) - grid.Y * 10;
+            if (px >= 0 && px < 10 && py >= 0 && py < 10)
+            {
+                cells[py, px] = '@';
+            }
+            sb.Append($"ROOM {GlobalState.CURRENT_MAP_NAME} screen {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left) player box={pb.X},{pb.Y} hp {GlobalState.CUR_HEALTH} {pl.state}\n");
+            for (int y = 0; y < 10; y++)
+            {
+                sb.Append($"  {grid.Y * 10 + y,3} ");
+                for (int x = 0; x < 10; x++)
+                {
+                    sb.Append(cells[y, x]);
+                }
+                sb.Append('\n');
+            }
+            foreach (var l in lines.Distinct())
+            {
+                sb.Append(l).Append('\n');
+            }
+            return sb.ToString();
+        }
+
+        private static bool _ignorePillars;
+
+        /// <summary>Walkable, taking every switch pillar as down (for the solvers that work out the pillars themselves).</summary>
+        public static bool WalkableNoPillars(Point t)
+        {
+            _ignorePillars = true;
+            try
+            {
+                return Walkable(t);
+            }
+            finally
+            {
+                _ignorePillars = false;
+            }
+        }
+
+        /// <summary>Plan as if a pillar switch had been hit once more: every switch pillar the other way up.</summary>
+        public static bool PillarFlip;
+        private static string _pillarKey, _pillarMapRef;
+        private static int _pillarOn = -1;
+        private static HashSet<Point> _pillarsUp = new();
+
+        /// <summary>
+        /// The switch pillars that are up (walls), all over the map: a pillar's preset frame says which way up it starts (frame 1 up, 0
+        /// down), and every hit on a pillar switch turns them all over (GlobalState.PillarSwitchOn, back to 0 on a new map).
+        /// </summary>
+        private static readonly Dictionary<string, HashSet<Point>> _pillarSets = new();
+
+        public static HashSet<Point> PillarsUp()
+        {
+            int on = GlobalState.PillarSwitchOn ^ (PillarFlip ? 1 : 0);
+            if (on == _pillarOn && ReferenceEquals(GlobalState.CURRENT_MAP_NAME, _pillarMapRef))
+            {
+                return _pillarsUp; // (asked on every Walkable: no string building on the fast path)
+            }
+            _pillarOn = on;
+            _pillarMapRef = GlobalState.CURRENT_MAP_NAME;
+            string key = GlobalState.CURRENT_MAP_NAME + "|" + on;
+            _pillarKey = key;
+            if (_pillarSets.TryGetValue(key, out var known))
+            {
+                _pillarsUp = known;
+                return known;
+            }
+            _pillarsUp = new HashSet<Point>();
+            _pillarSets[key] = _pillarsUp;
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.SwitchPillar) && on == 1 - pr.Frame)
+                {
+                    _pillarsUp.Add(new Point((int)Math.Floor((pr.Position.X + 8) / 16f), (int)Math.Floor((pr.Position.Y + 8) / 16f)));
+                }
+            }
+            return _pillarsUp;
         }
 
         public static bool Walkable(Point t)
@@ -368,9 +1621,17 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
+            if (SolidNpcTiles().Contains(t))
+            {
+                return false; // a rock or other fixed NPC: it stands in the way like a wall (it pushes us back)
+            }
             if (_shooterTiles.Contains(t))
             {
                 return false; // a plant or frog we can walk through but must not (its bullets spawn on it)
+            }
+            if (_keyLocked.Contains(t) || _keyDenied.Contains(t))
+            {
+                return false;
             }
             if (_gatesOpen.Contains(t))
             {
@@ -394,6 +1655,10 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
+            if (!_ignorePillars && PillarsUp().Contains(t))
+            {
+                return false;
+            }
             var (allow, ev) = map.GetTileClass(t);
             if (allow == Touching.ANY)
             {
@@ -402,21 +1667,84 @@ namespace AnodyneSharp.Recording
             switch (ev)
             {
                 case CollisionEventType.HOLE:
-                    return false;
+                    return AllowJump && allow == Touching.NONE && NarrowHole(t);
                 case CollisionEventType.PUDDLE:
                     return allow == Touching.NONE; // shallow water: slows you down but can be walked
                 case CollisionEventType.SPIKE:
                     return AllowJump && allow == Touching.NONE;
                 case CollisionEventType.CONVEYOR:
-                    return allow == Touching.NONE && (AllowWater || (AllowJump && NarrowWater(t)));
+                    return allow == Touching.NONE && (AllowWater || Wade || (AllowJump && NarrowWater(t)));
             }
             return allow == Touching.NONE;
+        }
+
+        private static long _solidNpcFrame = -1;
+        private static readonly HashSet<Point> _solidNpcTiles = new();
+
+        /// <summary>Tiles covered by rocks and statues (fixed NPCs that push us back): solid as walls, though the tile data shows floor.</summary>
+        internal static HashSet<Point> SolidNpcTiles()
+        {
+            if (_solidNpcFrame == BotRunner.Frame)
+            {
+                return _solidNpcTiles;
+            }
+            _solidNpcFrame = BotRunner.Frame;
+            _solidNpcTiles.Clear();
+            foreach (var e in BotRunner.Entities())
+            {
+                // (only the ones nothing is ever fetched from: an NPC we go and talk to must stay a tile a route can end on; HAPPY's
+                // pacing NPCs are pushy walls that walking into only starts their chatter)
+                if (e.exists && e.GetType().Name == "SuburbWalker" && e.CurAnimName is "die" or "dead")
+                {
+                    // (a townsperson's body stays where it fell and shoves us off like a wall: Suburb (3,3)'s corridor mouth had one in it)
+                    // (every tile it reaches 4px into: off the grid as it fell, it narrows the tiles round it past our 10x12 box)
+                    var cb = e.Hitbox;
+                    for (int ty = (int)Math.Floor((cb.Top + 4) / 16f); ty <= (int)Math.Floor((cb.Bottom - 5) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor((cb.Left + 4) / 16f); tx <= (int)Math.Floor((cb.Right - 5) / 16f); tx++)
+                        {
+                            _solidNpcTiles.Add(new Point(tx, ty));
+                        }
+                    }
+                    continue;
+                }
+                if (!e.exists || !e.immovable || e is not (AnodyneSharp.Entities.Decorations.RedCaveEntrance or AnodyneSharp.Entities.Interactive.Npc.Rock or AnodyneSharp.Entities.Interactive.Npc.Statue or AnodyneSharp.Entities.Enemy.Crowd.Rotator or AnodyneSharp.Entities.Interactive.Npc.Happy.HappyNPC) || e.width <= 0 || e.height <= 0)
+                {
+                    continue;
+                }
+                var hb = e.Hitbox;
+                if (e is AnodyneSharp.Entities.Decorations.RedCaveEntrance)
+                {
+                    // (Red Sea's cave mouths are solid, but sit off the tile grid: the tiles whose middles they cover, bar the door
+                    // tucked under the middle one's lip - a raft route through (3,5)'s mouth walked into it for good)
+                    var doors = BotRunner.Entities().Where(d => d.exists && d.GetType().Name.Contains("Door")).Select(d => d.Hitbox).ToList();
+                    for (int ty = (int)Math.Floor(hb.Top / 16f); ty <= (int)Math.Floor((hb.Bottom - 1) / 16f); ty++)
+                    {
+                        for (int tx = (int)Math.Floor(hb.Left / 16f); tx <= (int)Math.Floor((hb.Right - 1) / 16f); tx++)
+                        {
+                            if (hb.Contains(tx * 16 + 8, ty * 16 + 8) && !doors.Any(d => d.Intersects(new Rectangle(tx * 16, ty * 16, 16, 16))))
+                            {
+                                _solidNpcTiles.Add(new Point(tx, ty));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                for (int ty = (int)Math.Floor(hb.Top / 16f); ty <= (int)Math.Floor((hb.Bottom - 1) / 16f); ty++)
+                {
+                    for (int tx = (int)Math.Floor(hb.Left / 16f); tx <= (int)Math.Floor((hb.Right - 1) / 16f); tx++)
+                    {
+                        _solidNpcTiles.Add(new Point(tx, ty));
+                    }
+                }
+            }
+            return _solidNpcTiles;
         }
 
         /// <summary>Entity-made floor hazards (cracked tiles that collapse, holes) the tile data doesn't show.</summary>
         private static bool _crossCracked;
 
-        private static HashSet<Point> Hazards()
+        internal static HashSet<Point> Hazards()
         {
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
@@ -426,16 +1754,25 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 string name = e.GetType().Name;
-                if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name.EndsWith("Door") || name.EndsWith("Portal"))
+                if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name == "SteamPipe" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
                     set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
+                    if (name.EndsWith("Door") && name != "NexusDoor" && name != "OneWayDoor")
+                    {
+                        // (a door off the tile grid, or a wide or tall one, reaches into the tiles round it too)
+                        AddDoorTiles(set, e.Hitbox.X, e.Hitbox.Y, e.Hitbox.Width, e.Hitbox.Height);
+                    }
                 }
             }
             // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
+            var liveDoors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).Select(e => e.Position).ToList();
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
             {
-                if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor")
+                if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor"
+                    && !liveDoors.Any(lp => Vector2.Distance(lp, pr.Position) < 16))
                 {
+                    // (a loaded one's own box is the one above: Red Sea (3,5)'s cave door is a small box well up in its preset's tile, and
+                    // the preset's box closed the only way along under it to the gate button)
                     set.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
                     if (pr.Type.Name.StartsWith("Wide"))
                     {
@@ -444,9 +1781,30 @@ namespace AnodyneSharp.Recording
                             set.Add(new Point((int)(pr.Position.X + 8) / 16 + dx, (int)(pr.Position.Y + 8) / 16));
                         }
                     }
+                    if (pr.Type.Name.EndsWith("Door") && pr.Type.Name != "OneWayDoor")
+                    {
+                        bool wide = pr.Type.Name.StartsWith("Wide"), tall = pr.Type.Name.StartsWith("Tall");
+                        AddDoorTiles(set, pr.Position.X - (wide ? 32 : 0), pr.Position.Y - (tall ? 32 : 0), wide ? 80 : 16, tall ? 80 : 16);
+                    }
                 }
             }
             return set;
+        }
+
+        /// <summary>Every tile a door's box (x,y,w,h) reaches at least 2px into.</summary>
+        private static void AddDoorTiles(HashSet<Point> set, float x, float y, float w, float h)
+        {
+            var here = TileOf(BotRunner.Player.Position); // (not the tile we came out of it onto)
+            for (int ty = (int)Math.Floor((y + 2) / 16f); ty <= (int)Math.Floor((y + h - 2) / 16f); ty++)
+            {
+                for (int tx = (int)Math.Floor((x + 2) / 16f); tx <= (int)Math.Floor((x + w - 2) / 16f); tx++)
+                {
+                    if (new Point(tx, ty) != here)
+                    {
+                        set.Add(new Point(tx, ty));
+                    }
+                }
+            }
         }
 
         /// <summary>Debug: the screens (160x160) containing at least one tile reachable on foot from a.</summary>
@@ -519,9 +1877,9 @@ namespace AnodyneSharp.Recording
                 }
                 var d = e.facing switch
                 {
-                    Facing.RIGHT => new Point(1, 0),
-                    Facing.LEFT => new Point(-1, 0),
-                    Facing.UP => new Point(0, -1),
+                    AnodyneSharp.Entities.Facing.RIGHT => new Point(1, 0),
+                    AnodyneSharp.Entities.Facing.LEFT => new Point(-1, 0),
+                    AnodyneSharp.Entities.Facing.UP => new Point(0, -1),
                     _ => new Point(0, 1)
                 };
                 // An emitter need not sit on the tile grid (a laser at y=38 fires along y 38..54, over two tile rows): the beam covers every
@@ -542,11 +1900,24 @@ namespace AnodyneSharp.Recording
                         starts.Add(new Point(tx, cy));
                     }
                 }
+                // The bullets fly along the emitter's middle: a dust on that line stops the beam over every row (column) it touches.
+                var dusts = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust"));
+                int reach = 24;
+                var mid = TileOf(e.Position + new Vector2(8, 8));
+                for (int i = 1; i < 24; i++)
+                {
+                    mid = new Point(mid.X + d.X, mid.Y + d.Y);
+                    if (System.Linq.Enumerable.Any(dusts, x => TileOf(x.Position + new Vector2(8, 8)) == mid))
+                    {
+                        reach = i;
+                        break;
+                    }
+                }
                 foreach (var start in starts)
                 {
                     var t = start;
                     set[t] = d.X != 0 ? 0 : 1; // the emitter tile itself: every bullet is born there and dwells a while, it is no shortcut past the beam
-                    for (int i = 1; i < 24; i++)
+                    for (int i = 1; i < reach; i++)
                     {
                         t = new Point(t.X + d.X, t.Y + d.Y);
                         if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
@@ -560,6 +1931,12 @@ namespace AnodyneSharp.Recording
             return set;
         }
 
+        /// <summary>
+        /// A Silverfish we are herding (SilverfishOnButton): while it sits, its row and column (and the tiles round it) are where it sees
+        /// us and runs, so walks keep off them where they can and it only runs when we mean it to.
+        /// </summary>
+        public static Entity SpookFish;
+
         /// <summary>Extra path cost near stationary shooters (their bubbles always find a player walking past): 2 tiles = 12, 4 tiles = 5.</summary>
         public static Dictionary<Point, int> ShooterZones()
         {
@@ -570,7 +1947,7 @@ namespace AnodyneSharp.Recording
                 {
                     // A plugged beam still fires its bullets across the tiles between the emitter and the plug (a bullet spawns
                     // right at the muzzle and hits whoever stands there before it reaches the dust): walk round them if possible.
-                    var d = e.facing switch { Facing.RIGHT => new Point(1, 0), Facing.LEFT => new Point(-1, 0), Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
+                    var d = e.facing switch { AnodyneSharp.Entities.Facing.RIGHT => new Point(1, 0), AnodyneSharp.Entities.Facing.LEFT => new Point(-1, 0), AnodyneSharp.Entities.Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
                     var mt = TileOf(e.Position + new Vector2(8, 8));
                     var cells = new List<Point>();
                     for (int i = 1; i < 24; i++)
@@ -616,6 +1993,30 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            if (SpookFish != null && SpookFish.exists && SpookFish.velocity == Vector2.Zero)
+            {
+                var ft = TileOf(SpookFish.Position + new Vector2(8, 8));
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    for (int i = 1; i < 10; i++)
+                    {
+                        var t = new Point(ft.X + d.X * i, ft.Y + d.Y * i);
+                        if (!Walkable(t))
+                        {
+                            break;
+                        }
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int z) ? z : 0, 10);
+                    }
+                }
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        var t = new Point(ft.X + dx, ft.Y + dy);
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int z) ? z : 0, 10);
+                    }
+                }
+            }
             // Red Cave steam jets: walking along or across one is a gamble with its 2s cycle, so the route keeps off them where it can
             foreach (var e in BotRunner.Entities())
             {
@@ -634,21 +2035,71 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            // A Dog hurts by touch and stands (or paces) in the way: a route that passes right by it takes its dashes as it wakes, so one a
+            // tile or two off its spot is worth a few steps more.
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Crowd.Dog)
+                {
+                    continue;
+                }
+                var dt = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dy = -1; dy <= 1; dy++)
+                    {
+                        var t = new Point(dt.X + dx, dt.Y + dy);
+                        zones[t] = Math.Max(zones.TryGetValue(t, out int zd) ? zd : 0, dx == 0 && dy == 0 ? 12 : 6);
+                    }
+                }
+            }
+            // An idle on-sight dash trap charges whoever lines up with it at 80px/s: crossing its line far from it is safe (we are across
+            // before it arrives), next to it is a hit. Close-by tiles of its lines cost more, so the route crosses where it is far.
+            foreach (var e in BotRunner.Entities())
+            {
+                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity != Vector2.Zero)
+                {
+                    continue;
+                }
+                var t0 = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
+                {
+                    var t = t0;
+                    for (int i = 1; i < 10; i++)
+                    {
+                        t = new Point(t.X + d.X, t.Y + d.Y);
+                        if (!Walkable(t))
+                        {
+                            break;
+                        }
+                        zones[t] = (zones.TryGetValue(t, out int z1) ? z1 : 0) + Math.Max(2, 13 - 3 * i);
+                    }
+                }
+            }
             return zones;
         }
 
         /// <summary>Tiles within `margin` px of any living enemy except `except`.</summary>
+        /// <summary>
+        /// Black and White Town's killers: not enemies (no health, nothing kills them) but a touch costs 6 hearts. One stands still
+        /// until the player comes within 36px, then creeps after them at 30px/s for good: a berth that wide leaves it asleep.
+        /// </summary>
+        public static bool IsSuburbKiller(Entity e) => e.GetType().Name == "SuburbKiller";
+        public const int KillerWake = 30;
+
         public static HashSet<Point> NearEnemies(int margin, Entity except = null, bool stationaryOnly = false)
         {
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e == except || !e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || (stationaryOnly && e.velocity != Vector2.Zero))
+                bool killer = IsSuburbKiller(e);
+                if (!e.exists || e == except || !(killer || e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)) || (stationaryOnly && e.velocity != Vector2.Zero))
                 {
                     continue;
                 }
                 var r = e.Hitbox;
-                r.Inflate(margin, margin);
+                int m = killer ? margin + KillerWake : margin;
+                r.Inflate(m, m);
                 for (int ty = r.Top / 16; ty <= (r.Bottom - 1) / 16; ty++)
                 {
                     for (int tx = r.Left / 16; tx <= (r.Right - 1) / 16; tx++)
@@ -661,12 +2112,57 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Shortest tile path from a to the nearest tile satisfying isGoal (excluding a), or null. `forced` is a goal tile allowed even if not walkable.</summary>
-        public static List<Point> FindPath(Point a, Func<Point, bool> isGoal, Point? forced = null, bool strict = false)
+        private static readonly Dictionary<(Point, Point, bool, bool, bool, int, string), long> _noPathUntil = new();
+
+        /// <summary>FindPath to one tile, remembering for a few frames that there is none (a fight asks every frame for a way to a foe out on the
+        /// water, and on a big map each failing search walks all of it).</summary>
+        public static List<Point> FindPathTo(Point a, Point goal, bool strict = false, int forgetAfter = 15)
+        {
+            var key = (a, goal, strict, AllowJump, AllowWater, Avoid == null ? -1 : 1, GlobalState.CURRENT_MAP_NAME);
+            long now = BotRunner.Frame;
+            if (_noPathUntil.TryGetValue(key, out long until) && now < until)
+            {
+                return null;
+            }
+            var p = FindPath(a, t => t == goal, goal, strict);
+            if (p == null)
+            {
+                if (_noPathUntil.Count > 4000)
+                {
+                    _noPathUntil.Clear();
+                }
+                _noPathUntil[key] = now + forgetAfter;
+            }
+            return p;
+        }
+
+        public static List<Point> FindPath(Point a, Func<Point, bool> isGoal, Point? forced = null, bool strict = false, [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
+        {
+            if (!BotRunner.ProfOn)
+            {
+                return KeyLimited(() => FindPathCore0(a, isGoal, forced, strict));
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return KeyLimited(() => FindPathCore0(a, isGoal, forced, strict)); } finally { BotRunner.Prof($"FindPath@{line}", t0); }
+        }
+
+        public static List<Point> FindPathCore0(Point a, Func<Point, bool> isGoal, Point? forced = null, bool strict = false)
         {
             // Prefer routes that respect closed gates; if there is none, assume they will open (or can be opened) on arrival
             // (unless `strict`).
             _respectClosedGates = true;
             var p = FindPathCore(a, isGoal, forced);
+            if (p != null && p.Count > 20 && !_crossCracked)
+            {
+                // The way round cracked floor is long: running straight over it (it holds for a second under us) may be far shorter.
+                _crossCracked = true;
+                var pc = FindPathCore(a, isGoal, forced);
+                _crossCracked = false;
+                if (pc != null && pc.Count + 15 < p.Count)
+                {
+                    p = pc;
+                }
+            }
             if (p == null && !strict)
             {
                 _respectClosedGates = false;
@@ -685,6 +2181,52 @@ namespace AnodyneSharp.Recording
                     _respectClosedGates = true;
                 }
                 _crossCracked = false;
+            }
+            if (p == null && !strict && AllowJump)
+            {
+                // Stepping stones: jump from island to island (cracked ones too: they hold for a second).
+                _leaps = true;
+                _crossCracked = true;
+                p = FindPathCore(a, isGoal, forced);
+                if (p == null)
+                {
+                    _respectClosedGates = false;
+                    p = FindPathCore(a, isGoal, forced);
+                    _respectClosedGates = true;
+                }
+                _crossCracked = false;
+                _leaps = false;
+            }
+            if (p == null && strict && AllowJump)
+            {
+                // Strict (no shut gate taken as opening) still hops stepping stones: an island off a dash leap is only left that way.
+                _leaps = true;
+                _crossCracked = true;
+                p = FindPathCore(a, isGoal, forced);
+                _crossCracked = false;
+                _leaps = false;
+            }
+            // (with the boots, the caller's search with jumps comes next: a leap clean over it beats walking into it)
+            if (p == null && !strict && _shooterTiles.Count > 0 && (AllowJump || !GlobalState.inventory.CanJump))
+            {
+                // A plant or frog sits in the only way through: they are not solid, so it is walked over (its bullets are dodged, or
+                // the walker strikes it as a blocker) rather than no way at all.
+                var shooters = _shooterTiles;
+                _shooterTiles = new HashSet<Point>();
+                try
+                {
+                    p = FindPathCore(a, isGoal, forced);
+                    if (p == null)
+                    {
+                        _respectClosedGates = false;
+                        p = FindPathCore(a, isGoal, forced);
+                        _respectClosedGates = true;
+                    }
+                }
+                finally
+                {
+                    _shooterTiles = shooters;
+                }
             }
             return p;
         }
@@ -716,10 +2258,10 @@ namespace AnodyneSharp.Recording
                     path.Reverse();
                     return path;
                 }
-                foreach (var d in dirs)
+                foreach (var n in Steps(prev[c], c))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
-                    if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n)))
+                    var d = new Point(Math.Sign(n.X - c.X), Math.Sign(n.Y - c.Y));
+                    if (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n)))
                     {
                         continue;
                     }
@@ -748,7 +2290,192 @@ namespace AnodyneSharp.Recording
             return null;
         }
 
+        /// <summary>
+        /// A way from a to goal that hits pillar switches on the way (any screen of the map): a search over our tile and whether the
+        /// pillars are turned over from how they are now. The first switch hit on it, (where to stand, the switch), or null when there is
+        /// no such way (or one that needs no hit at all).
+        /// </summary>
+        /// <summary>After a PillarRoute that found its way only through a shut gate: the first such gate on it (else null).</summary>
+        public static Point? LastRouteGate;
+
+        /// <summary>After a PillarRoute: whether it got to the goal at all, and whether with every shut gate taken as shut.</summary>
+        public static bool LastRouteReached, LastRouteRespected;
+
+        /// <summary>Tiles where pressing the action key talks to something instead of swinging the broom (a Nexus pad underfoot teleports us
+        /// out of the dungeon): no place to stand to hit a switch from. Live interactables of this screen plus the map's pads.</summary>
+        public static HashSet<Point> InteractTiles()
+        {
+            var set = new HashSet<Point>();
+            void Add(Rectangle box)
+            {
+                for (int y = box.Top / 16; y <= (box.Bottom - 1) / 16; y++)
+                {
+                    for (int x = box.Left / 16; x <= (box.Right - 1) / 16; x++)
+                    {
+                        set.Add(new Point(x, y));
+                    }
+                }
+            }
+            foreach (var e in BotRunner.Entities())
+            {
+                if (e.exists && e is AnodyneSharp.Entities.Interactable && e is not AnodyneSharp.Entities.Gadget.Switches.PillarSwitch)
+                {
+                    Add(e.Hitbox);
+                }
+            }
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Doors.NexusPad))
+                {
+                    Add(new Rectangle((int)pr.Position.X + 6, (int)pr.Position.Y + 6, 22, 18));
+                }
+            }
+            return set;
+        }
+
+        public static (Point stand, Point sw)? PillarRoute(Point a, Point goal)
+        {
+            LastRouteGate = null;
+            LastRouteReached = false;
+            LastRouteRespected = false;
+            var switches = new HashSet<Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
+                {
+                    switches.Add(new Point((int)Math.Floor((pr.Position.X + 8) / 16f), (int)Math.Floor((pr.Position.Y + 8) / 16f)));
+                }
+            }
+            Point[] o4 = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
+            RefreshGates();
+            var hazards = Hazards();
+            // Water (still conveyor tiles) is crossed on a dust raft; with dust on the map, take it as passable here: this search only
+            // picks which switch to hit, and the raft planner works out the crossing once the pillars are turned over.
+            var talk = InteractTiles();
+            bool rafts = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type == typeof(AnodyneSharp.Entities.Dust));
+            try
+            {
+                foreach (int pass in new[] { 0, 1, 2 })
+                {
+                    bool respect = pass == 0;
+                    _respectClosedGates = respect;
+                    _noKillBars = pass == 2;
+                    var start = (a, false);
+                    var prev = new Dictionary<(Point, bool), (Point, bool)> { [start] = start };
+                    var q = new Queue<(Point, bool)>();
+                    q.Enqueue(start);
+                    while (q.Count > 0)
+                    {
+                        var (c, fl) = q.Dequeue();
+                        if (c == goal)
+                        {
+                            LastRouteReached = true;
+                            LastRouteRespected = respect;
+                            // the first hit on the way: the first node whose turn-over differs from the start's
+                            var chain = new List<(Point, bool)>();
+                            for (var n = (c, fl); n != start; n = prev[n])
+                            {
+                                chain.Add(n);
+                            }
+                            chain.Add(start);
+                            chain.Reverse();
+                            if (Environment.GetEnvironmentVariable("ANODYNE_PILLAR_TRACE") != null)
+                            {
+                                System.Console.Error.WriteLine($"  pillar route pass {pass}: " + string.Join(">", chain.Select(x => $"{x.Item1.X},{x.Item1.Y}{(x.Item2 ? "*" : "")}")));
+                            }
+                            for (int i = 1; i < chain.Count; i++)
+                            {
+                                if (chain[i].Item2 != chain[i - 1].Item2)
+                                {
+                                    var st = chain[i].Item1;
+                                    var sw = o4.Select(o => new Point(st.X + o.X, st.Y + o.Y)).First(switches.Contains);
+                                    return (st, sw);
+                                }
+                                var ct = chain[i].Item1;
+                                var cp = chain[i - 1].Item1;
+                                if (!respect && (_gatesClosed.Contains(ct) || (_edgeGates.Contains(ct) && ct.X / 10 == cp.X / 10 && ct.Y / 10 == cp.Y / 10)))
+                                {
+                                    // (taking shut gates as open: the first one on the way is what to open next, pillars or no pillars)
+                                    LastRouteGate = chain[i].Item1;
+                                    return null;
+                                }
+                            }
+                            return null;
+                        }
+                        PillarFlip = fl;
+                        var pc = prev[(c, fl)].Item1;
+                        foreach (var n in Steps(pc == c ? c : pc, c))
+                        {
+                            if (prev.ContainsKey((n, fl)) || hazards.Contains(n) || !(Walkable(n) || (rafts && IsConveyor(n) && !PillarsUp().Contains(n))) || KillGateBarred(c, n))
+                            {
+                                continue;
+                            }
+                            prev[(n, fl)] = (c, fl);
+                            q.Enqueue((n, fl));
+                        }
+                        if (o4.Any(o => switches.Contains(new Point(c.X + o.X, c.Y + o.Y))) && !prev.ContainsKey((c, !fl)) && !talk.Contains(c))
+                        {
+                            PillarFlip = !fl;
+                            bool crushed = PillarsUp().Contains(c); // (a pillar coming up where we stand)
+                            PillarFlip = fl;
+                            if (!crushed)
+                            {
+                                prev[(c, !fl)] = (c, fl);
+                                q.Enqueue((c, !fl));
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+            finally
+            {
+                PillarFlip = false;
+                _leaps = false;
+                _respectClosedGates = true;
+                _noKillBars = false;
+            }
+        }
+
+        /// <summary>Gates that open on puzzles solved (Gate preset frame 5-7, 15-17), by tile: their preset frame.</summary>
+        public static Dictionary<Point, int> PuzzleGates()
+        {
+            var res = new Dictionary<Point, int>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Gate) && pr.Frame % 10 >= 5 && pr.Frame % 10 <= 7)
+                {
+                    res[new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16)] = pr.Frame;
+                }
+            }
+            return res;
+        }
+
+        /// <summary>Buttons of the map, by tile.</summary>
+        public static List<Point> Buttons()
+        {
+            var res = new List<Point>();
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            {
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Button))
+                {
+                    res.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                }
+            }
+            return res;
+        }
+
         private static List<Point> FindPathCore(Point a, Func<Point, bool> isGoal, Point? forced)
+        {
+            if (!BotRunner.ProfOn)
+            {
+                return FindPathCore1(a, isGoal, forced);
+            }
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return FindPathCore1(a, isGoal, forced); } finally { BotRunner.Prof($"FPC{(_respectClosedGates ? "r" : "")}{(_leaps ? "l" : "")}{(_crossCracked ? "c" : "")}{(AllowJump ? "j" : "")}", t0); }
+        }
+
+        private static List<Point> FindPathCore1(Point a, Func<Point, bool> isGoal, Point? forced)
         {
             var map = CurrentMap;
             if (map == null)
@@ -774,10 +2501,9 @@ namespace AnodyneSharp.Recording
             while (q.Count > 0)
             {
                 var c = q.Dequeue();
-                foreach (var d in dirs)
+                foreach (var n in Steps(prev[c], c))
                 {
-                    var n = new Point(c.X + d.X, c.Y + d.Y);
-                    if (prev.ContainsKey(n) || (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n))))
+                    if (prev.ContainsKey(n) || (n != forced && (hazards.Contains(n) || (Avoid != null && Avoid.Contains(n)) || !Walkable(n) || KillGateBarred(c, n))))
                     {
                         continue;
                     }

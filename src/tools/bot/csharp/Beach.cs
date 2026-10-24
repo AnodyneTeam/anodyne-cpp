@@ -25,9 +25,13 @@ namespace AnodyneSharp.Recording
         public override IEnumerable<object> Run()
         {
             yield return Say("Beach 2: card gate, Health Upgrade, buttons");
-            yield return Section("beach card gate", () => Exec("c8 O1 X1 >32,740 I24,720,d W120"));
-            yield return Section("beach health upgrade", () => Exec("O1 X1 i"));
-            yield return Section("beach buttons", () => Exec("O1 X1 +"));
+            yield return Section("beach card gate", () => Exec("O1 X1 >32,740 I24,720,d W120"));
+            // (1,1) has two bouncing dash traps side by side along the bottom of its corridor, and they are on the left edge just as the
+            // screen scroll ends: come in along the top row, above their lanes. From there on the slimes and burst plants are left alone
+            // (the dodging walks past them; fighting them in that cramped corridor cost more hearts than it won).
+            yield return Section("beach health upgrade", () => Exec("O1 X1 >150,226 H1,1 X0 i"));
+            // (no auto-fight: the way to the (4,2) button crosses the burst plant, slimes and Annoyer of (4,1), and walking past them is safer)
+            yield return Section("beach buttons", () => Exec("O1 X0 +"));
         }
     }
 
