@@ -30,3 +30,25 @@ void World_GetBgOffsets(int16_t x[4], int16_t y[4]);
 
 bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing);
 void World_PlaceAt(int x, int y, uint8_t facing);
+
+// The player, for tools (game_probe.cpp): hitbox top-left in map pixels, facing (0 down, 1 right, 2 up, 3 left),
+// the current screen, and whether the camera is scrolling to it.
+struct WorldPlayerInfo final
+{
+    int mX;
+    int mY;
+    int mFacing;
+    int mGridX;
+    int mGridY;
+    bool mTransition;
+    bool mLadder;
+    bool mFallen;
+    int mHealth;
+};
+void World_GetPlayerInfo(WorldPlayerInfo& info);
+
+// The current map's collision (16x16 cells), for tools: size in cells, and each cell's blocked sides (Touching
+// flags) and tile event (0 none, 1 conveyor, 2 thin, 3 hole, 4 slow, 5 spike, 6 ladder, 7 puddle, 8 reflection,
+// 9 grass).
+void World_GetCellsSize(int& w, int& h);
+void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event);

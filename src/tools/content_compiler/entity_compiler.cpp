@@ -5,7 +5,10 @@
 #include <fstream>
 #include <map>
 #include <regex>
+#include <set>
 #include <sstream>
+
+#include "../../anodyne/entity_types.h"
 
 namespace
 {
@@ -16,8 +19,9 @@ struct EntityLook final
     bool mUseFrame;     // the entity's "frame" attribute picks the sheet frame
 };
 
-// Hand-written guesses (the C# decides sprites in each entity's constructor); anything missing from this table
-// gets the generic placeholder box. Sheets must be listed in sprite_defs.cpp.
+// What a placeholder (an entity the port doesn't implement yet) looks like: hand-written guesses (the C# decides
+// sprites in each entity's constructor); anything missing from this table gets the generic placeholder box. Sheets
+// must be listed in sprite_defs.cpp.
 const EntityLook kLooks[] = {
     { "Treasure", "treasureboxes", false },
     { "Dash_Trap", "dash_trap", false },
@@ -96,7 +100,7 @@ const EntityLook kLooks[] = {
     { "Propelled", nullptr, false },
 };
 
-// Doors that are visible objects (by the Door "type" attribute).
+// Doors that are visible objects (by the Door "type" attribute). Their warps are door_compiler.cpp's.
 struct DoorLook final
 {
     int mType;
@@ -106,6 +110,107 @@ const DoorLook kDoorLooks[] = {
     { 4, "whiteportal" },
     { 7, "whirlpool" },
     { 16, "nexus_pad" },
+};
+
+// The C# [NamedEntity(xmlName, type, map, frames)] attributes of the classes the port implements. An element takes
+// the most specific match (most of type/map/frames given), like EntityManager.ReadEntities; no match = placeholder.
+struct NamedEntity final
+{
+    const char* mXml;
+    const char* mTypeValue; // nullptr = any
+    const char* mMap;       // nullptr = any
+    std::set<int> mFrames;  // empty = any
+    EntityPresetType mType;
+};
+
+const NamedEntity kNamed[] = {
+    { "Console", nullptr, nullptr, { 0 }, EPT_Console },
+    { "Console", nullptr, "BLANK", { 1 }, EPT_BlankConsole },
+    { "Gate", nullptr, nullptr, {}, EPT_Gate },
+    { "Button", nullptr, nullptr, {}, EPT_Button },
+    { "Treasure", nullptr, nullptr, {}, EPT_Treasure },
+    { "solid_tile", nullptr, nullptr, {}, EPT_SolidTile },
+    { "Solid_Sprite", "blocker", nullptr, {}, EPT_Blocker },
+    { "Solid_Sprite", "vblock", nullptr, {}, EPT_VBlocker },
+    { "Dust", nullptr, nullptr, {}, EPT_Dust },
+    { "Jump_Trigger", "", nullptr, {}, EPT_JumpTrigger },
+    { "Jump_Trigger", "1", nullptr, {}, EPT_SpringPad },
+    { "CrackedTile", nullptr, nullptr, {}, EPT_CrackedTile },
+    { "Hole", nullptr, nullptr, {}, EPT_Hole },
+    { "KeyBlock", nullptr, nullptr, { 0 }, EPT_SmallKeyGate },
+    { "KeyBlock", nullptr, nullptr, { 1, 2, 3 }, EPT_BigKeyGate },
+    { "CardGate", nullptr, nullptr, {}, EPT_CardGate },
+    { "Key", nullptr, nullptr, {}, EPT_Key },
+    { "Health_Dropper", nullptr, nullptr, {}, EPT_HealthEntity },
+    { "Event", nullptr, nullptr, { 2 }, EPT_Checkpoint },
+    { "Event", "entrance", nullptr, { 5 }, EPT_DungeonEntrance },
+    { "Event", "entrance_ref", nullptr, { 5 }, EPT_DungeonEntranceRef },
+    { "Event", nullptr, nullptr, { 1 }, EPT_VolumeEvent },
+    { "Event", nullptr, nullptr, { 8 }, EPT_BossKeyReset },
+    { "Event", "bedroom_bounce", nullptr, {}, EPT_BedroomBounceLight },
+    { "Eye_Light", nullptr, nullptr, {}, EPT_EyeLight },
+    { "Dungeon_Statue", nullptr, nullptr, {}, EPT_DungeonStatue },
+    { "NPC", "rock", nullptr, {}, EPT_Rock },
+    { "NPC", "statue", nullptr, {}, EPT_Statue },
+    { "NPC", "big_key", nullptr, {}, EPT_BigKey },
+    { "Sage", nullptr, "BLANK", {}, EPT_SageBlank },
+    { "Sage", nullptr, "NEXUS", {}, EPT_SageNexus },
+    { "Sage", nullptr, "OVERWORLD", {}, EPT_SageOverworld },
+    { "Sage", nullptr, "BEDROOM", {}, EPT_SageBedroom },
+    { "Mitra", nullptr, "OVERWORLD", {}, EPT_MitraOverworld },
+    { "Health_Cicada", nullptr, nullptr, {}, EPT_HealthCicada },
+    { "Sadbro", nullptr, nullptr, {}, EPT_Sadbro },
+    { "Follower_Bro", nullptr, nullptr, {}, EPT_FollowerBro },
+    { "Slime", nullptr, nullptr, {}, EPT_Slime },
+    { "Shieldy", nullptr, nullptr, {}, EPT_Shieldy },
+    { "Pew_Laser", nullptr, nullptr, {}, EPT_PewLaser },
+    { "Annoyer", nullptr, nullptr, {}, EPT_Annoyer },
+    { "Sun_Guy", nullptr, nullptr, {}, EPT_Seer },
+    { "Dog", nullptr, nullptr, {}, EPT_Dog },
+    { "Rotator", nullptr, nullptr, {}, EPT_Rotator },
+};
+
+const char* const kTypeNames[] = {
+#define ANODYNE_ENTITY_NAME(name) #name,
+    ANODYNE_ENTITY_TYPES(ANODYNE_ENTITY_NAME)
+#undef ANODYNE_ENTITY_NAME
+};
+
+// Returns the implemented type for an element, EPT_Placeholder if none matches. Sets *conflict if two equally
+// specific classes match (the C# logs that and skips the entity).
+EntityPresetType Resolve(const std::string& tag, const std::string& typeValue, const std::string& map, int frame,
+                         bool* conflict)
+{
+    int bestScore = -1;
+    EntityPresetType best = EPT_Placeholder;
+    *conflict = false;
+    for (const NamedEntity& n : kNamed)
+    {
+        if (tag != n.mXml || (n.mTypeValue && typeValue != n.mTypeValue) || (n.mMap && map != n.mMap) ||
+            (!n.mFrames.empty() && !n.mFrames.count(frame)))
+        {
+            continue;
+        }
+        const int score = (n.mTypeValue ? 1 : 0) + (n.mMap ? 1 : 0) + (n.mFrames.empty() ? 0 : 1);
+        if (score > bestScore)
+        {
+            bestScore = score;
+            best = n.mType;
+            *conflict = false;
+        }
+        else if (score == bestScore)
+        {
+            *conflict = true;
+        }
+    }
+    return best;
+}
+
+struct Element final
+{
+    int mMap;
+    std::string mTag;
+    std::map<std::string, std::string> mAttrs;
 };
 } // namespace
 
@@ -122,6 +227,97 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
         mapIndex[mapNames[i]] = static_cast<int>(i);
     }
 
+    // Pass 1: every element of the maps we build, in file order (the C#'s preset order).
+    std::vector<Element> elements;
+    std::regex tagRe("<([A-Za-z_0-9]+)\\s([^>]*)>");
+    std::regex attrRe("(\\w+)=\"([^\"]*)\"");
+    int currentMap = -1;
+    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), tagRe); it != std::sregex_iterator(); ++it)
+    {
+        Element e;
+        e.mTag = (*it)[1].str();
+        const std::string body = (*it)[2].str();
+        for (auto a = std::sregex_iterator(body.begin(), body.end(), attrRe); a != std::sregex_iterator(); ++a)
+        {
+            e.mAttrs[(*a)[1].str()] = (*a)[2].str();
+        }
+        if (e.mTag == "map")
+        {
+            auto m = mapIndex.find(e.mAttrs["name"]);
+            currentMap = (m == mapIndex.end()) ? -1 : m->second;
+            continue;
+        }
+        if (currentMap < 0 || !e.mAttrs.count("x"))
+        {
+            continue;
+        }
+        e.mMap = currentMap;
+        elements.push_back(e);
+    }
+
+    // Link groups (EntityManager._linkGroups): linkid -> its presets; a "linkgroup" list merges several ids.
+    std::map<int, std::vector<size_t>> linkGroups;
+    std::map<int, int> groupOf; // linkid -> representative
+    auto findGroup = [&](int id)
+    {
+        while (groupOf.count(id) && groupOf[id] != id)
+        {
+            id = groupOf[id];
+        }
+        return id;
+    };
+    for (size_t i = 0; i < elements.size(); i++)
+    {
+        const auto& a = elements[i].mAttrs;
+        auto l = a.find("linkid");
+        if (l == a.end())
+        {
+            continue;
+        }
+        const int id = std::atoi(l->second.c_str());
+        if (!groupOf.count(id))
+        {
+            groupOf[id] = id;
+        }
+        linkGroups[id].push_back(i);
+        auto g = a.find("linkgroup");
+        if (g != a.end())
+        {
+            std::stringstream list(g->second);
+            std::string item;
+            while (std::getline(list, item, ','))
+            {
+                const int other = std::atoi(item.c_str());
+                if (!groupOf.count(other))
+                {
+                    groupOf[other] = other;
+                }
+                groupOf[findGroup(other)] = findGroup(id);
+            }
+        }
+    }
+    // The "entrance" Event of a link group, for DungeonEntranceRef.
+    auto groupEntrance = [&](int id) -> const Element*
+    {
+        const int root = findGroup(id);
+        for (auto& [lid, members] : linkGroups)
+        {
+            if (findGroup(lid) != root)
+            {
+                continue;
+            }
+            for (size_t m : members)
+            {
+                auto t = elements[m].mAttrs.find("type");
+                if (t != elements[m].mAttrs.end() && t->second == "entrance")
+                {
+                    return &elements[m];
+                }
+            }
+        }
+        return nullptr;
+    };
+
     std::vector<std::string> sheets;
     auto sheetId = [&](const std::string& name) -> int
     {
@@ -137,44 +333,52 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
     };
     sheetId("placeholder");
 
-    std::vector<std::vector<std::string>> perMap(mapNames.size());
-    std::regex tagRe("<([A-Za-z_0-9]+)\\s([^>]*)>");
-    std::regex attrRe("(\\w+)=\"([^\"]*)\"");
-    int currentMap = -1;
-    int count = 0;
-    for (auto it = std::sregex_iterator(xml.begin(), xml.end(), tagRe); it != std::sregex_iterator(); ++it)
+    std::vector<std::string> typeValues;
+    auto typeValueId = [&](const std::string& value) -> int
     {
-        const std::string tag = (*it)[1].str();
-        std::map<std::string, std::string> attrs;
-        const std::string body = (*it)[2].str();
-        for (auto a = std::sregex_iterator(body.begin(), body.end(), attrRe); a != std::sregex_iterator(); ++a)
+        for (size_t i = 0; i < typeValues.size(); i++)
         {
-            attrs[(*a)[1].str()] = (*a)[2].str();
+            if (typeValues[i] == value)
+            {
+                return static_cast<int>(i);
+            }
         }
-        if (tag == "map")
+        typeValues.push_back(value);
+        return static_cast<int>(typeValues.size() - 1);
+    };
+    typeValueId("");
+
+    std::vector<std::vector<std::string>> perMap(mapNames.size());
+    int typeCounts[EPT_Count] = {};
+    int globalId = 0;
+    for (const Element& e : elements)
+    {
+        const std::string& tag = e.mTag;
+        auto attr = [&](const char* name) -> std::string
         {
-            auto m = mapIndex.find(attrs["name"]);
-            currentMap = (m == mapIndex.end()) ? -1 : m->second;
-            continue;
-        }
-        if (currentMap < 0 || !attrs.count("x"))
+            auto f = e.mAttrs.find(name);
+            return f == e.mAttrs.end() ? std::string() : f->second;
+        };
+        const int frame = std::atoi(attr("frame").c_str());
+        const std::string typeValue = attr("type");
+        bool conflict = false;
+        const EntityPresetType type = Resolve(tag, typeValue, mapNames[e.mMap], frame, &conflict);
+        if (conflict)
         {
-            continue;
+            printf("Entities: conflicting classes for %s-%d-'%s' in %s\n", tag.c_str(), frame, typeValue.c_str(),
+                   mapNames[e.mMap].c_str());
         }
 
-        const int frame = std::atoi(attrs["frame"].c_str());
+        // The placeholder look (also the fallback sprite of implemented types, which mostly pick their own).
         std::string sheet = "placeholder";
         bool useFrame = false;
-        int kind = 0;
-        int arg = 0;
-        int shownFrame = -1; // -1 = use "frame" when the look says so
         if (tag == "Door")
         {
-            const int type = std::atoi(attrs["type"].c_str());
+            const int doorType = std::atoi(typeValue.c_str());
             sheet.clear();
             for (const DoorLook& d : kDoorLooks)
             {
-                if (d.mType == type)
+                if (d.mType == doorType)
                 {
                     sheet = d.mSheet;
                 }
@@ -191,35 +395,40 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
                 }
             }
         }
+        if (type == EPT_Placeholder && sheet.empty())
+        {
+            continue; // invisible and not implemented: nothing to do
+        }
         if (sheet.empty())
         {
-            continue;
-        }
-        if (tag == "Sage" && mapNames[currentMap] == "BLANK")
-        {
-            // SageBlank: invisible, shows sage/intro line frame+1 when the screen transition ends.
-            kind = 3;
-            arg = frame;
             sheet = "placeholder";
         }
-        else if (tag == "Console")
-        {
-            kind = 1;
-        }
-        else if (tag == "Gate")
-        {
-            // Gate.GetSprite(int.Parse(TypeValue)): the closed frame is the "type" attribute; "frame" is the condition.
-            kind = 2;
-            arg = frame;
-            shownFrame = std::atoi(attrs["type"].c_str());
-        }
 
-        char buf[96];
-        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, %d },\n", std::atoi(attrs["x"].c_str()),
-                 std::atoi(attrs["y"].c_str()), sheetId(sheet),
-                 shownFrame >= 0 ? shownFrame : (useFrame ? frame : 0), kind, arg);
-        perMap[currentMap].push_back(buf);
-        count++;
+        int x = static_cast<int>(std::atof(attr("x").c_str()));
+        int y = static_cast<int>(std::atof(attr("y").c_str()));
+        int outFrame = frame;
+        int linkId = attr("linkid").empty() ? -1 : std::atoi(attr("linkid").c_str());
+        if (type == EPT_DungeonEntranceRef)
+        {
+            // The linked "entrance" Event's position travels in frame/linkid (the ref only needs that).
+            const Element* entrance = linkId >= 0 ? groupEntrance(linkId) : nullptr;
+            if (!entrance)
+            {
+                printf("Entities: entrance_ref without an entrance in %s\n", mapNames[e.mMap].c_str());
+                continue;
+            }
+            outFrame = static_cast<int>(std::atof(entrance->mAttrs.at("x").c_str()));
+            linkId = static_cast<int>(std::atof(entrance->mAttrs.at("y").c_str()));
+        }
+        const int permanence = attr("p").empty() ? PERM_GRID_LOCAL : std::atoi(attr("p").c_str());
+
+        char buf[160];
+        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, EPT_%s, %d, %d, %d, %d },\n", x, y, outFrame, linkId,
+                 globalId, kTypeNames[type], permanence, sheetId(sheet), useFrame ? frame : 0,
+                 typeValueId(typeValue));
+        perMap[e.mMap].push_back(buf);
+        typeCounts[type]++;
+        globalId++;
     }
 
     std::string out = "static const char* const kEntitySheets[] = {\n";
@@ -227,7 +436,14 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
     {
         out += "    \"" + s + "\",\n";
     }
-    out += "};\nstatic const MapEntity kNoEntities[1] = {};\n";
+    out += "};\nstatic const char* const kEntityTypeValues[] = {\n";
+    for (const std::string& s : typeValues)
+    {
+        out += "    \"" + s + "\",\n";
+    }
+    out += "};\n";
+    out += "static const unsigned kEntityPresetCount = " + std::to_string(globalId) + ";\n";
+    out += "static const MapEntity kNoEntities[1] = {};\n";
     for (size_t i = 0; i < mapNames.size(); i++)
     {
         if (perMap[i].empty())
@@ -256,6 +472,6 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
         }
     }
     out += "};\n";
-    printf("Entities: %d placeholder sprites, %zu sheets\n", count, sheets.size());
+    printf("Entities: %d presets, %zu sheets, %d placeholders\n", globalId, sheets.size(), typeCounts[EPT_Placeholder]);
     return out;
 }

@@ -1,0 +1,1385 @@
+#include "ecs.h"
+
+#include <string.h>
+
+#include "tonc.h"
+
+#include "obj_vram_allocator.hpp"
+#include "sprite.h"
+
+// Pools and per-frame buffers live in EWRAM (".sbss" in gba_cart.ld: uninitialised, Ecs_Init resets them).
+#define ECS_EWRAM __attribute__((section(".sbss")))
+
+namespace
+{
+Pool<Entity, kMaxEntities> gEntities ECS_EWRAM;
+Pool<Transform, kMaxEntities> gTransforms ECS_EWRAM;
+Pool<Body, kMaxEntities> gBodies ECS_EWRAM;
+Pool<Visual, kMaxVisuals> gVisuals ECS_EWRAM;
+Pool<Brain, kMaxBrains> gBrains ECS_EWRAM;
+
+Entity* gHead = nullptr;
+Entity* gTail = nullptr;
+int gBaseKilled = 0;
+uint32_t gRngState = 0x2545F491u;
+
+constexpr fx kOverlapBias = Fx(4); // GameObject.OVERLAP_BIAS
+
+void Link(Entity* e)
+{
+    e->mPrev = gTail;
+    e->mNext = nullptr;
+    if (gTail)
+    {
+        gTail->mNext = e;
+    }
+    else
+    {
+        gHead = e;
+    }
+    gTail = e;
+}
+
+void Unlink(Entity* e)
+{
+    if (e->mPrev)
+    {
+        e->mPrev->mNext = e->mNext;
+    }
+    else
+    {
+        gHead = e->mNext;
+    }
+    if (e->mNext)
+    {
+        e->mNext->mPrev = e->mPrev;
+    }
+    else
+    {
+        gTail = e->mPrev;
+    }
+    e->mPrev = e->mNext = nullptr;
+}
+
+const SpriteAnimData* CurAnim(const Visual& v)
+{
+    return (v.mSheet && v.mAnim >= 0) ? &v.mSheet->mAnims[v.mAnim] : nullptr;
+}
+
+// Anim.Update: one step of the current animation.
+void AnimUpdate(Visual& v)
+{
+    const SpriteAnimData* anim = CurAnim(v);
+    if (!anim || v.mFinished)
+    {
+        return;
+    }
+    const int fps = v.mFpsOverride > 0 ? v.mFpsOverride : anim->mFps;
+    if (fps == 0)
+    {
+        v.mFinished = true; // delay 0: always "finished"
+        return;
+    }
+    v.mTimer += static_cast<uint16_t>(fps);
+    while (v.mTimer >= kFps)
+    {
+        v.mTimer -= kFps;
+        if (v.mAnimIndex + 1 >= anim->mFrameCount)
+        {
+            if (anim->mLoop)
+            {
+                v.mAnimIndex = 0;
+            }
+            else
+            {
+                v.mFinished = true;
+                break;
+            }
+        }
+        else
+        {
+            v.mAnimIndex++;
+        }
+    }
+}
+
+// Entity.DoFlicker: visible toggles every 0.05s (3 frames) until the timer runs out.
+void DoFlicker(Visual& v)
+{
+    v.mFlickerFreq -= kFxOne;
+    if (v.mFlickerFreq <= 0)
+    {
+        v.mFlickerFreq = FxSec(0.05f);
+        v.mVisible = !v.mVisible;
+    }
+    if (v.mFlickerTimer > 0)
+    {
+        v.mFlickerTimer -= kFxOne;
+        if (v.mFlickerTimer <= 0)
+        {
+            v.mFlickering = false;
+            v.mVisible = true;
+        }
+    }
+}
+
+// GameObject.CalculateDrag.
+fx Drag(fx vel, fx drag)
+{
+    const fx d = FxStep(drag);
+    if (vel < 0)
+    {
+        vel += d;
+        return vel > 0 ? 0 : vel;
+    }
+    vel -= d;
+    return vel < 0 ? 0 : vel;
+}
+
+// GameObject.SeparateX/Y for two objects given by position/last position/size (Fx). Object 2 may be a map tile
+// (immovable2, bias = OVERLAP_BIAS) or an entity (bias / 2).
+struct Obj final
+{
+    fx* mX;
+    fx* mY;
+    fx* mLastX;
+    fx* mLastY;
+    fx mW;
+    fx mH;
+    uint8_t mAllow;
+    uint8_t* mTouching;
+    bool mImmovable;
+};
+
+bool SeparateAxis(Obj& o1, Obj& o2, bool xAxis, bool o2IsEntity)
+{
+    if (o1.mImmovable && o2.mImmovable)
+    {
+        return false;
+    }
+    fx* p1 = xAxis ? o1.mX : o1.mY;
+    fx* p2 = xAxis ? o2.mX : o2.mY;
+    fx* l1 = xAxis ? o1.mLastX : o1.mLastY;
+    fx* l2 = xAxis ? o2.mLastX : o2.mLastY;
+    const fx d1 = *p1 - *l1;
+    const fx d2 = *p2 - *l2;
+    const fx d1a = d1 < 0 ? -d1 : d1;
+    const fx d2a = d2 < 0 ? -d2 : d2;
+
+    // The hulls: along this axis widened by the movement, across it at the last position.
+    fx a1, b1, a2, b2, s1a, s1b, s2a, s2b;
+    if (xAxis)
+    {
+        a1 = *p1 - (d1 > 0 ? d1 : 0);
+        s1a = o1.mW + d1a;
+        b1 = *o1.mLastY;
+        s1b = o1.mH;
+        a2 = *p2 - (d2 > 0 ? d2 : 0);
+        s2a = o2.mW + d2a;
+        b2 = *o2.mLastY;
+        s2b = o2.mH;
+    }
+    else
+    {
+        a1 = *p1 - (d1 > 0 ? d1 : 0);
+        s1a = o1.mH + d1a;
+        b1 = *o1.mLastX;
+        s1b = o1.mW;
+        a2 = *p2 - (d2 > 0 ? d2 : 0);
+        s2a = o2.mH + d2a;
+        b2 = *o2.mLastX;
+        s2b = o2.mW;
+    }
+    fx overlap = 0;
+    if (a1 + s1a > a2 && a1 < a2 + s2a && b1 + s1b > b2 && b1 < b2 + s2b)
+    {
+        const fx maxOverlap = d1a + d2a + (o2IsEntity ? kOverlapBias / 2 : kOverlapBias);
+        const fx size1 = xAxis ? o1.mW : o1.mH;
+        const fx size2 = xAxis ? o2.mW : o2.mH;
+        const fx overlapFwd = *p1 + size1 - *p2;  // right / down
+        const fx overlapBack = *p1 - size2 - *p2; // left / up
+        const uint8_t fwd1 = xAxis ? TOUCH_RIGHT : TOUCH_DOWN;
+        const uint8_t back1 = xAxis ? TOUCH_LEFT : TOUCH_UP;
+        if ((overlapFwd < 0 ? -overlapFwd : overlapFwd) < (overlapBack < 0 ? -overlapBack : overlapBack))
+        {
+            overlap = overlapFwd;
+            if (overlap > maxOverlap || (o1.mAllow & fwd1) == 0 || (o2.mAllow & back1) == 0)
+            {
+                overlap = 0;
+            }
+            else
+            {
+                *o1.mTouching |= fwd1;
+                if (o2.mTouching)
+                {
+                    *o2.mTouching |= back1;
+                }
+            }
+        }
+        else
+        {
+            overlap = overlapBack;
+            if (-overlap > maxOverlap || (o1.mAllow & back1) == 0 || (o2.mAllow & fwd1) == 0)
+            {
+                overlap = 0;
+            }
+            else
+            {
+                *o1.mTouching |= back1;
+                if (o2.mTouching)
+                {
+                    *o2.mTouching |= fwd1;
+                }
+            }
+        }
+    }
+    if (overlap == 0)
+    {
+        return false;
+    }
+    if (!o1.mImmovable && !o2.mImmovable)
+    {
+        overlap /= 2;
+        *p1 -= overlap;
+        *p2 += overlap;
+    }
+    else if (!o1.mImmovable)
+    {
+        *p1 -= overlap;
+        *l1 = *p1;
+    }
+    else
+    {
+        *p2 += overlap;
+        *l2 = *p2;
+    }
+    return true;
+}
+
+Obj ObjOf(Entity& e)
+{
+    Obj o;
+    o.mX = &e.mT->mX;
+    o.mY = &e.mT->mY;
+    o.mLastX = &e.mT->mLastX;
+    o.mLastY = &e.mT->mLastY;
+    o.mW = Fx(e.mB->mW);
+    o.mH = Fx(e.mB->mH);
+    o.mAllow = e.mB->mAllow;
+    o.mTouching = &e.mB->mTouching;
+    o.mImmovable = e.mB->mImmovable;
+    return o;
+}
+
+void Physics(Entity& e)
+{
+    Transform& t = *e.mT;
+    t.mLastX = t.mX;
+    t.mLastY = t.mY;
+    const fx oldVx = t.mVelX;
+    const fx oldVy = t.mVelY;
+    t.mVelX += FxStep(t.mAccX);
+    t.mVelY += FxStep(t.mAccY);
+    t.mVelX = Drag(t.mVelX, t.mDragX);
+    t.mVelY = Drag(t.mVelY, t.mDragY);
+    // Average velocity: exact for constant acceleration.
+    t.mX += FxStep(oldVx + (t.mVelX - oldVx) / 2);
+    t.mY += FxStep(oldVy + (t.mVelY - oldVy) / 2);
+    const fx oldAv = t.mAngVel;
+    t.mAngVel += FxStep(t.mAngAcc);
+    t.mRot += FxStep(oldAv + (t.mAngVel - oldAv) / 2);
+    e.mB->mWasTouching = e.mB->mTouching;
+    e.mB->mTouching = TOUCH_NONE;
+}
+
+bool Updatable(const Entity& e)
+{
+    return e.mExists && !e.mOld && !e.mFreed;
+}
+} // namespace
+
+// ---- Math ----------------------------------------------------------------------------------------------------
+fx FxSqrt(fx v)
+{
+    if (v <= 0)
+    {
+        return 0;
+    }
+    // sqrt(v / 65536) * 65536 = sqrt(v * 65536)
+    uint64_t n = static_cast<uint64_t>(v) << kFxShift;
+    uint64_t r = 0;
+    uint64_t bit = 1ull << 62;
+    while (bit > n)
+    {
+        bit >>= 2;
+    }
+    while (bit)
+    {
+        if (n >= r + bit)
+        {
+            n -= r + bit;
+            r = (r >> 1) + bit;
+        }
+        else
+        {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return static_cast<fx>(r);
+}
+
+fx FxLength(fx x, fx y)
+{
+    const int64_t sq = static_cast<int64_t>(x) * x + static_cast<int64_t>(y) * y; // 32.32
+    if (sq <= 0)
+    {
+        return 0;
+    }
+    uint64_t n = static_cast<uint64_t>(sq);
+    uint64_t r = 0;
+    uint64_t bit = 1ull << 62;
+    while (bit > n)
+    {
+        bit >>= 2;
+    }
+    while (bit)
+    {
+        if (n >= r + bit)
+        {
+            n -= r + bit;
+            r = (r >> 1) + bit;
+        }
+        else
+        {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return static_cast<fx>(r);
+}
+
+fx FxSin(fx radians)
+{
+    // 16.16 radians -> tonc's 0x10000-per-turn angle; sin_lut is .12 with 512 entries.
+    const int64_t turns = (static_cast<int64_t>(radians) * 10430) >> kFxShift; // 65536 / (2 pi) = 10430.38
+    const uint32_t theta = static_cast<uint32_t>(turns) & 0xFFFF;
+    const int i = static_cast<int>(theta >> 7);
+    const int frac = static_cast<int>(theta & 0x7F);
+    const int a = sin_lut[i];
+    const int b = sin_lut[(i + 1) & 0x1FF];
+    return (a + (((b - a) * frac) >> 7)) << 4;
+}
+
+fx FxCos(fx radians)
+{
+    return FxSin(radians + kFxPi / 2);
+}
+
+bool MoveTo(fx& value, fx target, fx speedPerSecond)
+{
+    const fx step = FxStep(speedPerSecond);
+    if (value < target)
+    {
+        value = value + step > target ? target : value + step;
+    }
+    else if (value > target)
+    {
+        value = value - step < target ? target : value - step;
+    }
+    return value == target;
+}
+
+uint32_t Rng_Next()
+{
+    // xorshift32
+    uint32_t x = gRngState;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    gRngState = x;
+    return x;
+}
+
+fx Rng_Unit()
+{
+    return static_cast<fx>(Rng_Next() >> 16);
+}
+
+int Rng_Range(int lo, int hi)
+{
+    if (hi <= lo)
+    {
+        return lo;
+    }
+    return lo + static_cast<int>(Rng_Next() % static_cast<uint32_t>(hi - lo));
+}
+
+int FacingX(Facing f)
+{
+    return f == FACE_RIGHT ? 1 : (f == FACE_LEFT ? -1 : 0);
+}
+
+int FacingY(Facing f)
+{
+    return f == FACE_DOWN ? 1 : (f == FACE_UP ? -1 : 0);
+}
+
+Facing FlipFacing(Facing f)
+{
+    switch (f)
+    {
+    case FACE_LEFT:
+        return FACE_RIGHT;
+    case FACE_RIGHT:
+        return FACE_LEFT;
+    case FACE_UP:
+        return FACE_DOWN;
+    default:
+        return FACE_UP;
+    }
+}
+
+// ---- Lifetime ------------------------------------------------------------------------------------------------
+void Ecs_Init()
+{
+    gEntities.Reset();
+    gTransforms.Reset();
+    gBodies.Reset();
+    gVisuals.Reset();
+    gBrains.Reset();
+    gHead = gTail = nullptr;
+    gBaseKilled = 0;
+}
+
+Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapEntity* preset, Entity* parent)
+{
+    if (gEntities.mFreeCount == 0 || gTransforms.mFreeCount == 0 || gBodies.mFreeCount == 0 ||
+        ((parts & PART_VISUAL) && gVisuals.mFreeCount == 0) || ((parts & PART_BRAIN) && gBrains.mFreeCount == 0))
+    {
+        return nullptr;
+    }
+    Entity* e = gEntities.Alloc();
+    e->mIndex = static_cast<uint16_t>(gEntities.IndexOf(e));
+    e->mClass = &cls;
+    e->mT = gTransforms.Alloc();
+    e->mB = gBodies.Alloc();
+    e->mV = (parts & PART_VISUAL) ? gVisuals.Alloc() : nullptr;
+    e->mBrain = (parts & PART_BRAIN) ? gBrains.Alloc() : nullptr;
+    e->mPreset = preset;
+    e->mParent = parent;
+    e->mExists = true;
+    e->mFacing = FACE_DOWN;
+    e->mT->mX = e->mT->mLastX = x;
+    e->mT->mY = e->mT->mLastY = y;
+    e->mB->mAllow = TOUCH_ANY;
+    e->mB->mMapInteraction = true;
+    if (e->mV)
+    {
+        e->mV->mAnim = -1;
+        e->mV->mVisible = true;
+        e->mV->mLayer = LAYER_ENTITIES;
+        e->mV->mOpacity = kFxOne;
+        e->mV->mScale = kFxOne;
+    }
+    Link(e);
+    return e;
+}
+
+void Ecs_Free(Entity& e)
+{
+    if (e.mFreed)
+    {
+        return;
+    }
+    e.mFreed = true;
+    if (e.mClass->mDestroy)
+    {
+        e.mClass->mDestroy(e);
+    }
+    Unlink(&e);
+    gTransforms.Free(e.mT);
+    gBodies.Free(e.mB);
+    gVisuals.Free(e.mV);
+    gBrains.Free(e.mBrain);
+    gEntities.Free(&e);
+}
+
+Entity* Ecs_First()
+{
+    return gHead;
+}
+
+void Ecs_MarkScreenOld()
+{
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!e->mPlayerOwned)
+        {
+            e->mOld = true;
+        }
+    }
+}
+
+void Ecs_FreeOld()
+{
+    for (Entity* e = gHead; e;)
+    {
+        Entity* next = e->mNext;
+        if (e->mOld)
+        {
+            Ecs_Free(*e);
+        }
+        e = next;
+    }
+}
+
+void Ecs_FreeAllButPlayer()
+{
+    for (Entity* e = gHead; e;)
+    {
+        Entity* next = e->mNext;
+        if (!e->mPlayerOwned)
+        {
+            Ecs_Free(*e);
+        }
+        e = next;
+    }
+}
+
+void Ecs_FreeDead()
+{
+    for (Entity* e = gHead; e;)
+    {
+        Entity* next = e->mNext;
+        if (!e->mExists && !e->mPreset && !e->mPlayerOwned && !(e->mClass->mFlags & ECF_ENEMY))
+        {
+            Ecs_Free(*e);
+        }
+        e = next;
+    }
+}
+
+int Ecs_Count()
+{
+    return gEntities.mUsed;
+}
+
+void Ecs_Stats(int* entities, int* visuals, int* brains)
+{
+    *entities = gEntities.mPeak;
+    *visuals = gVisuals.mPeak;
+    *brains = gBrains.mPeak;
+}
+
+// ---- Animation -----------------------------------------------------------------------------------------------
+bool Ecs_SetSheet(Entity& e, const char* sheet, int frameW, int frameH)
+{
+    if (!e.mV)
+    {
+        return false;
+    }
+    const SpriteSheetEntry* s = Sprite_FindSheet(sheet, frameW, frameH);
+    if (!s)
+    {
+        return false;
+    }
+    if (s != e.mV->mSheet)
+    {
+        e.mV->mSheet = s;
+        e.mV->mAnim = s->mAnimCount > 0 ? 0 : -1; // AnimatedSpriteRenderer starts on its first anim
+        e.mV->mAnimIndex = 0;
+        e.mV->mTimer = 0;
+        e.mV->mFinished = false;
+        e.mV->mStaticFrame = 0;
+    }
+    return true;
+}
+
+bool Ecs_Play(Entity& e, const char* anim, bool force, int fps)
+{
+    Visual* v = e.mV;
+    if (!v || !v->mSheet)
+    {
+        return false;
+    }
+    for (uint32_t i = 0; i < v->mSheet->mAnimCount; i++)
+    {
+        const char* name = v->mSheet->mAnims[i].mName;
+        // "name@N" is a second anim of the same name for another entity sharing the sheet: match the bare name too.
+        size_t n = strlen(anim);
+        if (strncmp(name, anim, n) != 0 || (name[n] != '\0' && name[n] != '@'))
+        {
+            continue;
+        }
+        // AnimatedSpriteRenderer.PlayAnim: the same unfinished anim keeps playing.
+        if (!force && v->mAnim == static_cast<int>(i) && !v->mFinished)
+        {
+            return false;
+        }
+        v->mAnim = static_cast<int16_t>(i);
+        v->mAnimIndex = 0;
+        v->mTimer = 0;
+        v->mFinished = false;
+        if (fps > 0)
+        {
+            v->mFpsOverride = static_cast<int16_t>(fps); // sticks, like changing the Anim's frame rate
+        }
+        return true;
+    }
+    return false;
+}
+
+void Ecs_PlayFacing(Entity& e, const char* prefix)
+{
+    static const char kSuffix[4] = { 'l', 'r', 'u', 'd' };
+    char name[24];
+    const size_t n = strlen(prefix);
+    if (n + 3 > sizeof(name))
+    {
+        return;
+    }
+    memcpy(name, prefix, n);
+    name[n] = '_';
+    name[n + 1] = kSuffix[e.mFacing & 3];
+    name[n + 2] = '\0';
+    Ecs_Play(e, name);
+}
+
+void Ecs_SetFrame(Entity& e, int frame)
+{
+    if (e.mV)
+    {
+        e.mV->mAnim = -1;
+        e.mV->mStaticFrame = static_cast<uint16_t>(frame);
+        e.mV->mFinished = true;
+    }
+}
+
+int Ecs_Frame(const Entity& e)
+{
+    if (!e.mV)
+    {
+        return 0;
+    }
+    const SpriteAnimData* anim = CurAnim(*e.mV);
+    if (!anim)
+    {
+        return e.mV->mStaticFrame;
+    }
+    return anim->mFrameCount ? anim->mFrames[e.mV->mAnimIndex] + e.mV->mFrameBase : 0;
+}
+
+int Ecs_AnimIndex(const Entity& e)
+{
+    return e.mV ? e.mV->mAnimIndex : 0;
+}
+
+bool Ecs_AnimFinished(const Entity& e)
+{
+    return !e.mV || e.mV->mAnim < 0 || e.mV->mFinished;
+}
+
+const char* Ecs_AnimName(const Entity& e)
+{
+    const SpriteAnimData* anim = e.mV ? CurAnim(*e.mV) : nullptr;
+    return anim ? anim->mName : "";
+}
+
+bool Ecs_AnimIs(const Entity& e, const char* name)
+{
+    const char* cur = Ecs_AnimName(e);
+    const size_t n = strlen(name);
+    return strncmp(cur, name, n) == 0 && (cur[n] == '\0' || cur[n] == '@');
+}
+
+void Ecs_Flicker(Entity& e, fx frames)
+{
+    if (!e.mV)
+    {
+        return;
+    }
+    if (frames == 0)
+    {
+        e.mV->mFlickering = false;
+        e.mV->mVisible = true;
+        return;
+    }
+    e.mV->mFlickering = true;
+    e.mV->mFlickerTimer = frames;
+}
+
+int Ecs_SpriteWidth(const Entity& e)
+{
+    return (e.mV && e.mV->mSheet) ? e.mV->mSheet->mFrameWidth : 16;
+}
+
+int Ecs_SpriteHeight(const Entity& e)
+{
+    return (e.mV && e.mV->mSheet) ? e.mV->mSheet->mFrameHeight : 16;
+}
+
+// ---- GameObject helpers --------------------------------------------------------------------------------------
+Rect Ecs_Hitbox(const Entity& e)
+{
+    return { FxTrunc(e.mT->mX), FxTrunc(e.mT->mY), e.mB->mW, e.mB->mH };
+}
+
+bool Ecs_Intersects(const Rect& a, const Rect& b)
+{
+    return a.mX < b.mX + b.mW && a.mX + a.mW > b.mX && a.mY < b.mY + b.mH && a.mY + a.mH > b.mY;
+}
+
+bool Ecs_Contains(const Rect& r, fx x, fx y)
+{
+    // Rectangle.Contains(Vector2): float compare against the integer edges.
+    return x >= Fx(r.mX) && x < Fx(r.mX + r.mW) && y >= Fx(r.mY) && y < Fx(r.mY + r.mH);
+}
+
+fx Ecs_CenterX(const Entity& e)
+{
+    return e.mT->mX + Fx(e.mB->mW) / 2;
+}
+
+fx Ecs_CenterY(const Entity& e)
+{
+    return e.mT->mY + Fx(e.mB->mH) / 2;
+}
+
+fx Ecs_VisualCenterX(const Entity& e)
+{
+    return e.mT->mX - (e.mV ? e.mV->mOffX : 0) + Fx(Ecs_SpriteWidth(e) / 2);
+}
+
+fx Ecs_VisualCenterY(const Entity& e)
+{
+    return e.mT->mY - (e.mV ? e.mV->mOffY : 0) + Fx(Ecs_SpriteHeight(e) / 2);
+}
+
+void Ecs_MoveTowards(Entity& e, fx tx, fx ty, fx speed)
+{
+    const fx dx = tx - e.mT->mX;
+    const fx dy = ty - e.mT->mY;
+    const fx len = FxLength(dx, dy);
+    if (len == 0)
+    {
+        // Vector2.Normalize of zero is NaN in the C#; standing still is the sane equivalent.
+        e.mT->mVelX = e.mT->mVelY = 0;
+        return;
+    }
+    e.mT->mVelX = static_cast<fx>(static_cast<int64_t>(dx) * speed / len);
+    e.mT->mVelY = static_cast<fx>(static_cast<int64_t>(dy) * speed / len);
+}
+
+void Ecs_FaceTowards(Entity& e, fx tx, fx ty)
+{
+    const fx dx = tx - e.mT->mX;
+    const fx dy = ty - e.mT->mY;
+    if ((dx < 0 ? -dx : dx) > (dy < 0 ? -dy : dy))
+    {
+        e.mFacing = dx > 0 ? FACE_RIGHT : FACE_LEFT;
+    }
+    else
+    {
+        e.mFacing = dy > 0 ? FACE_DOWN : FACE_UP;
+    }
+}
+
+void Ecs_CenterOffset(Entity& e, bool updatePos)
+{
+    if (!e.mV)
+    {
+        return;
+    }
+    e.mV->mOffX = Fx(Ecs_SpriteWidth(e) - e.mB->mW) / 2;
+    e.mV->mOffY = Fx(Ecs_SpriteHeight(e) - e.mB->mH) / 2;
+    if (updatePos)
+    {
+        e.mT->mX += e.mV->mOffX;
+        e.mT->mY += e.mV->mOffY;
+    }
+}
+
+bool Ecs_Separate(Entity& a, Entity& b)
+{
+    Obj o1 = ObjOf(a);
+    Obj o2 = ObjOf(b);
+    const bool x = SeparateAxis(o1, o2, true, true);
+    o1 = ObjOf(a);
+    o2 = ObjOf(b);
+    const bool y = SeparateAxis(o1, o2, false, true);
+    return x || y;
+}
+
+bool Ecs_SeparateRect(Entity& a, fx rx, fx ry, fx rw, fx rh, uint8_t allow)
+{
+    fx x = rx;
+    fx y = ry;
+    fx lx = rx;
+    fx ly = ry;
+    Obj o1 = ObjOf(a);
+    Obj o2;
+    o2.mX = &x;
+    o2.mY = &y;
+    o2.mLastX = &lx;
+    o2.mLastY = &ly;
+    o2.mW = rw;
+    o2.mH = rh;
+    o2.mAllow = allow;
+    o2.mTouching = nullptr;
+    o2.mImmovable = true;
+    const bool sx = SeparateAxis(o1, o2, true, false);
+    o1 = ObjOf(a);
+    const bool sy = SeparateAxis(o1, o2, false, false);
+    return sx || sy;
+}
+
+// ---- Systems -------------------------------------------------------------------------------------------------
+void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
+{
+    Entity* player = World_Player();
+
+    // Map colliders: the map's tiles, then every solid PartOfMap entity they overlap.
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!Updatable(*e) || !(e->mClass->mFlags & ECF_MAP_COLLISION))
+        {
+            continue;
+        }
+        const uint8_t allow = e->mB->mAllow;
+        if (ignorePlayerMap && e == player)
+        {
+            e->mB->mAllow = TOUCH_NONE; // tile events still apply
+        }
+        Map_Collide(*e);
+        for (Entity* m = gHead; m; m = m->mNext)
+        {
+            if (m == e || !Updatable(*m) || !(m->mClass->mFlags & ECF_PART_OF_MAP) || !Ecs_Solid(*m) ||
+                !m->mClass->mCollided)
+            {
+                continue;
+            }
+            if (Ecs_Intersects(Ecs_Hitbox(*m), Ecs_Hitbox(*e)))
+            {
+                m->mClass->mCollided(*m, *e);
+            }
+        }
+        e->mB->mAllow = allow;
+    }
+
+    // Collider -> target groups.
+    for (Entity* c = gHead; c; c = c->mNext)
+    {
+        if (!Updatable(*c) || c->mClass->mCollidesWith == 0 || !c->mClass->mCollided)
+        {
+            continue;
+        }
+        for (Entity* t = gHead; t; t = t->mNext)
+        {
+            if (t == c || !Updatable(*t) || (t->mClass->mGroups & c->mClass->mCollidesWith) == 0)
+            {
+                continue;
+            }
+            if (Ecs_Intersects(Ecs_Hitbox(*c), Ecs_Hitbox(*t)))
+            {
+                c->mClass->mCollided(*c, *t);
+                if (!Updatable(*c))
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    // KeepOnScreen.
+    const fx left = Fx(screenX);
+    const fx top = Fx(screenY);
+    const fx right = Fx(screenX + 160);
+    const fx bottom = Fx(screenY + 160);
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!Updatable(*e) || !(e->mClass->mFlags & ECF_KEEP_ON_SCREEN))
+        {
+            continue;
+        }
+        const Rect h = Ecs_Hitbox(*e);
+        if (Fx(h.mX) < left)
+        {
+            e->mT->mX = left;
+            e->mB->mTouching |= TOUCH_LEFT;
+        }
+        else if (Fx(h.mX + h.mW) > right)
+        {
+            e->mT->mX = right - Fx(e->mB->mW);
+            e->mB->mTouching |= TOUCH_RIGHT;
+        }
+        if (Fx(h.mY) < top)
+        {
+            e->mT->mY = top;
+            e->mB->mTouching |= TOUCH_UP;
+        }
+        else if (Fx(h.mY + h.mH) > bottom)
+        {
+            e->mT->mY = bottom - Fx(e->mB->mH);
+            e->mB->mTouching |= TOUCH_DOWN;
+        }
+    }
+}
+
+void Ecs_BaseUpdate(Entity& e)
+{
+    if (e.mV && e.mV->mFlickering)
+    {
+        DoFlicker(*e.mV);
+    }
+}
+
+void Ecs_BasePostUpdate(Entity& e)
+{
+    Physics(e);
+    if (e.mV)
+    {
+        AnimUpdate(*e.mV);
+    }
+}
+
+void Ecs_UpdateOne(Entity& e)
+{
+    if (e.mClass->mUpdate)
+    {
+        e.mClass->mUpdate(e);
+    }
+    else
+    {
+        Ecs_BaseUpdate(e);
+    }
+    if (!e.mFreed)
+    {
+        Ecs_BasePostUpdate(e);
+        if (e.mClass->mPostUpdate)
+        {
+            e.mClass->mPostUpdate(e);
+        }
+    }
+}
+
+void Ecs_UpdateAll(Entity* skip)
+{
+    // Entities created during the loop are appended and so also update this frame, unlike the C#'s _newlySpawned;
+    // stop at the entity that was last when the loop started.
+    Entity* last = gTail;
+    for (Entity* e = gHead; e;)
+    {
+        Entity* next = e->mNext;
+        if (e != skip && Updatable(*e))
+        {
+            Ecs_UpdateOne(*e);
+        }
+        if (e == last)
+        {
+            break;
+        }
+        e = next;
+    }
+}
+
+bool Ecs_CheckInteraction(Entity& player)
+{
+    // PlayState.CheckInteraction: the entity's box grows by one pixel on each side of the player's facing axis and
+    // shifts one pixel towards the player.
+    const int fx_ = -FacingX(static_cast<Facing>(player.mFacing));
+    const int fy_ = -FacingY(static_cast<Facing>(player.mFacing));
+    const int ax = fx_ < 0 ? -fx_ : fx_;
+    const int ay = fy_ < 0 ? -fy_ : fy_;
+    const Rect p = Ecs_Hitbox(player);
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!Updatable(*e) || !e->mClass->mInteract)
+        {
+            continue;
+        }
+        Rect r = Ecs_Hitbox(*e);
+        r.mX -= ax;
+        r.mY -= ay;
+        r.mW += 2 * ax;
+        r.mH += 2 * ay;
+        r.mX += fx_;
+        r.mY += fy_;
+        if (Ecs_Intersects(r, p) && e->mClass->mInteract(*e, static_cast<Facing>(player.mFacing)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Ecs_FireEvent(int gameEvent)
+{
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!e->mFreed && !e->mOld && e->mClass->mOnEvent)
+        {
+            e->mClass->mOnEvent(*e, gameEvent);
+        }
+    }
+}
+
+int Ecs_KilledEnemies()
+{
+    int n = gBaseKilled;
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (!e->mOld && (e->mClass->mFlags & ECF_ENEMY) && !e->mExists)
+        {
+            n++;
+        }
+    }
+    return n;
+}
+
+void Ecs_SetBaseKilledEnemies(int count)
+{
+    gBaseKilled = count;
+}
+
+// ---- Rendering -----------------------------------------------------------------------------------------------
+namespace
+{
+// OBJ VRAM: one cached copy of each (sheet, frame) shown recently, shared by every sprite showing it.
+constexpr int kFrameCacheSize = 112;
+constexpr int kFrameCacheTiles = 760; // leave the rest of the 1024 tiles to the HUD and the dialogue box
+struct FrameSlot final
+{
+    const SpriteSheetEntry* mSheet;
+    uint16_t mFrame;
+    int16_t mBlock;
+    uint16_t mTiles;
+    uint32_t mLastUsed;
+};
+FrameSlot gFrames[kFrameCacheSize] ECS_EWRAM;
+int gFrameTiles = 0;
+uint32_t gDrawTick = 1;
+
+// OBJ palette banks gFirstBank .. + gBankCount - 1, by sheet palette.
+constexpr int kPalBanks = 16;
+const uint16_t* gBankPal[kPalBanks];
+uint32_t gBankUsed[kPalBanks];
+int gFirstBank = 0;
+int gBankCount = 13;
+
+ObjVramAllocator* gVram = nullptr;
+
+int FrameTiles(const SpriteSheetEntry& s)
+{
+    return s.mTilesW * s.mTilesH;
+}
+
+int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
+{
+    if (frame < 0 || frame >= sheet->mFrameCount)
+    {
+        frame = 0;
+    }
+    int freeSlot = -1;
+    for (int i = 0; i < kFrameCacheSize; i++)
+    {
+        FrameSlot& s = gFrames[i];
+        if (s.mSheet == sheet && s.mFrame == frame)
+        {
+            s.mLastUsed = gDrawTick;
+            return s.mBlock;
+        }
+        if (!s.mSheet && freeSlot < 0)
+        {
+            freeSlot = i;
+        }
+    }
+    const int tiles = FrameTiles(*sheet);
+    int block = -1;
+    for (;;)
+    {
+        if (freeSlot >= 0 && gFrameTiles + tiles <= kFrameCacheTiles)
+        {
+            block = gVram->alloc(tiles * 32);
+            if (block >= 0)
+            {
+                break;
+            }
+        }
+        // Evict the least recently used frame not shown this frame.
+        int lru = -1;
+        for (int i = 0; i < kFrameCacheSize; i++)
+        {
+            if (gFrames[i].mSheet && gFrames[i].mLastUsed != gDrawTick &&
+                (lru < 0 || gFrames[i].mLastUsed < gFrames[lru].mLastUsed))
+            {
+                lru = i;
+            }
+        }
+        if (lru < 0)
+        {
+            return -1; // everything is on screen: this sprite doesn't fit
+        }
+        gVram->free(gFrames[lru].mBlock);
+        gFrameTiles -= gFrames[lru].mTiles;
+        gFrames[lru].mSheet = nullptr;
+        if (freeSlot < 0)
+        {
+            freeSlot = lru;
+        }
+    }
+    FrameSlot& s = gFrames[freeSlot];
+    s.mSheet = sheet;
+    s.mFrame = static_cast<uint16_t>(frame);
+    s.mBlock = static_cast<int16_t>(block);
+    s.mTiles = static_cast<uint16_t>(tiles);
+    s.mLastUsed = gDrawTick;
+    gFrameTiles += tiles;
+    LZ77UnCompVram(sheet->mFrameData + sheet->mFrameOffsets[frame], &tile_mem[4][block]);
+    return block;
+}
+
+int AcquireBank(const uint16_t* pal)
+{
+    int freeBank = -1;
+    for (int b = gFirstBank; b < gFirstBank + gBankCount; b++)
+    {
+        if (gBankPal[b] == pal)
+        {
+            gBankUsed[b] = gDrawTick;
+            return b;
+        }
+        if (freeBank < 0 && (!gBankPal[b] || gBankUsed[b] != gDrawTick))
+        {
+            freeBank = b;
+        }
+    }
+    if (freeBank < 0)
+    {
+        return -1;
+    }
+    gBankPal[freeBank] = pal;
+    gBankUsed[freeBank] = gDrawTick;
+    memcpy16(&pal_obj_bank[freeBank], pal, 16);
+    return freeBank;
+}
+
+int ObjPriority(int layer)
+{
+    if (layer < LAYER_MAP_BG2)
+    {
+        return 3; // between BG and BG2
+    }
+    if (layer == LAYER_MAP_BG2)
+    {
+        return 2; // on BG2
+    }
+    if (layer < LAYER_MAP_FG)
+    {
+        return 1; // between BG2 and FG
+    }
+    return 0;
+}
+
+// Front-to-back key: layer, then (ENTITIES only) the bottom of the hitbox within the screen, then RefLayer offsets.
+int32_t DepthKey(const Entity& e, int depth)
+{
+    const Visual& v = *e.mV;
+    if (v.mLayerRef && v.mLayerRef->mV && depth < 4)
+    {
+        return DepthKey(*v.mLayerRef, depth + 1) + v.mLayerOffset;
+    }
+    int32_t key = static_cast<int32_t>(v.mLayer) << 20;
+    if (v.mLayer == LAYER_ENTITIES)
+    {
+        const int y = FxTrunc(e.mT->mY);
+        const int inGrid = ((y % 160) + 160) % 160;
+        key += (inGrid + e.mB->mH + 256) << 6;
+    }
+    return key + 32;
+}
+
+struct DrawItem final
+{
+    Entity* mEntity;
+    int32_t mKey;
+};
+DrawItem gDraw[kMaxVisuals] ECS_EWRAM;
+int gLastOamEnd = 0;
+int gLastOamFirst = 0;
+} // namespace
+
+void Ecs_SetRenderer(ObjVramAllocator& vram, int firstPalBank, int palBankCount)
+{
+    gVram = &vram;
+    gFirstBank = firstPalBank;
+    gBankCount = palBankCount;
+    Ecs_FlushRenderCaches();
+}
+
+void Ecs_FlushRenderCaches()
+{
+    for (FrameSlot& s : gFrames)
+    {
+        if (s.mSheet && gVram)
+        {
+            gVram->free(s.mBlock);
+        }
+        s.mSheet = nullptr;
+    }
+    gFrameTiles = 0;
+    for (int b = 0; b < kPalBanks; b++)
+    {
+        gBankPal[b] = nullptr;
+        gBankUsed[b] = 0;
+    }
+}
+
+void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
+{
+    if (!gVram)
+    {
+        return;
+    }
+    gDrawTick++;
+    int count = 0;
+    for (Entity* e = gHead; e && count < kMaxVisuals; e = e->mNext)
+    {
+        if (e->mFreed || !e->mExists || !e->mV || !e->mV->mVisible || !e->mV->mSheet)
+        {
+            continue;
+        }
+        if (e->mV->mOpacity <= FxF(0.05f) || e->mV->mScale <= 0)
+        {
+            continue;
+        }
+        gDraw[count].mEntity = e;
+        gDraw[count].mKey = DepthKey(*e, 0);
+        count++;
+    }
+    // Insertion sort, front (highest key) first; stable so list order breaks ties like the C#'s SpriteBatch.
+    for (int i = 1; i < count; i++)
+    {
+        DrawItem item = gDraw[i];
+        int j = i - 1;
+        while (j >= 0 && gDraw[j].mKey < item.mKey)
+        {
+            gDraw[j + 1] = gDraw[j];
+            j--;
+        }
+        gDraw[j + 1] = item;
+    }
+
+    int oam = firstOam;
+    int affine = 0;
+    for (int i = 0; i < count; i++)
+    {
+        Entity& e = *gDraw[i].mEntity;
+        Visual& v = *e.mV;
+        const SpriteSheetEntry& sheet = *v.mSheet;
+        const int parts = static_cast<int>(sheet.mPartCount);
+        // Entity.Draw: Position - offset * scale; the C# scales about the frame centre.
+        const int fw = sheet.mFrameWidth;
+        const int fh = sheet.mFrameHeight;
+        const fx px = e.mT->mX - FxMul(v.mOffX, v.mScale);
+        const fx py = e.mT->mY - FxMul(v.mOffY, v.mScale) + v.mYPush;
+        const int sx = FxTrunc(px) - camX + viewX + shakeX;
+        const int sy = FxTrunc(py) - camY + shakeY;
+        const int sw = FxTrunc(FxMul(Fx(fw), v.mScale));
+        const int sh = FxTrunc(FxMul(Fx(fh), v.mScale));
+        // Off the playfield entirely: skip.
+        if (v.mLayer != LAYER_UI && (sx + sw <= viewX || sx >= viewX + 160 || sy + sh <= 0 || sy >= 160))
+        {
+            continue;
+        }
+        const bool rotated = e.mT->mRot != 0 && parts == 1;
+        const bool scaled = v.mScale != kFxOne && parts == 1;
+        const bool useAffine = (rotated || scaled) && affine < 32;
+        if (oam + parts > endOam)
+        {
+            break;
+        }
+        const int bank = AcquireBank(sheet.mPalette);
+        const int block = bank >= 0 ? AcquireFrame(&sheet, Ecs_Frame(e)) : -1;
+        if (block < 0)
+        {
+            continue;
+        }
+        const bool blend = v.mOpacity < FxF(0.95f);
+        const int prio = ObjPriority(v.mLayer);
+        if (useAffine)
+        {
+            const SpritePartData& part = sheet.mParts[0];
+            // texture = P * screen, P = R(-rot) / scale (rot clockwise on screen).
+            const fx c = FxCos(e.mT->mRot);
+            const fx s = FxSin(e.mT->mRot);
+            const fx inv = FxDiv(kFxOne, v.mScale);
+            int pa = FxMul(c, inv) >> 8;
+            int pb = FxMul(s, inv) >> 8;
+            int pc = -(FxMul(s, inv) >> 8);
+            int pd = FxMul(c, inv) >> 8;
+            if (v.mHFlip)
+            {
+                pa = -pa;
+                pb = -pb;
+            }
+            if (v.mVFlip)
+            {
+                pc = -pc;
+                pd = -pd;
+            }
+            OBJ_AFFINE* m = &obj_aff_mem[affine];
+            m->pa = static_cast<s16>(pa);
+            m->pb = static_cast<s16>(pb);
+            m->pc = static_cast<s16>(pc);
+            m->pd = static_cast<s16>(pd);
+            // Double size when it grows or turns, so the corners aren't cut.
+            const bool dbl = v.mScale > kFxOne || rotated;
+            const int cx = sx + sw / 2;
+            const int cy = sy + sh / 2;
+            const int boxW = part.mWidth * (dbl ? 2 : 1);
+            const int boxH = part.mHeight * (dbl ? 2 : 1);
+            const int ox = cx - boxW / 2;
+            const int oy = cy - boxH / 2;
+            obj_set_attr(&oam_mem[oam],
+                         (dbl ? ATTR0_AFF_DBL : ATTR0_AFF) | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP |
+                             (part.mShape << 14) | ATTR0_Y(oy & 0xFF),
+                         (part.mSize << 14) | ATTR1_AFF_ID(affine) | ATTR1_X(ox & 0x1FF),
+                         ATTR2_ID(block + part.mTileOffset) | ATTR2_PRIO(prio) | ATTR2_PALBANK(bank));
+            affine++;
+            oam++;
+            continue;
+        }
+        const int frameWidth = sheet.mTilesW * 8;
+        const int frameHeight = sheet.mTilesH * 8;
+        for (int p = 0; p < parts; p++)
+        {
+            const SpritePartData& part = sheet.mParts[p];
+            const int x = sx + (v.mHFlip ? frameWidth - part.mX - part.mWidth : part.mX);
+            const int y = sy + (v.mVFlip ? frameHeight - part.mY - part.mHeight : part.mY);
+            obj_set_attr(&oam_mem[oam + p],
+                         ATTR0_REG | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
+                         (part.mSize << 14) | ATTR1_X(x & 0x1FF) | (v.mHFlip ? ATTR1_HFLIP : 0) |
+                             (v.mVFlip ? ATTR1_VFLIP : 0),
+                         ATTR2_ID(block + part.mTileOffset) | ATTR2_PRIO(prio) | ATTR2_PALBANK(bank));
+        }
+        oam += parts;
+    }
+    // Hide what was drawn last frame and isn't now.
+    const int hideEnd = gLastOamFirst == firstOam && gLastOamEnd > oam ? gLastOamEnd : oam;
+    for (int i = oam; i < hideEnd; i++)
+    {
+        obj_hide(&oam_mem[i]);
+    }
+    gLastOamFirst = firstOam;
+    gLastOamEnd = oam;
+}
+
+void Ecs_HideAll(int firstOam, int endOam)
+{
+    for (int i = firstOam; i < endOam; i++)
+    {
+        obj_hide(&oam_mem[i]);
+    }
+    gLastOamEnd = firstOam;
+}

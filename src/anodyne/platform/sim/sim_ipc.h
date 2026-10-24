@@ -10,6 +10,7 @@
 //     shot <path.png>            save the current frame                       -> "ok" / "error ..."
 //     peek <hex addr> <len>      read memory (EWRAM/IWRAM/IO/PAL/VRAM/OAM)     -> hex bytes
 //     state                      the state line again
+//     collision                  the map's collision grid (GameProbe_Collision)
 //     quit                       exit the simulator
 // While held keys last, frames run without waiting for the bot.
 

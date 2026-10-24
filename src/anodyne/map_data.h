@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "entity_types.h"
+
 // Layout of the content-compiler generated map registry (map_registry.h).
 
 struct MapPalData final
@@ -106,25 +108,22 @@ struct MapDoorList final
     const MapDoor* mDoors;
 };
 
-// A placeholder sprite for a map entity (Entities.xml): static frame `mFrame` of sheet kEntitySheets[mSheet],
-// top-left at (mX, mY) in map pixels.
-// What an entity does (everything else is a static placeholder sprite).
-enum EntityKind : uint8_t
-{
-    ENT_STATIC = 0,
-    ENT_CONSOLE = 1, // solid; Accept while facing it turns it green and counts as a solved puzzle
-    ENT_GATE = 2,    // solid until enough puzzles are solved / enemies killed (mArg = the XML "frame" condition)
-    ENT_BLANK_SAGE = 3, // BLANK's invisible Sage: when the camera arrives on its screen it says sage/intro line mArg+1
-};
-
+// A map entity preset (Entities.xml, resolved to a class by the content compiler like the C# EntityManager).
+// Positions are map pixels. mGlobalId indexes the game's per-preset state (EntityPreset.Alive / Activated) and is
+// unique over all maps. A placeholder (an entity the port doesn't implement yet) draws static frame mLookFrame of
+// kEntitySheets[mSheet].
 struct MapEntity final
 {
     int16_t mX;
     int16_t mY;
+    int16_t mFrame;  // the XML "frame" (DungeonEntranceRef: its entrance's x)
+    int16_t mLinkId; // -1: none (DungeonEntranceRef: its entrance's y)
+    uint16_t mGlobalId;
+    uint8_t mType;       // EntityPresetType
+    uint8_t mPermanence; // EntityPermanence
     uint8_t mSheet;
-    uint8_t mFrame;
-    uint8_t mKind;
-    uint8_t mArg;
+    uint8_t mLookFrame;
+    uint8_t mTypeValue; // kEntityTypeValues index: the XML "type" string
 };
 
 struct MapEntityList final

@@ -1,0 +1,189 @@
+#include "game_state.h"
+
+#include <string.h>
+
+#include "audio_manager.h"
+#include "dialog.h"
+
+
+GameState gGame;
+
+namespace
+{
+constexpr unsigned kPresetWords = (kMaxPresets + 31) / 32;
+uint32_t gDead[kPresetWords] __attribute__((section(".sbss")));      // !Alive
+uint32_t gActivated[kPresetWords] __attribute__((section(".sbss"))); // Activated
+
+bool GetBit(const uint32_t* bits, unsigned i)
+{
+    return i < kMaxPresets && (bits[i >> 5] >> (i & 31)) & 1;
+}
+
+void SetBit(uint32_t* bits, unsigned i, bool on)
+{
+    if (i >= kMaxPresets)
+    {
+        return;
+    }
+    if (on)
+    {
+        bits[i >> 5] |= 1u << (i & 31);
+    }
+    else
+    {
+        bits[i >> 5] &= ~(1u << (i & 31));
+    }
+}
+
+// EventRegister: a small table of names (ROM strings or copied) and counters.
+constexpr int kMaxEvents = 64;
+constexpr int kEventNameLen = 24;
+struct EventSlot final
+{
+    char mName[kEventNameLen];
+    int mValue;
+};
+EventSlot gEvents[kMaxEvents];
+int gEventCount = 0;
+
+EventSlot* FindEvent(const char* name, bool create)
+{
+    for (int i = 0; i < gEventCount; i++)
+    {
+        if (strcmp(gEvents[i].mName, name) == 0)
+        {
+            return &gEvents[i];
+        }
+    }
+    if (!create || gEventCount == kMaxEvents)
+    {
+        return nullptr;
+    }
+    EventSlot& e = gEvents[gEventCount++];
+    strncpy(e.mName, name, kEventNameLen - 1);
+    e.mName[kEventNameLen - 1] = '\0';
+    e.mValue = 0;
+    return &e;
+}
+
+bool gDialogueFinished = true;
+} // namespace
+
+void GameState_Reset()
+{
+    memset(&gGame, 0, sizeof(gGame));
+    gGame.mMaxHealth = 6;
+    gGame.mCurHealth = 6;
+    memset(gDead, 0, sizeof(gDead));
+    memset(gActivated, 0, sizeof(gActivated));
+    gEventCount = 0;
+    gDialogueFinished = true;
+}
+
+void GameState_SetHealth(int health)
+{
+    gGame.mCurHealth = health < 0 ? 0 : (health > gGame.mMaxHealth ? gGame.mMaxHealth : health);
+}
+
+void GameState_SetMaxHealth(int maxHealth)
+{
+    gGame.mMaxHealth = maxHealth > 16 ? 16 : maxHealth;
+}
+
+bool Preset_Alive(const MapEntity& preset)
+{
+    return !GetBit(gDead, preset.mGlobalId);
+}
+
+void Preset_SetAlive(const MapEntity& preset, bool alive)
+{
+    SetBit(gDead, preset.mGlobalId, !alive);
+}
+
+bool Preset_Activated(const MapEntity& preset)
+{
+    return GetBit(gActivated, preset.mGlobalId);
+}
+
+void Preset_SetActivated(const MapEntity& preset, bool activated)
+{
+    SetBit(gActivated, preset.mGlobalId, activated);
+}
+
+void Preset_ReviveMap(const MapEntityList& list)
+{
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        if (list.mEntities[i].mPermanence != PERM_GLOBAL)
+        {
+            Preset_SetAlive(list.mEntities[i], true);
+        }
+    }
+}
+
+bool Preset_OnGrid(const MapEntity& preset, int gx, int gy)
+{
+    // Positions are never negative in Entities.xml, so division is the floor.
+    return preset.mX / 160 == gx && preset.mY / 160 == gy;
+}
+
+void Preset_ReviveGrid(const MapEntityList& list, int gx, int gy)
+{
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        const MapEntity& p = list.mEntities[i];
+        if (p.mPermanence == PERM_GRID_LOCAL && Preset_OnGrid(p, gx, gy))
+        {
+            Preset_SetAlive(p, true);
+        }
+    }
+}
+
+int Event_Get(const char* name)
+{
+    const EventSlot* e = FindEvent(name, false);
+    return e ? e->mValue : 0;
+}
+
+void Event_Set(const char* name, int value)
+{
+    EventSlot* e = FindEvent(name, true);
+    if (e)
+    {
+        e->mValue = value;
+    }
+}
+
+void Event_Inc(const char* name)
+{
+    Event_Set(name, Event_Get(name) + 1);
+}
+
+void Game_ShowDialogue(const char* npc, const char* scene, int id)
+{
+    bool top = false;
+    const char* text = Dialog_Get(npc, scene, id, &top);
+    if (text && text[0])
+    {
+        Dialog_Open(text, top, false);
+        gDialogueFinished = false;
+    }
+}
+
+bool Game_DialogueFinished()
+{
+    if (!gDialogueFinished && !Dialog_IsOpen())
+    {
+        gDialogueFinished = true;
+    }
+    return gDialogueFinished;
+}
+
+void Game_PlaySfx(const char* name)
+{
+    const int32_t id = AudioManager_FindSfx(name);
+    if (id >= 0)
+    {
+        AudioManager_PlaySFX(static_cast<uint32_t>(id));
+    }
+}

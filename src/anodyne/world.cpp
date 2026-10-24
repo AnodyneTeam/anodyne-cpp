@@ -197,6 +197,19 @@ int Abs(int v)
     return v < 0 ? -v : v;
 }
 
+// The player as the entities see it (entities.h).
+PlayerBridge Bridge()
+{
+    PlayerBridge b;
+    b.mX = gPosX;
+    b.mY = gPosY;
+    b.mLastX = gLastX;
+    b.mLastY = gLastY;
+    b.mTouching = gTouching;
+    b.mFacing = static_cast<uint8_t>(gFacing);
+    return b;
+}
+
 // ---- Background ---------------------------------------------------------------------------------------------
 // Screen entry for 8x8 tile (mx, my) of a layer: look up its 16x16 tile and pick the matching quarter. Outside the
 // layer (or index 0) is empty, like TileMap.GetTile.
@@ -969,6 +982,7 @@ void CheckForTransition()
     gGridEntranceY = gPosY;
     gVelX = gVelY = 0;
     gTransition = true;
+    Entities_LoadGrid(gGridX, gGridY, Bridge(), false);
     UpdateMusic(); // ReloadSettings(player position) as the screen changes
 }
 
@@ -1570,6 +1584,7 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     gStepTimer = 0;
     UpdateMusic();
     UpdateAmbience();
+    Entities_LoadGrid(gGridX, gGridY, Bridge(), true);
 }
 
 void World_GetBgOffsets(int16_t x[4], int16_t y[4])
@@ -1641,14 +1656,7 @@ void World_Update()
         if (doneX && doneY)
         {
             gTransition = false;
-            // PlayState EndScreenTransition: BLANK's invisible Sage speaks when the camera arrives on its screen.
-            int sageFrame = 0;
-            if (Entities_TakeScreenTrigger(gGridX, gGridY, &sageFrame))
-            {
-                bool top = false;
-                const char* text = Dialog_Get("sage", "intro", sageFrame + 1, &top);
-                Dialog_Open(text, top, false);
-            }
+            Entities_EndTransition();
         }
     }
     else
@@ -1656,10 +1664,7 @@ void World_Update()
         // ---- PlayState.EntityUpdate: Accept interacts with the entity the player faces (before they move) ----
         if (key_hit(KEY_A) && gState == PlayerState::Ground && !gWarp.mPending)
         {
-            static const int kDirX[4] = { 0, 1, 0, -1 }; // Facing order: Down, Right, Up, Left
-            static const int kDirY[4] = { 1, 0, -1, 0 };
-            const int f = static_cast<int>(gFacing);
-            Entities_Interact(gPosX >> kFrac, gPosY >> kFrac, kHitW, kHitH, kDirX[f], kDirY[f]);
+            Entities_Interact(Bridge());
         }
 
         // ---- Player.Update -> Movement() ----
@@ -1702,19 +1707,24 @@ void World_Update()
 
         // ---- Map.Collide + PlayState.CheckForTransition ----
         CollideWithMap();
-        SolidRect solids[24];
-        const int solidCount = Entities_GetSolids(solids, 24);
-        for (int i = 0; i < solidCount; i++)
-        {
-            Separate(Fx(solids[i].mX), Fx(solids[i].mY), Fx(solids[i].mW), Fx(solids[i].mH), TOUCH_ANY);
-        }
+        PlayerBridge bridge = Bridge();
+        Entities_Collide(bridge);
+        gPosX = bridge.mX;
+        gPosY = bridge.mY;
+        gLastX = bridge.mLastX;
+        gLastY = bridge.mLastY;
+        gTouching = bridge.mTouching;
         CheckDoors();
         CheckForTransition();
     }
 
     UpdateBackground(false);
     UpdateScroll(true, false);
-    Entities_Update(gGridX, gGridY, gCamX >> kFrac, gCamY >> kFrac, kViewX);
+    if (!gTransition)
+    {
+        Entities_Update(Bridge());
+    }
+    Entities_Draw(gCamX >> kFrac, gCamY >> kFrac, kViewX);
     if (gPlayerOk)
     {
         DrawPlayerAndOverlays(anim, moving);
@@ -1761,4 +1771,31 @@ void World_PlaceAt(int x, int y, uint8_t facing)
     UpdateBackground(true);
     UpdateScroll(false, true);
     UpdateMusic();
+    Entities_LoadGrid(gGridX, gGridY, Bridge(), true);
+}
+
+void World_GetPlayerInfo(WorldPlayerInfo& info)
+{
+    info.mX = gPosX >> kFrac;
+    info.mY = gPosY >> kFrac;
+    info.mFacing = static_cast<int>(gFacing);
+    info.mGridX = gGridX;
+    info.mGridY = gGridY;
+    info.mTransition = gTransition;
+    info.mLadder = gState == PlayerState::Ladder;
+    info.mFallen = gHasFallen;
+    info.mHealth = gHealth;
+}
+
+void World_GetCellsSize(int& w, int& h)
+{
+    w = gCellsW;
+    h = gCellsH;
+}
+
+void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event)
+{
+    const uint8_t* c = ClassAtCell(cx, cy);
+    allow = c[0];
+    event = c[1];
 }

@@ -20,6 +20,9 @@
 #include "pixelate_test.hpp"
 
 #include "map_registry.h"
+#include "game_state.h"
+
+static_assert(kEntityPresetCount <= kMaxPresets, "more entity presets than game_state.h has room for");
 
 // kMapCount is provided from map_registry_.h
 static uint32_t gCurrentMap = 0;
@@ -94,8 +97,12 @@ static void ScreenBlack(bool on)
 
 static void LoadWorldMap()
 {
+    gGame.mCurrentMap = gCurrentMap;
+    gGame.mMapName = kMapNames[gCurrentMap];
+    // Entities first: World_Load places the player and loads the screen's entities.
+    Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
+                    kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
     World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
-    Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]));
     Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 
@@ -291,6 +298,7 @@ int main()
     // The world (map + player, ported from the C#) owns OAM slot 0 / OBJ palette bank 0; the sprite gallery test
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
+    GameState_Reset();
     World_Init(objVram);
     Dialog_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
@@ -319,6 +327,10 @@ int main()
         // already does) throttles this loop to once per real 60Hz frame.
         VBlankIntrWait();
         key_poll();
+        {
+            static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test" };
+            gGame.mModeName = kModeNames[static_cast<int>(mode)];
+        }
 
         // ------------------------------------------------------------
         // MODE SWITCH (hold START+SELECT together)

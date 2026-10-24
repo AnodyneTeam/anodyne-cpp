@@ -21,6 +21,10 @@ extern "C" __attribute__((weak)) int GameProbe_Json(char* buf, int cap)
 {
     return snprintf(buf, static_cast<size_t>(cap), "{}");
 }
+extern "C" __attribute__((weak)) int GameProbe_Collision(char* buf, int cap)
+{
+    return snprintf(buf, static_cast<size_t>(cap), "0 0 ");
+}
 extern "C" __attribute__((weak)) int GameProbe_TraceHeader(char* buf, int cap)
 {
     return snprintf(buf, static_cast<size_t>(cap), "frame");
@@ -199,6 +203,12 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
         else if (!strcmp(cmd, "state"))
         {
             SendLine(StateLine(frame));
+        }
+        else if (!strcmp(cmd, "collision"))
+        {
+            std::vector<char> buf(1 << 16);
+            GameProbe_Collision(buf.data(), static_cast<int>(buf.size()));
+            SendLine(buf.data());
         }
         else if (!strcmp(cmd, "quit"))
         {

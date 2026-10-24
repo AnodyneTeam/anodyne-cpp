@@ -12,6 +12,10 @@ extern "C" {
 // screen (see game_probe.cpp for the fields).
 int GameProbe_Json(char* buf, int cap);
 
+// The current map's collision: "W H " then two hex digits per 16x16 cell, row by row (blocked sides, tile event;
+// see World_GetCell).
+int GameProbe_Collision(char* buf, int cap);
+
 // TSV trace in the C# bot's format (src/tools/bot/golden/*.trace.tsv): the header line, then one row per frame.
 int GameProbe_TraceHeader(char* buf, int cap);
 int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap);
