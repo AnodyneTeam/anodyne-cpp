@@ -37,11 +37,12 @@ namespace AnodyneSharp.Recording
         public static long DebtAge => DebtBaseline >= 0 ? _botFrame - _debtSince : -1;
         /// <summary>Hearts owed (0 when none).</summary>
         public static int DebtMissing => DebtBaseline >= 0 ? Math.Max(0, Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - GlobalState.CUR_HEALTH) : 0;
-        /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2, and a third of the hearts once
-        /// that is more: 4 of 13 late on, where checkpoints are few and far between); reset at the start of each part and section, and once back at full health.</summary>
+        /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2, and half the hearts once that
+        /// is more: 7 of 14 late on, where checkpoints are few and far between and a long part like the Circus's second adds up a heart a
+        /// fight); reset at the start of each part and section, and once back at full health.</summary>
         private static readonly int ChipBase = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_CHIP"), out int cl) ? cl : 2;
         public static int ChipLeft = ChipBase;
-        public static int ChipPerPart => Math.Max(ChipBase, GlobalState.MAX_HEALTH / 3);
+        public static int ChipPerPart => Math.Max(ChipBase, GlobalState.MAX_HEALTH / 2);
         public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 900;
         private static long _debtSince;
         public static bool PlayBusy;
