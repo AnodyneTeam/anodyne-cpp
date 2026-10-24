@@ -1438,7 +1438,11 @@ namespace AnodyneSharp.Recording
             var v = e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2();
             var f = Math.Abs(v.X) > Math.Abs(v.Y) ? (v.X < 0 ? Facing.LEFT : Facing.RIGHT) : (v.Y < 0 ? Facing.UP : Facing.DOWN);
             var near = Player.Hitbox;
-            var step = Entity.FacingDirection(f) * 4f;
+            // (the raft drifts the 4px nearer as we turn, but not against a current: Circus (2,3)'s channel runs up past a Frog, and the
+            // bot swung at it from out of reach again and again while the current carried it back and the Frog spat)
+            var flow = BotNav.FlowDir(BotNav.TileOf(Pos));
+            bool against = f switch { Facing.UP => flow == Touching.DOWN, Facing.DOWN => flow == Touching.UP, Facing.LEFT => flow == Touching.RIGHT, _ => flow == Touching.LEFT };
+            var step = against ? Vector2.Zero : Entity.FacingDirection(f) * 4f;
             near.Offset((int)step.X, (int)step.Y);
             // (no nearer through a wall: a Frog the far side of one is out of reach whatever the offset says)
             return WallFree(near) && e.Hitbox.Intersects(BroomBoxAt(Player.Position + step, f));
@@ -9955,7 +9959,9 @@ namespace AnodyneSharp.Recording
             {
                 return held;
             }
-            if (held.Contains(KeyFunctions.Accept))
+            // (swinging as we go, but not for long: a swing holds us still, and a Lion in Circus (4,5) kept us in it, swinging, for eight
+            // hits in a row)
+            if (held.Contains(KeyFunctions.Accept) && _contactFrames < 12)
             {
                 keys.Add(KeyFunctions.Accept);
             }
