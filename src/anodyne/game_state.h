@@ -41,6 +41,7 @@ struct GameState final
     uint8_t mEquippedBroom; // BroomType
     bool mHasBroom[5];      // by BroomType (NONE unused)
     bool mBroomActive;
+    bool mCanJump; // InventoryManager.CanJump (the jump shoes)
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
 

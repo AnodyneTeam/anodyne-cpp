@@ -6,6 +6,7 @@ set(ANODYNE_GAME_SOURCES
     audio_decode_core.cpp
     sprite.cpp
     entities.cpp
+    player.cpp
     entity_registry.cpp
     ent_gadgets.cpp
     ecs.cpp
