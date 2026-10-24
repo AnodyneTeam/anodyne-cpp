@@ -10392,11 +10392,18 @@ namespace AnodyneSharp.Recording
             {
                 foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
                 {
-                    var r = new Rectangle((int)(b.Position.X + b.velocity.X * air), (int)(b.Position.Y + b.velocity.Y * air), 8, 8);
-                    r.Inflate(4, 4);
-                    bodies.Add(r);
+                    foreach (float t in new[] { air, air + 0.1f, air + 0.2f })
+                    {
+                        var r = new Rectangle((int)(b.Position.X + b.velocity.X * t), (int)(b.Position.Y + b.velocity.Y * t), 8, 8);
+                        r.Inflate(4, 4);
+                        bodies.Add(r);
+                    }
                 }
             }
+            // (and the shots any Slime fires while we are up: at us, wherever we are then, from its top-left at 40px/s; two Slimes firing
+            // a moment apart, Hotel (1,3), had the hop over one's shot land on the other's)
+            var firing = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists && e.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+                .Select(e => (sl: e, due: SlimeShotIn(e))).Where(x => x.due is float d && d <= air + 0.2f).Select(x => (x.sl, due: x.due.Value)).ToList();
             // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
             // (out of every on-sight dash trap's line first; failing that, any landing still beats coming down where we stand)
             foreach (var (k, margin, sight) in keys.Select(k => (k, 3, true)).Concat(keys.Select(k => (k, 0, true))).Concat(keys.Select(k => (k, 0, false))))
@@ -10409,6 +10416,18 @@ namespace AnodyneSharp.Recording
                 if (new[] { (land.Left, land.Top), (land.Right - 1, land.Top), (land.Left, land.Bottom - 1), (land.Right - 1, land.Bottom - 1) }
                     .Select(c => new Point((int)Math.Floor(c.Item1 / 16f), (int)Math.Floor(c.Item2 / 16f))).All(t => BotNav.Walkable(t) && !BotNav.IsHole(t))
                     && !bodies.Any(r => r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height)))
+                    && !firing.Any(x => new[] { air, air + 0.1f, air + 0.2f }.Any(t =>
+                    {
+                        if (t <= x.due)
+                        {
+                            return false;
+                        }
+                        var aim = Player.Position + move * Math.Min(x.due / air, 1f);
+                        var p = x.sl.Position + Vector2.Normalize(aim - x.sl.Position) * 40f * (t - x.due);
+                        var r = new Rectangle((int)p.X, (int)p.Y, 8, 8);
+                        r.Inflate(4, 4);
+                        return r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height));
+                    }))
                     && !(sight && InTrapSight(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height), air)))
                 {
                     _hopDir = k;
@@ -20308,6 +20327,25 @@ namespace AnodyneSharp.Recording
                                 break;
                             }
                             br.Inflate(2, 2);
+                            bt[f] = br;
+                            bp += bv;
+                        }
+                        list.Add((bt, false));
+                    }
+                    // (and its next shot, if it comes within the horizon: from its top-left, at us as we stand now, give or take)
+                    if (Player != null && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() && SlimeShotIn(sl) is float due && due * 60f < frames)
+                    {
+                        var bt = new Rectangle?[frames + 1];
+                        var bp = sl.Position;
+                        var bv = Vector2.Normalize(Player.Position - sl.Position) * 40f / 60f;
+                        for (int f = (int)Math.Ceiling(due * 60f); f <= frames; f++)
+                        {
+                            var br = new Rectangle((int)bp.X, (int)bp.Y, 8, 8);
+                            if (!WallFree(br))
+                            {
+                                break;
+                            }
+                            br.Inflate(4, 4);
                             bt[f] = br;
                             bp += bv;
                         }
