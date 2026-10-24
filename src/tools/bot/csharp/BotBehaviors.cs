@@ -7482,6 +7482,15 @@ namespace AnodyneSharp.Recording
                 }
                 if (Math.Abs(Pos.X - at.X) > 1.5f || Math.Abs(Pos.Y - at.Y) > 1.5f)
                 {
+                    if (Enemies().Any(e => e.Hitbox.Intersects(near)))
+                    {
+                        // (not back onto it while a foe sits there: the Cell's Slimes crowd the spot, and each step onto one is a hit)
+                        BotRunner.Status = $"plant: wait for {at.X:0},{at.Y:0} to clear";
+                        var off = faces[0] switch { 'u' => KeyFunctions.Down, 'd' => KeyFunctions.Up, 'l' => KeyFunctions.Right, _ => KeyFunctions.Left };
+                        bool touching = Enemies().Any(e => e.Hitbox.Intersects(Player.Hitbox));
+                        yield return touching ? K(off) : K();
+                        continue;
+                    }
                     BotRunner.Status = $"plant: back onto {at.X:0},{at.Y:0}";
                     yield return ExactWalk(at, 20); // (knocked off it)
                     continue;
