@@ -124,6 +124,16 @@ namespace AnodyneSharp.Recording
                     yield return RollerHops(tiles, pick, tail, rk);
                     continue;
                 }
+                if (tok.StartsWith("wig") && tok.Length > 4 && "UDLR".Contains(tok[3]))
+                {
+                    // wig<U|D|L|R><n> / wig<U|D|L|R>@<p>: the wiggle glitch, n times or until our y (holding up or down) or x reaches p: back
+                    // and forth over a screen edge, holding along it (neither frame of a crossing collides with the map, so that bit of each
+                    // step goes through walls)
+                    var vk = tok[3] switch { 'U' => KeyFunctions.Up, 'D' => KeyFunctions.Down, 'L' => KeyFunctions.Left, _ => KeyFunctions.Right };
+                    bool to = tok[4] == '@';
+                    yield return Wiggle(vk, to ? 1000 : int.Parse(tok.Substring(4)), to ? float.Parse(tok.Substring(5)) : float.NaN);
+                    continue;
+                }
                 if (tok == "dd")
                 {
                     // dd: carrying a dust, set it down on a free tile beside us (off any beam)
@@ -19818,6 +19828,59 @@ namespace AnodyneSharp.Recording
         /// and hurt only on the ground): walk a tile, wait, or jump (on the spot, to the next tile, or over a pit to the one beyond) so
         /// that every bar passes under us in the air. (next tile, kind) with kind 0 walk/wait, 1 hop to the next tile, 2 leap; null if none.
         /// </summary>
+        /// <summary>
+        /// The wiggle glitch: on a screen's left or right edge, holding `vk` into a wall, cross the edge and back, `n` times. Each crossing
+        /// puts us on the border line while the walls are not pushing us out, so the hold gains a pixel into the wall each time.
+        /// </summary>
+        protected static IEnumerable<object> Wiggle(KeyFunctions vk, int n, float until = float.NaN)
+        {
+            ExactHolds = true;
+            try
+            {
+                for (int c = 0; c < n; c++)
+                {
+                    if (!float.IsNaN(until))
+                    {
+                        float at = vk is KeyFunctions.Up or KeyFunctions.Down ? Pos.Y : Pos.X;
+                        if (vk is KeyFunctions.Up or KeyFunctions.Left ? at <= until : at >= until)
+                        {
+                            System.Console.Error.WriteLine($"  wiggle done after {c} f{BotRunner.Frame}: at {Pos} on {Grid}");
+                            break;
+                        }
+                    }
+                    // (holding up or down: over the left or right edge; holding left or right: over the top or bottom one)
+                    bool horiz = vk is KeyFunctions.Up or KeyFunctions.Down;
+                    float p = horiz ? Pos.X + BotNav.HalfW : Pos.Y + BotNav.HalfH;
+                    int g = horiz ? Grid.X : Grid.Y;
+                    float edge = (g + (p - g * 160 < 80 ? 0 : 1)) * 160;
+                    var across = horiz ? (p < edge ? KeyFunctions.Right : KeyFunctions.Left) : (p < edge ? KeyFunctions.Down : KeyFunctions.Up);
+                    var g0 = Grid;
+                    BotRunner.Status = $"wiggle {c + 1}/{n} {across} at {Pos}";
+                    for (int w = 0; w < 120 && Grid == g0; w++)
+                    {
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        yield return K(across, vk);
+                    }
+                    // (already holding back the other way while the screen scrolls: the frame it ends on has no map collision, so the step back over
+                    // the edge from there starts the next transition with no collision either, and the sideways bit of each step goes through walls)
+                    var back = across switch { KeyFunctions.Right => KeyFunctions.Left, KeyFunctions.Left => KeyFunctions.Right, KeyFunctions.Down => KeyFunctions.Up, _ => KeyFunctions.Down };
+                    for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                    {
+                        ExactKeysUntil = BotRunner.Frame + 1;
+                        yield return K(back, vk);
+                    }
+                    if (c % 10 == 0 || c == n - 1)
+                    {
+                        System.Console.Error.WriteLine($"  wiggle {c + 1}/{n} f{BotRunner.Frame}: at {Pos} on {Grid}");
+                    }
+                }
+            }
+            finally
+            {
+                ExactHolds = false;
+            }
+        }
+
         private const int HopAirFrames = 28;
         private const float HopDrift = 29.2f, HopDriftDiag = 20.4f; // (0.83 x 70px/s for 0.46s and the frames either end, as measured; 0.7 of it each way on a diagonal)
         private const int HopPickFrames = 21;

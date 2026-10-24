@@ -474,14 +474,20 @@ namespace AnodyneSharp.Recording
                 + " b448,1296 W10 d1500 W30 H3,8 W10 >595,1298 W5 ex600.5,1298 W20 ca1 }3000 ca0 W10 >611,1298 W30 H4,8 W10 >760,1298 W5 ex762,1298 W20"
                 + " H3,8 W10 H4,8 W30 >659,1378 W5 plant659,1378,dwb,2400 W10 >659,1298 W5 ex750,1298 ex721,1298 W60 >643,1346 W5 ex643,1346 W5 dashrun800 W20"
                 + " I896,1344,d W60 T W30"));
-            // Debug World's Green Man card, with every card but it and the Nexus one (BLANK's card gate 47 wants 47). BLANK's west half
+            // Debug World's Green Man card and the Nexus one, the last two (BLANK's card gate 47 wants 47). BLANK's west half
             // has no way in on foot: from the Windmill side dig up to (5,0)'s button (it opens the gates round door 87), through 87 to
             // the west, down to (1,2)'s button (gate (15,21)) and on to the card gate, then doors 88, 89 and 90 into Debug. There a dust
             // raft rides down (0,2)-(0,3) and across (1,3)-(2,3) (its belts run into pits: leaning into them, hopping (1,3)'s rollers),
             // is swept up at (3,3), whose stepping stones two rollers sweep: one chain of seven hops, timed to the frame, then the dust
             // down on the water past them (a bar hit or so there) and on to the chest.
-            yield return Section("debug green man card", () => Exec("O1 X1 g4 viaWINDMILL W30 dig25,40 W10 oBLANK W60 dig53,38 W10 door86 W30 dig52,1 W30"
-                + " dig55,2 W10 door87 W60 dig11,23 W30 dig15,53 W30 door88 W60 door89 W60 door90 W60 >40,440 W10 ~40,470 W5 ~40,530 W5 ~150,600 W5"
+            yield return Section("blank card gate", () => Exec("O1 X1 g4 viaWINDMILL W30 dig25,40 W10 oBLANK W60 dig53,38 W10 door86 W30 dig52,1 W30"
+                + " dig55,2 W10 door87 W60 dig11,23 W30 dig15,53 W30 door88 W60 door89 W60"));
+            // The Nexus card, in a room walled in on every side (its card gate wants all 49) that straddles the edge between (4,2) and
+            // (5,2). Door 89 comes out in the upper Nexus's corridor right under it, on that same edge line: the wiggle glitch (back and
+            // forth over the edge, no map collision on either frame of it) holding Up climbs the edge line through the walls into the
+            // room, and holding Down back out again after the chest. Post-game only, with the swap broom.
+            yield return Section("nexus sealed card", () => Exec("O1 X1 >788,548 W10 wigU@408 W10 I832,400,d W60 T W30 >805,410 W10 wigD@546 W10"));
+            yield return Section("debug green man card", () => Exec("O1 X1 door90 W60 >40,440 W10 ~40,470 W5 ~40,530 W5 ~150,600 W5"
                 + " ~340,500 W5 ~485,612 O0 rhop31,38/31,36/33,36/35,36/35,34/37,34/37,32/38,31;p;t12;rR O1 ~720,570 W10 I720,592,d W60 T W30"));
         }
     }
