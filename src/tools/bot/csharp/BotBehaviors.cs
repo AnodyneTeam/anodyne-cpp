@@ -1551,6 +1551,16 @@ namespace AnodyneSharp.Recording
                             }
                             var r2 = r;
                             r2.Offset((int)(dir.X * run), (int)(dir.Y * run));
+                            // (it aims at where we are when it sets off, not where we are now: walking away as it warns, we drag the
+                            // line with us, so take the line to where our walk takes us by then too)
+                            var later = me + Player.velocity * Math.Max(0, start) / 60f - r.Center.ToVector2();
+                            if (later != Vector2.Zero && Player.velocity != Vector2.Zero)
+                            {
+                                later.Normalize();
+                                var r3 = r;
+                                r3.Offset((int)(later.X * run), (int)(later.Y * run));
+                                r2 = Rectangle.Union(r2, r3);
+                            }
                             r = Grow(f - start < 4 ? Rectangle.Union(r, r2) : r2, 8);
                         }
                         break;
@@ -9875,6 +9885,8 @@ namespace AnodyneSharp.Recording
         private static long _hopUntil;
 
         private static int _contactFrames;
+        private static List<KeyFunctions> _contactWay = new();
+        private static int _contactWayFrames;
         private static long _gasPolicyFrame = -1; // (the frame GasGuyKeys last steered: it answers its own contact)
 
         /// <summary>
@@ -9888,6 +9900,7 @@ namespace AnodyneSharp.Recording
                 || Environment.GetEnvironmentVariable("ANODYNE_NO_CONTACT_ESCAPE") != null)
             {
                 _contactFrames = 0;
+                _contactWay.Clear();
                 return held;
             }
             var pb = Player.Hitbox;
@@ -9897,6 +9910,7 @@ namespace AnodyneSharp.Recording
             if (on.Count == 0 || (_gasPolicyFrame == BotRunner.Frame && on.All(e => e is AnodyneSharp.Entities.Enemy.Apartment.GasGuy)))
             {
                 _contactFrames = 0;
+                _contactWay.Clear();
                 return held;
             }
             // (counted in the air too: hopping on the spot inside them is no way out, every landing is in them again)
@@ -9930,7 +9944,15 @@ namespace AnodyneSharp.Recording
                     && !OnConveyor(BotNav.TileOf(Pos + DirVector(k) * 6));
             }
             float bestOut = float.MaxValue;
-            foreach (var (hx, vy) in new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1) })
+            // (keep a way out once taken while it stays open: chosen afresh each frame, the 6px look ahead flipped between Up and Down
+            // inside a Lion against a wall, and we stood in it for five hits)
+            if (_contactWay.Count > 0 && _contactWayFrames > 0 && _contactWay.All(Ok))
+            {
+                _contactWayFrames--;
+                keys = new List<KeyFunctions>(_contactWay);
+                bestOut = float.MinValue;
+            }
+            foreach (var (hx, vy) in bestOut == float.MinValue ? Array.Empty<(int, int)>() : new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1) })
             {
                 var cand = new List<KeyFunctions>();
                 if (hx != 0)
@@ -9958,7 +9980,13 @@ namespace AnodyneSharp.Recording
             }
             if (keys.Count == 0)
             {
+                _contactWay.Clear();
                 return held;
+            }
+            if (bestOut != float.MinValue)
+            {
+                _contactWay = new List<KeyFunctions>(keys);
+                _contactWayFrames = 40;
             }
             // (swinging as we go, but not for long: a swing holds us still, and a Lion in Circus (4,5) kept us in it, swinging, for eight
             // hits in a row)
