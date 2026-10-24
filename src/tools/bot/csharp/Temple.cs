@@ -456,8 +456,10 @@ namespace AnodyneSharp.Recording
                 + " L16 @x397,u D90 @x424,u strike424,1236,r,420,1236 X1 kg0 I384,1232,d W60 T W30"));
             // Red Cave (3,1) Mover: the any% route leaves its gates shut; dig to the chest. The dig crosses (4,1) under its two steam
             // jets, which start as the screen loads and are on by the time the dig gets there: wait at its east end for them to switch
-            // off, then on. (Out of the dig's last swap a nudge up, off the key block's sentinel, which snags the step west.)
-            yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 X0 dig48,13 W5 steamgap dig36,12 W5 U12 W5 X1 I544,176,d W60 T W30"));
+            // off, then on. (Out of the dig's last swap a nudge up, off the key block's sentinel, which snags the step west.) Out by the menu
+            // and the entrance's down door: the walk back from (3,0) to the pad wades (4,0) and crosses (5,0)'s jets.
+            yield return Section("red cave mover card", () => Exec("O1 X1 viaREDCAVE W30 X0 dig48,13 W5 steamgap dig36,12 W5 U12 W5 X1 I544,176,d W60 T W30"
+                + " X0 n0 W120 >556,138 D30 W90 X1"));
             // Space (5,7) Entities: dig south off the pad's column into the walled-off south half; its chest is behind two gates, one
             // opened by a button at the end of the west path, the other by a kill on its screen at the end of the east path. West: the
             // Dustmaids (fought from their exit corridor with the long broom), the laser lane (no side tile to plug it from: run it at the
