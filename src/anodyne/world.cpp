@@ -72,8 +72,8 @@ const char* gMapName = "";
 const MapAudioData* gAudio = nullptr;
 const char* gMusicPlaying = nullptr;
 
-int gCamX = 0; // top-left of the current screen being shown, Fx
-int gCamY = 0;
+fx gCamX = 0; // top-left of the current screen being shown, Fx
+fx gCamY = 0;
 int gGridX = 0; // current 10x10-tile screen
 int gGridY = 0;
 bool gTransition = false;
