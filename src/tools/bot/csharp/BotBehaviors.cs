@@ -5389,7 +5389,13 @@ namespace AnodyneSharp.Recording
             {
                 System.Console.Error.WriteLine($"  leapfrog beam {string.Join(" ", beam.Select(b => $"{b.X},{b.Y}"))}; walk {string.Join(" ", beam.Select(b => BotNav.Walkable(b) ? 1 : 0))}");
             }
-            for (int j = 2; j < beam.Count; j++)
+            // (only a beam on this screen, whose dusts we counted, and walkable up to where we would plug it: planning the next screen's
+            // beams from the Temple's (0,1) once sent the bot fetching (0,1)'s dust for (1,2)'s walled beam, through (1,1)'s lasers)
+            if (target.X / 10 != Grid.X || target.Y / 10 != Grid.Y)
+            {
+                return null;
+            }
+            for (int j = 2; j < beam.Count && BotNav.Walkable(beam[j - 1]); j++)
             {
                 if (SafeStand(beam[j], lanes, beam[j - 1]) is { } st)
                 {
