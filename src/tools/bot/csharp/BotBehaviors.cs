@@ -20706,6 +20706,28 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
+                // (a Slime in the one-wide lane between the spikes: the step pushes into it and it bites every time we blink back in, six
+                // hearts in one chain run. Strike it from here instead, or wait while it flickers.)
+                var stepBox = new Rectangle(to.X * 16 - 2, to.Y * 16 - 2, 20, 20);
+                var inWay = Enemies().FirstOrDefault(e => e.GetType().Name != "Chaser" && (e.Hitbox.Intersects(stepBox) || e.Hitbox.Intersects(new Rectangle(Player.Hitbox.X - 3, Player.Hitbox.Y - 3, 16, 18))));
+                if (inWay != null && Math.Abs(to.X - here.X) + Math.Abs(to.Y - here.Y) == 1)
+                {
+                    var face = to.X > here.X ? KeyFunctions.Right : to.X < here.X ? KeyFunctions.Left : to.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
+                    BotRunner.Status = $"chasers: {inWay.GetType().Name} in the way at {here} -> {to}";
+                    if (!inWay._flickering && !(Player.broom != null && Player.broom.exists))
+                    {
+                        yield return K(face);
+                        yield return Tap(KeyFunctions.Accept);
+                        i += 3;
+                    }
+                    else
+                    {
+                        yield return K();
+                        i++;
+                    }
+                    steps = null;
+                    continue;
+                }
                 BotRunner.Status = $"chasers: {here} -> {to} (for {goal})";
                 if (Math.Abs(to.X - here.X) + Math.Abs(to.Y - here.Y) == 2)
                 {
