@@ -143,6 +143,11 @@ namespace AnodyneSharp.Recording
                     yield return CheatsAndDeath();
                     continue;
                 }
+                if (tok == "rb1" || tok == "rb0")
+                {
+                    RedBossWholeFight = tok == "rb1";
+                    continue;
+                }
                 if (tok == "steamgap")
                 {
                     // steamgap: wait for this screen's On-Off steam jets to switch off (they all start together as the screen loads): then
@@ -11058,6 +11063,56 @@ namespace AnodyneSharp.Recording
             return threats;
         }
 
+        /// <summary>Token rb1/rb0: the Red boss fight sets off its wave and dash phases too (the whole of it) / keeps out of them.</summary>
+        internal static bool RedBossWholeFight;
+        private static bool _redSawDash, _redSawStun;
+        private static Vector2 _redLastPos;
+        private static int _redStillFor;
+
+        /// <summary>
+        /// The next keys of a space-time plan to `goal` round the Red boss's dashing body (its bounces simulated as in the game: off an inner
+        /// box of its room, x and y 32..128, at 60px/s), its waves and any tentacle up, over the pool's still water only (we ride a raft; its
+        /// currents shove us). Null when no plan survives.
+        /// </summary>
+        private static KeyFunctions[] RedPlanKeys(Entity boss, Vector2 tl, Vector2 goal)
+        {
+            var at = new Rectangle?[Horizon + 1];
+            var p = boss.Position;
+            var v = boss.velocity;
+            for (int f = 0; f <= Horizon; f++)
+            {
+                at[f] = new Rectangle((int)p.X, (int)p.Y, 26, 19);
+                p += v / 60f;
+                var g = p - tl;
+                if (g.Y < 32) { v.Y = 60; } else if (g.Y + 19 > 128) { v.Y = -60; }
+                if (g.X < 32) { v.X = 60; } else if (g.X + 26 > 128) { v.X = -60; }
+            }
+            var threats = new List<StThreat> { new StThreat { At = at, Margin = 3 } };
+            foreach (var t in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Redcave.Tentacle))
+            {
+                var box = t.Hitbox;
+                threats.Add(new StThreat { At = Enumerable.Repeat<Rectangle?>(box, Horizon + 1).ToArray(), Margin = 2, Stationary = true });
+            }
+            foreach (var w in BotRunner.Entities().Where(e => e.exists && (e is AnodyneSharp.Entities.Enemy.Redcave.SmallWave || e is AnodyneSharp.Entities.Enemy.Redcave.BigWave)))
+            {
+                var wat = new Rectangle?[Horizon + 1];
+                for (int f = 0; f <= Horizon; f++)
+                {
+                    var r = w.Hitbox;
+                    r.Offset((int)(w.velocity.X * f / 60f), 0);
+                    wat[f] = r;
+                }
+                threats.Add(new StThreat { At = wat, Margin = 2 });
+            }
+            bool Water(Rectangle r)
+            {
+                return new[] { new Point(r.Left / 16, r.Top / 16), new Point((r.Right - 1) / 16, r.Top / 16), new Point(r.Left / 16, (r.Bottom - 1) / 16),
+                    new Point((r.Right - 1) / 16, (r.Bottom - 1) / 16) }.All(t => OnConveyor(t) && BotNav.FlowDir(t) == Touching.NONE);
+            }
+            int a = SpaceTime.Plan(Player.Hitbox, goal, threats, Water, Horizon, maxNodes: 1500);
+            return a < 0 || a >= StActions.Length ? null : StActions[a];
+        }
+
         /// <summary>
         /// The Red Cave boss: it sits still in the middle of its pool and every 3s fires splash bullets and raises tentacles. Both land in the
         /// left half of the room, except that tentacles rise beside us instead when one of its proximity sensors touches us at that moment,
@@ -11066,9 +11121,11 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> RedBossFight(int timeoutFrames = 6000)
         {
+            _redSawDash = _redSawStun = false;
+            _redStillFor = 0;
             const int Tick = 180;
             var healthField = typeof(AnodyneSharp.Entities.Enemy.Redcave.Red_Boss).GetField("health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            BotRunner.BossDamageBudget = 0;
+            BotRunner.BossDamageBudget = RedBossWholeFight ? 2 : 0; // (its dash phase: a tentacle in the pocket where we sit it out)
             int t0 = -1, lastSwing = -100, lastHit = -200;
             bool wasFlickering = false;
             for (int i = 0; i < timeoutFrames; i++)
@@ -11113,6 +11170,109 @@ namespace AnodyneSharp.Recording
                 int phase = (i - t0) % Tick;
                 bool window = phase >= 3 && phase < Tick - 22;
                 BotRunner.Status = $"Red boss fight: boss hp {hp}, tick phase {phase}";
+                if (RedBossWholeFight)
+                {
+                    // The whole fight: from half its health on, sit in its lower sensor at two ticks to set off its wave and dash phases;
+                    // hit it while it is stunned, and sit out its dashes in the pocket at the top of the pool.
+                    var tlr = new Vector2(Grid.X * 160, Grid.Y * 160);
+                    bool dashing = boss.velocity != Vector2.Zero;
+                    bool waves = BotRunner.Entities().Any(e => e.exists && (e is AnodyneSharp.Entities.Enemy.Redcave.SmallWave || e is AnodyneSharp.Entities.Enemy.Redcave.BigWave));
+                    bool stunned = !dashing && (waves || boss.CurAnimName == "warn" || boss.CurAnimName == "close_eyes");
+                    if (dashing && !_redSawDash)
+                    {
+                        _redSawDash = true;
+                        System.Console.Error.WriteLine($"  red boss: dash phase at f{BotRunner.Frame} (hp {hp})");
+                    }
+                    if (stunned && !_redSawStun)
+                    {
+                        _redSawStun = true;
+                        System.Console.Error.WriteLine($"  red boss: stun and waves at f{BotRunner.Frame} (hp {hp})");
+                    }
+                    Point? hold = null;
+                    bool strike = false;
+                    KeyFunctions face = KeyFunctions.Up;
+                    if (dashing)
+                    {
+                        // (its body bounces inside x and y 32..128 of the room, which is all the pool's still water but a pocket at its top,
+                        // x 64..95, y 16..31: wait there, out of its reach, dodging the tentacles it raises)
+                        hold = new Point((int)tlr.X + Math.Clamp(pb.X - (int)tlr.X, 66, 84), (int)tlr.Y + 18);
+                    }
+                    else if (_redSawStun)
+                    {
+                        // stunned: it drifts to the middle (x 96..122) and later 16px west, and its body hurts on the way; once it sits
+                        // still, with its waves rising at x 80..112 and running west, hit it
+                        bool still = _redLastPos == boss.Position;
+                        _redStillFor = still ? _redStillFor + 1 : 0;
+                        var small = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Redcave.SmallWave);
+                        // (hit it from above, at x 114 of the room: east of where its waves rise, on still water where the pool's
+                        // currents don't drift us into it as we swing; the broom reaches 16px down)
+                        var spot = new Point((int)tlr.X + 114, (int)tlr.Y + 49);
+                        if (pb.Bottom <= (int)tlr.Y + 64 && pb.X < spot.X - 3)
+                        {
+                            // above it, west (in the pocket where we sat out its dash): stay till its small wave is off west
+                            hold = small != null && small.velocity == Vector2.Zero ? new Point(pb.X, pb.Y) : spot;
+                        }
+                        else if (pb.Y > (int)tlr.Y + 60 && pb.X < (int)tlr.X + 128)
+                        {
+                            // under it: its small wave rises at x 96..112 and shoves us west, into the big one, which throws us onto the
+                            // floor in the pool's corner, off our raft: east out of both, under the tentacles it raised
+                            hold = new Point((int)tlr.X + 130, Math.Max(pb.Y, (int)tlr.Y + 99));
+                        }
+                        else if (pb.X > spot.X + 3 && pb.Y > spot.Y + 3)
+                        {
+                            hold = new Point((int)tlr.X + 130, spot.Y); // east of it: up (pressing east against the current there)
+                        }
+                        else
+                        {
+                            hold = spot;
+                            strike = _redStillFor >= 6;
+                            face = KeyFunctions.Down;
+                        }
+                    }
+                    else if (hp <= 6)
+                    {
+                        bool atTick = phase >= Tick - 12 || phase < 4;
+                        hold = new Point(bb.X + 8, atTick ? bb.Bottom + 9 : bb.Bottom + 23);
+                    }
+                    _redLastPos = boss.Position;
+                    if (hold is Point hp2)
+                    {
+                        int hx = hp2.X - pb.X, hy = hp2.Y - pb.Y;
+                        if (strike && Math.Abs(hx) <= 3 && Math.Abs(hy) <= 4)
+                        {
+                            if (Player.facing != (face == KeyFunctions.Down ? Facing.DOWN : Facing.LEFT))
+                            {
+                                yield return K(face);
+                                continue;
+                            }
+                            if (!boss._flickering && i - lastHit > 80 && i - lastSwing > 26)
+                            {
+                                lastSwing = i;
+                                yield return K(KeyFunctions.Accept);
+                                continue;
+                            }
+                            yield return K();
+                            continue;
+                        }
+                        if (dashing)
+                        {
+                            // (its body moves, and hurts: a space-time plan round it on the pool's still water)
+                            var planned = RedPlanKeys(boss, tlr, new Vector2(hp2.X, hp2.Y));
+                            if (planned != null)
+                            {
+                                yield return K(planned);
+                                continue;
+                            }
+                        }
+                        var hk = new List<KeyFunctions>();
+                        if (hx > 1) { hk.Add(KeyFunctions.Right); }
+                        else if (hx < -1) { hk.Add(KeyFunctions.Left); }
+                        if (hy > 1) { hk.Add(KeyFunctions.Down); }
+                        else if (hy < -1) { hk.Add(KeyFunctions.Up); }
+                        yield return K(hk.ToArray());
+                        continue;
+                    }
+                }
                 // under it, right of where its bullets and tentacles can land; out of its lower sensor's reach at each tick
                 var goal = new Point(bb.X + 8, window ? bb.Bottom + 8 : bb.Bottom + 22);
                 if (pb.Right > bb.X - 2 && pb.Y < bb.Bottom + 4)

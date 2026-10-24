@@ -106,7 +106,8 @@ namespace AnodyneSharp.Recording
             // (5,0): the way to the boss is up a channel whose current runs out of its room. Sweep up the dust by the north wall, drop it in
             // the channel's inlet straight after a steam burst and ride it against the current under both jets, into the boss room.
             yield return Section("redcave raft to the boss", () => Exec("O1 X0 J56,1,l s J52,2,d D12 G852,66,d R220"));
-            yield return Section("redcave boss", () => Exec("O0 X0 F W200 i W30"));
+            // (rb1: the whole fight, its wave and dash phases too, which the route needs only for its code coverage)
+            yield return Section("redcave boss", () => Exec("O0 X0 rb1 F rb0 W200 i W30"));
             // Below the boss room: the Sage comes over to talk, the red key waits in the corner and the chest holds a card.
             yield return Section("redcave red key", () => Exec("O1 X1 H6,1 W60 X0 I1088,288,u W120 I976,256,d W60 `rc_redkey"));
             // South of it: three tiles' wade down the stream (with the current) to the Nexus pad.
