@@ -680,7 +680,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} long={GlobalState.inventory.HasLengthen} wide={GlobalState.inventory.HasWiden} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} long={GlobalState.inventory.HasLengthen} wide={GlobalState.inventory.HasWiden} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count} goquest={GlobalState.events.GetEvent("GoQuestProgress")}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]

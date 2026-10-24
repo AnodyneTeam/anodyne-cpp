@@ -430,6 +430,24 @@ namespace AnodyneSharp.Recording
             yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
             yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
             yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
+            // Debug World, where the last card left us (a pocket ringed with pits: wade its channel north). The big door (step on its
+            // sill, off, on again: the card count lock, then it opens), the keys lying about, the sound test console (the music and
+            // sound lists), the test NPC, and the black thing: jump in it 50 times. Out by the menu.
+            yield return Section("extras debug world", () => Exec("O1 X1 a1 P720,440 a0 W10 >714,90 W5 G714,64 W400 D24 W30 U30 W400 P56,40 W5 P88,56 W5 P56,184 W5"
+                + " I32,192,d W30 A1 W10 R1 W8 R1 W8 A1 W60 C1 W10 D1 W8 A1 W10 R1 W8 A1 W30 C1 W10 C1 W10 C1 W10 C1 W30 I96,240,d W20 T W20 P872,232 W10"
+                + string.Concat(System.Linq.Enumerable.Repeat(" C1 W10", 52)) + " W30 n0 W120 `x_debug"));
+            // The Go quest: a word with each of its NPCs in turn (each one's talk moves it on: Cliff, Beach, Forest, Fields, Cell, Suburb,
+            // Space), which opens Go's door 71 (walled in: dug to) up to the note rock. On the way: the Cliff dog, Mitra in Fields, the
+            // Space cube kings.
+            yield return Section("extras go quest cliff", () => Exec("O1 X1 g4 viaCROWD W30 oCLIFF@1520,640 W30 I384,400,d W20 T W20 I704,544,d W20 T W20"));
+            yield return Section("extras go quest beach", () => Exec("O1 X1 g4 viaBEACH W30 I720,592,l W20 T W20"));
+            yield return Section("extras go quest forest", () => Exec("O1 X1 g4 viaFOREST W30 I448,704,d W20 T W20"));
+            yield return Section("extras go quest fields", () => Exec("O1 X1 g4 viaFIELDS W30 dig14,46 W10 I224,720,d W20 T W20 dig56,45 W10 I896,704,d W20 T W20"));
+            yield return Section("extras go quest cell", () => Exec("O1 X1 g4 viaCELL W30 dig41,27 W10 U20 W5 A1 W20 T W20"));
+            yield return Section("extras go quest suburb", () => Exec("O1 X1 g4 viaSUBURB W30 I272,352,d W20 T W20"));
+            yield return Section("extras go quest space", () => Exec("O1 X1 g4 viaSPACE W30 dig57,33 W10 U20 W5 A1 W20 T W20 dig34,13 W10 U30 W5 A1 W20 T W20"
+                + " dig74,13 W10 U30 W5 A1 W20 T W20"));
+            yield return Section("extras go quest note rock", () => Exec("O1 X1 g4 viaGO W30 dig38,32 W5 U40 W60 >88,40 W10 U30 W5 A1 W20 T W20 >84,276 W5 D40 W60 `x_goquest"));
         }
     }
 
