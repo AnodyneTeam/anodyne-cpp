@@ -56,6 +56,7 @@ extern "C" int GameProbe_Json(char* buf, int cap)
     PlayerProbe pp;
     Player_GetProbe(pp);
     const Entity* dust = Player_BroomDust();
+    o.Add("\"deathMenu\":%s,\"deaths\":%d,", p.mDeathMenu ? "true" : "false", p.mDeaths);
     o.Add("\"player\":{\"x\":%d,\"y\":%d,\"facing\":%d,\"ladder\":%s,\"fallen\":%s,\"health\":%d,", p.mX, p.mY,
           p.mFacing, p.mLadder ? "true" : "false", p.mFallen ? "true" : "false", p.mHealth);
     // Player.cs as the C# bot reads it: position and velocity (px/s) as raw 16.16 (x, y, vx, vy, additional vx, vy),
@@ -108,6 +109,10 @@ extern "C" int GameProbe_Json(char* buf, int cap)
         const Visual* v = e->mV;
         char fields[160];
         const int fieldsLen = Enemies_ProbeFields(*e, fields, sizeof(fields));
+        if (const char* fsm = Enemies_ProbeFsm(*e))
+        {
+            o.Add("\"fsm\":\"%s\",", fsm);
+        }
         o.Add("\"id\":%u,\"parent\":%d,\"gid\":%d,\"fx16\":[%d,%d,%d,%d],\"face\":%d,\"visible\":%s,\"flicker\":%s,"
               "\"opacity\":%d,\"f\":{%s}}",
               static_cast<unsigned>(e->mIndex), e->mParent ? static_cast<int>(e->mParent->mIndex) : -1,

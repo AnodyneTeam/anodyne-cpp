@@ -139,7 +139,11 @@ namespace AnodyneSharp.Recording
         public int EnemiesKilled => Int("killed");
         public IPlayerView Player => Mode == "play" && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p, this) : null;
         /// <summary>A dialogue box or cutscene has the input (PlayState's child states, BotRunner.PlayBusy).</summary>
-        public bool Busy => Bool("dialog") || Bool("cutscene");
+        public bool Busy => Bool("dialog") || Bool("cutscene") || DeathMenu;
+        /// <summary>DeathState is up (BotRunner.InDeathMenu).</summary>
+        public bool DeathMenu => Bool("deathMenu");
+        /// <summary>Deaths so far, each one back at the checkpoint (BotRunner.Deaths).</summary>
+        public int Deaths => Int("deaths");
 
         private readonly Dictionary<int, Entity> _shadows = new();
         private readonly Dictionary<Entity, List<Entity>> _children = new();
@@ -169,6 +173,8 @@ namespace AnodyneSharp.Recording
             _ = Entities;
             return id >= 0 && _shadows.TryGetValue(id, out var e) ? e : null;
         }
+
+        public string FsmPath(Entity e) => SimEntities.Fsm.TryGetValue(e, out var s) ? s : "";
 
         public IEnumerable<Entity> SubEntities(Entity e)
         {
@@ -208,6 +214,9 @@ namespace AnodyneSharp.Recording
     /// </summary>
     public static class SimEntities
     {
+        /// <summary>Each stand-in's state machine as the port reports it (IGameView.FsmPath).</summary>
+        public static readonly Dictionary<Entity, string> Fsm = new();
+
         private static Dictionary<string, Type> _types;
         private static readonly System.Reflection.PropertyInfo FlickeringProp = typeof(Entity).GetProperty("_flickering");
 
@@ -378,6 +387,7 @@ namespace AnodyneSharp.Recording
                         SetField(e, f.Name, f.Value.GetInt32());
                     }
                 }
+                Fsm[e] = j.TryGetProperty("fsm", out var fsm) ? fsm.GetString() : "";
                 var sprite = (SimSprite)e.sprite;
                 sprite.CurAnimName = j.GetProperty("anim").GetString();
                 sprite.Frame = j.GetProperty("frame").GetInt32();

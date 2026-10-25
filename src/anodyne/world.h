@@ -50,6 +50,8 @@ struct WorldPlayerInfo final
     bool mLadder;
     bool mFallen;
     int mHealth;
+    bool mDeathMenu; // DeathState is up (the "Continue?" menu once it takes keys)
+    int mDeaths;     // DeathStates finished (each one warps to the checkpoint)
 };
 void World_GetPlayerInfo(WorldPlayerInfo& info);
 

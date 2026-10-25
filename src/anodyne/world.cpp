@@ -1018,6 +1018,7 @@ struct Death final
     Entity* mDummy = nullptr;
     fx mFade = 0; // DeathFadeIn opacity, then the black overlay
 } gDeath;
+int gDeaths = 0;
 fx gDeathFallbackX = 0; // where the map was entered (dying before any checkpoint)
 fx gDeathFallbackY = 0;
 
@@ -1094,6 +1095,7 @@ void DeathUpdate()
         if (MoveTo(d.mFade, kFxOne, FxF(0.6f)))
         {
             d.mActive = false;
+            gDeaths++;
             if (d.mDummy)
             {
                 Ecs_Free(*d.mDummy);
@@ -1617,6 +1619,8 @@ void World_GetPlayerInfo(WorldPlayerInfo& info)
     info.mLadder = false;
     info.mFallen = Player_HasFallen();
     info.mHealth = gGame.mCurHealth;
+    info.mDeathMenu = gDeath.mActive;
+    info.mDeaths = gDeaths;
 }
 
 void World_GetCellsSize(int& w, int& h)

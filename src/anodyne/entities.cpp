@@ -180,6 +180,8 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
         }
     }
     Ecs_SetBaseKilledEnemies(killed);
+    // (PlayState.LoadGridEntities sets ENEMIES_KILLED here: the new screen's gates must not see the last screen's kills)
+    gGame.mEnemiesKilled = killed;
     gGame.mGridX = gx;
     gGame.mGridY = gy;
 }

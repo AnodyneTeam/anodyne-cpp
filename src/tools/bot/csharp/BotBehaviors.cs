@@ -1636,22 +1636,7 @@ namespace AnodyneSharp.Recording
         }
 
         // (debug) the entity's active state chain, by name
-        private static string FsmPath(Entity d)
-        {
-            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var names = new List<string>();
-            object st = d.GetType().GetField("_state", F)?.GetValue(d);
-            for (int k = 0; st != null && abs != null && k < 4; k++)
-            {
-                st = (abs.GetField("activeChildren", F)?.GetValue(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-                if (st != null)
-                {
-                    names.Add(st.GetType().GetProperty("Name")?.GetValue(st) as string ?? st.GetType().Name);
-                }
-            }
-            return string.Join("/", names) + $" exists={d.exists} solid={d.Solid} vel={d.velocity}";
-        }
+        private static string FsmPath(Entity d) => Gs.View.FsmPath(d) + $" exists={d.exists} solid={d.Solid} vel={d.velocity}";
 
         private static (string, int)? FsmStateLeft(Entity d)
         {

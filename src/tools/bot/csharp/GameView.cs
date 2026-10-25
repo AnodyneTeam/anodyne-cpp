@@ -3,6 +3,7 @@ using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Registry;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 
 namespace AnodyneSharp.Recording
@@ -25,6 +26,23 @@ namespace AnodyneSharp.Recording
         public int EnemiesKilled => GlobalState.ENEMIES_KILLED;
 
         public IEnumerable<Entity> SubEntities(Entity e) => e.SubEntities();
+
+        public string FsmPath(Entity e)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var names = new List<string>();
+            object st = e.GetType().GetField("_state", F)?.GetValue(e);
+            for (int k = 0; st != null && abs != null && k < 4; k++)
+            {
+                st = (abs.GetField("activeChildren", F)?.GetValue(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+                if (st != null)
+                {
+                    names.Add(st.GetType().GetProperty("Name")?.GetValue(st) as string ?? st.GetType().Name);
+                }
+            }
+            return string.Join("/", names);
+        }
 
         private MapView _map;
         public IMapView CurrentMap

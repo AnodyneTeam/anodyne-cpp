@@ -80,3 +80,6 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);
 // For the bot link (game_probe.cpp): the C# fields of an entity's class that the C# bot reads and the port keeps in its
 // brain, written as JSON members ("name":value,...; C# names, float fields as 16.16). Returns the length, 0 for none.
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap);
+// For the bot link: the entity's C# state machine as the C# bot reads it (the active states' type names from the top
+// down, e.g. "ActiveState/TimerState"), or nullptr when the port doesn't report one for its class.
+const char* Enemies_ProbeFsm(const Entity& e);

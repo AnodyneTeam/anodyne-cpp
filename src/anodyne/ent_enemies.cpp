@@ -1544,12 +1544,42 @@ int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
         return snprintf(buf, static_cast<size_t>(cap), "\"_bulletTimer\":%d,\"_isFast\":%d", static_cast<int>(d.mTimer / 60),
                         d.mFast ? 1 : 0);
     }
+    if (e.mClass == &kSeer)
+    {
+        return snprintf(buf, static_cast<size_t>(cap), "\"_health\":%d", const_cast<Entity&>(e).Data<SeerData>().mHealth);
+    }
+    if (e.mClass == &kAnnoyer)
+    {
+        return snprintf(buf, static_cast<size_t>(cap), "\"_health\":%d", const_cast<Entity&>(e).Data<AnnoyerData>().mHealth);
+    }
     if (e.mClass == &kLaser && e.mParent && e.mParent->mClass == &kPewLaser)
     {
         const PewLaserData& d = e.mParent->Data<PewLaserData>();
         return snprintf(buf, static_cast<size_t>(cap), "\"_isFast\":%d", d.mFast ? 1 : 0);
     }
     return 0;
+}
+
+const char* Enemies_ProbeFsm(const Entity& e)
+{
+    if (e.mClass == &kAnnoyer)
+    {
+        // Annoyer.cs: Active (Wait, Approach, Circle, Swoop) and Hit
+        switch (const_cast<Entity&>(e).Data<AnnoyerData>().mState)
+        {
+        case ANNOYER_WAIT:
+            return "ActiveState/TimerState";
+        case ANNOYER_APPROACH:
+            return "ActiveState/State";
+        case ANNOYER_CIRCLE:
+            return "ActiveState/CirclingState";
+        case ANNOYER_SWOOP:
+            return "ActiveState/SwoopState";
+        default:
+            return "TimerState";
+        }
+    }
+    return nullptr;
 }
 
 void Shieldy_ReceiveDamage(Entity& shieldy, int damage)

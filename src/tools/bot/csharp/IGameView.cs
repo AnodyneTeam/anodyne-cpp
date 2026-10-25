@@ -38,6 +38,11 @@ namespace AnodyneSharp.Recording
         IMapView CurrentMap { get; }
         /// <summary>Entity.SubEntities (an enemy's bullets...). Bot code calls it as e.Subs().</summary>
         IEnumerable<Entity> SubEntities(Entity e);
+        /// <summary>
+        /// The entity's state machine (its `_state`): the type names of the active states from the top down, e.g.
+        /// "ActiveState/TimerState" for an Annoyer waiting for the player; "" when it has none or it isn't known.
+        /// </summary>
+        string FsmPath(Entity e);
     }
 
     /// <summary>The current map, by 16x16 tile.</summary>
