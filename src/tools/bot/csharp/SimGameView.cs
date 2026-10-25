@@ -1,4 +1,6 @@
 using AnodyneSharp.Entities;
+using AnodyneSharp.MapData;
+using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Utilities;
 using Microsoft.Xna.Framework;
 using System;
@@ -72,12 +74,69 @@ namespace AnodyneSharp.Recording
         public int MapKeys => Int("keys");
         public int PuzzlesSolved => Int("puzzles");
         public int EnemiesKilled => Int("killed");
-        public IPlayerView Player => _state.TryGetProperty("player", out var p) ? new SimPlayerView(p) : null;
+        public IPlayerView Player => Mode == "play" && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p) : null;
+        /// <summary>A dialogue box or cutscene has the input (PlayState's child states, BotRunner.PlayBusy).</summary>
+        public bool Busy => Bool("dialog") || Bool("cutscene");
+
+        private SimMapView _map;
+        /// <summary>The map's collision, fetched (the "collision" command) when the map changes.</summary>
+        public IMapView CurrentMap
+        {
+            get
+            {
+                if (Mode != "play" || string.IsNullOrEmpty(Map))
+                {
+                    return null;
+                }
+                if (_map == null || _map.Name != Map)
+                {
+                    _out.WriteLine("collision");
+                    _map = new SimMapView(Map, _in.ReadLine() ?? throw new EndOfStreamException("simulator closed the bot link"));
+                }
+                return _map;
+            }
+        }
 
         public void Dispose()
         {
             _client.Dispose();
         }
+    }
+
+    /// <summary>The port's map collision: "W H" then two hex digits per cell (allowed sides, CollisionEventType).</summary>
+    public sealed class SimMapView : IMapView
+    {
+        private readonly (Touching, CollisionEventType)[] _cells;
+
+        public SimMapView(string name, string line)
+        {
+            Name = name;
+            var parts = line.Split(' ', 3);
+            WidthInTiles = int.Parse(parts[0]);
+            HeightInTiles = int.Parse(parts[1]);
+            string hex = parts.Length > 2 ? parts[2] : "";
+            _cells = new (Touching, CollisionEventType)[WidthInTiles * HeightInTiles];
+            for (int i = 0; i < _cells.Length && 2 * i + 1 < hex.Length; i++)
+            {
+                _cells[i] = ((Touching)Convert.ToInt32(hex.Substring(2 * i, 1), 16),
+                    (CollisionEventType)Convert.ToInt32(hex.Substring(2 * i + 1, 1), 16));
+            }
+        }
+
+        public string Name { get; }
+        public int WidthInTiles { get; }
+        public int HeightInTiles { get; }
+
+        public (Touching, CollisionEventType) GetTileClass(Point p)
+        {
+            if (p.X < 0 || p.Y < 0 || p.X >= WidthInTiles || p.Y >= HeightInTiles)
+            {
+                return (Touching.ANY, CollisionEventType.NONE);
+            }
+            return _cells[p.Y * WidthInTiles + p.X];
+        }
+
+        public int GetTile(Layer layer, Point p) => 0;
     }
 
     /// <summary>The port's player, from one frame's "player" object (game_probe.cpp).</summary>

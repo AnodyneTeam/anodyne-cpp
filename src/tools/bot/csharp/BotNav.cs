@@ -43,7 +43,7 @@ namespace AnodyneSharp.Recording
         }
         private static string _blockedMap = "";
 
-        public static Map CurrentMap => GlobalState.Map as Map;
+        public static IMapView CurrentMap => Gs.View.CurrentMap;
 
         // Gates are entities laid over the tile data: an opened one is passable even if the tile beneath says wall,
         // a closed one blocks even if the tile says floor. Refreshed at the start of every search.

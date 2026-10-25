@@ -1,4 +1,6 @@
 using AnodyneSharp.Entities;
+using AnodyneSharp.MapData;
+using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Registry;
 using Microsoft.Xna.Framework;
 
@@ -21,6 +23,23 @@ namespace AnodyneSharp.Recording
         public int PuzzlesSolved => GlobalState.PUZZLES_SOLVED;
         public int EnemiesKilled => GlobalState.ENEMIES_KILLED;
 
+        private MapView _map;
+        public IMapView CurrentMap
+        {
+            get
+            {
+                if (GlobalState.Map is not Map m)
+                {
+                    return null;
+                }
+                if (_map == null || _map.Native != m)
+                {
+                    _map = new MapView(m);
+                }
+                return _map;
+            }
+        }
+
         private PlayerView _player;
         public IPlayerView Player
         {
@@ -38,6 +57,21 @@ namespace AnodyneSharp.Recording
                 return _player;
             }
         }
+    }
+
+    /// <summary>The C# game's map, read straight through.</summary>
+    public sealed class MapView : IMapView
+    {
+        public MapView(Map map)
+        {
+            Native = map;
+        }
+
+        public Map Native { get; }
+        public int WidthInTiles => Native.WidthInTiles;
+        public int HeightInTiles => Native.HeightInTiles;
+        public (Touching, CollisionEventType) GetTileClass(Point p) => Native.GetTileClass(p);
+        public int GetTile(Layer layer, Point p) => Native.GetTile(layer, p);
     }
 
     /// <summary>The C# game's player, read straight through.</summary>

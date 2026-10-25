@@ -1,4 +1,6 @@
 using AnodyneSharp.Entities;
+using AnodyneSharp.MapData;
+using AnodyneSharp.MapData.Tiles;
 using Microsoft.Xna.Framework;
 
 namespace AnodyneSharp.Recording
@@ -6,8 +8,8 @@ namespace AnodyneSharp.Recording
     /// <summary>
     /// The game state the bot reads, so the same bot can play either the C# game (AnodyneGameView) or the GBA port in its
     /// simulator over the bot link (SimGameView). Bot code reads it through Gs rather than GlobalState.
-    /// Moving the bot onto this is gradual: what is here so far is the scalar state and the player; entities, presets and
-    /// the map's collision still come from the C# game directly.
+    /// Moving the bot onto this is gradual: what is here so far is the scalar state and the player and the map's collision;
+    /// entities and presets still come from the C# game directly.
     /// </summary>
     public interface IGameView
     {
@@ -31,6 +33,19 @@ namespace AnodyneSharp.Recording
         int EnemiesKilled { get; }
         /// <summary>The player, or null when there is none (no PlayState).</summary>
         IPlayerView Player { get; }
+        /// <summary>The current map's tiles, or null when none is loaded.</summary>
+        IMapView CurrentMap { get; }
+    }
+
+    /// <summary>The current map, by 16x16 tile.</summary>
+    public interface IMapView
+    {
+        int WidthInTiles { get; }
+        int HeightInTiles { get; }
+        /// <summary>The tile's collision sides and event (BG, with BG2 on top); off the map: (ANY, NONE).</summary>
+        (Touching, CollisionEventType) GetTileClass(Point p);
+        /// <summary>The tile id on a layer (0 = empty). Not reported by the simulator: 0 there.</summary>
+        int GetTile(Layer layer, Point p);
     }
 
     /// <summary>

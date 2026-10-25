@@ -50,6 +50,7 @@ namespace AnodyneSharp.Recording
         public static bool PlayBusy;
         private static string _lastBusyName = "";
         public static KeyFunctions[] LastHeld = Array.Empty<KeyFunctions>(); // the keys pressed last frame, after the guards
+        public static int GbaMask; // the same as a GBA KEYINPUT mask (1 = pressed), for playing the port's simulator
         public static string PlayBusyName = ""; // which child states of the play state are open (for the failure ring)
 
         /// <summary>The "Continue?" menu after dying is open (Up selects Yes, Accept confirms; No would send us to the death room).</summary>
@@ -675,6 +676,7 @@ namespace AnodyneSharp.Recording
             SwingAudit(held);
             RingRecord(held);
             WriteGbaFrame(held, _stack.Count == 0);
+            GbaMask = held.Aggregate(0, (m, f) => m | GbaBit(f));
             if (_stack.Count == 0)
             {
                 PrintSwingAudit();
