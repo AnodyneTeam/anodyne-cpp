@@ -1473,6 +1473,9 @@ void World_Update()
         Player_SetInvincible(true);
         Player_SetDontMove(true);
         Player_SetActionsDisabled(true);
+        // Child states stack: a box the cutscene itself opened pauses it (CutsceneState's DialogueEvent
+        // substate, also for the frame it closes), any other box runs alongside it.
+        const bool cutsceneBox = gDialogOpen && Game_DialogueIsCutscene();
         if (gDialogOpen)
         {
             if (!Dialog_Update())
@@ -1480,7 +1483,7 @@ void World_Update()
                 gDialogOpen = false;
             }
         }
-        else if (gCutscene.mFn)
+        if (gCutscene.mFn && !cutsceneBox)
         {
             Entity* owner = gCutscene.mOwner;
             if (owner->mFreed || owner->mClass != gCutscene.mClass || gCutscene.mFn(*owner))

@@ -652,25 +652,30 @@ void BreakLock(Entity& gate)
     }
 }
 
-// BigGate.OpeningSequence: five shakes 0.8 s apart, then the gate goes.
+// BigGate.OpeningSequence: five shakes 0.8 s apart, then the gate goes. (Each wait starts in the frame the last one
+// ended, as the C# loop runs straight on into the next MoveTo.)
 bool GateOpeningStep(Entity& gate)
 {
     KeyGateData& d = gate.Data<KeyGateData>();
-    if (!MoveTo(d.mTimer, FxF(0.8f), kFxOne))
+    for (;;)
     {
-        return false;
-    }
-    d.mTimer = 0;
-    if (d.mStep < 4)
-    {
+        if (!MoveTo(d.mTimer, FxF(0.8f), kFxOne))
+        {
+            return false;
+        }
+        d.mTimer = 0;
+        if (d.mStep >= 4)
+        {
+            break;
+        }
         d.mStep++;
+        Screen_Shake(FxF(0.02f), FxF(0.3f));
         Game_PlaySfx("hit_ground_1");
         if (d.mStep == 0)
         {
             BreakLock(gate);
         }
         Ecs_SetFrame(gate, d.mStep);
-        return false;
     }
     Game_PlaySfx("open");
     gate.mExists = false;
