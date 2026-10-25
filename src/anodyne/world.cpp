@@ -213,12 +213,13 @@ void CreateHealthBar()
     }
 }
 
-void UpdateHealthBar()
+void UpdateHealthBar(bool hidden)
 {
     for (int i = 0; i < kMaxHealthPieces; i++)
     {
         Entity& e = *gHealthPieces[i];
         e.mExists = i < gGame.mMaxHealth;
+        e.mV->mVisible = !hidden;
         if (!e.mExists)
         {
             continue;
@@ -599,6 +600,7 @@ void UpdateDarkness(bool transition)
     if (gPlayerLight)
     {
         gPlayerLight->mExists = playerLight;
+        gPlayerLight->mV->mVisible = true; // the death state hid it
     }
 }
 
@@ -1012,6 +1014,7 @@ struct Death final
     bool mActive = false;
     bool mGotControl = false;
     bool mFadingOut = false;
+    bool mNo = false; // "No.." selected
     Entity* mDummy = nullptr;
     fx mFade = 0; // DeathFadeIn opacity, then the black overlay
 } gDeath;
@@ -1100,7 +1103,14 @@ void DeathUpdate()
             int map = gGame.mCheckpointMap;
             int x = gGame.mCheckpointX;
             int y = gGame.mCheckpointY;
-            if (map < 0)
+            if (d.mNo)
+            {
+                // "No..": the death room, DRAWER.
+                map = Game_MapIndex("DRAWER");
+                x = 368;
+                y = 224;
+            }
+            else if (map < 0)
             {
                 // No checkpoint yet: where the map was entered.
                 map = gGame.mCurrentMap;
@@ -1115,20 +1125,44 @@ void DeathUpdate()
     }
     MoveTo(d.mFade, kFxOne, FxF(0.9f));
     SetDeathBlend(true, d.mFade);
-    if (d.mGotControl && key_hit(KEY_A))
+    if (!d.mGotControl)
     {
-        // "Continue?" Yes (the menu itself isn't drawn yet).
+        return;
+    }
+    if (key_hit(KEY_UP) && d.mNo)
+    {
+        d.mNo = false;
+        PlaySfx("menu_move");
+    }
+    else if (key_hit(KEY_DOWN) && !d.mNo)
+    {
+        d.mNo = true;
+        PlaySfx("menu_move");
+    }
+    else if (key_hit(KEY_A))
+    {
         PlaySfx("menu_select");
         GameState_SetHealth(gGame.mMaxHealth);
         d.mFadingOut = true;
         d.mFade = 0;
+        Dialog_HideLabels();
+        if (d.mNo)
+        {
+            gGame.mEquippedBroom = BROOM_NONE;
+        }
+        return;
     }
+    // "Continue?" / "Yes" / "No.." at (50, 60) of the C# screen (its playfield starts 20 px down), 8 px apart.
+    static const char* const kLines[3] = { "Continue?", "Yes", "No.." };
+    static const int kX[3] = { 50, 69, 67 };
+    static const int kY[3] = { 40, 48, 56 };
+    Dialog_ShowLabels(kLines, kX, kY, 3, 38, 53, (d.mNo ? kY[2] : kY[1]) + 2);
 }
 
 void DrawWorld()
 {
     UpdateBackground(false);
-    UpdateHealthBar();
+    UpdateHealthBar(gDeath.mActive);
     Entities_Draw(gCamX >> kFrac, gCamY >> kFrac, kViewX, gShake.mX, gShake.mY);
     gShown = true;
 }

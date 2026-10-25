@@ -368,7 +368,7 @@ fx FxSin(fx radians)
     const int frac = static_cast<int>(theta & 0x7F);
     const int a = sin_lut[i];
     const int b = sin_lut[(i + 1) & 0x1FF];
-    return (a + (((b - a) * frac) >> 7)) << 4;
+    return (a + (((b - a) * frac) >> 7)) * 16;
 }
 
 fx FxCos(fx radians)

@@ -30,5 +30,12 @@ bool Dialog_IsOpen();
 // Per frame while open (also on the frame it closes). Returns true while the box is still open afterwards.
 bool Dialog_Update();
 
+// Plain text on the screen with no box (the death screen's "Continue?" menu): `count` lines of black text, line i at
+// (xs[i], ys[i]) of the playfield (ys within 0-40 of `top`, the y of the text block), and a selector arrow at
+// (selectorX, selectorY) of the playfield unless selectorY < 0. Uses the box's OBJs, so not while it is open.
+void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
+                       int selectorY);
+void Dialog_HideLabels();
+
 // Closes the box immediately (hides the OBJs, frees the VRAM, restores the blend registers).
 void Dialog_Close();

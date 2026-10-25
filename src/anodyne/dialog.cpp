@@ -64,6 +64,7 @@ constexpr uint32_t kPromptRed = 6;
 ObjVramAllocator* gVram = nullptr;
 int gObjBlock[kObjCount];
 bool gOpen = false;
+bool gLabels = false; // Dialog_ShowLabels holds the OBJs
 bool gTop = false;
 bool gIntro = false;
 
@@ -615,6 +616,7 @@ void Dialog_Open(const char* text, bool top, bool intro)
     {
         return;
     }
+    Dialog_HideLabels();
     for (int o = 0; o < kObjCount; o++)
     {
         gObjBlock[o] = gVram->alloc((o < 3 ? 32 : 8) * ObjVramAllocator::BlockSize);
@@ -663,6 +665,81 @@ void Dialog_Open(const char* text, bool top, bool intro)
     gBlinkyOn = false;
     gBlinkyDrawn = false;
     gBlinkyEnabled = true;
+}
+
+void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
+                       int selectorY)
+{
+    if (!gVram || gOpen)
+    {
+        return;
+    }
+    if (!gLabels)
+    {
+        for (int o = 0; o < kObjCount; o++)
+        {
+            gObjBlock[o] = gVram->alloc((o < 3 ? 32 : 8) * ObjVramAllocator::BlockSize);
+            if (gObjBlock[o] < 0)
+            {
+                for (int p = 0; p < o; p++)
+                {
+                    gVram->free(gObjBlock[p]);
+                }
+                return;
+            }
+        }
+        gLabels = true;
+    }
+    pal_obj_mem[kPalBank * 16 + 0] = 0;
+    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    memset(gCanvas, 0, sizeof(gCanvas));
+    for (int i = 0; i < count; i++)
+    {
+        int x = xs[i];
+        for (const char* c = lines[i]; *c; c++)
+        {
+            if (HasGlyph(*c) && *c != ' ')
+            {
+                DrawGlyph(*c, x, ys[i] - top, kBlack, false);
+            }
+            x += kCharW;
+        }
+    }
+    if (selectorY >= 0)
+    {
+        // MenuSelector: a small arrow pointing right.
+        for (int r = 0; r < 5; r++)
+        {
+            const int len = r < 3 ? r + 1 : 5 - r;
+            for (int c = 0; c < len; c++)
+            {
+                SetPixel(gCanvas, selectorX + c, selectorY - top + r, kBlack);
+            }
+        }
+    }
+    Upload();
+    for (int o = 0; o < kObjCount; o++)
+    {
+        const int px = o < 3 ? 40 + o * 64 : 40 + (o - 3) * 32;
+        const int py = o < 3 ? top : top + 32;
+        const uint16_t a1 = o < 3 ? ATTR1_SIZE_64 : ATTR1_SIZE_32;
+        obj_set_attr(&oam_mem[kFirstOam + o], ATTR0_Y(py) | ATTR0_4BPP | ATTR0_WIDE, ATTR1_X(px) | a1,
+                     ATTR2_ID(gObjBlock[o]) | ATTR2_PRIO(0) | ATTR2_PALBANK(kPalBank));
+    }
+}
+
+void Dialog_HideLabels()
+{
+    if (!gLabels)
+    {
+        return;
+    }
+    HideObjs();
+    for (int o = 0; o < kObjCount; o++)
+    {
+        gVram->free(gObjBlock[o]);
+    }
+    gLabels = false;
 }
 
 bool Dialog_IsOpen()
