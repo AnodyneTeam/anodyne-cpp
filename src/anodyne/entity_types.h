@@ -40,6 +40,7 @@
     X(SageOverworld)            \
     X(SageBedroom)              \
     X(MitraOverworld)           \
+    X(MitraFields)              \
     X(HealthCicada)             \
     X(Sadbro)                   \
     X(FollowerBro)              \

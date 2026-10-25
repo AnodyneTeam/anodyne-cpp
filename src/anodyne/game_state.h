@@ -28,6 +28,14 @@ enum BroomType : uint8_t
     BROOM_TRANSFORMER,
 };
 
+// InventoryManager.TradeState.
+enum TradeState : uint8_t
+{
+    TRADE_NONE,
+    TRADE_SHOES,
+    TRADE_BOX,
+};
+
 // Room for the content compiler's map list (anodyne.cpp checks it fits).
 constexpr int kMaxMaps = 32;
 
@@ -45,6 +53,7 @@ struct GameState final
     bool mHasBroom[5];      // by BroomType (NONE unused)
     bool mBroomActive;
     bool mCanJump; // InventoryManager.CanJump (the jump shoes)
+    uint8_t mTradeState; // InventoryManager.TradeState: NONE, SHOES, BOX
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
     bool mSecretStatus[14];

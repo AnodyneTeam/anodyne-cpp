@@ -18,6 +18,7 @@ namespace
 const char* gArea = "";
 uint8_t gSceneLine[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
 uint8_t gSceneFinished[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
+uint8_t gSceneDirty[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
 
 const DialogSceneData* FindScene(const char* npc, const char* area, const char* scene, unsigned* index)
 {
@@ -571,6 +572,7 @@ void Dialog_Init(ObjVramAllocator& vram)
     gDialogueOpen = 0;
     memset(gSceneLine, 0, sizeof(gSceneLine));
     memset(gSceneFinished, 0, sizeof(gSceneFinished));
+    memset(gSceneDirty, 0, sizeof(gSceneDirty));
     gSfxBlip = AudioManager_FindSfx("dialogue_blip");
     gSfxBloop = AudioManager_FindSfx("dialogue_bloop");
     BuildBoxImage();
@@ -593,6 +595,7 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
     {
         *top = s->mTop != 0;
     }
+    gSceneDirty[index] = 1;
     if (id == -1)
     {
         id = gSceneLine[index];
@@ -614,6 +617,21 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
 const char* Dialog_Get(const char* npc, const char* scene, int id, bool* top)
 {
     return Dialog_GetFor(npc, gArea, scene, id, top);
+}
+
+bool Dialog_IsSceneDirty(const char* npc, const char* scene)
+{
+    unsigned index = 0;
+    return FindScene(npc, gArea, scene, &index) && gSceneDirty[index] != 0;
+}
+
+void Dialog_SetSceneProgress(const char* npc, const char* scene, int id)
+{
+    unsigned index = 0;
+    if (FindScene(npc, gArea, scene, &index))
+    {
+        gSceneLine[index] = static_cast<uint8_t>(id);
+    }
 }
 
 static bool AllocObjBlocks()

@@ -158,6 +158,7 @@ const NamedEntity kNamed[] = {
     { "Sage", nullptr, "OVERWORLD", {}, EPT_SageOverworld },
     { "Sage", nullptr, "BEDROOM", {}, EPT_SageBedroom },
     { "Mitra", nullptr, "OVERWORLD", {}, EPT_MitraOverworld },
+    { "Mitra", nullptr, "FIELDS", {}, EPT_MitraFields },
     { "Health_Cicada", nullptr, nullptr, {}, EPT_HealthCicada },
     { "Sadbro", nullptr, nullptr, {}, EPT_Sadbro },
     { "Follower_Bro", nullptr, nullptr, {}, EPT_FollowerBro },

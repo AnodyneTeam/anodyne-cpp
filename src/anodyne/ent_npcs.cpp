@@ -854,6 +854,10 @@ struct MitraData final
     uint8_t mStep; // within the entrance / exit cutscenes
     bool mFacePlayer;
     bool mOnBike;
+    bool mFields; // MitraFields (else MitraOverworld)
+    bool mInitial;
+    bool mGivenQuestHint;
+    bool mGivenInitialHint; // only give the dungeon/windmill hint once
     Entity* mBike;
     // its VolumeEvent: fades the song to mVolTarget at 0.4 a second
     float mVolTarget;
@@ -1045,6 +1049,12 @@ bool MitraExit(Entity& self)
 void MitraUpdate(Entity& self)
 {
     MitraData& d = self.Data<MitraData>();
+    if (d.mFields)
+    {
+        Ecs_BaseUpdate(self);
+        MitraFacePlayerPose(self);
+        return;
+    }
     const Entity& p = *World_Player();
     if (d.mState == MITRA_INITIAL_WAIT)
     {
@@ -1073,9 +1083,117 @@ void MitraUpdate(Entity& self)
     }
 }
 
+// MitraFields.GetInteractionText (never empty there).
+void MitraFieldsTalk(MitraData& d)
+{
+    if (d.mInitial)
+    {
+        Event_Inc("mitra.fieldinit");
+        if (Dialog_IsSceneDirty("mitra", "init"))
+        {
+            Game_ShowDialogue("mitra", "init");
+            return;
+        }
+        Game_ShowDialogue("mitra", "init", 1 - Event_Get("mitra.wares"));
+        Dialog_SetSceneProgress("mitra", "init", 2);
+        return;
+    }
+    if (gGame.mTradeState == TRADE_SHOES)
+    {
+        gGame.mTradeState = TRADE_NONE;
+        gGame.mCanJump = true;
+        Game_ShowDialogueFor("misc", "any", "mitra", 1);
+        return;
+    }
+    static const char* const kBosses[] = { "REDCAVE", "BEDROOM", "CROWD", "CIRCUS", "APARTMENT", "HOTEL" };
+    bool allBossesDead = true;
+    for (const char* b : kBosses)
+    {
+        allBossesDead = allBossesDead && Game_BossDefeated(b);
+    }
+    const int cards = Inventory_CardCount();
+    if (cards < 36 && allBossesDead)
+    {
+        if (!d.mGivenQuestHint && Event_Get("GoQuestProgress") == 0)
+        {
+            d.mGivenQuestHint = true;
+            Game_ShowDialogue("mitra", "quest_event");
+            return;
+        }
+        if (cards == 0)
+        {
+            Game_ShowDialogue("mitra", "card_hints", 36);
+            return;
+        }
+        int missing[36];
+        int count = 0;
+        for (int i = 0; i < 36; i++)
+        {
+            if (!gGame.mCardStatus[i])
+            {
+                missing[count++] = i;
+            }
+        }
+        Game_ShowDialogue("mitra", "card_hints", missing[Rng_Range(0, count)]);
+        return;
+    }
+    if (!d.mGivenInitialHint)
+    {
+        d.mGivenInitialHint = true;
+        int hint = 0;
+        if (Event_Get("WindmillOpened") == 0)
+        {
+            const bool redcave = Game_BossDefeated("REDCAVE");
+            const bool crowd = Game_BossDefeated("CROWD");
+            if (!redcave && !crowd)
+            {
+                hint = Rng_Range(1, 3);
+            }
+            else if (redcave && crowd)
+            {
+                hint = 3;
+            }
+            else if (redcave)
+            {
+                hint = 8;
+            }
+            else
+            {
+                hint = 7;
+            }
+        }
+        else if (!allBossesDead)
+        {
+            hint = 4;
+        }
+        else if (!gGame.mHasBroom[BROOM_TRANSFORMER])
+        {
+            hint = 5;
+        }
+        else
+        {
+            hint = 6;
+        }
+        Game_ShowDialogue("mitra", "game_hints", hint);
+        return;
+    }
+    if (!d.mGivenQuestHint && Event_Get("GoQuestProgress") == 0)
+    {
+        d.mGivenQuestHint = true;
+        Game_ShowDialogue("mitra", "quest_event");
+        return;
+    }
+    Game_ShowDialogue("mitra", "general_banter");
+}
+
 bool MitraInteract(Entity& self, Facing)
 {
     MitraData& d = self.Data<MitraData>();
+    if (d.mFields)
+    {
+        MitraFieldsTalk(d);
+        return true;
+    }
     if (Event_Get("mitra.wares") == 0)
     {
         Event_Inc("mitra.wares");
@@ -1370,11 +1488,41 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
     return e;
 }
 
+Entity* Spawn_MitraFields(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kMitra, preset, "mitra");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    MitraData& d = e->Data<MitraData>();
+    d.mFields = true;
+    d.mFacePlayer = true;
+    d.mVolReached = true;
+    d.mInitial = !Dialog_IsSceneDirty("mitra", "init");
+    MitraOnBike(*e, false);
+    d.mBike = Ecs_Create(kBike, e->mT->mX - Fx(20), e->mT->mY, PART_VISUAL, &preset, e);
+    if (d.mBike)
+    {
+        Entity& b = *d.mBike;
+        Ecs_SetSheet(b, "bike", 20, 20);
+        b.mB->mW = 16;
+        b.mB->mH = 10;
+        b.mV->mOffX = Fx(2);
+        b.mV->mOffY = Fx(11);
+        b.mB->mImmovable = true;
+        Ecs_Play(b, "r");
+    }
+    Ecs_PlayFacing(*e, "idle");
+    return e;
+}
+
 const char* Npcs_ProbeName(const Entity& e)
 {
     if (e.mClass == &kMitra)
     {
-        return "MitraOverworld";
+        return const_cast<Entity&>(e).Data<MitraData>().mFields ? "MitraFields" : "MitraOverworld";
     }
     if (e.mClass != &kSage)
     {

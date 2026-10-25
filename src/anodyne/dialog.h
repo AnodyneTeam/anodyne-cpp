@@ -19,6 +19,9 @@ void Dialog_SetArea(const char* mapName);
 // scene wants the box at the top of the screen. The area defaults to the one from Dialog_SetArea.
 const char* Dialog_Get(const char* npc, const char* scene, int id = -1, bool* top = nullptr);
 const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, int id = -1, bool* top = nullptr);
+// DialogueManager.IsSceneDirty (a line of it has been fetched) and SetSceneProgress, in the current area.
+bool Dialog_IsSceneDirty(const char* npc, const char* scene);
+void Dialog_SetSceneProgress(const char* npc, const char* scene, int id);
 
 // Opens the box and starts typing `text` (must stay valid while open: ROM strings are). `intro` = IntroState's
 // box: 4x speed-up and a red button prompt instead of the blinking arrow. Needs OBJ VRAM; does nothing if it is
