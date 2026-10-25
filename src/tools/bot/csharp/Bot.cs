@@ -36,13 +36,13 @@ namespace AnodyneSharp.Recording
         /// <summary>Frames since the oldest hit not yet won back (-1 when none is owed).</summary>
         public static long DebtAge => DebtBaseline >= 0 ? _botFrame - _debtSince : -1;
         /// <summary>Hearts owed (0 when none).</summary>
-        public static int DebtMissing => DebtBaseline >= 0 ? Math.Max(0, Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - GlobalState.CUR_HEALTH) : 0;
+        public static int DebtMissing => DebtBaseline >= 0 ? Math.Max(0, Math.Min(DebtBaseline, Gs.MaxHealth) - Gs.Health) : 0;
         /// <summary>Hearts per part that may stay lost after the recovery window (ANODYNE_BOT_CHIP, default 2, and half the hearts once that
         /// is more: 7 of 14 late on, where checkpoints are few and far between and a long part like the Circus's second adds up a heart a
         /// fight); reset at the start of each part and section, and once back at full health.</summary>
         private static readonly int ChipBase = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_CHIP"), out int cl) ? cl : 2;
         public static int ChipLeft = ChipBase;
-        public static int ChipPerPart => Math.Max(ChipBase, GlobalState.MAX_HEALTH / 2);
+        public static int ChipPerPart => Math.Max(ChipBase, Gs.MaxHealth / 2);
         public static readonly int RecoverFrames = int.TryParse(Environment.GetEnvironmentVariable("ANODYNE_BOT_RECOVER"), out int rf) ? rf : 900;
         private static long _debtSince;
         public static bool PlayBusy;
@@ -193,13 +193,13 @@ namespace AnodyneSharp.Recording
         private static void CheckStuck()
         {
             var p = Player;
-            string sig = $"{GlobalState.CURRENT_MAP_NAME}|{(p == null ? 0 : (int)p.Position.X)}|{(p == null ? 0 : (int)p.Position.Y)}|{GlobalState.CUR_HEALTH}|{GlobalState.Dialogue}|{GlobalState.inventory.CardCount}|{GlobalState.inventory.GetCurrentMapKeys()}|{GlobalState.ScreenTransition}";
+            string sig = $"{Gs.Map}|{(p == null ? 0 : (int)p.Position.X)}|{(p == null ? 0 : (int)p.Position.Y)}|{Gs.Health}|{Gs.Dialogue}|{Gs.CardCount}|{Gs.MapKeys}|{Gs.ScreenTransition}";
             // Dialogue and cutscene states (anything the play state has open) do the waiting themselves: the clock only runs once they are over.
-            if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+            if (!string.IsNullOrEmpty(Gs.Dialogue) || PlayBusy)
             {
                 if (++_busyFrames > 9000)
                 {
-                    System.Console.Error.WriteLine($"BOT FAILED: a dialogue/cutscene ({PlayBusyName}) has been open for {_busyFrames} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
+                    System.Console.Error.WriteLine($"BOT FAILED: a dialogue/cutscene ({PlayBusyName}) has been open for {_busyFrames} frames on {Gs.Map} at {p?.Position} ({Status})");
                     DumpRing();
                     _trace?.Flush();
                     Environment.Exit(2);
@@ -212,7 +212,7 @@ namespace AnodyneSharp.Recording
             }
             // An event that holds the player still until its sound has played (HAPPY's quake): the sound runs on the wall clock, which
             // an uncapped frame rate outruns by far, so give it wall-clock time rather than frames.
-            if (p != null && p.dontMove && string.IsNullOrEmpty(GlobalState.Dialogue) && !PlayBusy)
+            if (p != null && p.dontMove && string.IsNullOrEmpty(Gs.Dialogue) && !PlayBusy)
             {
                 if (_heldSince == null)
                 {
@@ -234,9 +234,9 @@ namespace AnodyneSharp.Recording
                 return;
             }
             // a long dialogue changes nothing we can see between its pages (same text, same place), so it gets a much longer leash
-            if (_botFrame - _stuckSince > (string.IsNullOrEmpty(GlobalState.Dialogue) && !PlayBusy ? (CutsceneRunning() ? 1500 : StuckLimit) : 3000) && !_allowRetry)
+            if (_botFrame - _stuckSince > (string.IsNullOrEmpty(Gs.Dialogue) && !PlayBusy ? (CutsceneRunning() ? 1500 : StuckLimit) : 3000) && !_allowRetry)
             {
-                System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {GlobalState.CURRENT_MAP_NAME} at {p?.Position} ({Status})");
+                System.Console.Error.WriteLine($"BOT FAILED: stuck for {_botFrame - _stuckSince} frames on {Gs.Map} at {p?.Position} ({Status})");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                 DumpRing();
                 _trace?.Flush();
@@ -257,7 +257,7 @@ namespace AnodyneSharp.Recording
             {
                 return;
             }
-            if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy)
+            if (!string.IsNullOrEmpty(Gs.Dialogue) || PlayBusy)
             {
                 return; // text being advanced
             }
@@ -300,7 +300,7 @@ namespace AnodyneSharp.Recording
                     return;
                 }
                 var sb = new System.Text.StringBuilder();
-                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={GlobalState.CUR_HEALTH} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} chain={string.Join("<", _stack.Take(3).Select(en => System.Text.RegularExpressions.Regex.Replace(en.GetType().Name, "^<|>d__\\d+$", "")))} busy={PlayBusyName} dlg={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "" : GlobalState.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, GlobalState.Dialogue.Length)))} fin={GlobalState.LastDialogueFinished} trans={(GlobalState.ScreenTransition ? 1 : 0)} E:");
+                sb.Append($"f{_botFrame} P={p.Hitbox.X},{p.Hitbox.Y},{p.Hitbox.Width},{p.Hitbox.Height} face={p.facing} hp={Gs.Health} keys={string.Join("+", held)} status=[{Status}] swinging={(p.broom != null && p.broom.exists)} chain={string.Join("<", _stack.Take(3).Select(en => System.Text.RegularExpressions.Regex.Replace(en.GetType().Name, "^<|>d__\\d+$", "")))} busy={PlayBusyName} dlg={(string.IsNullOrEmpty(Gs.Dialogue) ? "" : Gs.Dialogue.Replace(" ", "_").Substring(0, Math.Min(40, Gs.Dialogue.Length)))} fin={Gs.LastDialogueFinished} trans={(Gs.ScreenTransition ? 1 : 0)} E:");
                 foreach (var e in Entities())
                 {
                     if (e.exists && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) || e.GetType().Name.StartsWith("Seer")))
@@ -347,7 +347,7 @@ namespace AnodyneSharp.Recording
             {
                 return;
             }
-            int hp = GlobalState.CUR_HEALTH;
+            int hp = Gs.Health;
             if (Player != null && Environment.GetEnvironmentVariable("ANODYNE_STATUS_TRACE") != null)
             {
                 // Debug: every change of the bot's status or of the player's tile, with the frame.
@@ -404,17 +404,17 @@ namespace AnodyneSharp.Recording
             }
             if (DebtBaseline >= 0 && why == null)
             {
-                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || PlayBusy || Healing)
+                if (!string.IsNullOrEmpty(Gs.Dialogue) || PlayBusy || Healing)
                 {
                     _debtSince++; // the game is paused for text (no time passes in which a heart could be won back), or we are off to a checkpoint for them
                 }
-                if (hp >= Math.Min(DebtBaseline, GlobalState.MAX_HEALTH))
+                if (hp >= Math.Min(DebtBaseline, Gs.MaxHealth))
                 {
                     DebtBaseline = -1; // recovered
                 }
                 else if (_botFrame - _debtSince > RecoverFrames)
                 {
-                    int missing = Math.Min(DebtBaseline, GlobalState.MAX_HEALTH) - hp;
+                    int missing = Math.Min(DebtBaseline, Gs.MaxHealth) - hp;
                     if (missing <= ChipLeft)
                     {
                         // A heart or two that never dropped: a small, documented allowance per part (resets at the start of every part).
@@ -434,7 +434,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            if (DebtBaseline < 0 && hp >= GlobalState.MAX_HEALTH && ChipLeft < ChipPerPart)
+            if (DebtBaseline < 0 && hp >= Gs.MaxHealth && ChipLeft < ChipPerPart)
             {
                 ChipLeft = ChipPerPart; // (the hearts let go were won back after all, at a checkpoint later on: nothing is missing any more)
             }
@@ -455,7 +455,7 @@ namespace AnodyneSharp.Recording
             _whyShown = null;
             if (why != null)
             {
-                System.Console.Error.WriteLine($"BOT FAILED: {why} on {GlobalState.CURRENT_MAP_NAME} at {Player.Position} frame {_botFrame} doing [{Status}]");
+                System.Console.Error.WriteLine($"BOT FAILED: {why} on {Gs.Map} at {Player.Position} frame {_botFrame} doing [{Status}]");
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                 DumpRing();
                 _trace?.Flush();
@@ -535,7 +535,7 @@ namespace AnodyneSharp.Recording
             }
             if (PlayBusyName != _lastBusyName && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
-                System.Console.Error.WriteLine($"  busy '{_lastBusyName}' -> '{PlayBusyName}' at f{_botFrame} P={Player?.Position} dialogue={(string.IsNullOrEmpty(GlobalState.Dialogue) ? "-" : GlobalState.Dialogue.Substring(0, Math.Min(30, GlobalState.Dialogue.Length)))} ({Status})");
+                System.Console.Error.WriteLine($"  busy '{_lastBusyName}' -> '{PlayBusyName}' at f{_botFrame} P={Player?.Position} dialogue={(string.IsNullOrEmpty(Gs.Dialogue) ? "-" : Gs.Dialogue.Substring(0, Math.Min(30, Gs.Dialogue.Length)))} ({Status})");
             }
             _lastBusyName = PlayBusyName;
             BotNav.RefreshShooterTiles();
@@ -547,7 +547,7 @@ namespace AnodyneSharp.Recording
                 var parts = snap.Split(':', 2);
                 if (long.Parse(parts[0]) == _botFrame && Player != null)
                 {
-                    GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, Player.Position);
+                    GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, Player.Position);
                     GlobalState.SaveGame();
                     SectionEnumerator.CopyDirPublic(sd2, parts[1]);
                 }
@@ -619,7 +619,7 @@ namespace AnodyneSharp.Recording
                     held = frame;
                     if (Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE") is string kt && int.TryParse(kt, out int kfrom) && Frame >= kfrom && Frame < kfrom + int.Parse(Environment.GetEnvironmentVariable("ANODYNE_KEYTRACE_LEN") ?? "60"))
                     {
-                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={AnodyneSharp.Registry.GlobalState.CUR_HEALTH} yp={Player?.y_push} dm={Player?.dontMove} ex={Player?.exists} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
+                        System.Console.Error.WriteLine($"KEYS f{Frame} st={BotRunner.Status} me={Player?.Position} hp={Gs.Health} yp={Player?.y_push} dm={Player?.dontMove} ex={Player?.exists} [{string.Join("+", frame)}] {BotScript.DebugEnemies()}");
                     }
                     break;
                 }
@@ -713,7 +713,7 @@ namespace AnodyneSharp.Recording
                 return;
             }
             var p = Player;
-            _trace.WriteLine($"{_frame}\t{GlobalState.CURRENT_MAP_NAME}\t{(p == null ? 0 : (int)p.Position.X)}\t{(p == null ? 0 : (int)p.Position.Y)}\t{GlobalState.CUR_HEALTH}\t{(string.IsNullOrEmpty(GlobalState.Dialogue) ? 0 : 1)}\tb{(GlobalState.inventory.HasBroom ? 1 : 0)}k{GlobalState.inventory.GetCurrentMapKeys()}c{GlobalState.inventory.CardCount}");
+            _trace.WriteLine($"{_frame}\t{Gs.Map}\t{(p == null ? 0 : (int)p.Position.X)}\t{(p == null ? 0 : (int)p.Position.Y)}\t{Gs.Health}\t{(string.IsNullOrEmpty(Gs.Dialogue) ? 0 : 1)}\tb{(Gs.HasBroom ? 1 : 0)}k{Gs.MapKeys}c{Gs.CardCount}");
             if (!Active || _frame % 300 == 0)
             {
                 _trace.Flush();
@@ -775,7 +775,7 @@ namespace AnodyneSharp.Recording
             else if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SECSAVE") is string secDir2 && Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR") is string saveDir2 && BotRunner.Player != null)
             {
                 var (secDir, saveDir) = (secDir2, saveDir2);
-                GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+                GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
                 GlobalState.SaveGame();
                 CopyDir(saveDir, System.IO.Path.Combine(secDir, name));
             }
@@ -801,7 +801,7 @@ namespace AnodyneSharp.Recording
                 // Dev: snapshot a save at the start of every section so a failing section can be tried again from there (scene.sh).
                 try
                 {
-                    GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+                    GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
                     GlobalState.SaveGame();
                     var dest = System.IO.Path.Combine(secDir, $"{_secIndex++:00}_{_name.Replace(' ', '_')}");
                     CopyDir(saveDir, dest);
@@ -814,7 +814,7 @@ namespace AnodyneSharp.Recording
             else if (_inner == null && BotRunner.RecoverDeaths && BotRunner.Player != null)
             {
                 // (the respawn after a death puts us back here, where the section's steps start from)
-                GlobalState.checkpoint = new GlobalState.CheckPoint(GlobalState.CURRENT_MAP_NAME, BotRunner.Player.Position);
+                GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
             }
             if (_inner == null && BotRunner.StopBefore == _name)
             {
@@ -907,9 +907,9 @@ namespace AnodyneSharp.Recording
         public abstract IEnumerable<object> Run();
 
         protected static Player Player => BotRunner.Player;
-        protected static string Map => GlobalState.CURRENT_MAP_NAME;
+        protected static string Map => Gs.Map;
         protected static Vector2 Pos => Player == null ? Vector2.Zero : Player.Position;
-        protected static bool Talking => !string.IsNullOrEmpty(GlobalState.Dialogue) || BotRunner.PlayBusy;
+        protected static bool Talking => !string.IsNullOrEmpty(Gs.Dialogue) || BotRunner.PlayBusy;
 
         protected static IEnumerable<object> Say(string status)
         {
@@ -927,7 +927,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions[] SpikeEscape(KeyFunctions[] held)
         {
-            if (Player == null || Player.state != PlayerState.GROUND || GlobalState.ScreenTransition || held.Contains(KeyFunctions.Cancel)
+            if (Player == null || Player.state != PlayerState.GROUND || Gs.ScreenTransition || held.Contains(KeyFunctions.Cancel)
                 || held.Any(k => k is KeyFunctions.Left or KeyFunctions.Right or KeyFunctions.Up or KeyFunctions.Down))
             {
                 return null;
@@ -974,7 +974,7 @@ namespace AnodyneSharp.Recording
             {
                 return off;
             }
-            if (Player == null || Player.state != PlayerState.GROUND || !GlobalState.inventory.CanJump || held.Contains(KeyFunctions.Cancel) || GlobalState.ScreenTransition || Environment.GetEnvironmentVariable("ANODYNE_NO_SPIKEGUARD") != null)
+            if (Player == null || Player.state != PlayerState.GROUND || !Gs.CanJump || held.Contains(KeyFunctions.Cancel) || Gs.ScreenTransition || Environment.GetEnvironmentVariable("ANODYNE_NO_SPIKEGUARD") != null)
             {
                 return held;
             }
@@ -1058,7 +1058,7 @@ namespace AnodyneSharp.Recording
                 }
                 _holeJumpKeys = null;
             }
-            if (Player == null || Player.state != PlayerState.GROUND || held.Contains(KeyFunctions.Cancel) || GlobalState.ScreenTransition
+            if (Player == null || Player.state != PlayerState.GROUND || held.Contains(KeyFunctions.Cancel) || Gs.ScreenTransition
                 || !(BotRunner.Status ?? "").StartsWith("fight"))
             {
                 return held;
@@ -1094,7 +1094,7 @@ namespace AnodyneSharp.Recording
             }
             var land = hb;
             land.Offset((int)(dx * 27), (int)(dy * 27));
-            if (GlobalState.inventory.CanJump && !OnHole(land) && Floor(land))
+            if (Gs.CanJump && !OnHole(land) && Floor(land))
             {
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
@@ -1202,7 +1202,7 @@ namespace AnodyneSharp.Recording
                 if (state is AnodyneSharp.States.MainMenu.TitleState)
                 {
                     BotRunner.Status = "title";
-                    System.Console.Error.WriteLine($"CREDITS DONE: saved after the credits (SeenCredits={GlobalState.events.GetEvent("SeenCredits")}, f{BotRunner.Frame}, {GlobalState.inventory.CardCount} cards)");
+                    System.Console.Error.WriteLine($"CREDITS DONE: saved after the credits (SeenCredits={GlobalState.events.GetEvent("SeenCredits")}, f{BotRunner.Frame}, {Gs.CardCount} cards)");
                     yield break;
                 }
                 BotRunner.Status = "credits";
@@ -1222,27 +1222,27 @@ namespace AnodyneSharp.Recording
                 if (state is AnodyneSharp.States.CreditsState)
                 {
                     BotRunner.Status = "credits";
-                    System.Console.Error.WriteLine($"ENDING: the credits are rolling (f{BotRunner.Frame}, hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH})");
+                    System.Console.Error.WriteLine($"ENDING: the credits are rolling (f{BotRunner.Frame}, hp {Gs.Health}/{Gs.MaxHealth})");
                     yield break;
                 }
                 BotRunner.Status = "the ending";
-                // A cutscene's own dialogue boxes do not show in GlobalState.Dialogue: while the player is swapped for a stand-in, keep reading.
-                if (!string.IsNullOrEmpty(GlobalState.Dialogue) || !Player.exists)
+                // A cutscene's own dialogue boxes do not show in Gs.Dialogue: while the player is swapped for a stand-in, keep reading.
+                if (!string.IsNullOrEmpty(Gs.Dialogue) || !Player.exists)
                 {
                     hidden |= !Player.exists;
                     yield return BotScript.AdvanceKeys(i);
                     continue;
                 }
                 // On the ending screen the cutscene wants you sunk into the water first (deep enough), then walking off the top.
-                if (GlobalState.CURRENT_MAP_NAME == "GO" && GlobalState.CurrentMapGrid.Y == 0 && !hidden)
+                if (Gs.Map == "GO" && Gs.Grid.Y == 0 && !hidden)
                 {
                     // The water's current runs down at 35px/s and it only counts while you are above its last 20px: tread water mid-screen.
-                    float ly = Player.Position.Y - GlobalState.CurrentMapGrid.Y * 160;
+                    float ly = Player.Position.Y - Gs.Grid.Y * 160;
                     yield return ly > 118 ? K(KeyFunctions.Up) : K();
                     continue;
                 }
                 // Walk up the middle of the screen: the way out of the Briar's arena and the ending's walk are both there.
-                float dx = GlobalState.CurrentMapGrid.X * 160 + 80 - Player.Hitbox.Center.X;
+                float dx = Gs.Grid.X * 160 + 80 - Player.Hitbox.Center.X;
                 yield return dx > 3 ? K(KeyFunctions.Up, KeyFunctions.Right) : dx < -3 ? K(KeyFunctions.Up, KeyFunctions.Left) : K(KeyFunctions.Up);
             }
             throw new InvalidOperationException("bot: the ending never got to the credits");
@@ -1536,7 +1536,7 @@ namespace AnodyneSharp.Recording
             // Standing and waiting: hop what is about to sweep over us (a spike roller crossing the pad), as long as it spares a jumper.
             KeyFunctions[] WaitKeys()
             {
-                if (Player.state != PlayerState.GROUND || !GlobalState.inventory.CanJump)
+                if (Player.state != PlayerState.GROUND || !Gs.CanJump)
                 {
                     return K();
                 }
@@ -1754,7 +1754,7 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> GoToWhere(Func<Point, bool> isGoal, string what, int maxReplans = 6, Point? forced = null)
         {
-            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerWaits = 0, walkHp = GlobalState.CUR_HEALTH, airWaits = 0;
+            int shooterFights = 0, slimeFights = 0, annoyerFights = 0, lionFights = 0, gateFights = 0, dogFights = 0, walkerWaits = 0, walkHp = Gs.Health, airWaits = 0;
             var pluggedGrids = new HashSet<Point>(); // screens whose beams crossing this route were already plugged (or tried)
             HashSet<Point> avoidStationary = null; // tiles round stationary enemies, once one blocked the way
             int blockerHandled = 0;
@@ -1787,9 +1787,9 @@ namespace AnodyneSharp.Recording
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"  replan {replans}: grid {Grid} pos {Pos} hitbox {Player.Hitbox} trans {GlobalState.ScreenTransition}");
+                    System.Console.Error.WriteLine($"  replan {replans}: grid {Grid} pos {Pos} hitbox {Player.Hitbox} trans {Gs.ScreenTransition}");
                 }
-                if (!GlobalState.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center))
+                if (!Gs.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center))
                 {
                     // Outside the screen the game says we are on, not scrolling: we came in over a gate (standing on one holds it open),
                     // stepped back off it and it shut behind us. Go back out across the edge, and count the gate as shut from now on.
@@ -1803,11 +1803,11 @@ namespace AnodyneSharp.Recording
                     {
                         System.Console.Error.WriteLine($"  outside screen {Grid} at {Pos}: back out {outKey}, gate tile {shut} counted shut");
                     }
-                    for (int w = 0; w < 60 && !GlobalState.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center); w++)
+                    for (int w = 0; w < 60 && !Gs.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center); w++)
                     {
                         yield return K(outKey);
                     }
-                    for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                    for (int w = 0; w < 120 && Gs.ScreenTransition; w++)
                     {
                         yield return K();
                     }
@@ -1841,7 +1841,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 bool jumping = false;
-                if (path != null && GlobalState.inventory.CanJump && BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true) == null)
+                if (path != null && Gs.CanJump && BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced, strict: true) == null)
                 {
                     // The walk is only there through a shut gate (taken as opening on arrival): a way round with jumps that needs no gate
                     // to open (off dash pads, over pits) is the real one.
@@ -1861,7 +1861,7 @@ namespace AnodyneSharp.Recording
                 if (path == null)
                 {
                     // Spikes and narrow rivers: with the boots they are jumped over.
-                    if (GlobalState.inventory.CanJump)
+                    if (Gs.CanJump)
                     {
                         BotNav.AllowJump = true;
                         path = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
@@ -1887,7 +1887,7 @@ namespace AnodyneSharp.Recording
                         {
                             path = wade;
                         }
-                        else if (GlobalState.inventory.CanJump)
+                        else if (Gs.CanJump)
                         {
                             // wading and jumping both (a pit to jump on the way to a stream to wade down)
                             BotNav.AllowWater = true;
@@ -2005,7 +2005,7 @@ namespace AnodyneSharp.Recording
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}{(e.Solid ? " shut" : " open")}")) + $" kills={GlobalState.ENEMIES_KILLED} goal={what} forced={forced}");
+                            System.Console.Error.WriteLine($"  NOPATH at {Pos} grid {Grid}: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name is "Dust" or "PewLaser" or "Shieldy" or "Gate" or "Boulder")).Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}{(e.Solid ? " shut" : " open")}")) + $" kills={Gs.EnemiesKilled} goal={what} forced={forced}");
                             var here = BotNav.TileOf(Pos);
                             System.Console.Error.WriteLine("  walkable round us: " + string.Join(" ", new[] { new Point(0, -1), new Point(0, 1), new Point(-1, 0), new Point(1, 0), new Point(0, 0) }.Select(o => new Point(here.X + o.X, here.Y + o.Y)).Select(q => $"{q.X},{q.Y}={BotNav.Walkable(q)}/{BotNav.CurrentMap.GetTileClass(q)}"))
                                 + $" toGate={BotNav.FindPath(here, new Point(18, 14))?.Count} avoid={avoidStationary?.Count} hard={BotNav.HardAvoid?.Count} blocked={BotNav.Blocked.Count}");
@@ -2018,17 +2018,17 @@ namespace AnodyneSharp.Recording
                         throw new InvalidOperationException($"bot: no path from {BotNav.TileOf(Pos)} to {what} on {Map}");
                     }
                 }
-                if (path != null && path.Count > (GlobalState.inventory.CanJump ? 10 : 30) && !InRaft)
+                if (path != null && path.Count > (Gs.CanJump ? 10 : 30) && !InRaft)
                 {
                     // A long way round on dry land: a raft across the river may be far shorter.
                     BotNav.AllowWater = true;
-                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    BotNav.AllowJump = Gs.CanJump;
                     BotNav.Avoid = avoidStationary;
                     var shortcut = BotNav.FindPath(BotNav.TileOf(Pos), isGoal, forced);
                     BotNav.Avoid = null;
                     BotNav.AllowWater = false;
                     BotNav.AllowJump = false;
-                    if (shortcut != null && GlobalState.inventory.CanJump && shortcut.Count + 6 < path.Count && shortcut.Any(t => BotNav.IsSpike(t)) && !shortcut.Any(t => BotNav.IsConveyor(t)))
+                    if (shortcut != null && Gs.CanJump && shortcut.Count + 6 < path.Count && shortcut.Any(t => BotNav.IsSpike(t)) && !shortcut.Any(t => BotNav.IsConveyor(t)))
                     {
                         // With the boots the spikes are jumped: that beats a long way round (often out of the screen and back).
                         path = shortcut;
@@ -2041,17 +2041,17 @@ namespace AnodyneSharp.Recording
                     else if (shortcut != null && shortcut.Count + 20 < path.Count && BotNav.WadeOk(shortcut, BotNav.TileOf(Pos)))
                     {
                         path = shortcut; // water that can be waded (with a current, or a short way)
-                        jumping = GlobalState.inventory.CanJump;
+                        jumping = Gs.CanJump;
                     }
                     else if (shortcut != null && shortcut.Count + 20 < path.Count && !shortcut.Any(t => BotNav.IsSpike(t))
-                        && BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), shortcut[shortcut.Count - 1], GlobalState.inventory.CanJump) != null)
+                        && BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), shortcut[shortcut.Count - 1], Gs.CanJump) != null)
                     {
                         var lastT = BotNav.CentreOf(shortcut[shortcut.Count - 1]);
                         yield return RaftTo(lastT.X, lastT.Y);
                         yield break;
                     }
                 }
-                if (!BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && GlobalState.inventory.HasBroom && path.Count > 0 && HaveLooseDust())
+                if (!BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && Gs.HasBroom && path.Count > 0 && HaveLooseDust())
                 {
                     // A route through a laser beam with dust lying about: plug the emitter instead of racing (or waiting for) its shots.
                     var crossing = EmittersCrossing(path);
@@ -2118,9 +2118,9 @@ namespace AnodyneSharp.Recording
                     if (Grid != gridAtStart && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && !laneReplanned.Contains(Grid))
                     {
                         var dl = BotNav.LaneTiles();
-                        System.Console.Error.WriteLine($"  arrived on {Grid}: {dl.Count} beam tiles, route ends at {(path.Count > 0 ? path[path.Count - 1].ToString() : "-")} {(path.Count > 0 && dl.Contains(path[path.Count - 1]) ? "(in a beam)" : "")} trans={GlobalState.ScreenTransition}");
+                        System.Console.Error.WriteLine($"  arrived on {Grid}: {dl.Count} beam tiles, route ends at {(path.Count > 0 ? path[path.Count - 1].ToString() : "-")} {(path.Count > 0 && dl.Contains(path[path.Count - 1]) ? "(in a beam)" : "")} trans={Gs.ScreenTransition}");
                     }
-                    if (Grid != gridAtStart && !laneReplanned.Contains(Grid) && !InRaft && !GlobalState.ScreenTransition && path.Count > 0 && BotNav.LaneTiles() is { Count: > 0 } newLanes
+                    if (Grid != gridAtStart && !laneReplanned.Contains(Grid) && !InRaft && !Gs.ScreenTransition && path.Count > 0 && BotNav.LaneTiles() is { Count: > 0 } newLanes
                         && (newLanes.Contains(path[path.Count - 1]) || path.Skip(pi).Count(newLanes.Contains) >= 3))
                     {
                         laneReplanned.Add(Grid);
@@ -2131,7 +2131,7 @@ namespace AnodyneSharp.Recording
                         }
                         goto replan;
                     }
-                    if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
+                    if (Player.raft == null && !Gs.ScreenTransition && !chaserGaveUp.Contains(Grid)
                         && (BotRunner.Entities().Any(e => e.exists && (e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller || e is AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap && RouteCrossesLane(e, path, pi))) || RouteRunsByPillars(path, pi)))
                     {
                         // Spike rollers sweeping the room (bars that span it and turn only at walls): time this screen's stretch of the
@@ -2152,7 +2152,7 @@ namespace AnodyneSharp.Recording
                             goto replan;
                         }
                     }
-                    if (Player.raft == null && !GlobalState.ScreenTransition && !chaserGaveUp.Contains(Grid)
+                    if (Player.raft == null && !Gs.ScreenTransition && !chaserGaveUp.Contains(Grid)
                         && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser))
                     {
                         // Chasers about: the plain walk would line up with one and meet it in a corridor. Time this screen's stretch of
@@ -2173,8 +2173,8 @@ namespace AnodyneSharp.Recording
                             goto replan;
                         }
                     }
-                    if (Grid != gridAtStart && !BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !GlobalState.ScreenTransition
-                        && GlobalState.inventory.HasBroom && HaveLooseDust())
+                    if (Grid != gridAtStart && !BotRunner.NoAutoPlug && !pluggedGrids.Contains(Grid) && !Plugging && !InRaft && !Gs.ScreenTransition
+                        && Gs.HasBroom && HaveLooseDust())
                     {
                         // Arrived on another screen of a long route: its beams are only known now, so plug the ones the rest of the route crosses.
                         gridAtStart = Grid;
@@ -2237,7 +2237,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  jump {string.Join(">", jumpTiles.Select(q => $"{q.X},{q.Y}"))} land {land.X},{land.Y} enemies near landing: {BotNav.NearEnemies(10).Contains(land)}");
                         }
-                        for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                        for (int w = 0; w < 120 && Gs.ScreenTransition; w++)
                         {
                             yield return K(); // keys do nothing while the screen scrolls: a jump pressed now never happens
                         }
@@ -2406,14 +2406,14 @@ namespace AnodyneSharp.Recording
                             }
                             if (j > 24 && j < 60 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
-                                System.Console.Error.WriteLine($"    jump f+{j} at {Pos} hb={Player.Hitbox} state={Player.state} trans={GlobalState.ScreenTransition}");
+                                System.Console.Error.WriteLine($"    jump f+{j} at {Pos} hb={Player.Hitbox} state={Player.state} trans={Gs.ScreenTransition}");
                             }
                             yield return K(jk);
                         }
                         pi = pj - 1;
                         continue;
                     }
-                    if (GlobalState.inventory.GetCurrentMapKeys() > 0 && BotRunner.Entities().FirstOrDefault(e => e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate
+                    if (Gs.MapKeys > 0 && BotRunner.Entities().FirstOrDefault(e => e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.SmallKeyGate
                             && BotNav.TileOf(e.Position + new Vector2(3, 2)) == tile) is Entity keyGate)
                     {
                         // A keyblock in the way and a key in hand: push into it from the tile before.
@@ -2423,13 +2423,13 @@ namespace AnodyneSharp.Recording
                         yield return OpenKeyBlock(kc.X, kc.Y, kdir);
                     }
                     if (BotRunner.Entities().FirstOrDefault(e => e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.BigCardGate g
-                            && GlobalState.inventory.CardCount >= g._preset.Frame && e.Hitbox.Intersects(new Rectangle(tile.X * 16, tile.Y * 16, 16, 16))) is Entity cardGate)
+                            && Gs.CardCount >= g._preset.Frame && e.Hitbox.Intersects(new Rectangle(tile.X * 16, tile.Y * 16, 16, 16))) is Entity cardGate)
                     {
                         // A card gate in the way and the cards for it: open it from the side we come from.
                         var kfrom = pi == 0 ? BotNav.TileOf(Pos) : path[pi - 1];
                         yield return OpenCardGate(cardGate, kfrom.Y > tile.Y);
                     }
-                    if (BotNav.IsShutKillGate(tile) && gateFights < 2 && GlobalState.inventory.HasBroom && !OnWater())
+                    if (BotNav.IsShutKillGate(tile) && gateFights < 2 && Gs.HasBroom && !OnWater())
                     {
                         // The next step is a gate of this screen that opens on kills (the route counts it open from a side with enough
                         // enemies): walking into it only bumps the bars, so earn it first.
@@ -2452,7 +2452,7 @@ namespace AnodyneSharp.Recording
                             yield return BotScript.AdvanceKeys(i);
                             continue;
                         }
-                        if (GlobalState.ScreenTransition || Player.dontMove)
+                        if (Gs.ScreenTransition || Player.dontMove)
                         {
                             if (Player.dontMove)
                             {
@@ -2491,7 +2491,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  slow step to tile {tile} (centre {c}) at {p}: path " + string.Join(">", path.Skip(Math.Max(0, pi - 3)).Take(10).Select(q => $"{q.X},{q.Y}")));
                         }
-                        if (annoyerFights < 6 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer"
+                        if (annoyerFights < 6 && !OnWater() && Gs.HasBroom && Enemies().Any(e => e.GetType().Name == "Annoyer"
                             && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < (AutoFight ? 70 : 48)))
                         {
                             // An awake Annoyer comes for us wherever we walk (and walking about only dances us into its swoop): the broom answers it.
@@ -2501,19 +2501,19 @@ namespace AnodyneSharp.Recording
                             yield return Fight(900, soft: true, only: e => e.GetType().Name == "Annoyer");
                             goto replan;
                         }
-                        if (dogFights < 2 && GlobalState.CUR_HEALTH <= walkHp - 2 && !OnWater() && GlobalState.inventory.HasBroom
+                        if (dogFights < 2 && Gs.Health <= walkHp - 2 && !OnWater() && Gs.HasBroom
                             && Enemies().FirstOrDefault(e => e is AnodyneSharp.Entities.Enemy.Crowd.Dog
                                 && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 48) is Entity dog)
                         {
                             // Dogs that have bitten us twice on this walk and are still at our heels (even with auto-fight off: Overworld
                             // (8,9)'s pack sat in its north doorway and bit five hearts off a bot shoving past): see them off, then replan.
                             dogFights++;
-                            walkHp = GlobalState.CUR_HEALTH;
+                            walkHp = Gs.Health;
                             BotRunner.Status = "see off the Dogs on the way";
                             yield return Fight(1800, soft: true, only: e => e is AnodyneSharp.Entities.Enemy.Crowd.Dog);
                             goto replan;
                         }
-                        if (AutoFight && lionFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && Enemies().FirstOrDefault(e => (e is AnodyneSharp.Entities.Enemy.Circus.Lion || e is AnodyneSharp.Entities.Enemy.Circus.Contort)
+                        if (AutoFight && lionFights < 3 && !OnWater() && Gs.HasBroom && Enemies().FirstOrDefault(e => (e is AnodyneSharp.Entities.Enemy.Circus.Lion || e is AnodyneSharp.Entities.Enemy.Circus.Contort)
                             && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < 96
                             // (and on our side of the walls: one bouncing about the far side of one is no danger on the way, and its fight
                             // went round the long way after it until it timed out)
@@ -2527,7 +2527,7 @@ namespace AnodyneSharp.Recording
                             yield return Fight(3600, soft: true, only: e => e.GetType() == kind || e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall);
                             goto replan;
                         }
-                        if (AutoFight && slimeFights < 8 && !OnWater() && GlobalState.inventory.HasBroom && SlimeNear(48) is Entity slimeOnWay)
+                        if (AutoFight && slimeFights < 8 && !OnWater() && Gs.HasBroom && SlimeNear(48) is Entity slimeOnWay)
                         {
                             // A slime drifting across the route hurts on contact: kill it from a safe gap first, then replan.
                             slimeFights++;
@@ -2535,7 +2535,7 @@ namespace AnodyneSharp.Recording
                             yield return Fight(900, soft: true, only: e => e == slimeOnWay);
                             goto replan;
                         }
-                        if (DodgeEnabled && AutoFight && shooterFights < 3 && !OnWater() && GlobalState.inventory.HasBroom && GlobalState.CUR_HEALTH >= TankMinHp && ShooterNear(80) is Entity shooter)
+                        if (DodgeEnabled && AutoFight && shooterFights < 3 && !OnWater() && Gs.HasBroom && Gs.Health >= TankMinHp && ShooterNear(80) is Entity shooter)
                         {
                             // A frog/plant on the way would keep us dancing in and out of its bubbles: kill it (2 hits), pick up the hearts, replan.
                             shooterFights++;
@@ -2620,7 +2620,7 @@ namespace AnodyneSharp.Recording
                             // A stationary enemy is in the way. First try a route that keeps clear of it, else kill it, then replan.
                             var blocker = BlockedBy;
                             blockerHandled++;
-                            if (blocker is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller && blocker.velocity == Vector2.Zero && GlobalState.inventory.CanJump
+                            if (blocker is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller && blocker.velocity == Vector2.Zero && Gs.CanJump
                                 && RollerHop(blocker, dir) is float takeoff)
                             {
                                 // A roller that has stopped across the way is a spiked wall, but a thin one, and rollers miss us in the air.
@@ -2647,7 +2647,7 @@ namespace AnodyneSharp.Recording
                             {
                                 System.Console.Error.WriteLine($"  blocked by stationary {blocker.GetType().Name}@{blocker.Hitbox.X},{blocker.Hitbox.Y} at {Pos}: " + (detour != null ? $"detour of {detour.Count} tiles via {string.Join(">", detour.Take(8).Select(q => $"{q.X},{q.Y}"))} from tile {BotNav.TileOf(Pos)} (dir {dir})" : "no detour, fighting it"));
                             }
-                            if (detour != null && detour.Count > 0 && (detour.Count <= path.Count + 20 || !GlobalState.inventory.HasBroom))
+                            if (detour != null && detour.Count > 0 && (detour.Count <= path.Count + 20 || !Gs.HasBroom))
                             {
                                 avoidStationary = avoid;
                             }
@@ -2656,12 +2656,12 @@ namespace AnodyneSharp.Recording
                                 // asleep it cannot be hurt, and touching it hurts: never a fight; edge past it (the dodging walk keeps clear)
                                 avoidStationary = avoid;
                             }
-                            else if (GlobalState.inventory.HasBroom && blocker.GetType().Name == "Shieldy")
+                            else if (Gs.HasBroom && blocker.GetType().Name == "Shieldy")
                             {
                                 // A shield-bearer in the way: push it along the way we are going (left, right or up), then carry on.
                                 yield return PushBlocker(blocker, dir);
                             }
-                            else if (GlobalState.inventory.HasBroom)
+                            else if (Gs.HasBroom)
                             {
                                 // An Annoyer close by swoops while we deal with the blocker: it is fought too.
                                 yield return Fight(1200, soft: true, only: e => e == blocker || (e.GetType().Name == "Annoyer" && Vector2.Distance(e.Center, Player.Center) < 64));
@@ -2672,13 +2672,13 @@ namespace AnodyneSharp.Recording
                         {
                             safe = K(dir); // every way of dealing with the blocker has been tried: take the chance
                         }
-                        if (Dodged && GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && TrapLineCreep(dir))
+                        if (Dodged && Gs.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && TrapLineCreep(dir))
                         {
                             // (held back a few pixels short of where a jump over a dash trap's line takes off: edge on up to it)
                             yield return K(dir);
                             continue;
                         }
-                        if (GlobalState.inventory.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && BotRunner.Frame > _trapLineJumpAt + 90
+                        if (Gs.CanJump && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && !PassingTrap && BotRunner.Frame > _trapLineJumpAt + 90
                             && ((Dodged && dodgeWaits > 90 && OnSightTrapLineAhead(dir)) || TrapLineToJump(dir)))
                         {
                             _trapLineJumpAt = BotRunner.Frame; // (one at a time: a replan that turns us round must not jump straight back)
@@ -2761,7 +2761,7 @@ namespace AnodyneSharp.Recording
                     yield return BotScript.AdvanceKeys(i);
                     continue;
                 }
-                if (GlobalState.ScreenTransition)
+                if (Gs.ScreenTransition)
                 {
                     still = 0;
                     yield return K();

@@ -60,7 +60,7 @@ namespace AnodyneSharp.Recording
             // (only the blocks still shut: an opened one stayed in here and KeyLimited, with no key left, then shut it for good)
             _keyBlocks.Clear();
             // A key block with a key in hand is a door we open on the way (the walker does, on reaching it): plan through it.
-            bool haveKey = GlobalState.inventory.GetCurrentMapKeys() > 0;
+            bool haveKey = Gs.MapKeys > 0;
             foreach (var e in BotRunner.Entities())
             {
                 if (!e.exists || !e.GetType().Name.EndsWith("Gate"))
@@ -71,7 +71,7 @@ namespace AnodyneSharp.Recording
                 if (e is AnodyneSharp.Entities.Gadget.BigCardGate cg)
                 {
                     // A card gate (two tiles wide) with enough cards in hand: the walker opens it on the way.
-                    var set = cg.Solid && GlobalState.inventory.CardCount < cg._preset.Frame ? _gatesClosed : _gatesOpen;
+                    var set = cg.Solid && Gs.CardCount < cg._preset.Frame ? _gatesClosed : _gatesOpen;
                     set.Add(t);
                     set.Add(new Point(t.X + 1, t.Y));
                     continue;
@@ -89,8 +89,8 @@ namespace AnodyneSharp.Recording
                 (e.Solid ? _gatesClosed : _gatesOpen).Add(t);
             }
             // Screens that are not loaded: gates that are still shut are known from the map's entity presets.
-            var grid = GlobalState.CurrentMapGrid;
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            var grid = Gs.Grid;
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == null || !pr.Type.Name.EndsWith("Gate") || !pr.Alive || ((int)pr.Position.X / 160 == grid.X && (int)pr.Position.Y / 160 == grid.Y))
                 {
@@ -116,7 +116,7 @@ namespace AnodyneSharp.Recording
                     _edgeGates.Add(t);
                     continue;
                 }
-                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.BigCardGate) && GlobalState.inventory.CardCount >= pr.Frame)
+                if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.BigCardGate) && Gs.CardCount >= pr.Frame)
                 {
                     _gatesOpen.Add(t);
                     _gatesOpen.Add(new Point(t.X + 1, t.Y));
@@ -139,8 +139,8 @@ namespace AnodyneSharp.Recording
         private static void RefreshKillGates()
         {
             _killGateEntries = new Dictionary<Point, HashSet<Point>>();
-            var grid = GlobalState.CurrentMapGrid;
-            var presets = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME);
+            var grid = Gs.Grid;
+            var presets = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map);
             foreach (var pr in presets)
             {
                 if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.Gate) || !pr.Alive)
@@ -175,7 +175,7 @@ namespace AnodyneSharp.Recording
                     : presets.Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
                         .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
                 // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
-                int killed = here ? GlobalState.ENEMIES_KILLED : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+                int killed = here ? Gs.EnemiesKilled : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                     && screen.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)));
                 int need = needKills - killed;
                 var entries = new HashSet<Point>();
@@ -229,7 +229,7 @@ namespace AnodyneSharp.Recording
                 return new List<Point>();
             }
             var screen = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
-            return AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+            return AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
                 .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
         }
@@ -256,11 +256,11 @@ namespace AnodyneSharp.Recording
         public static bool KillGateShutHere()
         {
             RefreshGates();
-            var g = GlobalState.CurrentMapGrid;
+            var g = Gs.Grid;
             return Enumerable.Range(0, 100).Any(k => IsShutKillGate(new Point(g.X * 10 + k % 10, g.Y * 10 + k / 10)));
         }
 
-        public static bool IsShutKillGate(Point t) => _gatesClosed.Contains(t) && _killGateEntries.ContainsKey(t) && t.X / 10 == GlobalState.CurrentMapGrid.X && t.Y / 10 == GlobalState.CurrentMapGrid.Y;
+        public static bool IsShutKillGate(Point t) => _gatesClosed.Contains(t) && _killGateEntries.ContainsKey(t) && t.X / 10 == Gs.Grid.X && t.Y / 10 == Gs.Grid.Y;
 
         /// <summary>BFS step counts over walkable tiles from `from` (stays inside `bounds` if given).</summary>
         public static Dictionary<Point, int> DistMap(Point from, bool allowWater, Rectangle? bounds = null, bool allowJump = false)
@@ -345,14 +345,14 @@ namespace AnodyneSharp.Recording
             AllowJump = oldJ;
             var dc = new HashSet<int>();
             var dustTiles = new List<Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != null && pr.Type.Name == "Dust" && (int)pr.Position.X / 160 == sx && (int)pr.Position.Y / 160 == sy)
                 {
                     dustTiles.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
                 }
             }
-            var g = GlobalState.CurrentMapGrid;
+            var g = Gs.Grid;
             if (g.X == sx && g.Y == sy)
             {
                 foreach (var e in BotRunner.Entities())
@@ -433,7 +433,7 @@ namespace AnodyneSharp.Recording
                     {
                         return path;
                     }
-                    int keys = GlobalState.inventory.GetCurrentMapKeys();
+                    int keys = Gs.MapKeys;
                     var crossed = path.Where(t => _keyBlocks.Contains(t)).Distinct().ToList();
                     if (crossed.Count <= keys)
                     {
@@ -530,7 +530,7 @@ namespace AnodyneSharp.Recording
             // Fields (6,8) pool's currents all run in towards its two), and from beside Frogs: only when there is no other way does a ride
             // go through them.
             var lanes = new HashSet<Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Alive && pr.Type?.Name == "Frog")
                 {
@@ -783,13 +783,13 @@ namespace AnodyneSharp.Recording
         /// </summary>
         public static Dictionary<Point, Point> Ledges()
         {
-            if (_ledgeMap == GlobalState.CURRENT_MAP_NAME)
+            if (_ledgeMap == Gs.Map)
             {
                 return _ledges;
             }
-            _ledgeMap = GlobalState.CURRENT_MAP_NAME;
+            _ledgeMap = Gs.Map;
             _ledges = new Dictionary<Point, Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.JumpTrigger))
                 {
@@ -808,13 +808,13 @@ namespace AnodyneSharp.Recording
         /// <summary>Spring pads (Jump_Trigger type 1): landing on one (a jump onto it) bounces the player 32/48/64px down. Tile -> landing tile.</summary>
         public static Dictionary<Point, Point> Springs()
         {
-            if (_springMap == GlobalState.CURRENT_MAP_NAME)
+            if (_springMap == Gs.Map)
             {
                 return _springs;
             }
-            _springMap = GlobalState.CURRENT_MAP_NAME;
+            _springMap = Gs.Map;
             _springs = new Dictionary<Point, Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.SpringPad))
                 {
@@ -834,13 +834,13 @@ namespace AnodyneSharp.Recording
         /// is let go, in the air too, so a jump off the end of a row of them carries much further. Tile -> its way.</summary>
         public static Dictionary<Point, Point> DashPads()
         {
-            if (_padMap == GlobalState.CURRENT_MAP_NAME)
+            if (_padMap == Gs.Map)
             {
                 return _pads;
             }
-            _padMap = GlobalState.CURRENT_MAP_NAME;
+            _padMap = Gs.Map;
             _pads = new Dictionary<Point, Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != typeof(AnodyneSharp.Entities.Gadget.DashPad))
                 {
@@ -1113,10 +1113,10 @@ namespace AnodyneSharp.Recording
         /// </summary>
         public static bool LeapFits(Point a, Point b)
         {
-            if (_leapFitsMap != GlobalState.CURRENT_MAP_NAME)
+            if (_leapFitsMap != Gs.Map)
             {
                 _leapFits.Clear();
-                _leapFitsMap = GlobalState.CURRENT_MAP_NAME;
+                _leapFitsMap = Gs.Map;
             }
             if (_leapFits.TryGetValue((a, b), out var known))
             {
@@ -1212,7 +1212,7 @@ namespace AnodyneSharp.Recording
         public static Touching? SteamFlow(Point t)
         {
             // from the map's presets, so screens not loaded yet count too (frame: 0 down, 1 right, 2 up, 3 left)
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != typeof(AnodyneSharp.Entities.Enemy.Hotel.SteamPipe))
                 {
@@ -1391,7 +1391,7 @@ namespace AnodyneSharp.Recording
             if (BotRunner.Player != null)
             {
                 var here = TileOf(BotRunner.Player.Position);
-                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
                 {
                     if (pr.Alive && pr.Type?.Name is "Burst_Plant" or "Frog" or "Red_Pillar" or "Four_Shooter")
                     {
@@ -1440,7 +1440,7 @@ namespace AnodyneSharp.Recording
             }
             var lines = new List<string>();
             char next = 'A';
-            foreach (var p in AnodyneSharp.Entities.EntityManager.GetGridEntities(GlobalState.CURRENT_MAP_NAME, grid))
+            foreach (var p in AnodyneSharp.Entities.EntityManager.GetGridEntities(Gs.Map, grid))
             {
                 var t = new Point((int)Math.Floor((p.Position.X + 8) / 16f), (int)Math.Floor((p.Position.Y + 8) / 16f));
                 char ch = next <= 'Z' ? next++ : '*';
@@ -1451,7 +1451,7 @@ namespace AnodyneSharp.Recording
                 }
                 lines.Add($"  {ch} {p.Type.Name} tile={t.X},{t.Y} f{p.Frame}" + (string.IsNullOrEmpty(p.TypeValue) ? "" : $" '{p.TypeValue}'") + (p.Alive ? "" : " DEAD"));
             }
-            var sb = new System.Text.StringBuilder($"SCREEN {GlobalState.CURRENT_MAP_NAME} {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left)\n");
+            var sb = new System.Text.StringBuilder($"SCREEN {Gs.Map} {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left)\n");
             for (int y = 0; y < 10; y++)
             {
                 sb.Append($"  {grid.Y * 10 + y,3} ");
@@ -1476,7 +1476,7 @@ namespace AnodyneSharp.Recording
             {
                 return "ROOM: no map";
             }
-            var grid = GlobalState.CurrentMapGrid;
+            var grid = Gs.Grid;
             var cells = new char[10, 10];
             for (int y = 0; y < 10; y++)
             {
@@ -1542,7 +1542,7 @@ namespace AnodyneSharp.Recording
             {
                 cells[py, px] = '@';
             }
-            sb.Append($"ROOM {GlobalState.CURRENT_MAP_NAME} screen {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left) player box={pb.X},{pb.Y} hp {GlobalState.CUR_HEALTH} {pl.state}\n");
+            sb.Append($"ROOM {Gs.Map} screen {grid.X},{grid.Y} (tiles {grid.X * 10},{grid.Y * 10} = top-left) player box={pb.X},{pb.Y} hp {Gs.Health} {pl.state}\n");
             for (int y = 0; y < 10; y++)
             {
                 sb.Append($"  {grid.Y * 10 + y,3} ");
@@ -1590,13 +1590,13 @@ namespace AnodyneSharp.Recording
         public static HashSet<Point> PillarsUp()
         {
             int on = GlobalState.PillarSwitchOn ^ (PillarFlip ? 1 : 0);
-            if (on == _pillarOn && ReferenceEquals(GlobalState.CURRENT_MAP_NAME, _pillarMapRef))
+            if (on == _pillarOn && ReferenceEquals(Gs.Map, _pillarMapRef))
             {
                 return _pillarsUp; // (asked on every Walkable: no string building on the fast path)
             }
             _pillarOn = on;
-            _pillarMapRef = GlobalState.CURRENT_MAP_NAME;
-            string key = GlobalState.CURRENT_MAP_NAME + "|" + on;
+            _pillarMapRef = Gs.Map;
+            string key = Gs.Map + "|" + on;
             _pillarKey = key;
             if (_pillarSets.TryGetValue(key, out var known))
             {
@@ -1605,7 +1605,7 @@ namespace AnodyneSharp.Recording
             }
             _pillarsUp = new HashSet<Point>();
             _pillarSets[key] = _pillarsUp;
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.SwitchPillar) && on == 1 - pr.Frame)
                 {
@@ -1646,10 +1646,10 @@ namespace AnodyneSharp.Recording
             {
                 return false;
             }
-            if (_blockedMap != GlobalState.CURRENT_MAP_NAME)
+            if (_blockedMap != Gs.Map)
             {
                 Blocked.Clear();
-                _blockedMap = GlobalState.CURRENT_MAP_NAME;
+                _blockedMap = Gs.Map;
             }
             if (Blocked.Contains(t))
             {
@@ -1766,7 +1766,7 @@ namespace AnodyneSharp.Recording
             }
             // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
             var liveDoors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).Select(e => e.Position).ToList();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor"
                     && !liveDoors.Any(lp => Vector2.Distance(lp, pr.Position) < 16))
@@ -2118,7 +2118,7 @@ namespace AnodyneSharp.Recording
         /// water, and on a big map each failing search walks all of it).</summary>
         public static List<Point> FindPathTo(Point a, Point goal, bool strict = false, int forgetAfter = 15)
         {
-            var key = (a, goal, strict, AllowJump, AllowWater, Avoid == null ? -1 : 1, GlobalState.CURRENT_MAP_NAME);
+            var key = (a, goal, strict, AllowJump, AllowWater, Avoid == null ? -1 : 1, Gs.Map);
             long now = BotRunner.Frame;
             if (_noPathUntil.TryGetValue(key, out long until) && now < until)
             {
@@ -2207,7 +2207,7 @@ namespace AnodyneSharp.Recording
                 _leaps = false;
             }
             // (with the boots, the caller's search with jumps comes next: a leap clean over it beats walking into it)
-            if (p == null && !strict && _shooterTiles.Count > 0 && (AllowJump || !GlobalState.inventory.CanJump))
+            if (p == null && !strict && _shooterTiles.Count > 0 && (AllowJump || !Gs.CanJump))
             {
                 // A plant or frog sits in the only way through: they are not solid, so it is walked over (its bullets are dodged, or
                 // the walker strikes it as a blocker) rather than no way at all.
@@ -2323,7 +2323,7 @@ namespace AnodyneSharp.Recording
                     Add(e.Hitbox);
                 }
             }
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Doors.NexusPad))
                 {
@@ -2339,7 +2339,7 @@ namespace AnodyneSharp.Recording
             LastRouteReached = false;
             LastRouteRespected = false;
             var switches = new HashSet<Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
                 {
@@ -2352,7 +2352,7 @@ namespace AnodyneSharp.Recording
             // Water (still conveyor tiles) is crossed on a dust raft; with dust on the map, take it as passable here: this search only
             // picks which switch to hit, and the raft planner works out the crossing once the pillars are turned over.
             var talk = InteractTiles();
-            bool rafts = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type == typeof(AnodyneSharp.Entities.Dust));
+            bool rafts = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type == typeof(AnodyneSharp.Entities.Dust));
             try
             {
                 foreach (int pass in new[] { 0, 1, 2 })
@@ -2441,7 +2441,7 @@ namespace AnodyneSharp.Recording
         public static Dictionary<Point, int> PuzzleGates()
         {
             var res = new Dictionary<Point, int>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Gate) && pr.Frame % 10 >= 5 && pr.Frame % 10 <= 7)
                 {
@@ -2455,7 +2455,7 @@ namespace AnodyneSharp.Recording
         public static List<Point> Buttons()
         {
             var res = new List<Point>();
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Button))
                 {
