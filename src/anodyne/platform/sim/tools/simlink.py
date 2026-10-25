@@ -24,6 +24,12 @@ import time
 KEYS = {"a": 0, "b": 1, "select": 2, "start": 3, "right": 4, "left": 5, "up": 6, "down": 7, "r": 8, "l": 9}
 
 
+# Entity classes the player walks over or through (the path finder ignores them).
+WALK_OVER = {"Placeholder", "Button", "Checkpoint", "KeyBlockSentinel", "CrackedTile", "Dust", "SpringPad",
+             "JumpTrigger", "HealthPickup", "TreasureItem", "Explosion", "Key", "Blocker", "VBlocker", "FollowerBro",
+             "GatePart", "Treasure_Content", "SageBlank"}
+
+
 def mask(names):
     m = 0
     for n in names.replace("+", " ").split():
@@ -52,7 +58,10 @@ class Sim:
     def launch(cls, binary, port=47011, extra=()):
         env = dict(os.environ)
         env.setdefault("ASAN_OPTIONS", "detect_leaks=0")
-        proc = subprocess.Popen([binary, "--headless", "--ipc", str(port), *extra], env=env)
+        # SIMLINK_LOG=path keeps the simulator's own output out of the client's.
+        log = os.environ.get("SIMLINK_LOG")
+        out = open(log, "w") if log else None
+        proc = subprocess.Popen([binary, "--headless", "--ipc", str(port), *extra], env=env, stdout=out, stderr=out)
         return cls(port, proc)
 
     def _read_state(self):
@@ -87,6 +96,20 @@ class Sim:
     def peek(self, addr, length):
         self._send(f"peek {addr:x} {length}")
         return bytes.fromhex(self.file.readline().decode().strip())
+
+    def warp(self, map_name, x, y):
+        """Test shortcut: warps to (x, y) of a map with the broom; waits until the player is there."""
+        self._send(f"warp {map_name} {x} {y}")
+        reply = self.file.readline().decode().strip()
+        if reply != "ok":
+            raise ValueError(reply)
+        self.wait_until(lambda s: s.get("map") == map_name, 400)
+        return self.wait(60)  # the fade in
+
+    def heal(self):
+        """Test shortcut: back to full health."""
+        self._send("heal")
+        self.file.readline()
 
     def quit(self):
         try:
@@ -184,6 +207,142 @@ class Sim:
             path.append(c)
             c = prev[c]
         return path[::-1]
+
+    def _grid(self):
+        w, h, cells = self.collision()
+        blocked = set()
+        for e in self.state.get("entities", []):
+            if e["exists"] and (e["solid"] or e["type"] == "Hole") and e["type"] not in WALK_OVER and not e.get("enemy"):
+                for cy in range(e["y"] // 16, (e["y"] + e["h"] - 1) // 16 + 1):
+                    for cx in range(e["x"] // 16, (e["x"] + e["w"] - 1) // 16 + 1):
+                        blocked.add((cx, cy))
+        return w, h, cells, blocked
+
+    def path_where(self, goal):
+        """BFS over open 16x16 cells from the player's cell to the first cell where goal(cx, cy) holds."""
+        from collections import deque
+        w, h, cells, blocked = self._grid()
+        p = self.player()
+        start = ((p["x"] + 5) // 16, (p["y"] + 6) // 16)
+
+        def ok(c):
+            x, y = c
+            if not (0 <= x < w and 0 <= y < h) or c in blocked:
+                return False
+            allow, ev = cells[y][x]
+            return allow == 0 and ev not in (3, 5)
+
+        prev = {start: None}
+        q = deque([start])
+        end = None
+        while q:
+            c = q.popleft()
+            if goal(*c) and c != start:
+                end = c
+                break
+            for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                n = (c[0] + d[0], c[1] + d[1])
+                if n not in prev and ok(n):
+                    prev[n] = c
+                    q.append(n)
+        if end is None:
+            return None
+        path = []
+        c = end
+        while c is not None:
+            path.append(c)
+            c = prev[c]
+        return path[::-1]
+
+    def follow(self, path, limit=240):
+        for cx, cy in path[1:]:
+            if not self.walk_to(cx * 16 + 3, cy * 16 + 2, limit=limit):
+                return False
+        return True
+
+    def go_screen(self, gx, gy):
+        """Walks onto screen (gx, gy) of this map (BFS to its nearest cell, then waits out the scroll)."""
+        path = self.path_where(lambda cx, cy: cx // 10 == gx and cy // 10 == gy)
+        if path is None:
+            return False
+        ok = self.follow(path)
+        self.wait_until(lambda s: not s["transition"] and s["grid"] == [gx, gy], 300)
+        self.wait(10)
+        return ok and self.state["grid"] == [gx, gy]
+
+    def go_dir(self, d):
+        gx, gy = self.state["grid"]
+        dx, dy = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0)}[d]
+        return self.go_screen(gx + dx, gy + dy)
+
+    def read_dialogue(self, limit=400):
+        n = 0
+        while (self.state.get("dialog") or self.state.get("cutscene")) and n < limit:
+            if self.state.get("dialog"):
+                self.tap("a")
+            else:
+                self.wait(1)
+            n += 1
+
+    def interact_at(self, x, y, side="d"):
+        """Stands next to the object whose cell holds (x, y) on `side` (d: below, u: above, l: left, r: right),
+        faces it and presses A."""
+        cx, cy = x // 16, y // 16
+        dx, dy, face = {"d": (0, 1, "up"), "u": (0, -1, "down"), "l": (-1, 0, "right"), "r": (1, 0, "left")}[side]
+        if not self.go(( cx + dx) * 16 + 8, (cy + dy) * 16 + 8):
+            return False
+        self.hold(face, 8)
+        self.tap("a", 10)
+        self.read_dialogue()
+        return True
+
+    def enemies(self):
+        g = self.state["grid"]
+        return [e for e in self.state["entities"] if e.get("enemy") and e["exists"]
+                and e["x"] // 160 == g[0] and e["y"] // 160 == g[1]]
+
+    def fight(self, limit=3000):
+        """Swings at the screen's enemies until none are left: walks (along a BFS path when the straight line is
+        blocked) next to the nearest one, faces it and presses A."""
+        n = 0
+        stuck = 0
+        last = None
+        while self.enemies() and n < limit:
+            if self.state.get("dialog"):
+                self.read_dialogue()
+                continue
+            p = self.player()
+            px, py = p["x"] + 5, p["y"] + 6
+            e = min(self.enemies(), key=lambda e: abs(e["x"] + e["w"] / 2 - px) + abs(e["y"] + e["h"] / 2 - py))
+            ex, ey = e["x"] + e["w"] / 2, e["y"] + e["h"] / 2
+            dx, dy = ex - px, ey - py
+            if abs(dx) < 18 and abs(dy) < 18:
+                face = ("right" if dx > 0 else "left") if abs(dx) > abs(dy) else ("down" if dy > 0 else "up")
+                self.hold(face, 1)
+                self.tap("a", 8)
+                n += 9
+                stuck = 0
+                continue
+            pos = (p["x"], p["y"])
+            stuck = stuck + 1 if pos == last else 0
+            last = pos
+            if stuck > 6:
+                # The straight line is blocked: a few cells along a path to the enemy's neighbourhood.
+                ecx, ecy = int(ex) // 16, int(ey) // 16
+                path = self.path_where(lambda cx, cy: abs(cx - ecx) + abs(cy - ecy) <= 1)
+                if path:
+                    self.follow(path[:4], limit=60)
+                    n += 60
+                stuck = 0
+                continue
+            k = []
+            if abs(dx) > 10:
+                k.append("right" if dx > 0 else "left")
+            if abs(dy) > 10:
+                k.append("down" if dy > 0 else "up")
+            self.hold("+".join(k) or "", 4)
+            n += 4
+        return not self.enemies()
 
     def go(self, tx, ty):
         """Walks to the cell holding map pixel (tx, ty) along a BFS path; the hitbox ends centred in it."""

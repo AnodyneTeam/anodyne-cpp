@@ -29,4 +29,4 @@ void Entities_LoadGrid(int gx, int gy, bool initial);
 void Entities_EndTransition();
 
 // Draws the entities: camX/camY = camera top-left in map pixels, screenX = where the playfield starts on screen.
-void Entities_Draw(int camX, int camY, int screenX);
+void Entities_Draw(int camX, int camY, int screenX, int shakeX = 0, int shakeY = 0);

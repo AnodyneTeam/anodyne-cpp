@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 
 #include "file_utils.hpp"
@@ -264,6 +265,19 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
     for (size_t i = 0; i < image.size(); i++)
     {
         image[i] = { raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3] };
+    }
+    // Lights only ever draw as OBJ-window shapes (Darkness), so their soft glow becomes a hard disc: everything a
+    // quarter bright or more is lit.
+    static const char* const kLightSheets[] = { "glow-light", "player-light", "5-frame-glow", "5-frame-glow-bright" };
+    for (const char* light : kLightSheets)
+    {
+        if (strcmp(spec.mTexture, light) == 0)
+        {
+            for (Pixel& p : image)
+            {
+                p.a = p.a >= 64 ? 255 : 0;
+            }
+        }
     }
 
     out.mPalette = BuildPalette(image, spec.mTexture);

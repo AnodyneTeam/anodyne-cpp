@@ -74,6 +74,8 @@ void GameState_Reset()
     memset(&gGame, 0, sizeof(gGame));
     gGame.mMaxHealth = 6;
     gGame.mCurHealth = 6;
+    gGame.mCheckpointMap = -1;
+    gGame.mReturnMap = -1;
     memset(gDead, 0, sizeof(gDead));
     memset(gActivated, 0, sizeof(gActivated));
     gEventCount = 0;
@@ -88,6 +90,83 @@ void GameState_SetHealth(int health)
 void GameState_SetMaxHealth(int maxHealth)
 {
     gGame.mMaxHealth = maxHealth > 16 ? 16 : maxHealth;
+}
+
+namespace
+{
+bool MapBit(uint32_t bits, const char* map)
+{
+    const int i = Game_MapIndex(map);
+    return i >= 0 && ((bits >> i) & 1) != 0;
+}
+} // namespace
+
+bool Game_Visited(const char* map)
+{
+    return MapBit(gGame.mVisitedMaps, map);
+}
+
+bool Game_BossDefeated(const char* map)
+{
+    return MapBit(gGame.mBossDefeated, map);
+}
+
+bool Game_LeftAfterBoss(const char* map)
+{
+    return MapBit(gGame.mLeftAfterBoss, map);
+}
+
+void Game_SetBossDefeated(const char* map)
+{
+    const int i = Game_MapIndex(map);
+    if (i >= 0)
+    {
+        gGame.mBossDefeated |= 1u << i;
+    }
+}
+
+bool Game_IsDungeon()
+{
+    static const char* const kDungeons[] = { "BEDROOM", "REDCAVE", "CROWD", "APARTMENT", "HOTEL", "CIRCUS" };
+    for (const char* d : kDungeons)
+    {
+        if (gGame.mMapName && strcmp(gGame.mMapName, d) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+int Inventory_MapKeys()
+{
+    return (gGame.mCurrentMap >= 0 && gGame.mCurrentMap < kMaxMaps) ? gGame.mMapKeys[gGame.mCurrentMap] : 0;
+}
+
+void Inventory_AddMapKey()
+{
+    if (gGame.mCurrentMap >= 0 && gGame.mCurrentMap < kMaxMaps)
+    {
+        gGame.mMapKeys[gGame.mCurrentMap]++;
+    }
+}
+
+void Inventory_RemoveMapKey()
+{
+    if (Inventory_MapKeys() > 0)
+    {
+        gGame.mMapKeys[gGame.mCurrentMap]--;
+    }
+}
+
+int Inventory_CardCount()
+{
+    int n = 0;
+    for (uint8_t c : gGame.mCardStatus)
+    {
+        n += c ? 1 : 0;
+    }
+    return n;
 }
 
 bool Preset_Alive(const MapEntity& preset)
@@ -168,6 +247,27 @@ void Game_ShowDialogue(const char* npc, const char* scene, int id)
         Dialog_Open(text, top, false);
         gDialogueFinished = false;
     }
+}
+
+void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id)
+{
+    bool top = false;
+    const char* text = Dialog_GetFor(npc, area, scene, id, &top);
+    if (text && text[0])
+    {
+        Dialog_Open(text, top, false);
+        gDialogueFinished = false;
+    }
+}
+
+void Game_ShowText(const char* text)
+{
+    // Dialog_Open keeps the pointer: copy, so callers can build the text on the stack.
+    static char sText[512];
+    strncpy(sText, text, sizeof(sText) - 1);
+    sText[sizeof(sText) - 1] = '\0';
+    Dialog_Open(sText, false, false);
+    gDialogueFinished = false;
 }
 
 bool Game_DialogueFinished()

@@ -51,6 +51,11 @@ extern "C" int GameProbe_Json(char* buf, int cap)
           Str(gGame.mMapName), p.mGridX, p.mGridY, p.mTransition ? "true" : "false", Dialog_IsOpen() ? "true" : "false");
     o.Add("\"player\":{\"x\":%d,\"y\":%d,\"facing\":%d,\"ladder\":%s,\"fallen\":%s,\"health\":%d},", p.mX, p.mY,
           p.mFacing, p.mLadder ? "true" : "false", p.mFallen ? "true" : "false", p.mHealth);
+    o.Add("\"maxHealth\":%d,\"keys\":%d,\"cards\":%d,\"broom\":%d,\"canJump\":%s,\"cutscene\":%s,",
+          gGame.mMaxHealth, Inventory_MapKeys(), Inventory_CardCount(), gGame.mEquippedBroom,
+          gGame.mCanJump ? "true" : "false", Game_InCutscene() ? "true" : "false");
+    o.Add("\"checkpoint\":[%d,%d,%d],\"bosses\":%u,", gGame.mCheckpointMap, gGame.mCheckpointX, gGame.mCheckpointY,
+          static_cast<unsigned>(gGame.mBossDefeated));
     o.Add("\"puzzles\":%d,\"killed\":%d,\"entities\":[", gGame.mPuzzlesSolved, gGame.mEnemiesKilled);
     bool first = true;
     for (const Entity* e = Ecs_First(); e; e = e->mNext)
@@ -60,9 +65,10 @@ extern "C" int GameProbe_Json(char* buf, int cap)
             continue;
         }
         o.Add("%s{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"exists\":%s,\"solid\":%s,\"anim\":\"%s\","
-              "\"frame\":%d}",
+              "\"frame\":%d,\"enemy\":%s,\"preset\":%d}",
               first ? "" : ",", Str(e->mClass->mName), FxTrunc(e->mT->mX), FxTrunc(e->mT->mY), e->mB->mW, e->mB->mH,
-              e->mExists ? "true" : "false", Ecs_Solid(*e) ? "true" : "false", Ecs_AnimName(*e), Ecs_Frame(*e));
+              e->mExists ? "true" : "false", Ecs_Solid(*e) ? "true" : "false", Ecs_AnimName(*e), Ecs_Frame(*e),
+              (e->mClass->mFlags & ECF_ENEMY) ? "true" : "false", e->mPreset ? e->mPreset->mFrame : -1);
         first = false;
     }
     o.Add("]}");
@@ -95,4 +101,22 @@ extern "C" int GameProbe_Collision(char* buf, int cap)
     }
     buf[o.mLen] = '\0';
     return o.mLen;
+}
+
+int GameProbe_Warp(const char* map, int x, int y)
+{
+    const int index = Game_MapIndex(map);
+    if (index < 0)
+    {
+        return 0;
+    }
+    gGame.mHasBroom[BROOM_NORMAL] = true;
+    gGame.mEquippedBroom = BROOM_NORMAL;
+    World_RequestWarp(index, x, y, 2);
+    return 1;
+}
+
+void GameProbe_Heal(void)
+{
+    gGame.mCurHealth = gGame.mMaxHealth;
 }

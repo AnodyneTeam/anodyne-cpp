@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "entity_classes.h"
 #include "game_state.h"
 #include "sprite.h"
 
@@ -68,6 +69,13 @@ struct PlayerData final
     fx mStepTimer;
     fx mJumpT; // Parabola_Thing.t, in frames
     fx mJumpStartOff;
+    fx mJumpPeriod; // frames
+    int mJumpHeight;
+    bool mJumpHasTarget; // AutoJump: the position moves from the start to the target over the jump
+    fx mJumpBaseX;
+    fx mJumpBaseY;
+    fx mJumpTargetX;
+    fx mJumpTargetY;
 };
 
 Entity* gPlayer = nullptr;
@@ -382,6 +390,9 @@ void UpdateActions()
         {
             d.mState = PS_AIR;
             d.mJumpStage = 0;
+            d.mJumpPeriod = kJumpPeriod;
+            d.mJumpHeight = kJumpHeight;
+            d.mJumpHasTarget = false;
             gShadow->mV->mVisible = true;
             gBroom->mExists = false;
             d.mIsSlipping = false;
@@ -467,6 +478,8 @@ bool JumpStep()
         Game_PlaySfx(d.mOnConveyor ? "puddle_up" : "player_jump_up");
         d.mJumpT = 0;
         d.mJumpStartOff = v.mOffY;
+        d.mJumpBaseX = gPlayer->mT->mX;
+        d.mJumpBaseY = gPlayer->mT->mY;
         d.mAnimState = AS_IDLE;
         PlayerPlayFacing("jump");
         d.mJumpStage = 1;
@@ -474,8 +487,13 @@ bool JumpStep()
     if (d.mJumpStage == 1)
     {
         d.mJumpT += kFxOne;
-        if (d.mJumpT > kJumpPeriod)
+        if (d.mJumpT > d.mJumpPeriod)
         {
+            if (d.mJumpHasTarget)
+            {
+                gPlayer->mT->mX = d.mJumpTargetX;
+                gPlayer->mT->mY = d.mJumpTargetY;
+            }
             v.mOffY = d.mJumpStartOff;
             UpdateShadow(0);
             Game_PlaySfx(d.mOnConveyor ? "puddle_down" : "player_jump_down");
@@ -484,13 +502,18 @@ bool JumpStep()
             return false;
         }
         const int64_t t = d.mJumpT;
-        const int64_t p = kJumpPeriod;
+        const int64_t p = d.mJumpPeriod;
         const int64_t half = p / 2;
         // start + t * (period - t) / half^2 * height
-        v.mOffY = d.mJumpStartOff + static_cast<fx>(t * (p - t) * kJumpHeight / (half * half / kFxOne));
+        v.mOffY = d.mJumpStartOff + static_cast<fx>(t * (p - t) * d.mJumpHeight / (half * half / kFxOne));
         // UpdateShadow(|0.5 - progress| * 2)
         fx progress = static_cast<fx>((t << kFxShift) / p);
         progress = progress > kFxOne ? kFxOne : progress;
+        if (d.mJumpHasTarget)
+        {
+            gPlayer->mT->mX = d.mJumpBaseX + FxMul(d.mJumpTargetX - d.mJumpBaseX, progress);
+            gPlayer->mT->mY = d.mJumpBaseY + FxMul(d.mJumpTargetY - d.mJumpBaseY, progress);
+        }
         const fx fromMiddle = kFxOne / 2 - progress;
         UpdateShadow((fromMiddle < 0 ? -fromMiddle : fromMiddle) * 2);
         return false;
@@ -713,7 +736,41 @@ const EntityClass kPlayerClass = {
 struct BroomData final
 {
     bool mBehindPlayer;
+    bool mCarrying;     // Broom.dust != null (the entity itself may be gone: a screen change freed it)
+    bool mJustReleased; // just_released_dust
+    Entity* mDust;
+    Entity* mCandidate; // pickup_candidate
 };
+
+BroomData& B()
+{
+    return gBroom->Data<BroomData>();
+}
+
+// Broom.DustDistance: furthest along the facing, then closest to that line.
+fx DustDistance(const Entity& dust)
+{
+    const fx dx = Ecs_CenterX(dust) - Ecs_CenterX(*gPlayer);
+    const fx dy = Ecs_CenterY(dust) - Ecs_CenterY(*gPlayer);
+    const int fxDir = FacingX(static_cast<Facing>(gPlayer->mFacing));
+    const int fyDir = FacingY(static_cast<Facing>(gPlayer->mFacing));
+    const fx along = dx * fxDir + dy * fyDir;
+    fx across = dx * fyDir + dy * fxDir;
+    across = across < 0 ? -across : across;
+    return 50 * along - across;
+}
+
+void BroomCollided(Entity&, Entity& other)
+{
+    BroomData& b = B();
+    if (!b.mCarrying && !b.mJustReleased)
+    {
+        if (!b.mCandidate || DustDistance(*b.mCandidate) < DustDistance(other))
+        {
+            b.mCandidate = &other;
+        }
+    }
+}
 
 void BroomUpdatePos()
 {
@@ -761,9 +818,28 @@ void BroomUpdatePos()
 
 void BroomUpdate(Entity& self)
 {
+    BroomData& b = B();
+    if (b.mCandidate)
+    {
+        b.mDust = b.mCandidate;
+        b.mCarrying = true;
+        b.mCandidate = nullptr;
+        Ecs_Play(*b.mDust, "poof");
+        if (Event_Get("SweptDust") == 0)
+        {
+            Event_Inc("SweptDust");
+            Game_ShowDialogueFor("misc", "any", "dust", 0);
+        }
+    }
     if (Ecs_AnimFinished(self))
     {
         self.mExists = false;
+        if (b.mJustReleased)
+        {
+            b.mCarrying = false;
+            b.mDust = nullptr;
+            b.mJustReleased = false;
+        }
     }
     else
     {
@@ -773,7 +849,7 @@ void BroomUpdate(Entity& self)
 }
 
 const EntityClass kBroomClass = {
-    "Broom", BroomUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, GROUP_BROOM, GROUP_DUST, 0,
+    "Broom", BroomUpdate, nullptr, BroomCollided, nullptr, nullptr, nullptr, nullptr, GROUP_BROOM, GROUP_DUST, 0,
 };
 
 void BroomAttack()
@@ -786,6 +862,31 @@ void BroomAttack()
     Game_PlaySfx(kSwing[Rng_Range(0, 3)]);
     BroomUpdatePos();
     Ecs_FireEvent(GEV_BROOM_USED);
+
+    BroomData& bd = B();
+    if (bd.mCarrying)
+    {
+        // The tile in front of the player's centre.
+        const int cx = FxFloor(Ecs_CenterX(*gPlayer)) / 16 + FacingX(static_cast<Facing>(gPlayer->mFacing));
+        const int cy = FxFloor(Ecs_CenterY(*gPlayer)) / 16 + FacingY(static_cast<Facing>(gPlayer->mFacing));
+        const fx x = Fx(cx * 16);
+        const fx y = Fx(cy * 16);
+        if (Map_CollisionAllowAt(x, y) == TOUCH_NONE)
+        {
+            if (!bd.mDust)
+            {
+                bd.mDust = Spawn_DustAt(x, y);
+            }
+            if (bd.mDust)
+            {
+                bd.mDust->mT->mX = bd.mDust->mT->mLastX = x;
+                bd.mDust->mT->mY = bd.mDust->mT->mLastY = y;
+                bd.mDust->mExists = true;
+                Ecs_Play(*bd.mDust, "unpoof", true);
+                bd.mJustReleased = true;
+            }
+        }
+    }
 }
 
 // ---- Foot overlay ------------------------------------------------------------------------------------------------
@@ -1100,6 +1201,74 @@ bool Player_BroomOut()
 bool Player_HasFallen()
 {
     return P().mHasFallen;
+}
+
+void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height)
+{
+    PlayerData& d = P();
+    d.mJumpPeriod = periodFrames;
+    d.mJumpHeight = height;
+    d.mJumpHasTarget = true;
+    d.mJumpTargetX = targetX;
+    d.mJumpTargetY = targetY;
+    d.mJumpStage = 0;
+    d.mState = PS_AUTO_JUMP;
+    Ecs_SetSolid(*gPlayer, false);
+    gPlayer->mT->mVelX = gPlayer->mT->mVelY = 0;
+    gPlayer->mV->mYPush = 0;
+    gShadow->mV->mVisible = true;
+}
+
+bool Player_JustLanded()
+{
+    return P().mJustLanded;
+}
+
+void Player_SetFacing(Facing f)
+{
+    gPlayer->mFacing = f;
+}
+
+Entity* Player_BroomDust()
+{
+    return B().mDust;
+}
+
+void Player_DropBroomDust()
+{
+    BroomData& b = B();
+    b.mDust = nullptr;
+    b.mCandidate = nullptr;
+    b.mCarrying = false;
+    b.mJustReleased = false;
+}
+
+void Player_DustMerged()
+{
+    B().mJustReleased = false;
+}
+
+void Player_DustFreed(Entity& dust)
+{
+    BroomData& b = B();
+    if (b.mDust == &dust)
+    {
+        b.mDust = nullptr; // still carried
+    }
+    if (b.mCandidate == &dust)
+    {
+        b.mCandidate = nullptr;
+    }
+}
+
+void Player_Fall(fx x, fx y)
+{
+    PlayerMapEvent(*gPlayer, MAPEV_FALL, 0, x, y);
+}
+
+Facing Player_Facing()
+{
+    return static_cast<Facing>(gPlayer->mFacing);
 }
 
 void Player_ReceiveDamage(int amount, bool knockback, bool playSound)

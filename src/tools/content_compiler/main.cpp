@@ -499,6 +499,55 @@ static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
     return kSpecs;
 }
 
+// ------------------------------------------------------------
+// MAP DARKNESS SETTINGS
+// The plain DarknessAlpha / PlayerLight settings from old/Content/Maps/<MAP>/Settings.json (alpha -1 = not set
+// there). Textured darkness (the *_overlay / *_hardlight maps) isn't carried over yet.
+// ------------------------------------------------------------
+struct MapDarkArea final
+{
+    int x, y, w, h;
+    float alpha;
+    int playerLight; // -1 = not set
+};
+
+struct MapDarkSpec final
+{
+    const char* map;
+    float alpha;
+    bool playerLight;
+    std::vector<MapDarkArea> areas;
+};
+
+static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
+{
+    static const std::vector<MapDarkSpec> kSpecs = {
+        { "BEDROOM", 0, false, {
+            { 320, 0, 160, 160, 0.2f, -1 },
+            { 640, 0, 160, 320, 0.2f, -1 },
+            { 800, 320, 320, 480, 0.8f, -1 },
+            { 640, 480, 160, 320, 1.0f, -1 },
+            { 640, 320, 160, 160, 0.8f, -1 },
+            { 320, 640, 160, 160, 0.2f, -1 },
+            { 160, 480, 160, 160, 0.8f, -1 },
+        } },
+        { "CIRCUS", 0, false, { { 1280, 160, 160, 160, 0.8f, -1 } } },
+        { "DRAWER", 0, true, {
+            { 0, 0, 320, 160, 1.0f, -1 },
+            { 0, 160, 160, 640, 1.0f, -1 },
+            { 0, 800, 960, 960, 1.0f, -1 },
+        } },
+        { "HAPPY", 0, false, { { 320, 320, 480, 160, 0.0f, -1 } } },
+        { "STREET", 0, false, { { 160, 320, 160, 160, 0.6f, -1 }, { 160, 960, 160, 160, 0.6f, -1 } } },
+        { "SUBURB", 0, false, {
+            { 0, 800, 320, 160, 0.91f, 1 },
+            { 0, 1120, 320, 160, 0.91f, 1 },
+            { 160, 960, 160, 160, 0.91f, 1 },
+        } },
+    };
+    return kSpecs;
+}
+
 void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
 {
     FILE* f = fopen("map_registry.h", "w");
@@ -590,6 +639,45 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         else
         {
             fprintf(f, "    { \"%s\", \"%s\", 0, nullptr },\n", spec ? spec->music : "", spec ? spec->ambience : "");
+        }
+    }
+    fprintf(f, "};\n\n");
+    // Darkness: one MapDarkData per map (alpha in 1/256ths).
+    for (const auto& name : mapNames)
+    {
+        for (const auto& spec : GetMapDarkSpecs())
+        {
+            if (name == spec.map && !spec.areas.empty())
+            {
+                fprintf(f, "static const MapDarkArea kMapDarkAreas_%s[] = {\n", name.c_str());
+                for (const auto& area : spec.areas)
+                {
+                    fprintf(f, "    { %d, %d, %d, %d, %d, %d },\n", area.x, area.y, area.w, area.h,
+                            area.alpha < 0 ? -1 : static_cast<int>(area.alpha * 256 + 0.5f), area.playerLight);
+                }
+                fprintf(f, "};\n");
+            }
+        }
+    }
+    fprintf(f, "static const MapDarkData kMapDark[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        const MapDarkSpec* spec = nullptr;
+        for (const auto& candidate : GetMapDarkSpecs())
+        {
+            if (name == candidate.map)
+            {
+                spec = &candidate;
+            }
+        }
+        if (spec)
+        {
+            fprintf(f, "    { %d, %d, %zu, %s%s },\n", static_cast<int>(spec->alpha * 256 + 0.5f), spec->playerLight ? 1 : 0,
+                    spec->areas.size(), spec->areas.empty() ? "nullptr" : "kMapDarkAreas_", spec->areas.empty() ? "" : name.c_str());
+        }
+        else
+        {
+            fprintf(f, "    { 0, 0, 0, nullptr },\n");
         }
     }
     fprintf(f, "};\n\n");

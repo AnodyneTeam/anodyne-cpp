@@ -9,6 +9,8 @@ set(ANODYNE_GAME_SOURCES
     player.cpp
     entity_registry.cpp
     ent_gadgets.cpp
+    ent_enemies.cpp
+    ent_npcs.cpp
     ecs.cpp
     game_state.cpp
     game_probe.cpp

@@ -197,6 +197,7 @@ struct Visual final
     bool mFlickering;
     bool mHFlip;
     bool mVFlip;
+    bool mWindow;        // a Light: drawn as an OBJ-window shape that cuts the darkness, not as a sprite
     uint8_t mLayer;      // DrawLayer
     int8_t mLayerOffset; // RefLayer: in front (+) / behind (-) mLayerRef by this much
     Entity* mLayerRef;   // RefLayer parent (nullptr: own layer)
@@ -344,6 +345,8 @@ void Ecs_FreeAllButPlayer();
 // Frees the run-time entities (no preset, not an enemy, not the player's) that stopped existing.
 void Ecs_FreeDead();
 int Ecs_Count();
+// Existing entities of class `cls` whose parent is `parent` (an EntityPool's Alive count).
+int Ecs_CountChildren(const Entity& parent, const EntityClass& cls);
 
 // Entity.Play / SetFrame / PlayFacing on the visual. Play returns true when the anim changed (AnimationChanged).
 bool Ecs_SetSheet(Entity& e, const char* sheet, int frameW = 0, int frameH = 0);

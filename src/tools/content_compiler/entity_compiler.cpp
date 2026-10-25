@@ -214,8 +214,53 @@ struct Element final
 };
 } // namespace
 
+// CardLookup.card (CardDataManager): which card a "growth" chest holds, by map and screen.
+std::map<std::string, std::map<std::pair<int, int>, int>> ReadCardLookup(const std::string& path)
+{
+    std::map<std::string, std::map<std::pair<int, int>, int>> cards;
+    std::ifstream f(path);
+    std::string line;
+    std::string map;
+    while (std::getline(f, line))
+    {
+        // trim (and a UTF-8 BOM)
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+        {
+            line.pop_back();
+        }
+        size_t start = 0;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\t' || static_cast<unsigned char>(line[start]) >= 0x80))
+        {
+            start++;
+        }
+        line = line.substr(start);
+        if (line.empty() || line == "{")
+        {
+            continue;
+        }
+        if (line == "}")
+        {
+            map.clear();
+            continue;
+        }
+        int id = 0;
+        int x = 0;
+        int y = 0;
+        if (!map.empty() && sscanf(line.c_str(), "%d %d %d", &id, &x, &y) == 3)
+        {
+            cards[map][{ x, y }] = id;
+        }
+        else
+        {
+            map = line;
+        }
+    }
+    return cards;
+}
+
 std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
 {
+    const auto cardLookup = ReadCardLookup(contentPaths.GetBasePath() + "/CardLookup.card");
     std::ifstream file(contentPaths.GetEntitiesPath());
     std::stringstream ss;
     ss << file.rdbuf();
@@ -419,6 +464,25 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
             }
             outFrame = static_cast<int>(std::atof(entrance->mAttrs.at("x").c_str()));
             linkId = static_cast<int>(std::atof(entrance->mAttrs.at("y").c_str()));
+        }
+        if (type == EPT_Treasure)
+        {
+            // CardDataManager.GetCardId for a growth (card) chest: the card of its screen, 48 in the Nexus.
+            linkId = -1;
+            const std::string& mapName = mapNames[e.mMap];
+            if (mapName == "NEXUS")
+            {
+                linkId = 48;
+            }
+            else
+            {
+                const auto m = cardLookup.find(mapName);
+                if (m != cardLookup.end())
+                {
+                    const auto c = m->second.find({ x / 160, y / 160 });
+                    linkId = c != m->second.end() ? c->second : -1;
+                }
+            }
         }
         const int permanence = attr("p").empty() ? PERM_GRID_LOCAL : std::atoi(attr("p").c_str());
 

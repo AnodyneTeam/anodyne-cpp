@@ -23,6 +23,7 @@
 #include "game_state.h"
 
 static_assert(kEntityPresetCount <= kMaxPresets, "more entity presets than game_state.h has room for");
+static_assert(kMapCount <= static_cast<uint32_t>(kMaxMaps), "more maps than game_state.h has room for");
 
 // kMapCount is provided from map_registry_.h
 static uint32_t gCurrentMap = 0;
@@ -95,14 +96,34 @@ static void ScreenBlack(bool on)
     ScreenDarken(on ? 16 : 0);
 }
 
+int Game_MapIndex(const char* name)
+{
+    for (uint32_t i = 0; i < kMapCount; i++)
+    {
+        if (strcmp(kMapNames[i], name) == 0)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
 static void LoadWorldMap()
 {
+    // PlayState.Warp: leaving a map whose boss is beaten.
+    if (gGame.mMapName && gGame.mCurrentMap != static_cast<int>(gCurrentMap) &&
+        ((gGame.mBossDefeated >> gGame.mCurrentMap) & 1))
+    {
+        gGame.mLeftAfterBoss |= 1u << gGame.mCurrentMap;
+    }
     gGame.mCurrentMap = gCurrentMap;
     gGame.mMapName = kMapNames[gCurrentMap];
+    gGame.mVisitedMaps |= 1u << gCurrentMap;
     // Entities first: World_Load places the player and loads the screen's entities.
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap],
+               kMapDark[gCurrentMap]);
     Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 
@@ -555,11 +576,12 @@ int main()
                 if (warpPhase == WarpPhase::None)
                 {
                     World_Update();
-                    if (World_TakeWarp(warpMap, warpX, warpY, warpFacing))
+                    bool warpBlack = false;
+                    if (World_TakeWarp(warpMap, warpX, warpY, warpFacing, warpBlack))
                     {
                         warpPhase = WarpPhase::Exit;
                         warpPix = 256;
-                        warpDark = 0;
+                        warpDark = warpBlack ? 65536 - 1 : 0; // dying: the death state faded out already
                         // transition_out: 1.568s leaving BLANK, 0.785s elsewhere
                         warpExitStep = strcmp(kMapNames[gCurrentMap], "BLANK") == 0 ? 65536 * 1000 / 1568 / 60 : 65536 * 1000 / 785 / 60;
                     }
@@ -571,7 +593,7 @@ int main()
                     if (warpDark >= 65536)
                     {
                         warpDark = 65536;
-                        ScreenDarken(16);
+                        World_ScreenDarken(16);
                         Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
                         if (warpMap != gCurrentMap)
                         {
@@ -597,12 +619,12 @@ int main()
                         warpDark = 0;
                         warpPhase = WarpPhase::None;
                         Mosaic_End();
-                        ScreenDarken(0);
+                        World_ScreenDarken(0);
                     }
                 }
                 if (warpPhase != WarpPhase::None)
                 {
-                    ScreenDarken((warpDark * 16) >> 16);
+                    World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
                     Mosaic_Apply(warpPix, offsets);

@@ -2,6 +2,7 @@
 
 #include "ecs.h"
 #include "game_state.h"
+#include "world.h"
 
 // Shared by entities.cpp and the entity class files (ent_*.cpp): how a preset is turned into an entity.
 
@@ -22,3 +23,56 @@ Entity* Spawn_Basic(const EntityClass& cls, const MapEntity& preset, const char*
 Entity* Spawn_Console(const MapEntity& preset, Entity& player);
 Entity* Spawn_Gate(const MapEntity& preset, Entity& player);
 Entity* Spawn_SageBlank(const MapEntity& preset, Entity& player);
+Entity* Spawn_Treasure(const MapEntity& preset, Entity& player);
+Entity* Spawn_Button(const MapEntity& preset, Entity& player);
+Entity* Spawn_SolidTile(const MapEntity& preset, Entity& player);
+Entity* Spawn_Blocker(const MapEntity& preset, Entity& player);
+Entity* Spawn_VBlocker(const MapEntity& preset, Entity& player);
+Entity* Spawn_Dust(const MapEntity& preset, Entity& player);
+Entity* Spawn_CrackedTile(const MapEntity& preset, Entity& player);
+Entity* Spawn_Hole(const MapEntity& preset, Entity& player);
+Entity* Spawn_SmallKeyGate(const MapEntity& preset, Entity& player);
+Entity* Spawn_CardGate(const MapEntity& preset, Entity& player);
+Entity* Spawn_BigKeyGate(const MapEntity& preset, Entity& player);
+Entity* Spawn_Key(const MapEntity& preset, Entity& player);
+Entity* Spawn_HealthEntity(const MapEntity& preset, Entity& player);
+Entity* Spawn_Checkpoint(const MapEntity& preset, Entity& player);
+Entity* Spawn_SpringPad(const MapEntity& preset, Entity& player);
+Entity* Spawn_JumpTrigger(const MapEntity& preset, Entity& player);
+Entity* Spawn_DungeonEntrance(const MapEntity& preset, Entity& player);
+Entity* Spawn_DungeonEntranceRef(const MapEntity& preset, Entity& player);
+Entity* Spawn_BossKeyReset(const MapEntity& preset, Entity& player);
+
+// Run-time entities other classes create.
+// A dust put down by the broom after its own entity went with an old screen.
+Entity* Spawn_DustAt(fx x, fx y);
+// HealthDropper.Die: a health pickup (big: 3 hearts).
+Entity* Spawn_HealthDrop(fx x, fx y, bool big);
+// new Explosion(parent).
+Entity* Spawn_Explosion(const Entity& parent);
+
+// Enemies (ent_enemies.cpp).
+Entity* Spawn_Slime(const MapEntity& preset, Entity& player);
+Entity* Spawn_Annoyer(const MapEntity& preset, Entity& player);
+Entity* Spawn_PewLaser(const MapEntity& preset, Entity& player);
+Entity* Spawn_Shieldy(const MapEntity& preset, Entity& player);
+Entity* Spawn_Dog(const MapEntity& preset, Entity& player);
+Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
+// Shieldy.ReceiveDamage (a laser hit).
+void Shieldy_ReceiveDamage(Entity& shieldy, int damage);
+
+// NPCs and decorations (ent_npcs.cpp).
+Entity* Spawn_SageNexus(const MapEntity& preset, Entity& player);
+Entity* Spawn_SageOverworld(const MapEntity& preset, Entity& player);
+Entity* Spawn_SageBedroom(const MapEntity& preset, Entity& player);
+Entity* Spawn_Rock(const MapEntity& preset, Entity& player);
+Entity* Spawn_Statue(const MapEntity& preset, Entity& player);
+Entity* Spawn_Sadbro(const MapEntity& preset, Entity& player);
+Entity* Spawn_DungeonStatue(const MapEntity& preset, Entity& player);
+Entity* Spawn_EyeLight(const MapEntity& preset, Entity& player);
+Entity* Spawn_BedroomBounceLight(const MapEntity& preset, Entity& player);
+Entity* Spawn_Seer(const MapEntity& preset, Entity& player);
+Entity* Spawn_FollowerBro(const MapEntity& preset, Entity& player);
+Entity* Spawn_HealthCicada(const MapEntity& preset, Entity& player);
+Entity* Spawn_BigKey(const MapEntity& preset, Entity& player);
+Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);

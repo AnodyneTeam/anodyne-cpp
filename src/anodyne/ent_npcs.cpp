@@ -1,0 +1,1148 @@
+// NPCs and decorations met before the first boss (AnodyneSharp Entities/Interactive, Decorations, Enemy/Etc).
+#include "entity_classes.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "dialog.h"
+#include "player.h"
+
+namespace
+{
+bool IsPlayer(const Entity& e)
+{
+    return &e == World_Player();
+}
+
+fx DistanceToPlayer(const Entity& e)
+{
+    const Entity& p = *World_Player();
+    return FxLength(p.mT->mX - e.mT->mX, p.mT->mY - e.mT->mY);
+}
+
+void SeparateFromPlayer(Entity& self, Entity& other)
+{
+    Ecs_Separate(other, self);
+}
+
+// The C#'s _flip on the "_l" anims (left reuses the right frames).
+void FlipForLeft(Entity& e)
+{
+    const char* name = Ecs_AnimName(e);
+    const size_t n = strlen(name);
+    e.mV->mHFlip = n > 0 && name[n - 1] == 'l';
+}
+
+// MathUtilities.IntToString.
+const char* NumberWord(int n)
+{
+    static const char* const kWords[] = { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+                                          "nine", "ten" };
+    return (n >= 0 && n <= 10) ? kWords[n] : "one";
+}
+
+// ---- Sage (Sage.cs): walks up to the player once, talks; talks again when spoken to ------------------------------
+enum SageKind : uint8_t
+{
+    SAGE_NEXUS,
+    SAGE_OVERWORLD,
+    SAGE_BEDROOM,
+};
+
+struct SageData final
+{
+    uint8_t mKind;
+    uint8_t mStep; // the cutscene's
+    bool mFacePlayer;
+    fx mInitDistance;
+    fx mStopDistance;
+    const char* mScene;
+};
+
+const char* SageNexusScene()
+{
+    // (Skipped: "all_card_first", once every normal card of a map is in.)
+    if (Event_Get("WindmillOpened") != 0)
+    {
+        return "after_windmill";
+    }
+    if (Game_BossDefeated("REDCAVE") && Game_BossDefeated("CROWD"))
+    {
+        return "before_windmill";
+    }
+    if (Game_BossDefeated("BEDROOM"))
+    {
+        return "after_bed";
+    }
+    if (Game_Visited("STREET"))
+    {
+        return "after_ent_str";
+    }
+    return "enter_nexus";
+}
+
+// Sage.StateLogic (+ SageOverworld's broom lesson).
+bool SageCutscene(Entity& self)
+{
+    SageData& d = self.Data<SageData>();
+    const Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case 0:
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(20));
+        d.mStep++;
+        return false;
+    case 1:
+        if (DistanceToPlayer(self) > d.mStopDistance)
+        {
+            return false;
+        }
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Game_ShowDialogue("sage", d.mScene);
+        d.mStep++;
+        return d.mKind != SAGE_OVERWORLD;
+    case 2:
+        // SageOverworld: swing the broom (the player may act, not move)...
+        Player_SetActionsDisabled(false);
+        if (Player_BroomOut())
+        {
+            d.mStep++;
+        }
+        return false;
+    case 3:
+        if (Player_BroomOut())
+        {
+            return false;
+        }
+        Game_ShowDialogue("sage", "bedroom_entrance");
+        d.mStep++;
+        return true;
+    default:
+        return true;
+    }
+}
+
+void SageUpdate(Entity& self)
+{
+    SageData& d = self.Data<SageData>();
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    if (d.mFacePlayer)
+    {
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    }
+    else if (t.mVelX != 0 || t.mVelY != 0)
+    {
+        Ecs_FaceTowards(self, t.mX + t.mVelX, t.mY + t.mVelY);
+    }
+    Ecs_PlayFacing(self, (t.mVelX == 0 && t.mVelY == 0) ? "idle" : "walk");
+    FlipForLeft(self);
+
+    if (!Preset_Activated(*self.mPreset) && !World_InTransition() && Player_State() == PS_GROUND &&
+        DistanceToPlayer(self) < d.mInitDistance)
+    {
+        Preset_SetActivated(*self.mPreset, true);
+        d.mStep = 0;
+        Game_StartCutscene(self, SageCutscene);
+    }
+}
+
+bool SageInteract(Entity& self, Facing)
+{
+    SageData& d = self.Data<SageData>();
+    Game_ShowDialogue("sage", d.mKind == SAGE_NEXUS ? SageNexusScene() : d.mScene);
+    return true;
+}
+
+void SageCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kSage = {
+    "Sage", SageUpdate, nullptr, SageCollided, SageInteract, nullptr, nullptr, nullptr,
+    0,      GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+Entity* SpawnSage(const MapEntity& preset, uint8_t kind, int init, int stop, const char* scene)
+{
+    Entity* e = Spawn_Basic(kSage, preset, "sage");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 10;
+    e->mV->mOffX = e->mV->mOffY = Fx(3);
+    e->mT->mX += Fx(3);
+    e->mT->mY += Fx(3);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mB->mImmovable = true;
+    SageData& d = e->Data<SageData>();
+    d.mKind = kind;
+    d.mFacePlayer = true;
+    d.mInitDistance = Fx(init);
+    d.mStopDistance = Fx(stop);
+    d.mScene = scene;
+    Ecs_Play(*e, "idle_d");
+    return e;
+}
+
+// ---- Rock / Statue / Sadbro / DungeonStatue -----------------------------------------------------------------------
+bool RockInteract(Entity& self, Facing)
+{
+    const char* text = Dialog_Get("rock", NumberWord(self.mPreset->mFrame + 1));
+    if (Event_Get("RockTalk") == 0)
+    {
+        // The first rock also explains what rocks are.
+        static char sJoined[512];
+        char rock[384];
+        snprintf(rock, sizeof(rock), "%s", text ? text : "");
+        const char* intro = Dialog_GetFor("misc", "any", "rock", 0);
+        snprintf(sJoined, sizeof(sJoined), "%s^\n%s", intro ? intro : "", rock);
+        Event_Inc("RockTalk");
+        Game_ShowText(sJoined);
+    }
+    else if (text)
+    {
+        Game_ShowText(text);
+    }
+    return true;
+}
+
+const EntityClass kRock = {
+    "Rock", nullptr, nullptr, SeparateFromPlayer, RockInteract, nullptr, nullptr, nullptr,
+    0,      GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+bool StatueInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("statue", "one");
+    return true;
+}
+
+const EntityClass kStatue = {
+    "Statue", nullptr, nullptr, SeparateFromPlayer, StatueInteract, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+bool SadbroInteract(Entity& self, Facing)
+{
+    const char* scene = "initial_forced";
+    if (Preset_Activated(*self.mPreset))
+    {
+        if (Game_BossDefeated("BEDROOM"))
+        {
+            scene = "bedroom_done";
+        }
+        else if (Game_Visited("BEDROOM"))
+        {
+            scene = "bedroom_not_done";
+        }
+    }
+    Game_ShowDialogue("sadbro", scene);
+    Preset_SetActivated(*self.mPreset, true);
+    return true;
+}
+
+const EntityClass kSadbro = {
+    "Sadbro", nullptr, nullptr, SeparateFromPlayer, SadbroInteract, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+bool DungeonStatueInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("dungeon_statue", Event_Get("WindmillOpened") != 0 ? "two" : "one");
+    return true;
+}
+
+void DungeonStatueCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kDungeonStatue = {
+    "DungeonStatue", nullptr, nullptr, DungeonStatueCollided, DungeonStatueInteract, nullptr, nullptr, nullptr,
+    0,               0,       ECF_PART_OF_MAP | ECF_INTERACTABLE,
+};
+
+// ---- Eye_Light (Eye_Light.cs) -------------------------------------------------------------------------------------
+const EntityClass kEyeLight = {
+    "EyeLight", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kGlowLight = {
+    "GlowLight", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- BedRoomBounceLight (Lights/Light.cs) ------------------------------------------------------------------------
+// The Bedroom's light: bounces round the screen, then after 2 s locks on to the player once it touches them.
+struct BounceLightData final
+{
+    fx mLockOnTimer;
+    bool mLockedOn;
+};
+
+void BounceLightUpdate(Entity& self)
+{
+    BounceLightData& d = self.Data<BounceLightData>();
+    Transform& t = *self.mT;
+    if (d.mLockedOn)
+    {
+        const Entity& p = *World_Player();
+        MoveTo(t.mX, p.mT->mX, Fx(30));
+        MoveTo(t.mY, p.mT->mY, Fx(30));
+    }
+    else
+    {
+        if (self.mB->mTouching & (TOUCH_LEFT | TOUCH_RIGHT))
+        {
+            t.mVelX = -t.mVelX;
+        }
+        if (self.mB->mTouching & (TOUCH_UP | TOUCH_DOWN))
+        {
+            t.mVelY = -t.mVelY;
+        }
+        t.mVelX += Rng_Unit() * 2 - kFxOne;
+        t.mVelY += Rng_Unit() * 2 - kFxOne;
+        d.mLockOnTimer -= kFxOne;
+    }
+    Ecs_BaseUpdate(self);
+}
+
+void BounceLightCollided(Entity& self, Entity&)
+{
+    BounceLightData& d = self.Data<BounceLightData>();
+    if (d.mLockOnTimer < 0)
+    {
+        d.mLockedOn = true;
+    }
+}
+
+const EntityClass kBounceLight = {
+    "BedRoomBounceLight", BounceLightUpdate, nullptr, BounceLightCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                    GROUP_PLAYER,      ECF_KEEP_ON_SCREEN,
+};
+
+// ---- FollowerBro (FollowerBro.cs) ---------------------------------------------------------------------------------
+enum BroState : uint8_t
+{
+    BRO_HIDDEN,
+    BRO_APPEARING,
+    BRO_WALK,
+    BRO_WAIT,
+    BRO_DISAPPEARING,
+};
+
+struct BroData final
+{
+    uint8_t mState;
+    bool mTouched;
+};
+
+void BroUpdate(Entity& self)
+{
+    BroData& d = self.Data<BroData>();
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    switch (d.mState)
+    {
+    case BRO_HIDDEN:
+        if (p.mT->mY - t.mY < -Fx(20))
+        {
+            d.mState = BRO_APPEARING;
+            Player_SetDontMove(true);
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        break;
+    case BRO_APPEARING:
+        v.mOpacity += FxF(0.6f) / kFps;
+        if (v.mOpacity > FxF(0.96f))
+        {
+            d.mState = BRO_WALK;
+            Player_SetDontMove(false);
+            Ecs_Play(self, "walk");
+        }
+        break;
+    case BRO_WALK:
+        t.mVelX = p.mT->mX > t.mX ? Fx(10) : -Fx(10);
+        t.mVelY = -Fx(10);
+        if (d.mTouched)
+        {
+            d.mState = BRO_DISAPPEARING;
+        }
+        else if (p.mT->mY >= t.mY)
+        {
+            d.mState = BRO_WAIT;
+        }
+        break;
+    case BRO_WAIT:
+        if (p.mT->mY < t.mY)
+        {
+            d.mState = BRO_WALK;
+        }
+        break;
+    default:
+        v.mOpacity -= FxF(0.6f) / kFps;
+        if (v.mOpacity <= 0)
+        {
+            self.mExists = false;
+        }
+        break;
+    }
+    d.mTouched = false;
+    Ecs_BaseUpdate(self);
+}
+
+void BroCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        self.Data<BroData>().mTouched = true;
+    }
+}
+
+const EntityClass kFollowerBro = {
+    "FollowerBro", BroUpdate, nullptr, BroCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- HealthCicada (HealthCicada.cs + HealthCicadaSentinel.cs) ---------------------------------------------------
+enum CicadaStep : uint8_t
+{
+    CICADA_WAIT_FOR_BOSS,
+    CICADA_FLY_TO_START,
+    CICADA_WAIT_FOR_PLAYER,
+    CICADA_FLY_AWAY,
+    CICADA_HEAL,
+    CICADA_GNAW,
+    CICADA_FADE,
+};
+
+struct CicadaData final
+{
+    uint8_t mStep;
+    uint8_t mGnaws;
+    bool mPlayerCollided;
+    bool mActivated;
+    fx mTimer;
+    fx mHomeX; // the sentinel's (the preset's) position
+    fx mHomeY;
+};
+
+bool CicadaHealStep(Entity& self)
+{
+    // The cutscene only waits for the preset to die (HealthCicada's own states run in its Update).
+    return !Preset_Alive(*self.mPreset);
+}
+
+void CicadaUpdate(Entity& self)
+{
+    CicadaData& d = self.Data<CicadaData>();
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    const Entity& p = *World_Player();
+    Ecs_BaseUpdate(self);
+    switch (d.mStep)
+    {
+    case CICADA_WAIT_FOR_BOSS:
+        if (Game_IsDungeon() && !Game_BossDefeated(gGame.mMapName))
+        {
+            break;
+        }
+        v.mVisible = true;
+        Ecs_Play(self, "fly");
+        d.mStep = CICADA_FLY_TO_START;
+        break;
+    case CICADA_FLY_TO_START:
+    {
+        Game_PlaySfx("cicada_chirp");
+        const bool x = MoveTo(t.mX, d.mHomeX, Fx(30));
+        const bool y = MoveTo(t.mY, d.mHomeY, Fx(30));
+        if (x && y)
+        {
+            d.mActivated = true;
+            Ecs_Play(self, "idle");
+            d.mStep = CICADA_WAIT_FOR_PLAYER;
+        }
+        break;
+    }
+    case CICADA_WAIT_FOR_PLAYER:
+        Game_PlaySfx("cicada_chirp");
+        if (d.mActivated && FxLength(p.mT->mX - d.mHomeX, p.mT->mY - d.mHomeY) > Fx(80))
+        {
+            // HealthCicadaSentinel: the player walked away, it flies off (until the screen comes back).
+            Ecs_Play(self, "fly");
+            t.mVelY = -Fx(100);
+            d.mStep = CICADA_FLY_AWAY;
+        }
+        else if (d.mPlayerCollided)
+        {
+            v.mLayer = LAYER_UI;
+            Ecs_Play(self, "fly");
+            d.mTimer = 0;
+            d.mStep = CICADA_HEAL;
+            Game_StartCutscene(self, CicadaHealStep);
+        }
+        break;
+    case CICADA_FLY_AWAY:
+        if (MoveTo(v.mOpacity, 0, FxF(1.2f)))
+        {
+            self.mExists = false;
+        }
+        break;
+    case CICADA_HEAL:
+        Game_PlaySfx("cicada_chirp");
+        if (gGame.mCurHealth < gGame.mMaxHealth)
+        {
+            d.mTimer += kFxOne;
+            if (d.mTimer > FxSec(0.5f))
+            {
+                d.mTimer = 0;
+                Game_PlaySfx("get_small_health");
+                GameState_SetHealth(gGame.mCurHealth + 1);
+            }
+            break;
+        }
+        // (The C# flies it to the health bar before it gnaws.)
+        Ecs_Play(self, "gnaw");
+        d.mTimer = FxSec(2.0f);
+        d.mGnaws = 0;
+        d.mStep = CICADA_GNAW;
+        break;
+    case CICADA_GNAW:
+        d.mTimer += kFxOne;
+        if (d.mTimer > FxSec(1.7f))
+        {
+            d.mTimer = 0;
+            d.mGnaws++;
+            Game_PlaySfx("4sht_pop");
+        }
+        if (d.mGnaws >= 3)
+        {
+            GameState_SetMaxHealth(gGame.mMaxHealth + 1);
+            GameState_SetHealth(gGame.mCurHealth + 1);
+            Ecs_Play(self, "fly");
+            t.mVelY = -Fx(40);
+            d.mStep = CICADA_FADE;
+        }
+        break;
+    default:
+        if (MoveTo(v.mOpacity, 0, FxF(0.6f)))
+        {
+            Preset_SetAlive(*self.mPreset, false);
+            self.mExists = false;
+        }
+        break;
+    }
+    d.mPlayerCollided = false;
+}
+
+void CicadaCollided(Entity& self, Entity&)
+{
+    CicadaData& d = self.Data<CicadaData>();
+    if (d.mActivated && Player_State() == PS_GROUND)
+    {
+        d.mPlayerCollided = true;
+        d.mActivated = false;
+    }
+}
+
+const EntityClass kCicada = {
+    "HealthCicada", CicadaUpdate, nullptr, CicadaCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- Big_Key (Big_Key.cs) -----------------------------------------------------------------------------------------
+struct BigKeyData final
+{
+    uint8_t mStep;
+    fx mRadius;
+    fx mAngle;
+    fx mSparkleTimer;
+    fx mSparkleMax;
+};
+
+void SparkleUpdate(Entity& self)
+{
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+    Ecs_BaseUpdate(self);
+}
+
+const EntityClass kSparkle = {
+    "KeySparkle", SparkleUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void BigKeyUpdate(Entity& self)
+{
+    BigKeyData& d = self.Data<BigKeyData>();
+    Ecs_BaseUpdate(self);
+    d.mSparkleTimer += kFxOne;
+    if (d.mSparkleTimer > d.mSparkleMax)
+    {
+        d.mSparkleTimer = 0;
+        if (Ecs_CountChildren(self, kSparkle) < 3)
+        {
+            Entity* s = Ecs_Create(kSparkle, self.mT->mX - Fx(2), self.mT->mY - Fx(3) - self.mV->mOffY, PART_VISUAL,
+                                   nullptr, &self);
+            if (s)
+            {
+                Ecs_SetSolid(*s, false);
+                Ecs_SetSheet(*s, "key_sparkle");
+                s->mV->mLayer = LAYER_FG_SPRITES;
+                s->mT->mX += FxMul(Fx(self.mB->mW + 4), Rng_Unit());
+                s->mT->mY += FxMul(Fx(self.mB->mH + 6), Rng_Unit());
+                Ecs_Play(*s, "sparkle");
+                if (!Ecs_Solid(self))
+                {
+                    const fx faster = d.mSparkleMax - FxSec(0.06f);
+                    d.mSparkleMax = faster > FxSec(0.15f) ? faster : FxSec(0.15f);
+                    s->mT->mVelY = Fx(20);
+                    static const char* const kSfx[5] = { "sparkle_1", "sparkle_1", "sparkle_2", "sparkle_2",
+                                                         "sparkle_3" };
+                    Game_PlaySfx(kSfx[Rng_Range(0, 5)]);
+                }
+            }
+        }
+    }
+}
+
+// MathUtilities.RotateAround: the key circles the player's centre.
+void BigKeyOrbit(Entity& self, fx angularSpeed)
+{
+    BigKeyData& d = self.Data<BigKeyData>();
+    const Entity& p = *World_Player();
+    d.mAngle += angularSpeed / kFps;
+    self.mT->mX = Ecs_CenterX(p) + FxMul(FxCos(d.mAngle), d.mRadius);
+    self.mT->mY = Ecs_CenterY(p) + FxMul(FxSin(d.mAngle), d.mRadius);
+}
+
+bool BigKeyCutscene(Entity& self)
+{
+    BigKeyData& d = self.Data<BigKeyData>();
+    Visual& v = *self.mV;
+    switch (d.mStep)
+    {
+    case 0:
+    {
+        const bool a = MoveTo(v.mOffY, Fx(16), Fx(18));
+        const bool b = MoveTo(d.mRadius, Fx(40), Fx(12));
+        BigKeyOrbit(self, FxF(3.6f));
+        d.mStep += (a && b) ? 1 : 0;
+        return false;
+    }
+    case 1:
+    {
+        const bool a = MoveTo(v.mOffY, Fx(64), Fx(18));
+        const bool b = MoveTo(d.mRadius, Fx(2), FxF(8.4f));
+        BigKeyOrbit(self, FxF(6.2f));
+        d.mStep += (a && b) ? 1 : 0;
+        return false;
+    }
+    case 2:
+        d.mStep += MoveTo(v.mOffY, Fx(70), Fx(3)) ? 1 : 0;
+        return false;
+    case 3:
+        d.mStep += MoveTo(v.mOffY, Fx(16), Fx(132)) ? 1 : 0;
+        return false;
+    default:
+        // (The C# flashes the screen white and shakes it here.)
+        Game_PlaySfx("sun_guy_death_long");
+        self.mExists = false;
+        return true;
+    }
+}
+
+bool BigKeyInteract(Entity& self, Facing)
+{
+    BigKeyData& d = self.Data<BigKeyData>();
+    Preset_SetAlive(*self.mPreset, false);
+    Ecs_SetSolid(self, false);
+    gGame.mBigKeyStatus[(Ecs_Frame(self) / 2) % 3] = true;
+    const Entity& p = *World_Player();
+    d.mRadius = FxLength(self.mT->mX - Ecs_CenterX(p), self.mT->mY - Ecs_CenterY(p));
+    d.mAngle = self.mT->mY < Ecs_CenterY(p) ? -kFxPi / 2 : kFxPi / 2;
+    d.mStep = 0;
+    Game_StartCutscene(self, BigKeyCutscene);
+    return true;
+}
+
+void BigKeyCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kBigKey = {
+    "BigKey", BigKeyUpdate, nullptr, BigKeyCollided, BigKeyInteract, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+// ---- MitraOverworld (Mitra.cs) ------------------------------------------------------------------------------------
+enum MitraStep : uint8_t
+{
+    MITRA_INITIAL_WAIT,
+    MITRA_ENTRANCE,
+    MITRA_SECOND_WAIT,
+    MITRA_EXIT,
+};
+
+struct MitraData final
+{
+    uint8_t mState;
+    uint8_t mStep; // within the entrance / exit cutscenes
+    bool mFacePlayer;
+    bool mOnBike;
+    Entity* mBike;
+};
+
+void MitraOnBike(Entity& self, bool on)
+{
+    MitraData& d = self.Data<MitraData>();
+    d.mOnBike = on;
+    if (on)
+    {
+        Ecs_SetSheet(self, "mitra_bike", 20, 20);
+        self.mB->mW = self.mB->mH = 10;
+        self.mV->mOffX = self.mV->mOffY = Fx(5);
+    }
+    else
+    {
+        Ecs_SetSheet(self, "mitra", 16, 16);
+        self.mB->mW = self.mB->mH = 16;
+        self.mV->mOffX = self.mV->mOffY = 0;
+    }
+}
+
+void MitraFacePlayerPose(Entity& self)
+{
+    Transform& t = *self.mT;
+    const Entity& p = *World_Player();
+    if (t.mVelX == 0 && t.mVelY == 0)
+    {
+        if (self.Data<MitraData>().mFacePlayer)
+        {
+            Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        }
+        Ecs_PlayFacing(self, "idle");
+    }
+    else
+    {
+        Ecs_FaceTowards(self, t.mX + t.mVelX, t.mY + t.mVelY);
+        Ecs_PlayFacing(self, "walk");
+    }
+    FlipForLeft(self);
+}
+
+bool MitraEntrance(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    Transform& t = *self.mT;
+    Entity& p = *World_Player();
+    const fx left = Fx(gGame.mGridX * 160);
+    switch (d.mStep)
+    {
+    case 0:
+        t.mX -= Fx(20);
+        Preset_SetAlive(*self.mPreset, false);
+        Game_ShowDialogue("mitra", "initial_overworld");
+        d.mStep++;
+        return false;
+    case 1:
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(80));
+        self.mV->mVisible = true;
+        d.mStep++;
+        return false;
+    case 2:
+        // a quarter into the screen and near the player
+        if (t.mX - left < Fx(40) || p.mT->mX - t.mX > Fx(24))
+        {
+            return false;
+        }
+        t.mVelX = 0;
+        t.mVelY = Fx(80);
+        d.mStep++;
+        return false;
+    case 3:
+        if (t.mY - p.mT->mY < Fx(24))
+        {
+            return false;
+        }
+        t.mVelX = Fx(80);
+        t.mVelY = 0;
+        self.mB->mImmovable = false;
+        d.mStep++;
+        return false;
+    case 4:
+        if (self.mB->mWasTouching == TOUCH_NONE)
+        {
+            return false;
+        }
+        t.mVelX = t.mVelY = 0;
+        self.mB->mImmovable = true;
+        Game_PlaySfx("sun_guy_death_short");
+        MitraOnBike(self, false);
+        if (d.mBike)
+        {
+            d.mBike->mExists = true;
+            d.mBike->mT->mX = t.mX - Fx(4);
+            d.mBike->mT->mY = t.mY;
+        }
+        t.mVelX = -Fx(20);
+        d.mStep++;
+        return false;
+    case 5:
+        if (t.mX > p.mT->mX + Fx(3))
+        {
+            Ecs_FaceTowards(p, t.mX, t.mY);
+            return false;
+        }
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(20));
+        d.mStep++;
+        return false;
+    case 6:
+        if (t.mY > p.mT->mY + Fx(26))
+        {
+            Ecs_FaceTowards(p, t.mX, t.mY);
+            return false;
+        }
+        t.mVelX = t.mVelY = 0;
+        Game_ShowDialogue("mitra", "initial_overworld");
+        d.mState = MITRA_SECOND_WAIT;
+        return true;
+    default:
+        return true;
+    }
+}
+
+bool MitraExit(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case 0:
+        Game_ShowDialogue("mitra", "initial_overworld", 3);
+        d.mStep++;
+        return false;
+    case 1:
+        t.mVelX = Fx(20);
+        t.mVelY = 0;
+        d.mStep++;
+        return false;
+    case 2:
+        if (d.mBike && FxLength(t.mX - d.mBike->mT->mX, t.mY - d.mBike->mT->mY) > Fx(8))
+        {
+            return false;
+        }
+        MitraOnBike(self, true);
+        if (d.mBike)
+        {
+            d.mBike->mExists = false;
+        }
+        t.mVelX = 0;
+        t.mVelY = Fx(50);
+        d.mStep++;
+        return false;
+    case 3:
+        if (t.mY - Fx(gGame.mGridY * 160) < Fx(190))
+        {
+            return false;
+        }
+        self.mExists = false;
+        return true;
+    default:
+        return true;
+    }
+}
+
+void MitraUpdate(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    const Entity& p = *World_Player();
+    if (d.mState == MITRA_INITIAL_WAIT)
+    {
+        const fx dy = self.mT->mY - p.mT->mY;
+        if ((dy < 0 ? -dy : dy) < Fx(48))
+        {
+            d.mState = MITRA_ENTRANCE;
+            d.mStep = 0;
+            Game_StartCutscene(self, MitraEntrance);
+        }
+    }
+    else if (d.mState == MITRA_SECOND_WAIT && DistanceToPlayer(self) > Fx(48))
+    {
+        d.mState = MITRA_EXIT;
+        d.mStep = 0;
+        Game_StartCutscene(self, MitraExit);
+    }
+    Ecs_BaseUpdate(self);
+    MitraFacePlayerPose(self);
+}
+
+bool MitraInteract(Entity& self, Facing)
+{
+    MitraData& d = self.Data<MitraData>();
+    if (Event_Get("mitra.wares") == 0)
+    {
+        Event_Inc("mitra.wares");
+        Game_ShowDialogue("mitra", "initial_overworld");
+        return true;
+    }
+    if (d.mState != MITRA_EXIT)
+    {
+        d.mState = MITRA_EXIT;
+        d.mStep = 0;
+        Game_StartCutscene(self, MitraExit);
+    }
+    return false;
+}
+
+void MitraCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+void MitraDestroy(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    if (d.mBike)
+    {
+        Ecs_Free(*d.mBike);
+        d.mBike = nullptr;
+    }
+}
+
+const EntityClass kMitra = {
+    "Mitra",      MitraUpdate, nullptr, MitraCollided, MitraInteract, nullptr, nullptr, MitraDestroy,
+    0,            GROUP_PLAYER, ECF_MAP_COLLISION | ECF_INTERACTABLE,
+};
+
+void BikeCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kBike = {
+    "Bike", nullptr, nullptr, BikeCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+} // namespace
+
+Entity* Spawn_SageNexus(const MapEntity& preset, Entity&)
+{
+    if (Event_Get("SageDied") > 0)
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    return SpawnSage(preset, SAGE_NEXUS, 64, 20, "enter_nexus");
+}
+
+Entity* Spawn_SageOverworld(const MapEntity& preset, Entity&)
+{
+    if (Game_BossDefeated("BEDROOM"))
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    return SpawnSage(preset, SAGE_OVERWORLD, 56, 28, "bedroom_entrance");
+}
+
+Entity* Spawn_SageBedroom(const MapEntity& preset, Entity&)
+{
+    if (Game_LeftAfterBoss(gGame.mMapName))
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    return SpawnSage(preset, SAGE_BEDROOM, 48, 24, "after_boss");
+}
+
+Entity* Spawn_Rock(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRock, preset, "note_rock");
+    if (e)
+    {
+        e->mB->mImmovable = true;
+        Ecs_SetFrame(*e, 0);
+    }
+    return e;
+}
+
+Entity* Spawn_Statue(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kStatue, preset, "sage_statue");
+    if (e)
+    {
+        e->mB->mImmovable = true;
+        Ecs_SetFrame(*e, 0);
+    }
+    return e;
+}
+
+Entity* Spawn_Sadbro(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSadbro, preset, "sadman");
+    if (e)
+    {
+        e->mB->mImmovable = true;
+        Ecs_Play(*e, "a");
+    }
+    return e;
+}
+
+Entity* Spawn_DungeonStatue(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kDungeonStatue, preset, "big_statue", 32, 48);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    e->mB->mW = 30;
+    e->mB->mH = 16;
+    e->mV->mOffX = Fx(1);
+    e->mV->mOffY = Fx(32);
+    e->mT->mX += Fx(1);
+    e->mT->mY += Fx(32);
+    if (Event_Get("WindmillOpened") != 0)
+    {
+        // DungeonStatue.MoveDir: up for frame 0, else right.
+        if (preset.mFrame == 0)
+        {
+            e->mT->mY -= Fx(32);
+        }
+        else
+        {
+            e->mT->mX += Fx(32);
+        }
+    }
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    Ecs_SetFrame(*e, preset.mFrame);
+    return e;
+}
+
+Entity* Spawn_EyeLight(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kEyeLight, preset, "eyelight", 16, 16, PART_VISUAL);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetSolid(*e, false);
+    Ecs_Play(*e, "glow");
+    const bool bright = strcmp(Preset_TypeValue(preset), "bright") == 0;
+    Entity* light = Ecs_Create(kGlowLight, e->mT->mX + Fx(8), e->mT->mY + Fx(6), PART_VISUAL, nullptr, e);
+    if (light)
+    {
+        Darkness_MakeLight(*light, bright ? "5-frame-glow-bright" : "5-frame-glow");
+        Ecs_Play(*light, "glow");
+    }
+    return e;
+}
+
+Entity* Spawn_BedroomBounceLight(const MapEntity& preset, Entity& player)
+{
+    if (Game_BossDefeated("BEDROOM") && strcmp(gGame.mMapName, "BEDROOM") == 0)
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    Entity* e = Ecs_Create(kBounceLight, player.mT->mX, player.mT->mY, PART_VISUAL | PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Darkness_MakeLight(*e, "glow-light");
+    e->mV->mScale = Fx(2);
+    e->mB->mW = e->mB->mH = 32;
+    Darkness_SetPlayerLight(*e);
+    const int velDecider = Rng_Range(0, 4);
+    e->mT->mVelX = velDecider % 2 == 0 ? -Fx(30) : Fx(30);
+    e->mT->mVelY = velDecider / 2 == 0 ? -Fx(30) : Fx(30);
+    e->Data<BounceLightData>().mLockOnTimer = FxSec(2.0f);
+    return e;
+}
+
+Entity* Spawn_FollowerBro(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFollowerBro, preset, "follower_bro", 16, 24);
+    if (e)
+    {
+        e->mV->mOpacity = 0;
+        Ecs_Play(*e, "wait");
+    }
+    return e;
+}
+
+Entity* Spawn_HealthCicada(const MapEntity& preset, Entity&)
+{
+    // The sentinel's hitbox at the preset; the cicada flies in from the screen's left edge (UI -16, 30 in the C#,
+    // drawn at the room's top-left minus the 20 px header).
+    const fx sx = Fx(gGame.mGridX * 160 - 16);
+    const fx sy = Fx(gGame.mGridY * 160 + 10);
+    Entity* e = Ecs_Create(kCicada, sx, sy, PART_VISUAL | PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 16;
+    Ecs_SetSolid(*e, false);
+    Ecs_SetSheet(*e, "life_cicada");
+    Ecs_SetFrameBase(*e, preset.mFrame);
+    e->mV->mLayer = LAYER_FG_SPRITES;
+    e->mV->mVisible = false;
+    CicadaData& d = e->Data<CicadaData>();
+    d.mHomeX = Fx(preset.mX);
+    d.mHomeY = Fx(preset.mY);
+    return e;
+}
+
+Entity* Spawn_BigKey(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBigKey, preset, "key_green");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    e->mB->mW = 9;
+    e->mV->mOffX = Fx(4);
+    e->mT->mX += Fx(4);
+    e->mT->mLastX = e->mT->mX;
+    Ecs_SetFrame(*e, preset.mFrame);
+    e->Data<BigKeyData>().mSparkleMax = FxSec(0.8f);
+    return e;
+}
+
+Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kMitra, preset, "mitra");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    e->mV->mVisible = false;
+    MitraData& d = e->Data<MitraData>();
+    d.mFacePlayer = true;
+    MitraOnBike(*e, true);
+    d.mBike = Ecs_Create(kBike, e->mT->mX, e->mT->mY, PART_VISUAL, &preset, e);
+    if (d.mBike)
+    {
+        Entity& b = *d.mBike;
+        Ecs_SetSheet(b, "bike", 20, 20);
+        b.mB->mW = 16;
+        b.mB->mH = 10;
+        b.mV->mOffX = Fx(2);
+        b.mV->mOffY = Fx(11);
+        b.mB->mImmovable = true;
+        Ecs_Play(b, "r");
+        b.mExists = false;
+    }
+    Ecs_PlayFacing(*e, "idle");
+    return e;
+}

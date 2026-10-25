@@ -77,6 +77,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "big_door", 32, 32, {
     } },
     { "big_health_pickup", 16, 16, {
+        { "float", { 0, 1, 2, 3 }, 5.0f, true },  // variant-relative
     } },
     { "big_statue", 32, 48, {
     } },
@@ -157,6 +158,8 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     } },
     { "briar_thorn_bullet", 16, 16, {
         { "move", { 0, 1 }, 10.0f, true },
+    } },
+    { "broom_reflection", 16, 16, {
     } },
     { "broom", 16, 16, {
         { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
@@ -436,6 +439,9 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "walk_l", { 6, 7 }, 4.0f, true },  // variant-relative
     } },
     { "health_piece", 11, 6, {
+        { "full", { 0 }, 1.0f, true },
+        { "empty", { 1 }, 1.0f, true },
+        { "flash", { 0, 2 }, 7.0f, true },
     } },
     { "hole", 16, 16, {
     } },
@@ -530,6 +536,15 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "bike_r", { 2, 3 }, 8.0f, true },
         { "bike_l", { 2, 3 }, 8.0f, true },
         { "idle", { 22 }, 1.0f, true },
+        // Mitra.OnBike swaps the texture under the walking sprite's anims (Mitra.GetSprite).
+        { "walk_d", { 0, 1 }, 8.0f, true },
+        { "walk_l", { 2, 3 }, 8.0f, true },
+        { "walk_r", { 2, 3 }, 8.0f, true },
+        { "walk_u", { 4, 5 }, 8.0f, true },
+        { "idle_d", { 6 }, 8.0f, true },
+        { "idle_l", { 7 }, 8.0f, true },
+        { "idle_r", { 7 }, 8.0f, true },
+        { "idle_u", { 8 }, 8.0f, true },
     } },
     { "moving_platform", 16, 16, {
         { "unpressed-inactive", { 0 }, 1.0f, true },  // variant-relative
@@ -728,6 +743,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "splash", { 0 }, 1.0f, true },  // variant-relative
     } },
     { "small_health_pickup", 10, 16, {
+        { "float", { 0, 1, 2, 3 }, 5.0f, true },  // variant-relative
     } },
     { "smoke_red", 32, 32, {
     } },

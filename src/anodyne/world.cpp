@@ -10,6 +10,7 @@
 #include "audio_manager.h"
 #include "ecs.h"
 #include "game_state.h"
+#include "screen_fx.hpp"
 #include "tonc.h"
 
 namespace
@@ -188,6 +189,97 @@ void SetBgOffset(int hw, int x, int y)
     gBgOfsY[hw] = static_cast<int16_t>(y);
 }
 
+// ---- HealthBar (UI/Health) ---------------------------------------------------------------------------------------
+// One piece per point of max health, rows of 8 right-aligned at (155, 2) of the playfield (over it: the GBA has no
+// room for the C#'s HUD strip).
+constexpr int kMaxHealthPieces = 16;
+Entity* gHealthPieces[kMaxHealthPieces] = {};
+
+const EntityClass kHealthPieceClass = {
+    "HealthBarPiece", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void CreateHealthBar()
+{
+    for (int i = 0; i < kMaxHealthPieces; i++)
+    {
+        Entity* e = Ecs_Create(kHealthPieceClass, 0, 0, PART_VISUAL);
+        e->mPlayerOwned = true;
+        Ecs_SetSheet(*e, "health_piece");
+        Ecs_SetSolid(*e, false);
+        e->mV->mLayer = LAYER_UI;
+        e->mExists = false;
+        gHealthPieces[i] = e;
+    }
+}
+
+void UpdateHealthBar()
+{
+    for (int i = 0; i < kMaxHealthPieces; i++)
+    {
+        Entity& e = *gHealthPieces[i];
+        e.mExists = i < gGame.mMaxHealth;
+        if (!e.mExists)
+        {
+            continue;
+        }
+        const int x = 155 - 11 - 8 * (7 - i % 8) - 7 * (i / 8);
+        const int y = 2 + i / 8 * 7;
+        e.mT->mX = gCamX + Fx(x);
+        e.mT->mY = gCamY + Fx(y);
+        const char* anim = i < gGame.mCurHealth ? "full" : "empty";
+        if (i == 0 && gGame.mCurHealth == 1)
+        {
+            anim = "flash";
+        }
+        Ecs_Play(e, anim);
+    }
+}
+
+// ---- ScreenShake / FlashEffect ----------------------------------------------------------------------------------
+struct Shake final
+{
+    fx mTime;      // frames left
+    fx mIntensity; // fraction of the screen
+    fx mUpdate;
+    int mX;
+    int mY;
+};
+Shake gShake = {};
+
+struct Flash final
+{
+    fx mAlpha;
+    fx mStep; // per frame
+    bool mWhite;
+};
+Flash gFlash = {};
+
+void UpdateScreenEffects()
+{
+    if (gShake.mTime > 0)
+    {
+        gShake.mTime -= kFxOne;
+        gShake.mUpdate += kFxOne;
+        if (gShake.mUpdate >= FxSec(1 / 30.0f))
+        {
+            gShake.mUpdate = 0;
+            const fx px = FxMul(gShake.mIntensity, Fx(kScreenPx));
+            gShake.mX = FxTrunc(FxMul(Rng_Unit() * 2 - kFxOne, px));
+            gShake.mY = FxTrunc(FxMul(Rng_Unit() * 2 - kFxOne, px));
+        }
+    }
+    if (gShake.mTime <= 0)
+    {
+        gShake.mX = gShake.mY = 0;
+    }
+    if (gFlash.mAlpha > 0)
+    {
+        gFlash.mAlpha -= gFlash.mStep;
+        gFlash.mAlpha = gFlash.mAlpha < 0 ? 0 : gFlash.mAlpha;
+    }
+}
+
 // Screen x of world x 0 is kViewX - camera, so the BG origin is the camera minus the playfield's left margin.
 void UpdateBackground(bool force)
 {
@@ -203,7 +295,7 @@ void UpdateBackground(bool force)
     }
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        SetBgOffset(gHw[layer], vx & 255, vy & 255);
+        SetBgOffset(gHw[layer], (vx - gShake.mX) & 255, (vy - gShake.mY) & 255);
     }
 }
 
@@ -318,6 +410,10 @@ void UpdateScroll(bool advance, bool force)
     SetBgOffset(gHw[kRoleScroll], vx & 255, vy & 255);
 }
 
+bool gLightWindows = false; // the darkness's lights are on (see Darkness below)
+uint16_t gWinLayers = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
+void ApplyWindows();
+
 // Hardware BG roles for the current map, and the registers that depend on them.
 void ApplyDisplayRegs(bool windowOn)
 {
@@ -359,7 +455,8 @@ void ApplyDisplayRegs(bool windowOn)
         dispcnt |= DCNT_WIN0;
     }
     REG_DISPCNT = dispcnt;
-    REG_WININ = winin | WIN_BLD; // anodyne.cpp hides map loads behind a full darken
+    gWinLayers = winin;
+    ApplyWindows();
 }
 
 // ---- Audio ---------------------------------------------------------------------------------------------------
@@ -410,6 +507,133 @@ void UpdateMusic()
         AudioManager_StopBGM();
     }
 }
+
+// ---- Darkness (Drawing/Effects/Darkness.cs, Entities/Lights) ----------------------------------------------------
+// The C# multiplies the screen by a light map and mixes that back in by alpha. Here: the whole screen darkens by
+// alpha (BLDY), except inside the lights, which are OBJ-window shapes. The OBJ window loses to window 0, so while
+// lights are on the margins move to windows 0/1 and the playfield becomes the outside.
+struct Darkness final
+{
+    fx mAlpha;
+    fx mTarget;
+    fx mVel;
+};
+Darkness gDark = { 0, 0, FxF(0.8f) };
+const MapDarkData* gDarkData = nullptr;
+bool gDarkWritten = false; // the last frame's BLD came from the darkness
+Entity* gPlayerLight = nullptr;
+Entity* gMainLight = nullptr; // GlobalState.PlayerLight
+const EntityClass* gMainLightClass = nullptr;
+
+void ApplyWindows()
+{
+    if ((REG_DISPCNT & DCNT_WIN0) == 0)
+    {
+        return; // windows are off (the sprite gallery)
+    }
+    if (gLightWindows)
+    {
+        REG_DISPCNT = REG_DISPCNT | DCNT_WIN1 | DCNT_WINOBJ;
+        REG_WIN0H = (0 << 8) | kViewX;
+        REG_WIN1H = static_cast<uint16_t>(((kViewX + kScreenPx) << 8) | 240);
+        REG_WIN0V = REG_WIN1V = (0 << 8) | kScreenPx;
+        REG_WININ = WIN_BLD | (WIN_BLD << 8);
+        REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
+    }
+    else
+    {
+        REG_DISPCNT = REG_DISPCNT & ~(DCNT_WIN1 | DCNT_WINOBJ);
+        REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
+        REG_WIN0V = (0 << 8) | kScreenPx;
+        REG_WININ = gWinLayers | WIN_BLD; // anodyne.cpp hides map loads behind a full darken
+        REG_WINOUT = WIN_BLD;             // the side margins show the backdrop, which the darken has to cover too
+    }
+}
+
+int DarkLevel()
+{
+    const int y = FxFloor(gDark.mAlpha * 16 + kFxOne / 2);
+    return y < 0 ? 0 : (y > 16 ? 16 : y);
+}
+
+// Map.ReloadSettings: DarknessAlpha and PlayerLight for where the player is, forced on a map load and faded to on
+// a screen change.
+void UpdateDarkness(bool transition)
+{
+    fx target = 0;
+    bool playerLight = false;
+    if (gDarkData)
+    {
+        target = gDarkData->mAlpha * (kFxOne / 256);
+        playerLight = gDarkData->mPlayerLight;
+        const int px = FxTrunc(Player_Entity()->mT->mX);
+        const int py = FxTrunc(Player_Entity()->mT->mY);
+        bool alphaSet = false;
+        bool lightSet = false;
+        for (uint32_t i = 0; i < gDarkData->mAreaCount; i++)
+        {
+            const MapDarkArea& a = gDarkData->mAreas[i];
+            if (px >= a.mX && px < a.mX + a.mWidth && py >= a.mY && py < a.mY + a.mHeight)
+            {
+                if (!alphaSet && a.mAlpha >= 0)
+                {
+                    target = a.mAlpha * (kFxOne / 256);
+                    alphaSet = true;
+                }
+                if (!lightSet && a.mPlayerLight >= 0)
+                {
+                    playerLight = a.mPlayerLight != 0;
+                    lightSet = true;
+                }
+            }
+        }
+    }
+    if (transition)
+    {
+        Darkness_TargetAlpha(target);
+    }
+    else
+    {
+        Darkness_ForceAlpha(target);
+    }
+    if (gPlayerLight)
+    {
+        gPlayerLight->mExists = playerLight;
+    }
+}
+
+// PlayerLight: follows the player's centre, its scale flickering a little.
+struct PlayerLightData final
+{
+    fx mFlickerTimer;
+};
+
+void PlayerLightUpdate(Entity& self)
+{
+    PlayerLightData& d = self.Data<PlayerLightData>();
+    const Entity& p = *Player_Entity();
+    self.mT->mX = Ecs_CenterX(p);
+    self.mT->mY = Ecs_CenterY(p);
+    d.mFlickerTimer -= kFxOne;
+    if (d.mFlickerTimer < 0)
+    {
+        if (self.mV->mScale != Fx(2))
+        {
+            self.mV->mScale = Fx(2);
+            d.mFlickerTimer = FxSec(6 / 30.0f);
+        }
+        else
+        {
+            self.mV->mScale += FxMul(Rng_Unit(), FxF(0.2f));
+            d.mFlickerTimer = FxSec(0.05f);
+        }
+    }
+    Ecs_BaseUpdate(self);
+}
+
+const EntityClass kPlayerLightClass = {
+    "PlayerLight", PlayerLightUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
 
 void UpdateAmbience()
 {
@@ -633,7 +857,11 @@ bool gDoorLatch = false; // Door.player_on_door: no re-trigger until the player 
 struct PendingWarp final
 {
     bool mPending = false;
-    const MapDoor* mDoor = nullptr;
+    uint8_t mMap = 0;
+    int mX = 0;
+    int mY = 0;
+    uint8_t mFacing = 0;
+    bool mBlack = false; // the screen is already black (death): no fade out
 } gWarp;
 
 // Door.Collided: stepping onto a door (or pressing B on an interactive one) warps the player.
@@ -654,13 +882,16 @@ void CheckDoors()
             continue;
         }
         touching = true;
-        if (gDoorLatch || (d.mInteract && !key_hit(KEY_B)))
+        if (gDoorLatch || (d.mInteract && !key_hit(KEY_A)))
         {
             continue;
         }
         PlaySfx(d.mPortal || d.mInteract ? "teleport_up" : "enter_door");
         gWarp.mPending = true;
-        gWarp.mDoor = &d;
+        gWarp.mMap = d.mDestMap;
+        gWarp.mX = d.mDestX;
+        gWarp.mY = d.mDestY;
+        gWarp.mFacing = d.mFacing;
         gDoorLatch = true;
         Player_SetDontMove(true); // PlayState S_MAP_EXIT
         Player_SetActionsDisabled(true);
@@ -742,6 +973,7 @@ void CheckForTransition()
     t.mY = newY;
     Ecs_FireEvent(GEV_START_SCREEN_TRANSITION);
     UpdateMusic(); // ReloadSettings(player position) as the screen changes
+    UpdateDarkness(true);
     Player_SetGridEntrance();
     Player_SetDontMove(true);
     t.mVelX = t.mVelY = 0;
@@ -766,13 +998,241 @@ void StateTransition()
 bool gDialogOpen = false; // a DialogueState child state is running
 bool gShown = false;
 
+// CutsceneState: the entity's step function runs once a frame (while no dialogue is open) until it returns true.
+struct Cutscene final
+{
+    CutsceneFn mFn = nullptr;
+    Entity* mOwner = nullptr;
+    const EntityClass* mClass = nullptr;
+} gCutscene;
+
+// DeathState: the player's "die" dummy over a white fade, then Accept continues from the checkpoint.
+struct Death final
+{
+    bool mActive = false;
+    bool mGotControl = false;
+    bool mFadingOut = false;
+    Entity* mDummy = nullptr;
+    fx mFade = 0; // DeathFadeIn opacity, then the black overlay
+} gDeath;
+fx gDeathFallbackX = 0; // where the map was entered (dying before any checkpoint)
+fx gDeathFallbackY = 0;
+
+const EntityClass kDieDummyClass = {
+    "PlayerDieDummy", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void SetDeathBlend(bool white, fx level)
+{
+    int y = FxFloor(level * 16 + kFxOne / 2);
+    y = y < 0 ? 0 : (y > 16 ? 16 : y);
+    REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_BACKDROP | (white ? BLD_WHITE : BLD_BLACK) |
+                 (white ? 0 : BLD_OBJ);
+    REG_BLDY = static_cast<uint16_t>(y);
+}
+
+void DeathStart()
+{
+    gDeath = Death();
+    gDeath.mActive = true;
+    AudioManager_StopBGM();
+    Entity& p = *Player_Entity();
+    const fx px = p.mT->mX;
+    const fx py = p.mT->mY;
+    Player_Reset(gMapName);
+    p.mT->mX = px;
+    p.mT->mY = py;
+    p.mExists = false;
+    // UpdateEntities = false and only the dummy is drawn over the fade.
+    for (Entity* e = Ecs_First(); e; e = e->mNext)
+    {
+        if (e->mV)
+        {
+            e->mV->mVisible = false;
+        }
+    }
+    gDeath.mDummy = Ecs_Create(kDieDummyClass, px, py, PART_VISUAL);
+    if (gDeath.mDummy)
+    {
+        Entity& d = *gDeath.mDummy;
+        d.mPlayerOwned = true; // kept until the death state ends
+        Ecs_SetSheet(d, "young_player", 16, 16);
+        d.mV->mOffX = Fx(3);
+        d.mV->mOffY = Fx(4);
+        d.mV->mLayer = LAYER_UI;
+        Ecs_Play(d, "die");
+    }
+}
+
+void DeathUpdate()
+{
+    Death& d = gDeath;
+    if (d.mDummy)
+    {
+        Entity& dummy = *d.mDummy;
+        // PlayerDieDummy: towards (80, 100) of the screen (80, 80 of the playfield).
+        MoveTo(dummy.mT->mX, Fx(gGridX * kScreenPx + 80), Fx(30));
+        MoveTo(dummy.mT->mY, Fx(gGridY * kScreenPx + 80), Fx(30));
+        Ecs_BasePostUpdate(dummy);
+        if (!d.mGotControl && Ecs_AnimFinished(dummy))
+        {
+            PlaySfx("player_hit_1");
+            const int32_t song = AudioManager_FindBgm("gameover");
+            if (song >= 0)
+            {
+                AudioManager_PlayBGM(static_cast<uint32_t>(song));
+            }
+            d.mGotControl = true;
+        }
+    }
+    if (d.mFadingOut)
+    {
+        // black_overlay.ChangeAlpha(0.6f)
+        if (MoveTo(d.mFade, kFxOne, FxF(0.6f)))
+        {
+            d.mActive = false;
+            if (d.mDummy)
+            {
+                Ecs_Free(*d.mDummy);
+                d.mDummy = nullptr;
+            }
+            Player_Entity()->mExists = true;
+            int map = gGame.mCheckpointMap;
+            int x = gGame.mCheckpointX;
+            int y = gGame.mCheckpointY;
+            if (map < 0)
+            {
+                // No checkpoint yet: where the map was entered.
+                map = gGame.mCurrentMap;
+                x = FxTrunc(gDeathFallbackX);
+                y = FxTrunc(gDeathFallbackY);
+            }
+            World_RequestWarp(map, x, y, 255);
+            gWarp.mBlack = true;
+        }
+        SetDeathBlend(false, d.mFade);
+        return;
+    }
+    MoveTo(d.mFade, kFxOne, FxF(0.9f));
+    SetDeathBlend(true, d.mFade);
+    if (d.mGotControl && key_hit(KEY_A))
+    {
+        // "Continue?" Yes (the menu itself isn't drawn yet).
+        PlaySfx("menu_select");
+        GameState_SetHealth(gGame.mMaxHealth);
+        d.mFadingOut = true;
+        d.mFade = 0;
+    }
+}
+
 void DrawWorld()
 {
     UpdateBackground(false);
-    Entities_Draw(gCamX >> kFrac, gCamY >> kFrac, kViewX);
+    UpdateHealthBar();
+    Entities_Draw(gCamX >> kFrac, gCamY >> kFrac, kViewX, gShake.mX, gShake.mY);
     gShown = true;
 }
 } // namespace
+
+void Game_PlaySong(const char* name)
+{
+    gMusicPlaying = name;
+    const int32_t id = name[0] ? AudioManager_FindBgm(name) : -1;
+    if (id >= 0)
+    {
+        AudioManager_PlayBGM(static_cast<uint32_t>(id));
+    }
+    else
+    {
+        AudioManager_StopBGM();
+    }
+}
+
+void Screen_Shake(fx intensity, fx seconds)
+{
+    gShake = Shake();
+    gShake.mTime = FxMul(seconds, Fx(kFps));
+    gShake.mIntensity = intensity;
+}
+
+bool Screen_ShakeActive()
+{
+    return gShake.mTime > 0;
+}
+
+void Screen_Flash(fx seconds, bool white)
+{
+    gFlash.mAlpha = kFxOne;
+    gFlash.mStep = FxDiv(kFxOne, FxMul(seconds, Fx(kFps)));
+    gFlash.mWhite = white;
+}
+
+bool Screen_FlashActive()
+{
+    return gFlash.mAlpha > 0;
+}
+
+void Darkness_TargetAlpha(fx alpha, fx vel)
+{
+    gDark.mVel = vel;
+    gDark.mTarget = alpha;
+    if (gDark.mAlpha == 0 && alpha != 0)
+    {
+        gDark.mAlpha = FxF(0.1f);
+    }
+}
+
+void Darkness_ForceAlpha(fx alpha)
+{
+    gDark.mTarget = gDark.mAlpha = alpha;
+}
+
+fx Darkness_Alpha()
+{
+    return gDark.mAlpha;
+}
+
+bool Darkness_ReachedAlpha()
+{
+    return gDark.mAlpha == gDark.mTarget;
+}
+
+Entity* Darkness_PlayerLight()
+{
+    if (gMainLight && (gMainLight->mFreed || gMainLight->mClass != gMainLightClass))
+    {
+        gMainLight = nullptr;
+    }
+    return gMainLight;
+}
+
+void Darkness_SetPlayerLight(Entity& light)
+{
+    gMainLight = &light;
+    gMainLightClass = light.mClass;
+}
+
+void Darkness_MakeLight(Entity& e, const char* sheet)
+{
+    Ecs_SetSheet(e, sheet);
+    e.mV->mWindow = true;
+    e.mV->mOffX = Fx(Ecs_SpriteWidth(e) / 2);
+    e.mV->mOffY = Fx(Ecs_SpriteHeight(e) / 2);
+    e.mV->mScale = Fx(3);
+    Ecs_SetSolid(e, false);
+}
+
+void World_ScreenDarken(int level)
+{
+    const int dark = DarkLevel();
+    const bool lights = level == 0 && dark > 0;
+    if (lights != gLightWindows)
+    {
+        gLightWindows = lights;
+        ApplyWindows();
+    }
+    ScreenDarken(level > dark ? level : dark);
+}
 
 // ---- Map callbacks for the entity system ---------------------------------------------------------------------------
 void Map_Collide(Entity& e)
@@ -807,12 +1267,20 @@ bool World_Init(ObjVramAllocator& vram)
     gVram = &vram;
     Entities_Init(vram);
     Player_Create();
+    gPlayerLight = Ecs_Create(kPlayerLightClass, 0, 0, PART_VISUAL | PART_BRAIN);
+    gPlayerLight->mPlayerOwned = true;
+    Darkness_MakeLight(*gPlayerLight, "player-light");
+    gPlayerLight->mV->mScale = Fx(2);
+    gPlayerLight->mExists = false;
+    CreateHealthBar();
     return true;
 }
 
 void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
-                const MapDoorList& doors)
+                const MapDoorList& doors, const MapDarkData& dark)
 {
+    gDarkData = &dark;
+    Darkness_SetPlayerLight(*gPlayerLight);
     gMap = &map;
     gMapName = mapName;
     gDoors = &doors;
@@ -873,6 +1341,9 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
 
     UpdateMusic();
     UpdateAmbience();
+    UpdateDarkness(false);
+    gDeathFallbackX = Player_Entity()->mT->mX;
+    gDeathFallbackY = Player_Entity()->mT->mY;
     Entities_LoadGrid(gGridX, gGridY, true);
 }
 
@@ -888,10 +1359,8 @@ void World_GetBgOffsets(int16_t x[4], int16_t y[4])
 void World_Enter()
 {
     // BG layers + OBJ, with window 0 cutting everything to the 160x160 playfield.
+    gLightWindows = false;
     ApplyDisplayRegs(true);
-    REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
-    REG_WIN0V = (0 << 8) | kScreenPx;
-    REG_WINOUT = WIN_BLD; // the side margins show the backdrop, which the darken has to cover too
 }
 
 void World_SetPlayerVisible(bool visible)
@@ -906,25 +1375,44 @@ void World_SetPlayerVisible(bool visible)
 // PlayState.Update.
 void World_Update()
 {
-    const fx screenX = Fx(gGridX * kScreenPx);
-    const fx screenY = Fx(gGridY * kScreenPx);
-    (void)screenX;
-    (void)screenY;
-    if (gDialogOpen)
+    const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive;
+    bool updateEntities = !gDeath.mActive;
+    if (child)
     {
-        // DialogueState: entities keep updating, the player stands still.
+        // A child state (dialogue, cutscene, death): the player stands still; entities keep updating (except death).
         Player_SetInvincible(true);
         Player_SetDontMove(true);
         Player_SetActionsDisabled(true);
-        if (!Dialog_Update())
+        if (gDialogOpen)
         {
-            gDialogOpen = false;
+            if (!Dialog_Update())
+            {
+                gDialogOpen = false;
+            }
+        }
+        else if (gCutscene.mFn)
+        {
+            Entity* owner = gCutscene.mOwner;
+            if (owner->mFreed || owner->mClass != gCutscene.mClass || gCutscene.mFn(*owner))
+            {
+                gCutscene.mFn = nullptr;
+            }
+        }
+        if (gDeath.mActive)
+        {
+            DeathUpdate();
+        }
+        if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive)
+        {
             Player_SetDontMove(false);
             Player_SetActionsDisabled(false);
             Player_SetInvincible(false);
             Player_SetSkipBroom(); // the press that closed the box doesn't also swing the broom
         }
-        Ecs_DoCollisions(false, gGridX * kScreenPx, gGridY * kScreenPx);
+        if (updateEntities)
+        {
+            Ecs_DoCollisions(false, gGridX * kScreenPx, gGridY * kScreenPx);
+        }
     }
     else
     {
@@ -946,15 +1434,18 @@ void World_Update()
     }
 
     // PlayState.EntityUpdate
-    Entity& player = *Player_Entity();
-    if (key_hit(KEY_A) && !gDialogOpen && Player_State() == PS_GROUND && !Player_SkipBroom() &&
-        Ecs_CheckInteraction(player))
+    if (updateEntities)
     {
-        Player_SetSkipBroom();
+        Entity& player = *Player_Entity();
+        if (key_hit(KEY_A) && !child && Player_State() == PS_GROUND && !Player_SkipBroom() &&
+            Ecs_CheckInteraction(player))
+        {
+            Player_SetSkipBroom();
+        }
+        Ecs_UpdateAll(&player);
+        Player_Update();
+        Ecs_FreeDead();
     }
-    Ecs_UpdateAll(&player);
-    Player_Update();
-    Ecs_FreeDead();
 
     // GlobalState.SetDialogueMode: something opened the dialogue box this frame.
     if (!gDialogOpen && Dialog_IsOpen())
@@ -964,22 +1455,90 @@ void World_Update()
     }
     gGame.mEnemiesKilled = Ecs_KilledEnemies();
 
+    // PlayState.UpdateHealth
+    if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive && !gWarp.mPending && gGame.mCurHealth == 0)
+    {
+        DeathStart();
+    }
+
+    // The darkness fades on, and its BLD stands until something else (death, a warp) takes over.
+    // A flash whitens everything over it.
+    UpdateScreenEffects();
+    if (!gDeath.mActive && !(gWarp.mPending && gWarp.mBlack))
+    {
+        MoveTo(gDark.mAlpha, gDark.mTarget, gDark.mVel);
+        if (gFlash.mAlpha > 0)
+        {
+            if (gLightWindows)
+            {
+                gLightWindows = false;
+                ApplyWindows();
+            }
+            int y = FxFloor(gFlash.mAlpha * 16 + kFxOne / 2);
+            y = y > 16 ? 16 : y;
+            ScreenDarken(0);
+            REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP |
+                         (gFlash.mWhite ? BLD_WHITE : BLD_BLACK);
+            REG_BLDY = static_cast<uint16_t>(y);
+            gDarkWritten = true;
+        }
+        else
+        {
+            if (gDark.mAlpha > 0 || gDarkWritten)
+            {
+                World_ScreenDarken(0);
+            }
+            gDarkWritten = gDark.mAlpha > 0;
+        }
+    }
+
     UpdateScroll(true, false);
     DrawWorld();
 }
 
-bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing)
+void Game_StartCutscene(Entity& owner, CutsceneFn fn)
+{
+    gCutscene.mFn = fn;
+    gCutscene.mOwner = &owner;
+    gCutscene.mClass = owner.mClass;
+}
+
+bool Game_InCutscene()
+{
+    return gCutscene.mFn != nullptr;
+}
+
+bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing, bool& alreadyBlack)
 {
     if (!gWarp.mPending)
     {
         return false;
     }
     gWarp.mPending = false;
-    destMap = gWarp.mDoor->mDestMap;
-    destX = gWarp.mDoor->mDestX;
-    destY = gWarp.mDoor->mDestY;
-    facing = gWarp.mDoor->mFacing;
+    destMap = gWarp.mMap;
+    destX = gWarp.mX;
+    destY = gWarp.mY;
+    facing = gWarp.mFacing;
+    alreadyBlack = gWarp.mBlack;
+    gWarp.mBlack = false;
     return true;
+}
+
+bool World_InTransition()
+{
+    return gTransition;
+}
+
+void World_RequestWarp(int map, int x, int y, uint8_t facing)
+{
+    gWarp.mPending = true;
+    gWarp.mMap = static_cast<uint8_t>(map);
+    gWarp.mX = x;
+    gWarp.mY = y;
+    gWarp.mFacing = facing;
+    Player_SetDontMove(true);
+    Player_SetActionsDisabled(true);
+    Player_SetInvincible(true);
 }
 
 void World_PlaceAt(int x, int y, uint8_t facing)
@@ -1005,6 +1564,9 @@ void World_PlaceAt(int x, int y, uint8_t facing)
     UpdateBackground(true);
     UpdateScroll(false, true);
     UpdateMusic();
+    UpdateDarkness(false);
+    gDeathFallbackX = Player_Entity()->mT->mX;
+    gDeathFallbackY = Player_Entity()->mT->mY;
     Entities_LoadGrid(gGridX, gGridY, true);
 }
 

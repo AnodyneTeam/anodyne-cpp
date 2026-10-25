@@ -37,6 +37,25 @@ bool Player_SkipBroom();
 bool Player_BroomOut();
 bool Player_HasFallen();
 
+// Player.AutoJump(period, target, height): a jump that carries the player to (targetX, targetY).
+void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height = 24);
+bool Player_JustLanded();
+void Player_SetFacing(Facing f);
+
+// The broom's dust (Broom.dust): the dust entity carried or just put down (nullptr if none or freed).
+Entity* Player_BroomDust();
+// broom.dust = null: whatever the broom was carrying is gone.
+void Player_DropBroomDust();
+// Dust.Collided on another dust: the one just put down merged back (just_released_dust = false).
+void Player_DustMerged();
+// A dust entity is being freed: the broom forgets the pointer (keeping what it carries).
+void Player_DustFreed(Entity& dust);
+
+// Player.Fall(fallPoint): a hole (entity) under the player, its top-left at (x, y).
+void Player_Fall(fx x, fx y);
+// The player's facing (Facing).
+Facing Player_Facing();
+
 // Player.ReceiveDamage.
 void Player_ReceiveDamage(int amount, bool knockback = true, bool playSound = true);
 

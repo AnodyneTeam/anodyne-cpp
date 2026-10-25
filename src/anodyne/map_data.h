@@ -75,6 +75,26 @@ struct MapAudioData final
     const MapAudioArea* mAreas;
 };
 
+// Map darkness (Settings.json DarknessAlpha / PlayerLight). Alphas are in 1/256ths; an area's -1 means it doesn't
+// set that value, so the map's own applies.
+struct MapDarkArea final
+{
+    int16_t mX;
+    int16_t mY;
+    int16_t mWidth;
+    int16_t mHeight;
+    int16_t mAlpha;
+    int8_t mPlayerLight;
+};
+
+struct MapDarkData final
+{
+    int16_t mAlpha;
+    bool mPlayerLight;
+    uint32_t mAreaCount;
+    const MapDarkArea* mAreas;
+};
+
 // A background that scrolls at a fixed speed behind the map (or, with mOverlay, over everything: the windmill's
 // rain). mPattern is a 20x20 tile (160x160 px) block of screen entries that repeats; velocities are px/s.
 struct MapScrollData final
@@ -117,7 +137,7 @@ struct MapEntity final
     int16_t mX;
     int16_t mY;
     int16_t mFrame;  // the XML "frame" (DungeonEntranceRef: its entrance's x)
-    int16_t mLinkId; // -1: none (DungeonEntranceRef: its entrance's y)
+    int16_t mLinkId; // -1: none (DungeonEntranceRef: its entrance's y; Treasure: the card of its screen)
     uint16_t mGlobalId;
     uint8_t mType;       // EntityPresetType
     uint8_t mPermanence; // EntityPermanence

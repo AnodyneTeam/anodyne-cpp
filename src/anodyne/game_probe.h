@@ -20,6 +20,11 @@ int GameProbe_Collision(char* buf, int cap);
 int GameProbe_TraceHeader(char* buf, int cap);
 int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap);
 
+// Test shortcut: warps to (x, y) of map, with the broom, like a door would. 0 if there's no such map.
+int GameProbe_Warp(const char* map, int x, int y);
+// Test shortcut: back to full health.
+void GameProbe_Heal(void);
+
 #ifdef __cplusplus
 }
 #endif

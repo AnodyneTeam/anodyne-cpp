@@ -210,6 +210,15 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
             GameProbe_Collision(buf.data(), static_cast<int>(buf.size()));
             SendLine(buf.data());
         }
+        else if (!strcmp(cmd, "warp") && sscanf(line.c_str(), "warp %63s %u %u", arg, &a, &b) == 3)
+        {
+            SendLine(GameProbe_Warp(arg, static_cast<int>(a), static_cast<int>(b)) ? "ok" : "error no such map");
+        }
+        else if (!strcmp(cmd, "heal"))
+        {
+            GameProbe_Heal();
+            SendLine("ok");
+        }
         else if (!strcmp(cmd, "quit"))
         {
             exit(0);

@@ -28,6 +28,9 @@ enum BroomType : uint8_t
     BROOM_TRANSFORMER,
 };
 
+// Room for the content compiler's map list (anodyne.cpp checks it fits).
+constexpr int kMaxMaps = 32;
+
 struct GameState final
 {
     // Per screen (PlayState.LoadGridEntities resets them).
@@ -44,6 +47,20 @@ struct GameState final
     bool mCanJump; // InventoryManager.CanJump (the jump shoes)
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
+    bool mSecretStatus[14];
+    uint8_t mMapKeys[kMaxMaps]; // small keys held, per map (InventoryManager's map key table)
+
+    // GlobalState.checkpoint: where dying sends the player (map index, -1 = none yet; position in map pixels).
+    int mCheckpointMap;
+    int mCheckpointX;
+    int mCheckpointY;
+    // GlobalState.ReturnTarget: the dungeon entrance outside the current dungeon (map index, -1 = none).
+    int mReturnMap;
+    int mReturnX;
+    int mReturnY;
+    uint32_t mVisitedMaps;  // EventRegister.VisitedMaps, by map index
+    uint32_t mBossDefeated; // EventRegister.BossDefeated, by map index
+    uint32_t mLeftAfterBoss; // EventRegister.LeftAfterBoss, by map index
 
     const char* mModeName; // what anodyne.cpp's main loop is showing (for the probe)
     const char* mMapName;  // CURRENT_MAP_NAME
@@ -54,11 +71,27 @@ struct GameState final
 
 extern GameState gGame;
 
+// The kMaps index of a map name (-1 if unknown); anodyne.cpp has the map list.
+int Game_MapIndex(const char* name);
+// EventRegister.VisitedMaps / BossDefeated / LeftAfterBoss by name.
+bool Game_Visited(const char* map);
+bool Game_BossDefeated(const char* map);
+bool Game_LeftAfterBoss(const char* map);
+void Game_SetBossDefeated(const char* map);
+// GlobalState.IsDungeon: the current map is one of the dungeons.
+bool Game_IsDungeon();
+
 // New game (GlobalState.ResetValues + EntityManager.State cleared).
 void GameState_Reset();
 
 void GameState_SetHealth(int health);
 void GameState_SetMaxHealth(int maxHealth);
+
+// InventoryManager: the current map's small keys.
+int Inventory_MapKeys();
+void Inventory_AddMapKey();
+void Inventory_RemoveMapKey();
+int Inventory_CardCount();
 
 // Room for the content compiler's kEntityPresetCount (anodyne.cpp checks it fits).
 constexpr unsigned kMaxPresets = 4096;
@@ -82,8 +115,21 @@ void Event_Inc(const char* name);
 
 // GlobalState.Dialogue = DialogueManager.GetDialogue(npc, scene, id): opens the dialogue box.
 void Game_ShowDialogue(const char* npc, const char* scene, int id = -1);
+// The same with the dialogue's area given (GetDialogue(npc, area, scene, id)).
+void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id = -1);
+// GlobalState.Dialogue = text (copied).
+void Game_ShowText(const char* text);
 // GlobalState.LastDialogueFinished.
 bool Game_DialogueFinished();
 
+// GlobalState.StartCutscene: a CutsceneState runs `fn(owner)` once a frame (the player frozen, entities updating)
+// until it returns true. A dialogue opened by the step plays before the next step.
+struct Entity;
+using CutsceneFn = bool (*)(Entity& owner);
+void Game_StartCutscene(Entity& owner, CutsceneFn fn);
+bool Game_InCutscene();
+
 // SoundManager.PlaySoundEffect.
 void Game_PlaySfx(const char* name);
+// SoundManager.PlaySong / StopSong (""): until the next screen or map with other music.
+void Game_PlaySong(const char* name);

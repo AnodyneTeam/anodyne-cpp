@@ -498,6 +498,13 @@ void Ecs_Free(Entity& e)
         e.mClass->mDestroy(e);
     }
     Unlink(&e);
+    for (Entity* c = gHead; c; c = c->mNext)
+    {
+        if (c->mParent == &e)
+        {
+            c->mParent = nullptr;
+        }
+    }
     gTransforms.Free(e.mT);
     gBodies.Free(e.mB);
     gVisuals.Free(e.mV);
@@ -558,6 +565,16 @@ void Ecs_FreeDead()
         }
         e = next;
     }
+}
+
+int Ecs_CountChildren(const Entity& parent, const EntityClass& cls)
+{
+    int n = 0;
+    for (const Entity* e = gHead; e; e = e->mNext)
+    {
+        n += (e->mParent == &parent && e->mClass == &cls && e->mExists && !e->mFreed) ? 1 : 0;
+    }
+    return n;
 }
 
 int Ecs_Count()
@@ -1305,7 +1322,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         {
             continue;
         }
-        const bool blend = v.mOpacity < FxF(0.95f);
+        const uint16_t mode = v.mWindow ? ATTR0_WINDOW : (v.mOpacity < FxF(0.95f) ? ATTR0_BLEND : 0);
         const int prio = ObjPriority(v.mLayer);
         if (useAffine)
         {
@@ -1342,7 +1359,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             const int ox = cx - boxW / 2;
             const int oy = cy - boxH / 2;
             obj_set_attr(&oam_mem[oam],
-                         (dbl ? ATTR0_AFF_DBL : ATTR0_AFF) | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP |
+                         (dbl ? ATTR0_AFF_DBL : ATTR0_AFF) | mode | ATTR0_4BPP |
                              (part.mShape << 14) | ATTR0_Y(oy & 0xFF),
                          (part.mSize << 14) | ATTR1_AFF_ID(affine) | ATTR1_X(ox & 0x1FF),
                          ATTR2_ID(block + part.mTileOffset) | ATTR2_PRIO(prio) | ATTR2_PALBANK(bank));
@@ -1358,7 +1375,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             const int x = sx + (v.mHFlip ? frameWidth - part.mX - part.mWidth : part.mX);
             const int y = sy + (v.mVFlip ? frameHeight - part.mY - part.mHeight : part.mY);
             obj_set_attr(&oam_mem[oam + p],
-                         ATTR0_REG | (blend ? ATTR0_BLEND : 0) | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
+                         ATTR0_REG | mode | ATTR0_4BPP | (part.mShape << 14) | ATTR0_Y(y & 0xFF),
                          (part.mSize << 14) | ATTR1_X(x & 0x1FF) | (v.mHFlip ? ATTR1_HFLIP : 0) |
                              (v.mVFlip ? ATTR1_VFLIP : 0),
                          ATTR2_ID(block + part.mTileOffset) | ATTR2_PRIO(prio) | ATTR2_PALBANK(bank));
