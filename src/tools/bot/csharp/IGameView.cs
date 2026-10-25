@@ -2,14 +2,15 @@ using AnodyneSharp.Entities;
 using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using Microsoft.Xna.Framework;
+using System.Collections.Generic;
 
 namespace AnodyneSharp.Recording
 {
     /// <summary>
     /// The game state the bot reads, so the same bot can play either the C# game (AnodyneGameView) or the GBA port in its
     /// simulator over the bot link (SimGameView). Bot code reads it through Gs rather than GlobalState.
-    /// Moving the bot onto this is gradual: what is here so far is the scalar state and the player and the map's collision;
-    /// entities and presets still come from the C# game directly.
+    /// Moving the bot onto this is gradual: what is here so far is the scalar state and the player, the map's collision and
+    /// entities (BotRunner.Entities, set by the host); presets still come from the C# game directly.
     /// </summary>
     public interface IGameView
     {
@@ -35,6 +36,8 @@ namespace AnodyneSharp.Recording
         IPlayerView Player { get; }
         /// <summary>The current map's tiles, or null when none is loaded.</summary>
         IMapView CurrentMap { get; }
+        /// <summary>Entity.SubEntities (an enemy's bullets...). Bot code calls it as e.Subs().</summary>
+        IEnumerable<Entity> SubEntities(Entity e);
     }
 
     /// <summary>The current map, by 16x16 tile.</summary>
@@ -46,6 +49,8 @@ namespace AnodyneSharp.Recording
         (Touching, CollisionEventType) GetTileClass(Point p);
         /// <summary>The tile id on a layer (0 = empty). Not reported by the simulator: 0 there.</summary>
         int GetTile(Layer layer, Point p);
+        /// <summary>The BG tile's direction (a conveyor's flow; still water says ANY). Not reported by the simulator yet: NONE.</summary>
+        Touching GetTileDirection(Point p);
     }
 
     /// <summary>

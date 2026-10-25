@@ -3,7 +3,12 @@ using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Utilities;
 using Microsoft.Xna.Framework;
+using AnodyneSharp.Entities.Base.Rendering;
+using Microsoft.Xna.Framework.Graphics;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using System.IO;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -78,6 +83,34 @@ namespace AnodyneSharp.Recording
         /// <summary>A dialogue box or cutscene has the input (PlayState's child states, BotRunner.PlayBusy).</summary>
         public bool Busy => Bool("dialog") || Bool("cutscene");
 
+        private readonly Dictionary<int, Entity> _shadows = new();
+        private readonly Dictionary<Entity, List<Entity>> _children = new();
+        private List<Entity> _entities = new();
+        private long _entitiesFrame = -1;
+
+        /// <summary>
+        /// The port's entities this frame (not the player's own), as stand-ins of the C# game's classes (SimEntities) so
+        /// the bot's entity code (type tests, Hitbox, velocity...) runs unchanged. For BotRunner.Entities.
+        /// </summary>
+        public List<Entity> Entities
+        {
+            get
+            {
+                if (_entitiesFrame != Frame)
+                {
+                    _entitiesFrame = Frame;
+                    _entities = SimEntities.Update(_state, _shadows, _children);
+                }
+                return _entities;
+            }
+        }
+
+        public IEnumerable<Entity> SubEntities(Entity e)
+        {
+            _ = Entities; // (this frame's)
+            return _children.TryGetValue(e, out var list) ? list : System.Linq.Enumerable.Empty<Entity>();
+        }
+
         private SimMapView _map;
         /// <summary>The map's collision, fetched (the "collision" command) when the map changes.</summary>
         public IMapView CurrentMap
@@ -100,6 +133,146 @@ namespace AnodyneSharp.Recording
         public void Dispose()
         {
             _client.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Stand-ins for the port's entities: an object of the C# entity class of the same name (made without running its
+    /// constructor) with what the port reports filled in. Its other fields keep their defaults, so bot code that reads an
+    /// entity's internals sees nothing there.
+    /// </summary>
+    public static class SimEntities
+    {
+        private static Dictionary<string, Type> _types;
+        private static readonly System.Reflection.PropertyInfo FlickeringProp = typeof(Entity).GetProperty("_flickering");
+
+        /// <summary>The C# class for a port class name: by name, or outer + inner name for nested ones (AnnoyerFireball).</summary>
+        public static Type TypeOf(string name)
+        {
+            if (_types == null)
+            {
+                _types = new Dictionary<string, Type>();
+                foreach (var t in typeof(Entity).Assembly.GetTypes().Where(t => typeof(Entity).IsAssignableFrom(t) && !t.IsAbstract && !t.IsGenericType))
+                {
+                    _types.TryAdd(t.Name, t);
+                    if (t.DeclaringType != null)
+                    {
+                        _types.TryAdd(t.DeclaringType.Name + t.Name, t);
+                    }
+                }
+            }
+            return _types.TryGetValue(name, out var type) ? type : typeof(Entity);
+        }
+
+        private static float Fx(JsonElement a, int i) => a[i].GetInt32() / 65536f;
+
+        /// <summary>
+        /// This frame's top-level entities. As in the C# game, an entity's own (an enemy's bullets: the port's entities with
+        /// a parent) are not in the list but its sub-entities, in `children`.
+        /// </summary>
+        public static List<Entity> Update(JsonElement state, Dictionary<int, Entity> shadows, Dictionary<Entity, List<Entity>> children)
+        {
+            var list = new List<Entity>();
+            var seen = new HashSet<int>();
+            var parents = new List<(Entity, int)>();
+            children.Clear();
+            if (!state.TryGetProperty("entities", out var arr))
+            {
+                shadows.Clear();
+                return list;
+            }
+            foreach (var j in arr.EnumerateArray())
+            {
+                int id = j.GetProperty("id").GetInt32();
+                var type = TypeOf(j.GetProperty("type").GetString());
+                // (the same slot as last frame and the same class: the same entity, so state the bot keys by entity carries on)
+                if (!shadows.TryGetValue(id, out var e) || e.GetType() != type)
+                {
+                    e = (Entity)RuntimeHelpers.GetUninitializedObject(type);
+                    e.sprite = new SimSprite();
+                    shadows[id] = e;
+                }
+                seen.Add(id);
+                var fx = j.GetProperty("fx16");
+                e.Position = new Vector2(Fx(fx, 0), Fx(fx, 1));
+                e.velocity = new Vector2(Fx(fx, 2), Fx(fx, 3));
+                e.width = j.GetProperty("w").GetInt32();
+                e.height = j.GetProperty("h").GetInt32();
+                e.exists = j.GetProperty("exists").GetBoolean();
+                e.Solid = j.GetProperty("solid").GetBoolean();
+                e.visible = j.GetProperty("visible").GetBoolean();
+                e.opacity = j.GetProperty("opacity").GetInt32() / 65536f;
+                e.facing = (Facing)j.GetProperty("face").GetInt32();
+                FlickeringProp?.SetValue(e, j.GetProperty("flicker").GetBoolean());
+                var sprite = (SimSprite)e.sprite;
+                sprite.CurAnimName = j.GetProperty("anim").GetString();
+                sprite.Frame = j.GetProperty("frame").GetInt32();
+                int parent = j.GetProperty("parent").GetInt32();
+                if (parent >= 0)
+                {
+                    parents.Add((e, parent));
+                }
+                else
+                {
+                    list.Add(e);
+                }
+            }
+            foreach (var (e, parent) in parents)
+            {
+                if (shadows.TryGetValue(parent, out var p) && seen.Contains(parent))
+                {
+                    if (!children.TryGetValue(p, out var subs))
+                    {
+                        children[p] = subs = new List<Entity>();
+                    }
+                    subs.Add(e);
+                }
+                else
+                {
+                    list.Add(e); // (its parent is not reported: the player's own)
+                }
+            }
+            foreach (var gone in shadows.Keys.Where(k => !seen.Contains(k)).ToList())
+            {
+                shadows.Remove(gone);
+            }
+            return list;
+        }
+
+        /// <summary>A sprite that only reports the port's anim and frame.</summary>
+        private sealed class SimSprite : ISpriteRenderer
+        {
+            public bool AnimFinished => false;
+            public Color Color { get; set; } = Color.White;
+            public string CurAnimName { get; set; } = "";
+            public int Frame { get; set; }
+            public int FrameIndex => 0;
+            public int Height => 16;
+            public int Width => 16;
+            public ILayerType Layer { get; set; }
+
+            public void Draw(SpriteBatch batch, Vector2 position, float scale, int y_push, float rotation, float opacity, SpriteEffects flip)
+            {
+            }
+
+            public void SetFrame(int index)
+            {
+                Frame = index;
+            }
+
+            public bool PlayAnim(string name, bool force = false, int? newFramerate = null)
+            {
+                return false;
+            }
+
+            public bool SetTexture(string textureName, int width, int height, bool ignoreChaos, bool allowFailure)
+            {
+                return false;
+            }
+
+            public void Update()
+            {
+            }
         }
     }
 
@@ -136,7 +309,8 @@ namespace AnodyneSharp.Recording
             return _cells[p.Y * WidthInTiles + p.X];
         }
 
-        public int GetTile(Layer layer, Point p) => 0;
+        public int GetTile(AnodyneSharp.MapData.Layer layer, Point p) => 0;
+        public Touching GetTileDirection(Point p) => Touching.NONE;
     }
 
     /// <summary>The port's player, from one frame's "player" object (game_probe.cpp).</summary>

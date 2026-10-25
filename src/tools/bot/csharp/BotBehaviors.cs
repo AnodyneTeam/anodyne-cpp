@@ -662,7 +662,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '+' partly solid, '.' floor, 'o' still water, U/D/L/R water flowing that way, else the event's initial (h hole, s spike...)
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
-                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.CurrentMap);
+                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.NativeMap);
                         for (int ty = a[1]; ty <= a[3]; ty++)
                         {
                             var row = new System.Text.StringBuilder($"FLOW {ty,3} ");
@@ -2083,7 +2083,7 @@ namespace AnodyneSharp.Recording
             me.Inflate(2, 2);
             foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
             {
-                foreach (var b in an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>())
+                foreach (var b in an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>())
                 {
                     if (!b.exists || b.velocity == Vector2.Zero)
                     {
@@ -2123,7 +2123,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static int? AnnoyerFireDue(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
-            if (!an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().Any())
+            if (!an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().Any())
             {
                 return null;
             }
@@ -2146,7 +2146,7 @@ namespace AnodyneSharp.Recording
 
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
-            var balls = an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
+            var balls = an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
             if (balls.Count == 0)
             {
                 return null; // a plain one: no shots
@@ -4711,7 +4711,7 @@ namespace AnodyneSharp.Recording
                     ph = (kind, now);
                     _slasherPhase[sl] = ph;
                 }
-                foreach (var sub in sl.SubEntities().Where(e => e.exists && e.visible && e.GetType().Name.EndsWith("Slash")))
+                foreach (var sub in sl.Subs().Where(e => e.exists && e.visible && e.GetType().Name.EndsWith("Slash")))
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && now - ph.since <= 1)
                     {
@@ -6828,7 +6828,7 @@ namespace AnodyneSharp.Recording
         /// <summary>The collision of BG tile id `id` (what a tile becomes when a swap brings that id to it).</summary>
         private static (Touching, AnodyneSharp.MapData.Tiles.CollisionEventType) ClassOfTileId(int id)
         {
-            var tiles = (System.Collections.IList)_mapTileObjects.GetValue(BotNav.CurrentMap);
+            var tiles = (System.Collections.IList)_mapTileObjects.GetValue(BotNav.NativeMap);
             var t = (AnodyneSharp.MapData.Tiles.Tile)tiles[id];
             return (t.allowCollisions, t.collisionEventType);
         }
@@ -9646,7 +9646,7 @@ namespace AnodyneSharp.Recording
             {
                 foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>())
                 {
-                    if (!sl.exists || sl.Hitbox.Intersects(reach) || !sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+                    if (!sl.exists || sl.Hitbox.Intersects(reach) || !sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
                     {
                         continue;
                     }
@@ -9820,7 +9820,7 @@ namespace AnodyneSharp.Recording
         {
             box.Inflate(margin, margin);
             return BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>()
-                .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(box))));
+                .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.Subs().Any(st => st.exists && st.Hitbox.Intersects(box))));
         }
 
         /// <summary>
@@ -9859,7 +9859,7 @@ namespace AnodyneSharp.Recording
             pb.Inflate(3, 3);
             foreach (var pipe in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>())
             {
-                if (!pipe.exists || pipe.Disabled || !(pipe.Hitbox.Intersects(pb) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(pb))))
+                if (!pipe.exists || pipe.Disabled || !(pipe.Hitbox.Intersects(pb) || pipe.Subs().Any(st => st.exists && st.Hitbox.Intersects(pb))))
                 {
                     continue;
                 }
@@ -10273,7 +10273,7 @@ namespace AnodyneSharp.Recording
             pb.Inflate(1, 1);
             foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
             {
-                var shots = sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().ToList();
+                var shots = sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().ToList();
                 if (shots.Count == 0)
                 {
                     continue; // (a plain Slime)
@@ -10407,7 +10407,7 @@ namespace AnodyneSharp.Recording
             // (and the Slime shots still flying as we come down: hopping along one's line lands us on it)
             foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
             {
-                foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                foreach (var b in sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
                 {
                     foreach (float t in new[] { air, air + 0.1f, air + 0.2f })
                     {
@@ -10419,7 +10419,7 @@ namespace AnodyneSharp.Recording
             }
             // (and the shots any Slime fires while we are up: at us, wherever we are then, from its top-left at 40px/s; two Slimes firing
             // a moment apart, Hotel (1,3), had the hop over one's shot land on the other's)
-            var firing = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists && e.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+            var firing = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists && e.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
                 .Select(e => (sl: e, due: SlimeShotIn(e))).Where(x => x.due is float d && d <= air + 0.2f).Select(x => (x.sl, due: x.due.Value)).ToList();
             // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
             // (out of every on-sight dash trap's line first; failing that, any landing still beats coming down where we stand)
@@ -10827,7 +10827,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
+                var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.Subs()).ToList();
                 var rects = beams.Select(b => new Rectangle((int)b.Position.X, (int)b.Position.Y, b.width, b.height)).ToList();
                 var m = movers.OrderBy(e => (e.Position - Pos).Length()).First();
                 var mc = m.Position + new Vector2(8, 8);
@@ -11832,7 +11832,7 @@ namespace AnodyneSharp.Recording
                 }
 
                 var threats = new List<Threat>();
-                foreach (var bu in boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>().Where(e => e.exists && e.opacity > 0))
+                foreach (var bu in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>().Where(e => e.exists && e.opacity > 0))
                 {
                     if (!(SplitBulletActiveField.GetValue(bu) is bool on && on))
                     {
@@ -11854,7 +11854,7 @@ namespace AnodyneSharp.Recording
                     }
                     threats.Add(th);
                 }
-                var copyList = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.Copy>().Where(c => c.exists).ToList();
+                var copyList = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.Copy>().Where(c => c.exists).ToList();
                 bool copies = copyList.Count > 0;
                 var bodies = new List<AnodyneSharp.Entities.Enemy.Apartment.BaseSplitBoss> { boss };
                 bodies.AddRange(copyList);
@@ -11957,7 +11957,7 @@ namespace AnodyneSharp.Recording
                     else if (!dashing)
                     {
                         goal = new Vector2(here.X, Math.Clamp(here.Y, tl.Y + 20, tl.Y + 50)); // it follows our row: keep room above and below
-                        var sitting = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>()
+                        var sitting = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>()
                             .Where(e => e.exists && e.opacity > 0 && !(SplitBulletActiveField.GetValue(e) is bool on && on)).Select(e => e.Hitbox.Center.ToVector2()).ToList();
                         if (sitting.Count > 0 && !boss.visible || sitting.Count > 0 && bb.Right < tl.X)
                         {
@@ -12174,7 +12174,7 @@ namespace AnodyneSharp.Recording
                 // fan of them with nowhere left to step. Only where nothing else gets us while the swing roots us.
                 if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
                 {
-                    var balls = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion).SelectMany(e => e.SubEntities())
+                    var balls = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion).SelectMany(e => e.Subs())
                         .Where(b => b.exists && b.CurAnimName != "poof").ToList();
                     Rectangle BallAt(Entity b, int t) { var r = b.Hitbox; r.Offset((int)(b.velocity.X * t / 60f), (int)(b.velocity.Y * t / 60f)); return r; }
                     var meBox = pb;
@@ -12827,7 +12827,7 @@ namespace AnodyneSharp.Recording
                         threats.Add(back);
                     }
                 }
-                var waves = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Circus.CircusFolks.ShockWave>().Where(e => e.exists && Shown(e) && e.CurAnimName == "move").ToList();
+                var waves = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Circus.CircusFolks.ShockWave>().Where(e => e.exists && Shown(e) && e.CurAnimName == "move").ToList();
                 foreach (var sw in waves)
                 {
                     var at = SimWalkAround(sw.Hitbox, sw.facing, sw.touching, 70f, center, Horizon);
@@ -13408,7 +13408,7 @@ namespace AnodyneSharp.Recording
                     threats.Add(th);
                 }
             }
-            foreach (var e in sage.SubEntities().Where(e => e.exists))
+            foreach (var e in sage.Subs().Where(e => e.exists))
             {
                 if (!(e is AnodyneSharp.Entities.Enemy.Etc.SageBoss.HurtingEntity he) || !he.IsHurting)
                 {
@@ -13680,7 +13680,7 @@ namespace AnodyneSharp.Recording
         private static List<Threat> BriarThreats(AnodyneSharp.Entities.Entity fight, int phase)
         {
             var threats = new List<Threat>();
-            var subs = fight.SubEntities().ToList();
+            var subs = fight.Subs().ToList();
             var body = subs[0];
             var bt = new Threat { Name = "Briar body", Source = body, Stationary = true, HurtsInAir = true, Margin = 2 };
             for (int k = 0; k <= Horizon; k++)
@@ -13699,7 +13699,7 @@ namespace AnodyneSharp.Recording
                 threats.Add(gt);
             }
             long now = BotRunner.Frame;
-            foreach (var e in body.SubEntities().Where(e => e.exists))
+            foreach (var e in body.Subs().Where(e => e.exists))
             {
                 if (e is AnodyneSharp.Entities.Enemy.Go.BriarBossBody.Bullet)
                 {
@@ -13740,11 +13740,11 @@ namespace AnodyneSharp.Recording
             }
             foreach (var arm in subs.Skip(2))
             {
-                foreach (var e in arm.SubEntities().Where(e => e.exists))
+                foreach (var e in arm.Subs().Where(e => e.exists))
                 {
                     if (e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye eye)
                     {
-                        foreach (var m in eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist && !m.Hitbox.Intersects(Player.Hitbox)))
+                        foreach (var m in eye.Subs().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist && !m.Hitbox.Intersects(Player.Hitbox)))
                         {
                             // (not one we are in already, knocked or jumped into it: the planners find no way from inside a threat, and
                             // it is harmless, so walk out of it)
@@ -13756,9 +13756,9 @@ namespace AnodyneSharp.Recording
                             }
                             threats.Add(t);
                         }
-                        var eyeDusts = eye.SubEntities().Where(d => d.exists && d is AnodyneSharp.Entities.Dust).ToList();
-                        var eyeMists = eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(m => m.Hitbox).ToList();
-                        foreach (var f in eye.SubEntities().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
+                        var eyeDusts = eye.Subs().Where(d => d.exists && d is AnodyneSharp.Entities.Dust).ToList();
+                        var eyeMists = eye.Subs().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(m => m.Hitbox).ToList();
+                        foreach (var f in eye.Subs().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
                         {
                             BriarShotThreats(threats, "Briar fireball", f, new Vector2(f.Hitbox.X, f.Hitbox.Y), f.velocity, 0, eyeDusts, eyeMists, 2);
                         }
@@ -13882,7 +13882,7 @@ namespace AnodyneSharp.Recording
                     yield return K(KeyFunctions.Up);
                     continue;
                 }
-                var subs = fight.SubEntities().ToList();
+                var subs = fight.Subs().ToList();
                 var body = (AnodyneSharp.Entities.Enemy.Go.BriarBossBody)subs[0];
                 var blue = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[2];
                 var happy = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[3];
@@ -13894,8 +13894,8 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"  BRIAR HURT f{i} by {GlobalState.DamageDealer} P={pb} {Player.state} threats={string.Join(",", threats.Where(t => t.At[0] is Rectangle r && Math.Abs(r.Center.X - pb.Center.X) < 30 && Math.Abs(r.Center.Y - pb.Center.Y) < 30).Select(t => $"{t.Name}@{t.At[0]}"))}");
                 }
                 lastHearts = Gs.Health;
-                var crystal = happy.SubEntities().FirstOrDefault(e => e.exists); // (it flickers in: invisible every other moment)
-                var eye = blue.SubEntities().FirstOrDefault(e => e.exists && e.Position != Vector2.Zero) as AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye; // (it exists from the start, at 0,0, until its first turn)
+                var crystal = happy.Subs().FirstOrDefault(e => e.exists); // (it flickers in: invisible every other moment)
+                var eye = blue.Subs().FirstOrDefault(e => e.exists && e.Position != Vector2.Zero) as AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye; // (it exists from the start, at 0,0, until its first turn)
                 bool grounded = Player.state == PlayerState.GROUND;
                 bool broomOut = Player.broom != null && Player.broom.exists;
                 if (BriarCarrying != wasCarrying)
@@ -13973,8 +13973,8 @@ namespace AnodyneSharp.Recording
                 {
                     // The fire eye: a dust where its blast reaches the right arm, and us where its next shot meets that dust first.
                     mode = "dust bomb";
-                    var dusts = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
-                    var mists = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(e => e.Hitbox).ToList();
+                    var dusts = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
+                    var mists = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(e => e.Hitbox).ToList();
                     if (bomb != null && !BriarBombStillOn(bomb, dusts))
                     {
                         bomb = null;
@@ -14275,7 +14275,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static BriarBomb BriarBombPlan(Vector2 tl, Entity eye, Entity arm, List<Rectangle> mists, List<Rectangle> solids)
         {
-            var dustPos = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position).ToList();
+            var dustPos = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position).ToList();
             if (BriarCarrying)
             {
                 dustPos.Add(new Vector2(-1000, -1000)); // (the one in hand: carried from here)
@@ -14287,7 +14287,7 @@ namespace AnodyneSharp.Recording
             var arena = new Rectangle((int)tl.X, (int)tl.Y, 160, 160);
             Rectangle Box(Vector2 p) => new Rectangle((int)p.X, (int)p.Y, 16, 16);
             // (a dust's own box, as the broom and our feet meet it)
-            var dustOne = eye.SubEntities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Dust);
+            var dustOne = eye.Subs().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Dust);
             var dustOff = dustOne == null ? new Rectangle(0, 0, 16, 16) : new Rectangle(dustOne.Hitbox.X - (int)dustOne.Position.X, dustOne.Hitbox.Y - (int)dustOne.Position.Y, dustOne.Hitbox.Width, dustOne.Hitbox.Height);
             Rectangle DustBox(Vector2 p) => new Rectangle((int)p.X + dustOff.X, (int)p.Y + dustOff.Y, dustOff.Width, dustOff.Height);
 
@@ -14812,7 +14812,7 @@ namespace AnodyneSharp.Recording
             Swinging = Player.broom != null && Player.broom.exists,
             T = target.Hitbox,
             TV = SeenVelocity(target),
-            Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
+            Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
             Walk = CornersWalkable,
             Hazard = LaneHazard(),
             Others = Enemies().Where(e => e != target).Select(e => e.Hitbox).ToList()
@@ -15262,7 +15262,7 @@ namespace AnodyneSharp.Recording
                 // would touch us is popped with the broom when it comes into the broom's box first, else stepped round (the land
                 // phase's lobbed shots are only stepped round).
                 // (a lobbed land shot only hurts the moment it comes down and while it bursts there: it flies 1.5s at 45px up)
-                var shots = boss.SubEntities().Where(b => b.exists && b is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker
+                var shots = boss.Subs().Where(b => b.exists && b is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker
                     && ((b is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase.Bullet && b.velocity != Vector2.Zero) || b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)).ToList();
                 const int Ahead = 40;
                 var area = new Rectangle((int)tl.X, (int)tl.Y, 16 * 8, 16 * 9);
@@ -15293,7 +15293,7 @@ namespace AnodyneSharp.Recording
                     }).ToList();
                 // A land shot bursts into 4 splashes (20px/s, a 36px lob of 1-1.4s): low down (the start and the end, and their 10-frame pop)
                 // one slows us to 0.3 for 100 frames, and the eye's next shots (aimed where we stand) then come down on us.
-                foreach (var sp in boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
+                foreach (var sp in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
                 {
                     const System.Reflection.BindingFlags SF = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
                     var para = sp.GetType().GetField("parabola", SF)?.GetValue(sp);
@@ -15961,7 +15961,7 @@ namespace AnodyneSharp.Recording
             // it was and the next volley came early, into a plan that thought itself clear.
             foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog))
             {
-                foreach (var b in f.SubEntities().Where(b => b.exists && b.velocity == Vector2.Zero && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                foreach (var b in f.Subs().Where(b => b.exists && b.velocity == Vector2.Zero && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
                 {
                     _frogSplashSeen.TryAdd(b, BotRunner.Frame);
                 }
@@ -15987,7 +15987,7 @@ namespace AnodyneSharp.Recording
                 // The next volley: now if it is ready, else once the last bullet has landed and splashed. Aimed at wherever we are then,
                 // so it is a danger all round its corner (12px out) for the 16 frames it is low.
                 int fireAt = 0;
-                foreach (var b in f.SubEntities().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                foreach (var b in f.Subs().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
                 {
                     int left = 18;
                     if (b.velocity != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
@@ -16658,7 +16658,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var bullets = f.SubEntities().Where(b => b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).ToList();
+                var bullets = f.Subs().Where(b => b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).ToList();
                 int fireAt = 1;
                 foreach (var b in bullets.Where(b => b.exists))
                 {
@@ -16840,7 +16840,7 @@ namespace AnodyneSharp.Recording
                 // A frog that is ready to fire looses a volley the moment we come within 64px: its bullets are unknown until then.
                 var meNow = new Vector2(pb.Center.X, pb.Center.Y);
                 if (!takeoffOnly && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - meNow).Length() < 110 &&
-                    !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)))
+                    !f.Subs().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)))
                 {
                     why = "a frog is ready to fire";
                     return false;
@@ -16935,7 +16935,7 @@ namespace AnodyneSharp.Recording
                     return K(dodge);
                 }
                 var near = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - new Vector2(spot.X + 5, spot.Y + 6)).Length() < 40).ToList();
-                var readyOnes = near.Where(f => !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)).ToList();
+                var readyOnes = near.Where(f => !f.Subs().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)).ToList();
                 var stepKey = StepKey(origin.X - here.X, origin.Y - here.Y, null);
                 var stepTo = here + DirVector(stepKey) * 6f;
                 bool stepOk = StandsSafe(new Rectangle((int)stepTo.X, (int)stepTo.Y, pb.Width, pb.Height));
@@ -18096,7 +18096,7 @@ namespace AnodyneSharp.Recording
                 {
                     // A bullet Slime shoots at us from anywhere while we stand about waiting out a plant's or frog's volleys: it goes first.
                     bool rooted = enemies.Any(e => e.GetType().Name is "Burst_Plant" or "Frog");
-                    committed = enemies.OrderBy(e => rooted && e is AnodyneSharp.Entities.Enemy.Slime sl && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() ? 0 : 1)
+                    committed = enemies.OrderBy(e => rooted && e is AnodyneSharp.Entities.Enemy.Slime sl && sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() ? 0 : 1)
                         .ThenBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
                 }
                 var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
@@ -18311,7 +18311,7 @@ namespace AnodyneSharp.Recording
                     SlasherThreats(); // (keeps each one's phase up to date)
                     var pcNow = Player.Center;
                     if (Enemies().Where(e => e.GetType().Name == "Slasher" && (e.Center - pcNow).Length() < 72)
-                            .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.SubEntities().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
+                            .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.Subs().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
                     {
                         target = soon;
                     }
@@ -18558,7 +18558,7 @@ namespace AnodyneSharp.Recording
                     }
                     _slasherRun = null;
                     string anim = target.CurAnimName ?? "";
-                    bool cutting = anim.StartsWith("attack") && target.SubEntities().Any(sub => sub.exists);
+                    bool cutting = anim.StartsWith("attack") && target.Subs().Any(sub => sub.exists);
                     bool floating = anim.StartsWith("float");
                     if (floating && !slPrev.StartsWith("float"))
                     {
@@ -20398,7 +20398,7 @@ namespace AnodyneSharp.Recording
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Slime sl)
                 {
                     // a bullet Slime's shots in flight: straight on at their speed until a wall (they hurt only on the ground)
-                    foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                    foreach (var b in sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
                     {
                         var bt = new Rectangle?[frames + 1];
                         var bp = b.Position;
@@ -20418,7 +20418,7 @@ namespace AnodyneSharp.Recording
                         list.Add((bt, false));
                     }
                     // (and its next shot, if it comes within the horizon: from its top-left, at us as we stand now, give or take)
-                    if (Player != null && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() && SlimeShotIn(sl) is float due && due * 60f < frames)
+                    if (Player != null && sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() && SlimeShotIn(sl) is float due && due * 60f < frames)
                     {
                         var bt = new Rectangle?[frames + 1];
                         var bp = sl.Position;
@@ -20512,7 +20512,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> SteamGap()
         {
             BotRunner.Status = "wait for the steam jets to switch off";
-            var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
+            var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.Subs()).ToList();
             if (beams.Count == 0)
             {
                 yield break;

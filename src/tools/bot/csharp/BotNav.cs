@@ -44,6 +44,8 @@ namespace AnodyneSharp.Recording
         private static string _blockedMap = "";
 
         public static IMapView CurrentMap => Gs.View.CurrentMap;
+        /// <summary>The C# game's map, for what only it has (its tile objects); null on the simulator.</summary>
+        public static Map NativeMap => (CurrentMap as MapView)?.Native;
 
         // Gates are entities laid over the tile data: an opened one is passable even if the tile beneath says wall,
         // a closed one blocks even if the tile says floor. Refreshed at the start of every search.
@@ -1192,7 +1194,6 @@ namespace AnodyneSharp.Recording
         /// <summary>A solid wall tile: it stops bullets (holes, water and spikes do not, they fly over them).</summary>
         public static bool IsBeamWall(Point t) => CurrentMap == null || CurrentMap.GetTileClass(t).Item1 == Touching.ANY;
 
-        private static System.Reflection.FieldInfo _tileObjectsField;
 
         /// <summary>Which way the water on t flows (Touching.NONE for still water or no water).</summary>
         public static Touching FlowDir(Point t)
@@ -1201,10 +1202,7 @@ namespace AnodyneSharp.Recording
             {
                 return Touching.NONE;
             }
-            _tileObjectsField ??= typeof(Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var tiles = _tileObjectsField?.GetValue(CurrentMap) as Tile[];
-            int id = CurrentMap.GetTile(Layer.BG, t);
-            var dir = tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
+            var dir = CurrentMap.GetTileDirection(t);
             return dir is Touching.UP or Touching.DOWN or Touching.LEFT or Touching.RIGHT ? dir : Touching.NONE; // (still water says ANY)
         }
 
@@ -2024,7 +2022,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                foreach (var sub in e.SubEntities())
+                foreach (var sub in e.Subs())
                 {
                     for (int ty = (int)Math.Floor(sub.Position.Y / 16f); ty <= (int)Math.Floor((sub.Position.Y + sub.height - 1) / 16f); ty++)
                     {

@@ -2,6 +2,7 @@ using AnodyneSharp.Entities;
 using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Registry;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 
 namespace AnodyneSharp.Recording
@@ -22,6 +23,8 @@ namespace AnodyneSharp.Recording
         public int MapKeys => GlobalState.inventory.GetCurrentMapKeys();
         public int PuzzlesSolved => GlobalState.PUZZLES_SOLVED;
         public int EnemiesKilled => GlobalState.ENEMIES_KILLED;
+
+        public IEnumerable<Entity> SubEntities(Entity e) => e.SubEntities();
 
         private MapView _map;
         public IMapView CurrentMap
@@ -72,6 +75,16 @@ namespace AnodyneSharp.Recording
         public int HeightInTiles => Native.HeightInTiles;
         public (Touching, CollisionEventType) GetTileClass(Point p) => Native.GetTileClass(p);
         public int GetTile(Layer layer, Point p) => Native.GetTile(layer, p);
+
+        private static readonly System.Reflection.FieldInfo TileObjectsField =
+            typeof(Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        public Touching GetTileDirection(Point p)
+        {
+            var tiles = TileObjectsField?.GetValue(Native) as Tile[];
+            int id = Native.GetTile(Layer.BG, p);
+            return tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
+        }
     }
 
     /// <summary>The C# game's player, read straight through.</summary>
@@ -108,6 +121,12 @@ namespace AnodyneSharp.Recording
         Rectangle IBroomView.Hitbox => Native.broom.Hitbox;
         Entity IBroomView.dust => Native.broom.dust;
         bool IBroomView.just_released_dust => Native.broom.just_released_dust;
+    }
+
+    public static class EntityViewExtensions
+    {
+        /// <summary>The entity's sub-entities in the game the bot is playing.</summary>
+        public static IEnumerable<Entity> Subs(this Entity e) => Gs.View.SubEntities(e);
     }
 
     /// <summary>The game the bot is playing: AnodyneGameView by default.</summary>

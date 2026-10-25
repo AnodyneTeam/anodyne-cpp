@@ -2,9 +2,9 @@ using AnodyneSharp.Recording;
 using System;
 using System.Diagnostics;
 
-// usage: SimHost <anodyne_sim binary> [port] [--bot PART]
-// Starts the simulator headless. With --bot, plays that route part (BotScripts.PartNames, e.g. nexus) with the C# bot,
-// one bot frame per simulator frame. Without it, a link check: presses A through the title into the game, walks right
+// usage: SimHost <anodyne_sim binary> [port] [--bot PART[,PART...]]
+// Starts the simulator headless. With --bot, plays those route parts in order (BotScripts.PartNames, e.g. nexus,roadway) with the C#
+// bot, one bot frame per simulator frame. Without it, a link check: presses A through the title into the game, walks right
 // and prints what the IGameView reads.
 int port = args.Length > 1 && int.TryParse(args[1], out int pa) ? pa : 47011;
 int botAt = Array.IndexOf(args, "--bot");
@@ -38,27 +38,54 @@ void Show(string tag)
     {
         Console.WriteLine($"  player {p.Position} box={p.Hitbox} v={p.velocity} facing={p.facing} state={p.state} anim={p.CurAnimName} swing={p.broom.exists}");
     }
+    foreach (var e in view.Entities)
+    {
+        Console.WriteLine($"  {e.GetType().Name} {e.Hitbox} exists={e.exists} solid={e.Solid} anim={e.CurAnimName}");
+    }
 }
 
 if (part != null)
 {
     Gs.View = view;
-    BotRunner.Start(part);
+    BotRunner.Entities = () => view.Entities;
+    // (a bot failure exits the process: show where it left the game)
+    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+    {
+        if (BotRunner.Active)
+        {
+            Show("bot failed");
+        }
+    };
+    // (each part continues from where the one before left the game, not from the title)
+    Environment.SetEnvironmentVariable("ANODYNE_BOT_ONLY", "1");
     long frames = 0;
     string status = null;
-    while (BotRunner.Active && frames < 200000)
+    foreach (var name in part.Split(','))
     {
-        BotRunner.PlayBusy = view.Busy;
-        BotRunner.NextFrame();
-        view.Hold(BotRunner.GbaMask, 1);
-        frames++;
-        if (BotRunner.Status != status)
+        Console.WriteLine($"== {name}");
+        BotRunner.Start(name);
+        while (BotRunner.Active && frames < 200000)
         {
-            status = BotRunner.Status;
-            Console.WriteLine($"f{view.Frame} [{status}] {view.Map} {view.Player?.Position}");
+            BotRunner.PlayBusy = view.Busy;
+            BotRunner.NextFrame();
+            view.Hold(BotRunner.GbaMask, 1);
+            frames++;
+            if (BotRunner.Status != status)
+            {
+                status = BotRunner.Status;
+                Console.WriteLine($"f{view.Frame} [{status}] {view.Map} {view.Player?.Position} entities={view.Entities.Count}");
+            }
         }
+        if (BotRunner.Active)
+        {
+            break;
+        }
+        Show("part done");
     }
-    Show(BotRunner.Active ? "gave up" : "part done");
+    if (BotRunner.Active)
+    {
+        Show("gave up");
+    }
 }
 else
 {

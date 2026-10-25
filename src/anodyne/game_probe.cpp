@@ -81,10 +81,20 @@ extern "C" int GameProbe_Json(char* buf, int cap)
             continue;
         }
         o.Add("%s{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"exists\":%s,\"solid\":%s,\"anim\":\"%s\","
-              "\"frame\":%d,\"enemy\":%s,\"preset\":%d}",
+              "\"frame\":%d,\"enemy\":%s,\"preset\":%d,",
               first ? "" : ",", Str(e->mClass->mName), FxTrunc(e->mT->mX), FxTrunc(e->mT->mY), e->mB->mW, e->mB->mH,
               e->mExists ? "true" : "false", Ecs_Solid(*e) ? "true" : "false", Ecs_AnimName(*e), Ecs_Frame(*e),
               (e->mClass->mFlags & ECF_ENEMY) ? "true" : "false", e->mPreset ? e->mPreset->mFrame : -1);
+        // For the C# bot: the pool slot, the parent's (-1: none), the preset's id, position and velocity as raw 16.16,
+        // facing (Facing order).
+        const Visual* v = e->mV;
+        o.Add("\"id\":%u,\"parent\":%d,\"gid\":%d,\"fx16\":[%d,%d,%d,%d],\"face\":%d,\"visible\":%s,\"flicker\":%s,"
+              "\"opacity\":%d}",
+              static_cast<unsigned>(e->mIndex), e->mParent ? static_cast<int>(e->mParent->mIndex) : -1,
+              e->mPreset ? e->mPreset->mGlobalId : -1, static_cast<int>(e->mT->mX),
+              static_cast<int>(e->mT->mY), static_cast<int>(e->mT->mVelX), static_cast<int>(e->mT->mVelY),
+              e->mFacing & 3, v && v->mVisible ? "true" : "false", v && v->mFlickering ? "true" : "false",
+              v ? static_cast<int>(v->mOpacity) : 0);
         first = false;
     }
     o.Add("]}");
