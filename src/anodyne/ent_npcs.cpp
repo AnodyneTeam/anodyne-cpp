@@ -1,6 +1,7 @@
 // NPCs and decorations met before the first boss (AnodyneSharp Entities/Interactive, Decorations, Enemy/Etc).
 #include "entity_classes.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -682,7 +683,6 @@ struct BigKeyData final
 {
     uint8_t mStep;
     fx mRadius;
-    fx mAngle;
     fx mSparkleTimer;
     fx mSparkleMax;
 };
@@ -734,16 +734,29 @@ void BigKeyUpdate(Entity& self)
     }
 }
 
-// MathUtilities.RotateAround: the key circles the player's centre.
+// MathUtilities.RotateAround: the key's direction from the player's centre turns by speed * dt (Matrix.CreateRotationZ),
+// at the given radius.
 void BigKeyOrbit(Entity& self, fx angularSpeed)
 {
-    BigKeyData& d = self.Data<BigKeyData>();
     const Entity& p = *World_Player();
-    d.mAngle += FxStep(angularSpeed);
-    self.mT->mX = Ecs_CenterX(p) + FxMul(FxCos(d.mAngle), d.mRadius);
-    self.mT->mY = Ecs_CenterY(p) + FxMul(FxSin(d.mAngle), d.mRadius);
+    const float cx = Ecs_CenterX(p).mV;
+    const float cy = Ecs_CenterY(p).mV;
+    float dx = self.mT->mX.mV - cx;
+    float dy = self.mT->mY.mV - cy;
+    const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
+    dx *= inv;
+    dy *= inv;
+    const double angle = static_cast<double>(FxStep(angularSpeed).mV);
+    const float c = static_cast<float>(cos(angle));
+    const float sn = static_cast<float>(sin(angle));
+    const float rx = dx * c + dy * -sn;
+    const float ry = dx * sn + dy * c;
+    const float r = self.Data<BigKeyData>().mRadius.mV;
+    self.mT->mX = fx(cx + rx * r);
+    self.mT->mY = fx(cy + ry * r);
 }
 
+// Big_Key.States: each step runs on into the next in the same frame, as the C# loop does until its next yield.
 bool BigKeyCutscene(Entity& self)
 {
     BigKeyData& d = self.Data<BigKeyData>();
@@ -752,28 +765,52 @@ bool BigKeyCutscene(Entity& self)
     {
     case 0:
     {
+        const Entity& p = *World_Player();
+        d.mRadius = FxLength(self.mT->mX - Ecs_CenterX(p), self.mT->mY - Ecs_CenterY(p));
+        d.mStep = 1;
+    }
+        [[fallthrough]];
+    case 1:
+    {
         const bool a = MoveTo(v.mOffY, Fx(16), Fx(18));
         const bool b = MoveTo(d.mRadius, Fx(40), Fx(12));
-        BigKeyOrbit(self, FxF(3.6f));
-        d.mStep += (a && b) ? 1 : 0;
-        return false;
+        if (!(a && b))
+        {
+            BigKeyOrbit(self, FxF(3.6f));
+            return false;
+        }
+        d.mStep = 2;
     }
-    case 1:
+        [[fallthrough]];
+    case 2:
     {
         const bool a = MoveTo(v.mOffY, Fx(64), Fx(18));
         const bool b = MoveTo(d.mRadius, Fx(2), FxF(8.4f));
-        BigKeyOrbit(self, FxF(6.2f));
-        d.mStep += (a && b) ? 1 : 0;
-        return false;
+        if (!(a && b))
+        {
+            BigKeyOrbit(self, FxF(6.2f));
+            return false;
+        }
+        d.mStep = 3;
     }
-    case 2:
-        d.mStep += MoveTo(v.mOffY, Fx(70), Fx(3)) ? 1 : 0;
-        return false;
+        [[fallthrough]];
     case 3:
-        d.mStep += MoveTo(v.mOffY, Fx(16), Fx(132)) ? 1 : 0;
-        return false;
+        if (!MoveTo(v.mOffY, Fx(70), Fx(3)))
+        {
+            return false;
+        }
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (!MoveTo(v.mOffY, Fx(16), Fx(132)))
+        {
+            return false;
+        }
+        d.mStep = 5;
+        [[fallthrough]];
     default:
-        // (The C# flashes the screen white and shakes it here.)
+        Screen_Flash(Fx(2));
+        Screen_Shake(FxF(0.02f), FxF(0.4f));
         Game_PlaySfx("sun_guy_death_long");
         self.mExists = false;
         return true;
@@ -786,9 +823,6 @@ bool BigKeyInteract(Entity& self, Facing)
     Preset_SetAlive(*self.mPreset, false);
     Ecs_SetSolid(self, false);
     gGame.mBigKeyStatus[(Ecs_Frame(self) / 2) % 3] = true;
-    const Entity& p = *World_Player();
-    d.mRadius = FxLength(self.mT->mX - Ecs_CenterX(p), self.mT->mY - Ecs_CenterY(p));
-    d.mAngle = self.mT->mY < Ecs_CenterY(p) ? -kFxPi / 2 : kFxPi / 2;
     d.mStep = 0;
     Game_StartCutscene(self, BigKeyCutscene);
     return true;

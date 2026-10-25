@@ -389,6 +389,13 @@ namespace AnodyneSharp.Recording
                 e.visible = j.GetProperty("visible").GetBoolean();
                 e.opacity = j.GetProperty("opacity").GetInt32() / 65536f;
                 e.facing = (Facing)j.GetProperty("face").GetInt32();
+                // (a stand-in whose class keeps its preset, e.g. BigCardGate's card count: the map's preset at its spot)
+                var presetField = FindField(type, "_preset");
+                if (presetField != null && presetField.GetValue(e) == null && state.TryGetProperty("map", out var mapName))
+                {
+                    presetField.SetValue(e, EntityManager.GetMapEntities(mapName.GetString()).FirstOrDefault(pr =>
+                        (int)pr.Position.X == (int)e.Position.X && (int)pr.Position.Y == (int)e.Position.Y));
+                }
                 FlickeringProp?.SetValue(e, j.GetProperty("flicker").GetBoolean());
                 if (j.TryGetProperty("f", out var fields))
                 {
