@@ -5490,6 +5490,12 @@ namespace AnodyneSharp.Recording
                 {
                     yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
                     yield return Wait(30);
+                    if (Talking)
+                    {
+                        // The first dust ever swept says so ("Your broom is now full of dust!"): only in a release build of the C#
+                        // game, and on the GBA port. Read it, or the next Accept (setting the dust down) only turns its page.
+                        yield return ReadDialogue();
+                    }
                     _pickedDust = Player.broom.dust != null;
                     yield break;
                 }

@@ -60,6 +60,8 @@ if (part != null)
     // (each part continues from where the one before left the game, not from the title)
     Environment.SetEnvironmentVariable("ANODYNE_BOT_ONLY", "1");
     long frames = 0;
+    // SIMHOST_SHOT=F1,F2...: a screenshot at those frames (/tmp/simhost_fN.png)
+    var shotAt = (Environment.GetEnvironmentVariable("SIMHOST_SHOT") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(long.Parse).ToHashSet();
     // SIMHOST_TRACE=FROM-TO: print every frame's keys and position in that frame range
     var tr = (Environment.GetEnvironmentVariable("SIMHOST_TRACE") ?? "").Split('-');
     long traceFrom = tr.Length == 2 && long.TryParse(tr[0], out long t0) ? t0 : -1;
@@ -75,12 +77,16 @@ if (part != null)
             BotRunner.NextFrame();
             view.Hold(BotRunner.GbaMask, 1);
             frames++;
+            if (shotAt.Contains(view.Frame))
+            {
+                view.Shot($"/tmp/simhost_f{view.Frame}.png");
+            }
             if (traceFrom >= 0 && view.Frame >= traceFrom && view.Frame <= traceTo)
             {
                 var pc = view.Player?.Center ?? Microsoft.Xna.Framework.Vector2.Zero;
                 var near = view.Entities.SelectMany(e => new[] { e }.Concat(view.SubEntities(e)))
                     .Where(e => e.exists && (e.Center - pc).Length() < 48).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y} v{e.velocity.X:0},{e.velocity.Y:0}");
-                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} hp={view.Health} dust={(view.Player?.broom.dust is { } dd ? $"{dd.Position.X:0},{dd.Position.Y:0}:{dd.exists}:{dd.CurAnimName}" : "-")} [{BotRunner.Status}] {string.Join(" ", near)}");
+                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} hp={view.Health} busy={view.Busy}/{view.Raw.GetProperty("dialog")}/{view.Raw.GetProperty("cutscene")} face={view.Player?.facing} swing={view.Player?.broom.exists} dust={(view.Player?.broom.dust is { } dd ? $"{dd.Position.X:0},{dd.Position.Y:0}:{dd.exists}:{dd.CurAnimName}" : "-")} [{BotRunner.Status}] {string.Join(" ", near)}");
             }
             if (BotRunner.Status != status)
             {

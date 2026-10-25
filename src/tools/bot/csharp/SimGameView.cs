@@ -45,6 +45,13 @@ namespace AnodyneSharp.Recording
             ReadState();
         }
 
+        /// <summary>Saves the current frame as a PNG.</summary>
+        public bool Shot(string path)
+        {
+            _out.WriteLine($"shot {path}");
+            return _in.ReadLine() == "ok";
+        }
+
         private void ReadState()
         {
             string line = _in.ReadLine() ?? throw new EndOfStreamException("simulator closed the bot link");
@@ -274,8 +281,8 @@ namespace AnodyneSharp.Recording
 
 
         /// <summary>
-        /// This frame's top-level entities. As in the C# game, an entity's own (an enemy's bullets: the port's entities with
-        /// a parent) are not in the list but its sub-entities, in `children`.
+        /// This frame's entities. As in the C# game (PlayState._gridEntities) the list has sub-entities too; an entity's own
+        /// (an enemy's bullets: the port's entities with a parent) are also its sub-entities, in `children`.
         /// </summary>
         public static List<Entity> Update(JsonElement state, Dictionary<int, Entity> shadows, Dictionary<Entity, List<Entity>> children)
         {
@@ -328,10 +335,7 @@ namespace AnodyneSharp.Recording
                 {
                     parents.Add((e, parent));
                 }
-                else
-                {
-                    list.Add(e);
-                }
+                list.Add(e);
             }
             foreach (var (e, parent) in parents)
             {
@@ -342,10 +346,6 @@ namespace AnodyneSharp.Recording
                         children[p] = subs = new List<Entity>();
                     }
                     subs.Add(e);
-                }
-                else
-                {
-                    list.Add(e); // (its parent is not reported: the player's own)
                 }
             }
             foreach (var e in list.Concat(children.Values.SelectMany(c => c)).ToList())
