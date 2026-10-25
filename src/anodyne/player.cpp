@@ -195,8 +195,10 @@ void SetInitVel(fx mul)
     const uint8_t touching = gPlayer->mB->mTouching;
     const fx x = t.mX;
     const fx y = t.mY;
-    const int px = FxTrunc(x);
-    const int py = FxTrunc(y);
+    // (float %, as the C#'s Position.X % 16: 57.6 % 16 is 9.6, past the > 9 a whole pixel's 57 % 16 isn't)
+    const float px = x.mV;
+    const float py = y.mV;
+    auto mod16 = [](float v) { return fmodf(v, 16.0f); };
     int vx = 0;
     int vy = 0;
     if (key_is_down(KEY_UP))
@@ -209,11 +211,11 @@ void SetInitVel(fx mul)
             if (!tl && !tr)
             {
             }
-            else if ((px + kHitW) % 16 < 6 && !tl)
+            else if (mod16(px + kHitW) < 6 && !tl)
             {
                 d.mAddVelX -= kCornerAssist;
             }
-            else if (px % 16 > 9 && !tr)
+            else if (mod16(px) > 9 && !tr)
             {
                 d.mAddVelX += kCornerAssist;
             }
@@ -229,11 +231,11 @@ void SetInitVel(fx mul)
             if (!bl && !br)
             {
             }
-            else if ((px + kHitW) % 16 < 6 && !bl)
+            else if (mod16(px + kHitW) < 6 && !bl)
             {
                 d.mAddVelX -= kCornerAssist;
             }
-            else if (px % 16 > 9 && !br)
+            else if (mod16(px) > 9 && !br)
             {
                 d.mAddVelX += kCornerAssist;
             }
@@ -249,11 +251,11 @@ void SetInitVel(fx mul)
             if (!tl && !bl)
             {
             }
-            else if ((py + kHitH) % 16 < 6 && !tl)
+            else if (mod16(py + kHitH) < 6 && !tl)
             {
                 d.mAddVelY -= kCornerAssist;
             }
-            else if (py % 16 > 9 && !bl)
+            else if (mod16(py) > 9 && !bl)
             {
                 d.mAddVelY += kCornerAssist;
             }
@@ -269,11 +271,11 @@ void SetInitVel(fx mul)
             if (!tr && !br)
             {
             }
-            else if ((py + kHitH) % 16 < 6 && !tr)
+            else if (mod16(py + kHitH) < 6 && !tr)
             {
                 d.mAddVelY -= kCornerAssist;
             }
-            else if (py % 16 > 9 && !br)
+            else if (mod16(py) > 9 && !br)
             {
                 d.mAddVelY += kCornerAssist;
             }
