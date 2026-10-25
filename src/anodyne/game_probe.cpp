@@ -6,6 +6,7 @@
 
 #include "dialog.h"
 #include "ecs.h"
+#include "entity_classes.h"
 #include "game_state.h"
 #include "player.h"
 #include "world.h"
@@ -65,8 +66,9 @@ extern "C" int GameProbe_Json(char* buf, int cap)
           "\"touching\":%d,\"anim\":\"%s\",",
           pe.mFacing & 3, pp.mState, pp.mAnimState, pe.mExists ? "true" : "false", pp.mDontMove ? "true" : "false",
           pp.mOnConveyor ? "true" : "false", pp.mSlow ? "true" : "false", pe.mB->mTouching, Ecs_AnimName(pe));
-    o.Add("\"broomOut\":%s,\"broomBox\":[%d,%d,%d,%d],\"dust\":%s},", pp.mBroomOut ? "true" : "false", pp.mBroomX,
-          pp.mBroomY, pp.mBroomW, pp.mBroomH, dust ? "true" : "false");
+    o.Add("\"broomOut\":%s,\"broomBox\":[%d,%d,%d,%d],\"dust\":%s,\"dustId\":%d,\"justReleased\":%s},", pp.mBroomOut ? "true" : "false",
+          pp.mBroomX, pp.mBroomY, pp.mBroomW, pp.mBroomH, dust ? "true" : "false",
+          dust ? static_cast<int>(dust->mIndex) : -1, pp.mJustReleasedDust ? "true" : "false");
     o.Add("\"maxHealth\":%d,\"keys\":%d,\"cards\":%d,\"broom\":%d,\"canJump\":%s,\"cutscene\":%s,",
           gGame.mMaxHealth, Inventory_MapKeys(), Inventory_CardCount(), gGame.mEquippedBroom,
           gGame.mCanJump ? "true" : "false", Game_InCutscene() ? "true" : "false");
@@ -88,13 +90,15 @@ extern "C" int GameProbe_Json(char* buf, int cap)
         // For the C# bot: the pool slot, the parent's (-1: none), the preset's id, position and velocity as raw 16.16,
         // facing (Facing order).
         const Visual* v = e->mV;
+        char fields[160];
+        const int fieldsLen = Enemies_ProbeFields(*e, fields, sizeof(fields));
         o.Add("\"id\":%u,\"parent\":%d,\"gid\":%d,\"fx16\":[%d,%d,%d,%d],\"face\":%d,\"visible\":%s,\"flicker\":%s,"
-              "\"opacity\":%d}",
+              "\"opacity\":%d,\"f\":{%s}}",
               static_cast<unsigned>(e->mIndex), e->mParent ? static_cast<int>(e->mParent->mIndex) : -1,
               e->mPreset ? e->mPreset->mGlobalId : -1, static_cast<int>(e->mT->mX),
               static_cast<int>(e->mT->mY), static_cast<int>(e->mT->mVelX), static_cast<int>(e->mT->mVelY),
               e->mFacing & 3, v && v->mVisible ? "true" : "false", v && v->mFlickering ? "true" : "false",
-              v ? static_cast<int>(v->mOpacity) : 0);
+              v ? static_cast<int>(v->mOpacity) : 0, fieldsLen > 0 ? fields : "");
         first = false;
     }
     o.Add("]}");

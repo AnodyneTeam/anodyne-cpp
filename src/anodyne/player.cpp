@@ -1218,6 +1218,7 @@ void Player_GetProbe(PlayerProbe& out)
     out.mBroomY = FxTrunc(gBroom->mT->mY);
     out.mBroomW = gBroom->mB->mW;
     out.mBroomH = gBroom->mB->mH;
+    out.mJustReleasedDust = B().mJustReleased;
 }
 
 void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height)

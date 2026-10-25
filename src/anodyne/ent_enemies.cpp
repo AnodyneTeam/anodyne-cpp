@@ -1535,6 +1535,23 @@ const EntityClass kSeer = {
 };
 } // namespace
 
+int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
+{
+    // (the C# bot's names and units: seconds as 16.16, so its stand-in gets what the C# field would hold)
+    if (e.mClass == &kPewLaser)
+    {
+        const PewLaserData& d = const_cast<Entity&>(e).Data<PewLaserData>();
+        return snprintf(buf, static_cast<size_t>(cap), "\"_bulletTimer\":%d,\"_isFast\":%d", static_cast<int>(d.mTimer / 60),
+                        d.mFast ? 1 : 0);
+    }
+    if (e.mClass == &kLaser && e.mParent && e.mParent->mClass == &kPewLaser)
+    {
+        const PewLaserData& d = e.mParent->Data<PewLaserData>();
+        return snprintf(buf, static_cast<size_t>(cap), "\"_isFast\":%d", d.mFast ? 1 : 0);
+    }
+    return 0;
+}
+
 void Shieldy_ReceiveDamage(Entity& shieldy, int damage)
 {
     if (shieldy.mClass == &kShieldy)

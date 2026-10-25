@@ -79,7 +79,7 @@ namespace AnodyneSharp.Recording
         public int MapKeys => Int("keys");
         public int PuzzlesSolved => Int("puzzles");
         public int EnemiesKilled => Int("killed");
-        public IPlayerView Player => Mode == "play" && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p) : null;
+        public IPlayerView Player => Mode == "play" && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p, this) : null;
         /// <summary>A dialogue box or cutscene has the input (PlayState's child states, BotRunner.PlayBusy).</summary>
         public bool Busy => Bool("dialog") || Bool("cutscene");
 
@@ -103,6 +103,13 @@ namespace AnodyneSharp.Recording
                 }
                 return _entities;
             }
+        }
+
+        /// <summary>The stand-in of the port entity in pool slot id this frame, or null.</summary>
+        public Entity EntityById(int id)
+        {
+            _ = Entities;
+            return id >= 0 && _shadows.TryGetValue(id, out var e) ? e : null;
         }
 
         public IEnumerable<Entity> SubEntities(Entity e)
@@ -146,12 +153,32 @@ namespace AnodyneSharp.Recording
         private static Dictionary<string, Type> _types;
         private static readonly System.Reflection.PropertyInfo FlickeringProp = typeof(Entity).GetProperty("_flickering");
 
+        // Port class names that are not the C# class's own (or outer + inner) name: C# full names (nested: Outer+Inner).
+        private static readonly Dictionary<string, string> Aliases = new()
+        {
+            ["PewLaserBullet"] = "AnodyneSharp.Entities.Enemy.Bedroom.PewLaser+Laser",
+            ["BigKey"] = "Big_Key",
+            ["KeyGate"] = "SmallKeyGate",
+            ["VBlocker"] = "VerticalBlocker",
+            ["EyeLight"] = "Eye_Light",
+            ["GlowLight"] = "FiveFrameGlowLight",
+        };
+
         /// <summary>The C# class for a port class name: by name, or outer + inner name for nested ones (AnnoyerFireball).</summary>
         public static Type TypeOf(string name)
         {
             if (_types == null)
             {
                 _types = new Dictionary<string, Type>();
+                foreach (var (port, cs) in Aliases)
+                {
+                    var t = typeof(Entity).Assembly.GetType(cs)
+                        ?? typeof(Entity).Assembly.GetTypes().FirstOrDefault(t => t.Name == cs && typeof(Entity).IsAssignableFrom(t));
+                    if (t != null)
+                    {
+                        _types[port] = t;
+                    }
+                }
                 foreach (var t in typeof(Entity).Assembly.GetTypes().Where(t => typeof(Entity).IsAssignableFrom(t) && !t.IsAbstract && !t.IsGenericType))
                 {
                     _types.TryAdd(t.Name, t);
@@ -161,10 +188,90 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            return _types.TryGetValue(name, out var type) ? type : typeof(Entity);
+            if (!_types.TryGetValue(name, out var type))
+            {
+                System.Console.Error.WriteLine($"SimEntities: no C# class for the port's {name}: a plain Entity stands in");
+                _types[name] = type = typeof(Entity);
+            }
+            return type;
         }
 
         private static float Fx(JsonElement a, int i) => a[i].GetInt32() / 65536f;
+
+        private const System.Reflection.BindingFlags AnyInstance =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+
+        private static System.Reflection.FieldInfo FindField(Type t, string name)
+        {
+            for (; t != null; t = t.BaseType)
+            {
+                if (t.GetField(name, AnyInstance | System.Reflection.BindingFlags.DeclaredOnly) is { } f)
+                {
+                    return f;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Sets a C# field the port reports in "f": floats come as 16.16, bools as 0/1.</summary>
+        private static void SetField(object o, string name, int raw)
+        {
+            var f = FindField(o.GetType(), name);
+            if (f == null)
+            {
+                return;
+            }
+            object v = f.FieldType == typeof(float) ? raw / 65536f : f.FieldType == typeof(bool) ? raw != 0 : f.FieldType == typeof(int) ? raw : null;
+            if (v != null)
+            {
+                f.SetValue(o, v);
+            }
+        }
+
+        private static void SetField(object o, string name, object value) => FindField(o.GetType(), name)?.SetValue(o, value);
+
+        private static T Blank<T>() where T : Entity
+        {
+            var e = (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+            e.sprite = new SimSprite();
+            return e;
+        }
+
+        // What a class's stand-in needs beyond fields the port reports: the C# containers its children live in...
+        // (fixups get the entity, its sub-entities and the port's "f" fields, which may name fields the C# class lacks)
+        private static readonly Dictionary<Type, Action<Entity, List<Entity>, JsonElement>> Fixups = new()
+        {
+            [typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser)] = (e, subs, f) =>
+            {
+                // lasers: an EntityPool of 5, the dead ones too (the bot reads a laser's speed and spawn offset off them)
+                bool fast = f.ValueKind == JsonValueKind.Object && f.TryGetProperty("_isFast", out var fv) && fv.GetInt32() != 0;
+                var lasers = subs.OfType<AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser>().ToList();
+                while (lasers.Count < 5)
+                {
+                    var l = Blank<AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser>();
+                    l.exists = false;
+                    l.facing = e.facing;
+                    (l.width, l.height) = e.facing is Facing.LEFT or Facing.RIGHT ? (8, 16) : (16, 8);
+                    SetField(l, "_isFast", (object)fast);
+                    lasers.Add(l);
+                }
+                foreach (var l in lasers)
+                {
+                    SetField(l, "spawn_offset", e.facing switch
+                    {
+                        Facing.DOWN => new Vector2(0, 11),
+                        Facing.UP => new Vector2(0, 8),
+                        Facing.LEFT => new Vector2(8, 0),
+                        _ => Vector2.Zero,
+                    });
+                }
+                var pool = RuntimeHelpers.GetUninitializedObject(typeof(EntityPool<AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser>));
+                SetField(pool, "_pool", lasers);
+                SetField(e, "lasers", pool);
+            },
+        };
+
+
 
         /// <summary>
         /// This frame's top-level entities. As in the C# game, an entity's own (an enemy's bullets: the port's entities with
@@ -175,6 +282,7 @@ namespace AnodyneSharp.Recording
             var list = new List<Entity>();
             var seen = new HashSet<int>();
             var parents = new List<(Entity, int)>();
+            var fieldsOf = new Dictionary<Entity, JsonElement>();
             children.Clear();
             if (!state.TryGetProperty("entities", out var arr))
             {
@@ -204,6 +312,14 @@ namespace AnodyneSharp.Recording
                 e.opacity = j.GetProperty("opacity").GetInt32() / 65536f;
                 e.facing = (Facing)j.GetProperty("face").GetInt32();
                 FlickeringProp?.SetValue(e, j.GetProperty("flicker").GetBoolean());
+                if (j.TryGetProperty("f", out var fields))
+                {
+                    fieldsOf[e] = fields;
+                    foreach (var f in fields.EnumerateObject())
+                    {
+                        SetField(e, f.Name, f.Value.GetInt32());
+                    }
+                }
                 var sprite = (SimSprite)e.sprite;
                 sprite.CurAnimName = j.GetProperty("anim").GetString();
                 sprite.Frame = j.GetProperty("frame").GetInt32();
@@ -230,6 +346,13 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     list.Add(e); // (its parent is not reported: the player's own)
+                }
+            }
+            foreach (var e in list.Concat(children.Values.SelectMany(c => c)).ToList())
+            {
+                if (Fixups.TryGetValue(e.GetType(), out var fix))
+                {
+                    fix(e, children.TryGetValue(e, out var subs) ? subs : new List<Entity>(), fieldsOf.TryGetValue(e, out var f) ? f : default);
                 }
             }
             foreach (var gone in shadows.Keys.Where(k => !seen.Contains(k)).ToList())
@@ -318,10 +441,12 @@ namespace AnodyneSharp.Recording
     {
         private readonly JsonElement _p;
         private readonly JsonElement _fx;
+        private readonly SimGameView _view;
 
-        public SimPlayerView(JsonElement p)
+        public SimPlayerView(JsonElement p, SimGameView view)
         {
             _p = p;
+            _view = view;
             _fx = p.GetProperty("fx16");
         }
 
@@ -361,7 +486,7 @@ namespace AnodyneSharp.Recording
                 return new Rectangle(b[0].GetInt32(), b[1].GetInt32(), b[2].GetInt32(), b[3].GetInt32());
             }
         }
-        Entity IBroomView.dust => null;
-        bool IBroomView.just_released_dust => false;
+        Entity IBroomView.dust => _view.EntityById(Int("dustId"));
+        bool IBroomView.just_released_dust => Bool("justReleased");
     }
 }

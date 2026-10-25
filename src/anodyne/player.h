@@ -52,6 +52,7 @@ struct PlayerProbe final
     int mBroomY;
     int mBroomW;
     int mBroomH;
+    bool mJustReleasedDust;
 };
 void Player_GetProbe(PlayerProbe& out);
 

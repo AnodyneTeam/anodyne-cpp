@@ -76,3 +76,7 @@ Entity* Spawn_FollowerBro(const MapEntity& preset, Entity& player);
 Entity* Spawn_HealthCicada(const MapEntity& preset, Entity& player);
 Entity* Spawn_BigKey(const MapEntity& preset, Entity& player);
 Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);
+
+// For the bot link (game_probe.cpp): the C# fields of an entity's class that the C# bot reads and the port keeps in its
+// brain, written as JSON members ("name":value,...; C# names, float fields as 16.16). Returns the length, 0 for none.
+int Enemies_ProbeFields(const Entity& e, char* buf, int cap);

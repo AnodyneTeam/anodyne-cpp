@@ -1,6 +1,7 @@
 using AnodyneSharp.Recording;
 using System;
 using System.Diagnostics;
+using System.Linq;
 
 // usage: SimHost <anodyne_sim binary> [port] [--bot PART[,PART...]]
 // Starts the simulator headless. With --bot, plays those route parts in order (BotScripts.PartNames, e.g. nexus,roadway) with the C#
@@ -76,7 +77,10 @@ if (part != null)
             frames++;
             if (traceFrom >= 0 && view.Frame >= traceFrom && view.Frame <= traceTo)
             {
-                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} [{BotRunner.Status}]");
+                var pc = view.Player?.Center ?? Microsoft.Xna.Framework.Vector2.Zero;
+                var near = view.Entities.SelectMany(e => new[] { e }.Concat(view.SubEntities(e)))
+                    .Where(e => e.exists && (e.Center - pc).Length() < 48).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y} v{e.velocity.X:0},{e.velocity.Y:0}");
+                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} hp={view.Health} dust={(view.Player?.broom.dust is { } dd ? $"{dd.Position.X:0},{dd.Position.Y:0}:{dd.exists}:{dd.CurAnimName}" : "-")} [{BotRunner.Status}] {string.Join(" ", near)}");
             }
             if (BotRunner.Status != status)
             {

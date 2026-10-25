@@ -91,7 +91,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Out: a swing is on.</summary>
         bool exists { get; }
         Rectangle Hitbox { get; }
-        /// <summary>The dust carried or just put down, or null. (Still the C# entity: null on the simulator for now.)</summary>
+        /// <summary>The dust carried or just put down, or null.</summary>
         Entity dust { get; }
         bool just_released_dust { get; }
     }
