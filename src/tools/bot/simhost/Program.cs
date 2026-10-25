@@ -12,7 +12,9 @@ using System.IO;
 int port = args.Length > 1 && int.TryParse(args[1], out int pa) ? pa : 47011;
 int botAt = Array.IndexOf(args, "--bot");
 string part = botAt >= 0 && botAt + 1 < args.Length ? args[botAt + 1] : null;
-var sim = Process.Start(new ProcessStartInfo(args[0], $"--headless --ipc {port}")
+// (a replay reads no pixels unless SIMHOST_SHOT asks for some: don't draw them)
+bool noRender = Array.IndexOf(args, "--replay") >= 0 && Environment.GetEnvironmentVariable("SIMHOST_SHOT") == null;
+var sim = Process.Start(new ProcessStartInfo(args[0], $"--headless --ipc {port}" + (noRender ? " --no-render" : ""))
 {
     RedirectStandardError = true,
     RedirectStandardOutput = true,

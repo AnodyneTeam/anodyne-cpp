@@ -26,6 +26,7 @@ namespace
 {
 int gLine = 0;
 uint64_t gFrames = 0;
+bool gRender = true; // --no-render: skip the PPU (nothing reads the pixels)
 bool gFrameStarted = false;
 
 void HBlank(int line)
@@ -115,7 +116,7 @@ void StepLine()
     }
     Irq_Service();
 
-    if (line < kScreenH)
+    if (line < kScreenH && gRender)
     {
         Ppu_RenderLine(line);
     }
@@ -156,6 +157,7 @@ int main(int argc, char** argv)
     {
         return 2;
     }
+    sim::gRender = options.mRender;
     sim::Memory_Init();
     sim::Io_InstallTrap(options.mIoTrap);
     sim::Frontend_Init(options);

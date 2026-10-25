@@ -14,6 +14,7 @@ struct FrontendOptions final
     bool mFast = false;        // don't hold the frame rate at 59.73 Hz
     bool mAudio = true;
     bool mIoTrap = true;
+    bool mRender = true;       // false: don't draw the frames (screenshots come out blank)
     int64_t mMaxFrames = -1;   // quit after this many frames
     std::string mInputPath;    // .gbainput run-length key masks to play
     std::string mRecordPath;   // write the keys pressed as .gbainput

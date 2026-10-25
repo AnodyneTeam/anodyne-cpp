@@ -300,6 +300,7 @@ void Usage()
             "  --wav FILE         write the sound output\n"
             "  --no-audio         no sound device\n"
             "  --no-io-trap       poll IO registers once per line instead of trapping each write\n"
+            "  --no-render        don't draw the frames (faster; screenshots come out blank)\n"
             "  --ipc PORT         serve the bot protocol on 127.0.0.1:PORT (lock-step, see sim_ipc.h)\n"
             "  --trace FILE       per-frame game state trace (TSV)\n"
             "keys: arrows/WASD d-pad, X/K = A, Z/J = B, Enter = Start, Backspace = Select, Q/E = L/R, F12 shot, Esc quit\n");
@@ -347,6 +348,10 @@ bool Frontend_ParseArgs(int argc, char** argv, FrontendOptions& o)
         else if (!strcmp(a, "--no-io-trap"))
         {
             o.mIoTrap = false;
+        }
+        else if (!strcmp(a, "--no-render"))
+        {
+            o.mRender = false;
         }
         else if (!strcmp(a, "--ipc") && hasNext)
         {
