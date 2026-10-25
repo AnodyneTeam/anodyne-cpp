@@ -6,6 +6,7 @@
 
 #include "dialog.h"
 #include "ecs.h"
+#include "entities.h"
 #include "entity_classes.h"
 #include "game_state.h"
 #include "player.h"
@@ -74,6 +75,21 @@ extern "C" int GameProbe_Json(char* buf, int cap)
           gGame.mCanJump ? "true" : "false", Game_InCutscene() ? "true" : "false");
     o.Add("\"checkpoint\":[%d,%d,%d],\"bosses\":%u,", gGame.mCheckpointMap, gGame.mCheckpointX, gGame.mCheckpointY,
           static_cast<unsigned>(gGame.mBossDefeated));
+    // The map's presets that are dead (EntityPreset.Alive false: 1) or activated (2), as [x, y, frame, flags].
+    o.Add("\"presets\":[");
+    const MapEntityList& presets = Entities_Presets();
+    bool firstPreset = true;
+    for (uint32_t i = 0; i < presets.mCount; i++)
+    {
+        const MapEntity& pr = presets.mEntities[i];
+        const int flags = (Preset_Alive(pr) ? 0 : 1) | (Preset_Activated(pr) ? 2 : 0);
+        if (flags != 0)
+        {
+            o.Add("%s[%d,%d,%d,%d]", firstPreset ? "" : ",", pr.mX, pr.mY, pr.mFrame, flags);
+            firstPreset = false;
+        }
+    }
+    o.Add("],");
     o.Add("\"puzzles\":%d,\"killed\":%d,\"entities\":[", gGame.mPuzzlesSolved, gGame.mEnemiesKilled);
     bool first = true;
     for (const Entity* e = Ecs_First(); e; e = e->mNext)

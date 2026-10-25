@@ -102,6 +102,11 @@ void Entities_Init(ObjVramAllocator& vram)
     gHaveMap = false;
 }
 
+const MapEntityList& Entities_Presets()
+{
+    return gList;
+}
+
 void Entities_SetMap(const MapEntityList& list, const char* const* sheetNames, uint32_t sheetCount,
                      const char* const* typeValues, uint32_t typeCount)
 {

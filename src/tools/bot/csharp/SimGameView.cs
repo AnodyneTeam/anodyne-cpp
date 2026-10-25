@@ -58,6 +58,57 @@ namespace AnodyneSharp.Recording
             using var doc = JsonDocument.Parse(line);
             Frame = doc.RootElement.GetProperty("frame").GetInt64();
             _state = doc.RootElement.GetProperty("state").Clone();
+            SyncPresets();
+        }
+
+        private static bool _presetsLoaded;
+        private string _presetsSeen, _presetsMap;
+
+        /// <summary>
+        /// The bot reads the map's entity presets (EntityManager.GetMapEntities: gates, doors, pillars of the screens not loaded) and
+        /// whether they are still alive: load the C# game's own Entities.xml once and set EntityManager.State from the port's.
+        /// </summary>
+        private void SyncPresets()
+        {
+            if (!_state.TryGetProperty("presets", out var pv))
+            {
+                return;
+            }
+            string seen = pv.GetRawText(), map = Map;
+            if (seen == _presetsSeen && map == _presetsMap)
+            {
+                return;
+            }
+            _presetsSeen = seen;
+            _presetsMap = map;
+            if (!_presetsLoaded)
+            {
+                _presetsLoaded = true;
+                // (EntityManager.Initialize reads the entry assembly's resources: here that is SimHost, so read the game's own)
+                var asm = typeof(EntityManager).Assembly;
+                using var stream = asm.GetManifestResourceStream($"{asm.GetName().Name}.Content.Entities.xml");
+                using var reader = new StreamReader(stream);
+                typeof(EntityManager).GetMethod("ReadEntities", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                    .Invoke(null, new object[] { reader.ReadToEnd() });
+            }
+            var list = EntityManager.GetMapEntities(map);
+            foreach (var pr in list)
+            {
+                pr.Alive = true;
+                pr.Activated = false;
+            }
+            foreach (var d in pv.EnumerateArray())
+            {
+                int x = d[0].GetInt32(), y = d[1].GetInt32(), frame = d[2].GetInt32(), flags = d[3].GetInt32();
+                foreach (var pr in list)
+                {
+                    if ((int)pr.Position.X == x && (int)pr.Position.Y == y && pr.Frame == frame)
+                    {
+                        pr.Alive = (flags & 1) == 0;
+                        pr.Activated = (flags & 2) != 0;
+                    }
+                }
+            }
         }
 
         private int Int(string name) => _state.TryGetProperty(name, out var v) ? v.GetInt32() : 0;

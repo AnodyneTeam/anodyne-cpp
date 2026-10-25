@@ -86,7 +86,7 @@ if (part != null)
                 var pc = view.Player?.Center ?? Microsoft.Xna.Framework.Vector2.Zero;
                 var near = view.Entities.SelectMany(e => new[] { e }.Concat(view.SubEntities(e)))
                     .Where(e => e.exists && (e.Center - pc).Length() < 48).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y} v{e.velocity.X:0},{e.velocity.Y:0}");
-                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} hp={view.Health} busy={view.Busy}/{view.Raw.GetProperty("dialog")}/{view.Raw.GetProperty("cutscene")} face={view.Player?.facing} swing={view.Player?.broom.exists} dust={(view.Player?.broom.dust is { } dd ? $"{dd.Position.X:0},{dd.Position.Y:0}:{dd.exists}:{dd.CurAnimName}" : "-")} [{BotRunner.Status}] {string.Join(" ", near)}");
+                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} hp={view.Health} puz={view.PuzzlesSolved} grid={view.Grid.X},{view.Grid.Y} busy={view.Busy}/{view.Raw.GetProperty("dialog")}/{view.Raw.GetProperty("cutscene")} face={view.Player?.facing} swing={view.Player?.broom.exists} dust={(view.Player?.broom.dust is { } dd ? $"{dd.Position.X:0},{dd.Position.Y:0}:{dd.exists}:{dd.CurAnimName}" : "-")} [{BotRunner.Status}] {string.Join(" ", near)}");
             }
             if (BotRunner.Status != status)
             {

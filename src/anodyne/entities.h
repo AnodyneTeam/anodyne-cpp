@@ -18,6 +18,9 @@ void Entities_Init(ObjVramAllocator& vram);
 void Entities_SetMap(const MapEntityList& list, const char* const* sheetNames, uint32_t sheetCount,
                      const char* const* typeValues, uint32_t typeCount);
 
+// The current map's presets (the list Entities_SetMap was given).
+const MapEntityList& Entities_Presets();
+
 // Hides every entity sprite (the world isn't being shown).
 void Entities_Clear();
 
