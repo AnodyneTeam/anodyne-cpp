@@ -1239,6 +1239,8 @@ Entity* Spawn_BedroomBounceLight(const MapEntity& preset, Entity& player)
 {
     if (Game_BossDefeated("BEDROOM") && strcmp(gGame.mMapName, "BEDROOM") == 0)
     {
+        // (the C#'s constructor picks its direction before it finds the boss dead)
+        Rng_Range(0, 4);
         Preset_SetAlive(preset, false);
         return nullptr;
     }
