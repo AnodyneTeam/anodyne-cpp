@@ -155,18 +155,25 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
     gGridY = gy;
     gGame.mPuzzlesSolved = 0; // before the constructors: Console counts the activated ones
 
-    // ENEMIES_KILLED starts at the enemies of this screen that are already dead; PUZZLES_SOLVED at 0.
+    // ENEMIES_KILLED starts at the enemies of this screen that are already dead; PUZZLES_SOLVED at 0. PlayState sets
+    // it before the constructors (a Gate the player stands on checks it), so the new screen's gates never see the
+    // last screen's kills.
     int killed = 0;
     for (uint32_t i = 0; i < gList.mCount; i++)
     {
         const MapEntity& p = gList.mEntities[i];
-        if (!Preset_OnGrid(p, gx, gy))
-        {
-            continue;
-        }
-        if (!Preset_Alive(p))
+        if (Preset_OnGrid(p, gx, gy) && !Preset_Alive(p))
         {
             killed += IsEnemyType(p.mType) ? 1 : 0;
+        }
+    }
+    Ecs_SetBaseKilledEnemies(killed);
+    gGame.mEnemiesKilled = killed;
+    for (uint32_t i = 0; i < gList.mCount; i++)
+    {
+        const MapEntity& p = gList.mEntities[i];
+        if (!Preset_OnGrid(p, gx, gy) || !Preset_Alive(p))
+        {
             continue;
         }
         const SpawnFn spawn = Entities_SpawnFn(p.mType);
@@ -179,9 +186,7 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
             SpawnPlaceholder(p);
         }
     }
-    Ecs_SetBaseKilledEnemies(killed);
-    // (PlayState.LoadGridEntities sets ENEMIES_KILLED here: the new screen's gates must not see the last screen's kills)
-    gGame.mEnemiesKilled = killed;
+    Ecs_MovePlayerOwnedLast();
     gGame.mGridX = gx;
     gGame.mGridY = gy;
 }

@@ -194,6 +194,10 @@ void Replay(string inputPath, string tracePath, int show)
         dumpTo = long.Parse(d[1]);
     }
     var portTypes = new HashSet<string>();
+    // (and only the types the C#'s trace lists at all: it has no entry for sub-entities it updates by hand, like
+    // HealthCicadaSentinel's HealthCicada)
+    var csTypes = csEnts.Values.SelectMany(w => w.Length > 2 ? w[2].Split(' ', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>())
+        .Select(e => e.Substring(0, e.IndexOf('@'))).ToHashSet();
     string Types(string ents, bool learn) => string.Join(" ", ents.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(e =>
     {
         string t = e.Substring(0, e.IndexOf('@'));
@@ -205,7 +209,7 @@ void Replay(string inputPath, string tracePath, int show)
         {
             portTypes.Add(t);
         }
-        return portTypes.Contains(t);
+        return portTypes.Contains(t) && csTypes.Contains(t);
     }));
     int diffs = 0;
     bool entDiffShown = false;

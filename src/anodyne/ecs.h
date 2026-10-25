@@ -201,8 +201,10 @@ uint32_t Game_Frame();
 // RecordingManager.Now - then, in seconds, for `then` a Game_Frame() (the C#'s TimeSpan of frame ticks at 60 a second).
 float Game_SecondsSince(uint32_t thenFrame);
 
-// FSM TimerState: named timers on one clock. A timer fires once the clock reaches it and is re-armed its period on
-// from the clock's time then; Advance moves the clock on without firing anything.
+// FSM TimerState: named timers on one clock (room for N). A timer fires once the clock reaches it and is re-armed its
+// period on from the clock's time then; Advance moves the clock on without firing anything. Reset drops the timers but
+// not the clock.
+template <int N>
 struct TimerState final
 {
     struct Timer
@@ -213,10 +215,27 @@ struct TimerState final
     };
     float mCurrent;
     uint8_t mCount;
-    Timer mTimers[4];
+    Timer mTimers[N];
 
     // AddTimer: due `time` from now, after the ones due at the same time.
-    void Add(float time, uint8_t id);
+    void Add(float time, uint8_t id)
+    {
+        if (mCount >= N)
+        {
+            return;
+        }
+        const float at = mCurrent + time;
+        int i = mCount++;
+        for (; i > 0 && mTimers[i - 1].mAt > at; i--)
+        {
+            mTimers[i] = mTimers[i - 1];
+        }
+        mTimers[i] = { at, time, id };
+    }
+    void Reset()
+    {
+        mCount = 0;
+    }
     void Tick(float dt)
     {
         mCurrent += dt;
@@ -226,7 +245,21 @@ struct TimerState final
         mCurrent += time;
     }
     // The next timer due (re-armed) or -1: Update's loop, one event at a time.
-    int Pop();
+    int Pop()
+    {
+        if (mCount == 0 || mTimers[0].mAt > mCurrent)
+        {
+            return -1;
+        }
+        const Timer t = mTimers[0];
+        mCount--;
+        for (int i = 0; i < mCount; i++)
+        {
+            mTimers[i] = mTimers[i + 1];
+        }
+        Add(t.mMax, t.mId);
+        return t.mId;
+    }
 };
 
 enum Touching : uint8_t
@@ -488,6 +521,8 @@ inline void Ecs_MarkSpawned(Entity& e)
 }
 // All entities, in update order.
 Entity* Ecs_First();
+// PlayState.LoadGridEntities' order: the screen's presets, then the player's sub-entities.
+void Ecs_MovePlayerOwnedLast();
 // Moves `e` to just after `after` in the update order (a sub-entity made late that the C# has after its owner).
 void Ecs_MoveAfter(Entity& e, Entity& after);
 // Frees every entity of the previous screen (mOld) / every entity not owned by the player.

@@ -172,6 +172,27 @@ index 90822d3..f2a54eb 100644
                      })
                  .End()
                  .State("Hurt")
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs
+index bd9bee4..9761566 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs
+@@ -80,15 +80,13 @@ namespace AnodyneSharp.Entities
+                 pickup_candidate = null;
+                 dust.Play("poof");
+ 
+-#if RELEASE
+-
++                // (anodyne-cpp: always, as in the release game, not only #if RELEASE: the port is compared with this build)
+                 if (GlobalState.events.GetEvent("SweptDust") == 0)
+                 {
+                     GlobalState.events.IncEvent("SweptDust");
+ 
+                     GlobalState.Dialogue = Dialogue.DialogueManager.GetDialogue("misc", "any", "dust", 0);
+                 }
+-#endif
+             }
+             if (AnimFinished)
+             {
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
 index 432bb3f..d305409 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs

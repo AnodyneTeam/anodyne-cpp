@@ -73,7 +73,7 @@ struct SlimeData final
     bool mSoundSync;
     int mHealth;
     fx mSpeed;
-    TimerState mMove;
+    TimerState<3> mMove; // MoveTimer, and a ShootTimer for each time in Move
     uint32_t mExitFrame;
     // The EntityPools' entities are made with the slime, each picking its anim's framerate then.
     uint8_t mGooRate[kGooPool];
@@ -141,15 +141,17 @@ const EntityClass kSlimeBullet = {
     0,             GROUP_PLAYER,      ECF_MAP_COLLISION,
 };
 
-// EntityPool.Spawn: the first slot whose entity doesn't exist (-1: all in use).
-int FreePoolSlot(const Entity& slime, const EntityClass& cls, int slots)
+// EntityPool.Spawn: the first slot whose entity doesn't exist (-1: all in use). T is the pool entity's data, with its
+// mSlot.
+template <typename T>
+int FreePoolSlot(const Entity& owner, const EntityClass& cls, int slots)
 {
     uint32_t used = 0;
-    for (const Entity* e = Ecs_First(); e; e = e->mNext)
+    for (Entity* e = Ecs_First(); e; e = e->mNext)
     {
-        if (e->mParent == &slime && e->mClass == &cls && e->mExists && !e->mFreed)
+        if (e->mParent == &owner && e->mClass == &cls && e->mExists && !e->mFreed)
         {
-            used |= 1u << const_cast<Entity*>(e)->Data<PoolData>().mSlot;
+            used |= 1u << e->Data<T>().mSlot;
         }
     }
     for (int i = 0; i < slots; i++)
@@ -162,10 +164,33 @@ int FreePoolSlot(const Entity& slime, const EntityClass& cls, int slots)
     return -1;
 }
 
+// The C#'s pool entities are in the lists from the start, just after their owner (and the pools before theirs, `before`)
+// in slot order: a pooled entity made now goes there, so it updates and collides in the C#'s order (and, made during
+// its owner's update, still updates this frame).
+template <typename T>
+void PlaceInPool(Entity& e, Entity& owner, const EntityClass* before = nullptr)
+{
+    const EntityClass& cls = *e.mClass;
+    const uint8_t slot = e.Data<T>().mSlot;
+    Entity* after = &owner;
+    for (Entity* x = Ecs_First(); x; x = x->mNext)
+    {
+        if (x == &e || x->mParent != &owner || x->mFreed)
+        {
+            continue;
+        }
+        if ((before && x->mClass == before) || (x->mClass == &cls && x->Data<T>().mSlot < slot))
+        {
+            after = x;
+        }
+    }
+    Ecs_MoveAfter(e, *after);
+}
+
 // Goo.Spawn: from the slime, into its Move state.
 void SpawnGoo(Entity& slime)
 {
-    const int slot = FreePoolSlot(slime, kGoo, kGooPool);
+    const int slot = FreePoolSlot<PoolData>(slime, kGoo, kGooPool);
     if (slot < 0)
     {
         return;
@@ -180,6 +205,7 @@ void SpawnGoo(Entity& slime)
     g->mV->mLayer = LAYER_PARTICLES;
     PoolData& d = g->Data<PoolData>();
     d.mSlot = static_cast<uint8_t>(slot);
+    PlaceInPool<PoolData>(*g, slime);
     d.mPeriod = FxF(0.8f) + FxMul(FxF(0.3f), Rng_Unit());
     const int sx = Rng_Range(0, 2) ? 1 : -1;
     g->mT->mVelX = (Fx(10) + FxMul(Fx(5), Rng_Unit())) * sx;
@@ -191,7 +217,7 @@ void SpawnGoo(Entity& slime)
 // Bullet.Spawn: from the slime, at the player.
 void SlimeShoot(Entity& slime)
 {
-    const int slot = FreePoolSlot(slime, kSlimeBullet, kSlimeBulletPool);
+    const int slot = FreePoolSlot<PoolData>(slime, kSlimeBullet, kSlimeBulletPool);
     if (slot < 0)
     {
         return;
@@ -202,6 +228,7 @@ void SlimeShoot(Entity& slime)
         return;
     }
     b->Data<PoolData>().mSlot = static_cast<uint8_t>(slot);
+    PlaceInPool<PoolData>(*b, slime, &kGoo);
     Game_PlaySfx("slime_shoot");
     b->mB->mW = b->mB->mH = 8;
     Ecs_SetSheet(*b, "slime_bullet");
@@ -331,13 +358,25 @@ enum AnnoyerState : uint8_t
     ANNOYER_HIT,
 };
 
+enum AnnoyerTimer : uint8_t
+{
+    ANNOYER_FIRE,
+    ANNOYER_APPROACH_CHECK,
+    ANNOYER_SWOOP_TIMER,
+    ANNOYER_END_KNOCKBACK,
+    ANNOYER_DIE,
+};
+
+// Each state object's TimerState lives as long as the Annoyer: its clock only runs while the state does.
 struct AnnoyerData final
 {
     uint8_t mState;
-    bool mDying;
+    bool mStarted; // start_state is Approach after the first time in Active
     int mHealth;
-    fx mTimer;     // Wait's ApproachCheck, Circle's Swoop, Hit's end
-    fx mFireTimer; // Active's Fire
+    TimerState<1> mActive; // Fire
+    TimerState<1> mWait;   // ApproachCheck
+    TimerState<1> mCircle; // Swoop
+    TimerState<1> mHit;    // EndKnockback or Die
     fx mAngle;
     fx mTargetX;
     fx mTargetY;
@@ -347,6 +386,7 @@ constexpr int kAnnoyerSuper = 2;
 
 struct FireballData final
 {
+    uint8_t mSlot;
     bool mPoof;
 };
 
@@ -410,19 +450,47 @@ void AnnoyerApproachTarget(fx& x, fx& y)
     y = Ecs_CenterY(p);
 }
 
-void AnnoyerEnterActive(Entity& self, uint8_t state)
+void AnnoyerFire(Entity& self)
+{
+    Transform& t = *self.mT;
+    const int slot = self.mPreset && self.mPreset->mFrame == kAnnoyerSuper ? FreePoolSlot<FireballData>(self, kFireball, 4) : -1;
+    if (slot < 0)
+    {
+        return;
+    }
+    Entity* f = Ecs_Create(kFireball, t.mX, t.mY, PART_VISUAL | PART_BRAIN, nullptr, &self);
+    if (f)
+    {
+        f->Data<FireballData>().mSlot = static_cast<uint8_t>(slot);
+        PlaceInPool<FireballData>(*f, self);
+        f->mB->mW = f->mB->mH = 8;
+        f->mV->mOffX = f->mV->mOffY = Fx(4);
+        Ecs_SetSolid(*f, false);
+        Ecs_SetSheet(*f, "lion_fireballs");
+        f->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_Play(*f, "shoot");
+        const Entity& p = *World_Player();
+        Ecs_MoveTowards(*f, p.mT->mX, p.mT->mY, Fx(30));
+    }
+}
+
+// ChangeState among Active's children: the old one's Exit, then the new one's Enter.
+void AnnoyerChangeActive(Entity& self, uint8_t state)
 {
     AnnoyerData& d = self.Data<AnnoyerData>();
+    if (d.mState == ANNOYER_APPROACH)
+    {
+        self.mT->mVelX = self.mT->mVelY = 0;
+    }
     d.mState = state;
-    d.mTimer = 0;
     if (state == ANNOYER_WAIT)
     {
-        d.mTimer = FxSec(0.25f);
+        d.mWait.Reset();
+        d.mWait.Add(0.25f, ANNOYER_APPROACH_CHECK);
     }
     else if (state == ANNOYER_CIRCLE)
     {
         d.mAngle = 0;
-        d.mTimer = FxSec(3.0f);
     }
     else if (state == ANNOYER_SWOOP)
     {
@@ -432,49 +500,71 @@ void AnnoyerEnterActive(Entity& self, uint8_t state)
     }
 }
 
+// Active's Enter: still, into start_state (Wait the first time, Approach after).
+void AnnoyerEnterActive(Entity& self)
+{
+    AnnoyerData& d = self.Data<AnnoyerData>();
+    self.mT->mVelX = self.mT->mVelY = 0;
+    d.mState = ANNOYER_HIT; // (no child yet: nothing to exit)
+    AnnoyerChangeActive(self, d.mStarted ? ANNOYER_APPROACH : ANNOYER_WAIT);
+    d.mStarted = true;
+}
+
 void AnnoyerUpdate(Entity& self)
 {
     AnnoyerData& d = self.Data<AnnoyerData>();
     Transform& t = *self.mT;
-    if (d.mState != ANNOYER_HIT)
+    if (d.mState == ANNOYER_HIT)
     {
-        d.mFireTimer -= kFxTick;
-        if (d.mFireTimer <= 0)
+        d.mHit.Tick(kDeltaTime);
+        for (int id = d.mHit.Pop(); id >= 0; id = d.mHit.Pop())
         {
-            d.mFireTimer += FxSec(2.3f);
-            if (self.mPreset && self.mPreset->mFrame == kAnnoyerSuper && Ecs_CountChildren(self, kFireball) < 4)
+            if (id == ANNOYER_END_KNOCKBACK)
             {
-                Entity* f = Ecs_Create(kFireball, t.mX, t.mY, PART_VISUAL | PART_BRAIN, nullptr, &self);
-                if (f)
-                {
-                    f->mB->mW = f->mB->mH = 8;
-                    f->mV->mOffX = f->mV->mOffY = Fx(4);
-                    Ecs_SetSolid(*f, false);
-                    Ecs_SetSheet(*f, "lion_fireballs");
-                    f->mV->mLayer = LAYER_FG_SPRITES;
-                    Ecs_Play(*f, "shoot");
-                    const Entity& p = *World_Player();
-                    Ecs_MoveTowards(*f, p.mT->mX, p.mT->mY, Fx(30));
-                }
+                Ecs_SetSolid(self, false); // (Hit's Exit)
+                AnnoyerEnterActive(self);
+                break;
             }
+            // Die: the explosion (a HealthDropper sub-entity, after the Annoyer) goes off where it is
+            self.mExists = false;
+            Preset_SetAlive(*self.mPreset, false);
+            Entity* ex = Ecs_Create(kAnnoyerExplosion, t.mX, t.mY, PART_VISUAL);
+            if (ex)
+            {
+                Entity* after = &self;
+                for (Entity* x = Ecs_First(); x; x = x->mNext)
+                {
+                    after = x->mParent == &self && x->mClass == &kFireball && !x->mFreed ? x : after;
+                }
+                Ecs_MoveAfter(*ex, *after);
+                Ecs_SetSolid(*ex, false);
+                Ecs_SetSheet(*ex, "enemy_explode_2");
+                Ecs_Play(*ex, "explode");
+            }
+            Game_PlaySfx("hit_wall");
         }
+        Ecs_BaseUpdate(self);
+        return;
+    }
+    // ActiveState: its Fire timer, then the child state
+    d.mActive.Tick(kDeltaTime);
+    while (d.mActive.Pop() >= 0)
+    {
+        AnnoyerFire(self);
     }
     switch (d.mState)
     {
     case ANNOYER_WAIT:
-    {
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
+        d.mWait.Tick(kDeltaTime);
+        for (int id = d.mWait.Pop(); id >= 0; id = d.mWait.Pop())
         {
-            d.mTimer += FxSec(0.25f);
             const Entity& p = *World_Player();
-            if (FxLength(t.mX - p.mT->mX, t.mY - p.mT->mY) < Fx(64))
+            if (d.mState == ANNOYER_WAIT && FxLength(t.mX - p.mT->mX, t.mY - p.mT->mY) < Fx(64))
             {
-                AnnoyerEnterActive(self, ANNOYER_APPROACH);
+                AnnoyerChangeActive(self, ANNOYER_APPROACH);
             }
         }
         break;
-    }
     case ANNOYER_APPROACH:
     {
         fx ax = 0;
@@ -485,59 +575,34 @@ void AnnoyerUpdate(Entity& self)
         AnnoyerApproachTarget(ax, ay);
         if (FxLength(t.mX - ax, t.mY - ay) < Fx(2))
         {
-            t.mVelX = t.mVelY = 0;
-            AnnoyerEnterActive(self, ANNOYER_CIRCLE);
+            AnnoyerChangeActive(self, ANNOYER_CIRCLE);
         }
         break;
     }
     case ANNOYER_CIRCLE:
     {
+        // CirclingState.Update: the angle, its Swoop timer, then (even when that left the state) the position
         d.mAngle += FxStep(FxF(8.4f));
+        d.mCircle.Tick(kDeltaTime);
+        while (d.mCircle.Pop() >= 0)
+        {
+            AnnoyerChangeActive(self, ANNOYER_SWOOP);
+        }
         const Entity& p = *World_Player();
         t.mX = Ecs_VisualCenterX(p) + FxMul(FxCos(d.mAngle), Fx(20));
         t.mY = Ecs_VisualCenterY(p) + FxMul(FxSin(d.mAngle), Fx(20));
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
-        {
-            AnnoyerEnterActive(self, ANNOYER_SWOOP);
-        }
         break;
     }
-    case ANNOYER_SWOOP:
+    default:
     {
         const bool x = MoveTo(t.mX, d.mTargetX, Fx(150));
         const bool y = MoveTo(t.mY, d.mTargetY, Fx(150));
         if (x && y)
         {
-            AnnoyerEnterActive(self, ANNOYER_APPROACH);
+            AnnoyerChangeActive(self, ANNOYER_APPROACH);
         }
         break;
     }
-    default:
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
-        {
-            Ecs_SetSolid(self, false);
-            if (d.mDying)
-            {
-                self.mExists = false;
-                Preset_SetAlive(*self.mPreset, false);
-                Entity* ex = Ecs_Create(kAnnoyerExplosion, t.mX, t.mY, PART_VISUAL);
-                if (ex)
-                {
-                    Ecs_SetSolid(*ex, false);
-                    Ecs_SetSheet(*ex, "enemy_explode_2");
-                    Ecs_Play(*ex, "explode");
-                }
-                Game_PlaySfx("hit_wall");
-            }
-            else
-            {
-                t.mVelX = t.mVelY = 0;
-                AnnoyerEnterActive(self, ANNOYER_APPROACH);
-            }
-        }
-        break;
     }
     Ecs_BaseUpdate(self);
 }
@@ -562,18 +627,24 @@ void AnnoyerCollided(Entity& self, Entity& other)
         {
             self.mT->mVelX = Fx(Rng_Range(-30, 31));
         }
+        // ChangeState("Hit"): Active's Exit takes its child's (Approach's stops it dead) ...
+        if (d.mState == ANNOYER_APPROACH)
+        {
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+        // ... then Hit's Enter
         d.mState = ANNOYER_HIT;
         Game_PlaySfx("player_hit_1");
+        d.mHit.Reset();
         Ecs_Flicker(self, FxSec(0.2f));
         if (--d.mHealth <= 0)
         {
             Ecs_SetSolid(self, true);
-            d.mDying = true;
-            d.mTimer = FxSec(0.25f);
+            d.mHit.Add(0.25f, ANNOYER_DIE);
         }
         else
         {
-            d.mTimer = FxSec(0.4f);
+            d.mHit.Add(0.4f, ANNOYER_END_KNOCKBACK);
         }
     }
 }
@@ -593,6 +664,7 @@ struct PewLaserData final
 
 struct LaserData final
 {
+    uint8_t mSlot;
     bool mPoof;
     fx mSolidTimer;
 };
@@ -658,12 +730,15 @@ void PewLaserUpdate(Entity& self)
     if (d.mTimer < 0)
     {
         d.mTimer = FxSec(0.5f);
-        if (Ecs_CountChildren(self, kLaser) < 5)
+        const int slot = FreePoolSlot<LaserData>(self, kLaser, 5);
+        if (slot >= 0)
         {
             const Facing f = static_cast<Facing>(self.mFacing);
             Entity* l = Ecs_Create(kLaser, self.mT->mX, self.mT->mY, PART_VISUAL | PART_BRAIN, nullptr, &self);
             if (l)
             {
+                l->Data<LaserData>().mSlot = static_cast<uint8_t>(slot);
+                PlaceInPool<LaserData>(*l, self);
                 Ecs_SetSheet(*l, "pew_laser_bullet");
                 l->mV->mLayer = LAYER_FG_SPRITES;
                 l->mB->mMapInteraction = false;
@@ -1691,8 +1766,9 @@ Entity* Spawn_Annoyer(const MapEntity& preset, Entity&)
     e->mV->mOffY = Fx(2);
     AnnoyerData& d = e->Data<AnnoyerData>();
     d.mHealth = preset.mFrame == kAnnoyerSuper ? 2 : 1;
-    d.mFireTimer = FxSec(2.3f);
-    AnnoyerEnterActive(*e, ANNOYER_WAIT);
+    d.mActive.Add(2.3f, ANNOYER_FIRE);
+    d.mCircle.Add(3.0f, ANNOYER_SWOOP_TIMER);
+    AnnoyerEnterActive(*e);
     Ecs_Play(*e, preset.mFrame == kAnnoyerSuper ? "flap_super" : "flap");
     return e;
 }

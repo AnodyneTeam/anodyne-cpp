@@ -31,6 +31,8 @@ struct Rng
     uint32_t mCalls;
 };
 Rng gRng;
+// Ecs_UpdateAll's last entity: the ones created after it wait for the next frame.
+Entity* gUpdateLast;
 
 constexpr fx kOverlapBias = Fx(4); // GameObject.OVERLAP_BIAS
 
@@ -424,37 +426,6 @@ float Game_SecondsSince(uint32_t thenFrame)
     return static_cast<float>(static_cast<double>(FrameTicks(gGameFrame) - FrameTicks(thenFrame)) / 10000000.0);
 }
 
-void TimerState::Add(float time, uint8_t id)
-{
-    if (mCount >= 4)
-    {
-        return;
-    }
-    const float at = mCurrent + time;
-    int i = mCount++;
-    for (; i > 0 && mTimers[i - 1].mAt > at; i--)
-    {
-        mTimers[i] = mTimers[i - 1];
-    }
-    mTimers[i] = { at, time, id };
-}
-
-int TimerState::Pop()
-{
-    if (mCount == 0 || mTimers[0].mAt > mCurrent)
-    {
-        return -1;
-    }
-    const Timer t = mTimers[0];
-    mCount--;
-    for (int i = 0; i < mCount; i++)
-    {
-        mTimers[i] = mTimers[i + 1];
-    }
-    Add(t.mMax, t.mId);
-    return t.mId;
-}
-
 int Rng_Next()
 {
     constexpr int kMbig = 0x7FFFFFFF;
@@ -648,11 +619,33 @@ void Ecs_FreeDead()
     }
 }
 
+void Ecs_MovePlayerOwnedLast()
+{
+    Entity* owned[kMaxEntities];
+    int n = 0;
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        if (e->mPlayerOwned)
+        {
+            owned[n++] = e;
+        }
+    }
+    for (int i = 0; i < n; i++)
+    {
+        Unlink(owned[i]);
+        Link(owned[i]);
+    }
+}
+
 void Ecs_MoveAfter(Entity& e, Entity& after)
 {
     if (&e == &after)
     {
         return;
+    }
+    if (gUpdateLast == &after)
+    {
+        gUpdateLast = &e; // (Ecs_UpdateAll: still updated this frame)
     }
     Unlink(&e);
     e.mPrev = &after;
@@ -1117,7 +1110,7 @@ void Ecs_UpdateAll(Entity* skip)
 {
     // Entities created during the loop are appended and so also update this frame, unlike the C#'s _newlySpawned;
     // stop at the entity that was last when the loop started.
-    Entity* last = gTail;
+    gUpdateLast = gTail;
     for (Entity* e = gHead; e; e = e->mNext)
     {
         e->mSpawned = false;
@@ -1128,13 +1121,19 @@ void Ecs_UpdateAll(Entity* skip)
         if (e != skip && Updatable(*e))
         {
             Ecs_UpdateOne(*e);
+            // (a sub-entity it moved in just after itself updates this frame too, as the C#'s pool entities do)
+            if (!e->mFreed)
+            {
+                next = e->mNext;
+            }
         }
-        if (e == last)
+        if (e == gUpdateLast)
         {
             break;
         }
         e = next;
     }
+    gUpdateLast = nullptr;
 }
 
 bool Ecs_CheckInteraction(Entity& player)

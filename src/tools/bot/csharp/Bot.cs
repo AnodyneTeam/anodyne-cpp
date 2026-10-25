@@ -91,6 +91,8 @@ namespace AnodyneSharp.Recording
         /// A section that dies MaxSectionDeaths times is fatal.
         /// </summary>
         public static readonly bool RecoverDeaths = Environment.GetEnvironmentVariable("ANODYNE_BOT_DEATH_FAILS") == null;
+        /// <summary>Where the current section started: the checkpoint the bot respawns at after a death.</summary>
+        public static GlobalState.CheckPoint RespawnPoint;
         public const int MaxSectionDeaths = 3;
         private static int _deathMenuFrames;
 
@@ -615,6 +617,10 @@ namespace AnodyneSharp.Recording
             if (InDeathMenu && !ExpectDeath && RecoverDeaths)
             {
                 // The "Continue?" menu: Up picks Yes, Accept confirms (it takes a few seconds to take keys).
+                if (RespawnPoint != null)
+                {
+                    GlobalState.checkpoint = RespawnPoint;
+                }
                 NotStuck();
                 _deathMenuFrames++;
                 held = _deathMenuFrames % 60 == 20 ? new[] { KeyFunctions.Up } : _deathMenuFrames >= 200 && _deathMenuFrames % 60 == 35 ? new[] { KeyFunctions.Accept } : Array.Empty<KeyFunctions>();
@@ -864,8 +870,9 @@ namespace AnodyneSharp.Recording
             }
             else if (_inner == null && BotRunner.RecoverDeaths && BotRunner.Player != null)
             {
-                // (the respawn after a death puts us back here, where the section's steps start from)
-                GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
+                // (the respawn after a death puts us back here, where the section's steps start from; set as the
+                // checkpoint only once dead, so the game plays as it would without the bot until then)
+                BotRunner.RespawnPoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
             }
             if (_inner == null && BotRunner.StopBefore == _name)
             {
