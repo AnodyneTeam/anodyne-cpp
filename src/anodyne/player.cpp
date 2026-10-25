@@ -873,18 +873,16 @@ void BroomAttack()
         const fx y = Fx(cy * 16);
         if (Map_CollisionAllowAt(x, y) == TOUCH_NONE)
         {
-            if (!bd.mDust)
-            {
-                bd.mDust = Spawn_DustAt(x, y);
-            }
+            // (dust carried off its screen: the C#'s Dust object is in no entity list any more, so putting it down
+            // shows and does nothing)
             if (bd.mDust)
             {
                 bd.mDust->mT->mX = bd.mDust->mT->mLastX = x;
                 bd.mDust->mT->mY = bd.mDust->mT->mLastY = y;
                 bd.mDust->mExists = true;
                 Ecs_Play(*bd.mDust, "unpoof", true);
-                bd.mJustReleased = true;
             }
+            bd.mJustReleased = true;
         }
     }
 }
