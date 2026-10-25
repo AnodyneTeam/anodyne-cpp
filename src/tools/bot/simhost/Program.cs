@@ -34,10 +34,18 @@ for (int n = 0; view.Mode != "play" && n < 6000; n += 12)
     view.Hold(0, 11);
 }
 view.Hold(0, 30);
-void Show(string tag) => Console.WriteLine(
-    $"{tag}: f{view.Frame} map={view.Map} grid={view.Grid} hp={view.Health}/{view.MaxHealth} dialog={view.Dialogue != null} broom={view.HasBroom}");
+void Show(string tag)
+{
+    var p = view.Player;
+    Console.WriteLine($"{tag}: f{view.Frame} map={view.Map} grid={view.Grid} hp={view.Health}/{view.MaxHealth} dialog={view.Dialogue != null} broom={view.HasBroom}");
+    Console.WriteLine($"  player {p.Position} box={p.Hitbox} v={p.velocity} facing={p.facing} state={p.state} anim={p.CurAnimName} swing={p.broom.exists}");
+}
 Show("in game");
-view.Hold(Right, 60);
-Show("after walking right");
+view.Hold(Right, 30);
+Show("walking right");
+view.Hold(Right | A, 2);
+Show("swinging");
+view.Hold(0, 30);
+Show("standing");
 view.Dispose();
 sim.Kill();

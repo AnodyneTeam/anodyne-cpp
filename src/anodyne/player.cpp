@@ -1203,6 +1203,23 @@ bool Player_HasFallen()
     return P().mHasFallen;
 }
 
+void Player_GetProbe(PlayerProbe& out)
+{
+    const PlayerData& d = P();
+    out.mState = d.mState;
+    out.mAnimState = d.mAnimState;
+    out.mDontMove = d.mDontMove;
+    out.mOnConveyor = d.mOnConveyor;
+    out.mSlow = d.mSlow;
+    out.mAddVelX = d.mAddVelX;
+    out.mAddVelY = d.mAddVelY;
+    out.mBroomOut = gBroom->mExists;
+    out.mBroomX = FxTrunc(gBroom->mT->mX);
+    out.mBroomY = FxTrunc(gBroom->mT->mY);
+    out.mBroomW = gBroom->mB->mW;
+    out.mBroomH = gBroom->mB->mH;
+}
+
 void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height)
 {
     PlayerData& d = P();

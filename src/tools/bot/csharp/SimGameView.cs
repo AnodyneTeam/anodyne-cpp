@@ -1,3 +1,5 @@
+using AnodyneSharp.Entities;
+using AnodyneSharp.Utilities;
 using Microsoft.Xna.Framework;
 using System;
 using System.IO;
@@ -70,10 +72,63 @@ namespace AnodyneSharp.Recording
         public int MapKeys => Int("keys");
         public int PuzzlesSolved => Int("puzzles");
         public int EnemiesKilled => Int("killed");
+        public IPlayerView Player => _state.TryGetProperty("player", out var p) ? new SimPlayerView(p) : null;
 
         public void Dispose()
         {
             _client.Dispose();
         }
+    }
+
+    /// <summary>The port's player, from one frame's "player" object (game_probe.cpp).</summary>
+    public sealed class SimPlayerView : IPlayerView, IBroomView
+    {
+        private readonly JsonElement _p;
+        private readonly JsonElement _fx;
+
+        public SimPlayerView(JsonElement p)
+        {
+            _p = p;
+            _fx = p.GetProperty("fx16");
+        }
+
+        private float Fx(int i) => _fx[i].GetInt32() / 65536f;
+        private int Int(string name) => _p.TryGetProperty(name, out var v) ? v.GetInt32() : 0;
+        private bool Bool(string name) => _p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
+
+        public Vector2 Position => new Vector2(Fx(0), Fx(1));
+        public Rectangle Hitbox => MathUtilities.CreateRectangle(Fx(0), Fx(1), Int("w"), Int("h"));
+        public Vector2 Center => Position + new Vector2(Int("w"), Int("h")) / 2;
+        // (not reported by the port: the hitbox centre stands in)
+        public Vector2 VisualCenter => Center;
+        public Vector2 velocity => new Vector2(Fx(2), Fx(3));
+        public Vector2 additionalVel => new Vector2(Fx(4), Fx(5));
+        public Facing facing => (Facing)Int("face");
+        public PlayerState state => (PlayerState)Int("state");
+        public PlayerAnimState ANIM_STATE => (PlayerAnimState)Int("animState");
+        public Touching touching => (Touching)Int("touching");
+        public string CurAnimName => _p.TryGetProperty("anim", out var v) ? v.GetString() : "";
+        public bool exists => Bool("exists");
+        public bool dontMove => Bool("dontMove");
+        public bool reversed => false;
+        public bool ON_CONVEYOR => Bool("conveyor");
+        public float y_push => 0f;
+        public int slowTicks => Bool("slow") ? 1 : 0;
+        public float slowMul => Bool("slow") ? 0.5f : 1f;
+        public IBroomView broom => this;
+        public Entity raft => null;
+        public AnodyneSharp.Entities.Player Native => null;
+
+        bool IBroomView.exists => Bool("broomOut");
+        Rectangle IBroomView.Hitbox
+        {
+            get
+            {
+                var b = _p.GetProperty("broomBox");
+                return new Rectangle(b[0].GetInt32(), b[1].GetInt32(), b[2].GetInt32(), b[3].GetInt32());
+            }
+        }
+        Entity IBroomView.dust => null;
+        bool IBroomView.just_released_dust => false;
     }
 }

@@ -439,7 +439,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Dev only (experiments, never in a recorded route): put the player at x,y.
                         var a = tok.Substring(1).Split(',');
-                        Player.Position = new Vector2(float.Parse(a[0]), float.Parse(a[1]));
+                        Player.Native.Position = new Vector2(float.Parse(a[0]), float.Parse(a[1]));
                         yield return Wait(5);
                         break;
                     }
@@ -1192,7 +1192,7 @@ namespace AnodyneSharp.Recording
 
         private static float DashFactor()
         {
-            if (Player == null || DashStateField?.GetValue(Player) is not Vector2 ds)
+            if (Player == null || DashStateField?.GetValue(Player.Native) is not Vector2 ds)
             {
                 return 1f;
             }
@@ -2054,7 +2054,7 @@ namespace AnodyneSharp.Recording
             var d = DirVector(way);
             var hb = Player.Hitbox;
             // (and as we really go: a raft on running water carries us far faster than a walk)
-            var seen = SeenVelocity(Player) / 60f;
+            var seen = SeenVelocity(Player.Native) / 60f;
             foreach (var mv in new[] { Vector2.Zero, d * WalkPxPerFrame, seen })
             {
                 for (int f = 1; f <= within; f++)
@@ -4224,7 +4224,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Frames until we land from the jump we are in (read off the jump's parabola clock), or null when it cannot be read.</summary>
         private static int? AirFramesLeft()
         {
-            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || JumpAnimField?.GetValue(Player) is not object anim)
+            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || JumpAnimField?.GetValue(Player.Native) is not object anim)
             {
                 return null;
             }
@@ -4466,7 +4466,7 @@ namespace AnodyneSharp.Recording
                     return (0, 0);
                 };
             }
-            var dash0 = Player.state == PlayerState.GROUND && PlayerDashField?.GetValue(Player) is Vector2 dv ? dv : Vector2.Zero;
+            var dash0 = Player.state == PlayerState.GROUND && PlayerDashField?.GetValue(Player.Native) is Vector2 dv ? dv : Vector2.Zero;
             int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700, survive: survive, airOk: airOk, padAt: padAt, dash0: dash0);
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
@@ -4842,7 +4842,7 @@ namespace AnodyneSharp.Recording
             typeof(AnodyneSharp.Entities.Player).GetField("IS_SINKING", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Wading in water (no raft): the game ignores the jump key then, whatever tile our position rounds to.</summary>
-        private static bool Sinking => SinkingField?.GetValue(Player) is bool b && b;
+        private static bool Sinking => SinkingField?.GetValue(Player.Native) is bool b && b;
 
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
@@ -4876,7 +4876,7 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
-            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && DashStateField?.GetValue(Player) is Vector2 dsv)
+            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && DashStateField?.GetValue(Player.Native) is Vector2 dsv)
             {
                 // Running off a dash pad (it lasts while the key is held): the plans below think in walking pace, so if anything is in the
                 // way of the run let go for a frame (that ends it) and plan again at a walk.
@@ -6886,7 +6886,7 @@ namespace AnodyneSharp.Recording
             }
             int fails = 0;
             BotRunner.NoAccept = true; // (a swing on the way, by a guard or a walker, is a swap step: it swapped a dug shaft shut behind us)
-            Player.transformer.Reset(); // (and one let through before, the menu's own Accept: a selector up holds us still, BLANK (4,1))
+            Player.Native.transformer.Reset(); // (and one let through before, the menu's own Accept: a selector up holds us still, BLANK (4,1))
             try
             {
                 for (int dig = 0; dig < 120; dig++)
@@ -6982,7 +6982,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> SwapTiles(Point c, Point a, Point b)
         {
             static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
-            var tf = Player.transformer;
+            var tf = Player.Native.transformer;
             Entity Sel() => (Entity)_tfSelector.GetValue(tf);
             Entity Marked() => (Entity)_tfSelected.GetValue(tf);
             Point TileAt(Entity e) => new Point((int)Math.Floor((e.Position.X + 8) / 16f), (int)Math.Floor((e.Position.Y + 8) / 16f));
@@ -7992,7 +7992,7 @@ namespace AnodyneSharp.Recording
         private static bool HasRaft()
         {
             var f = typeof(Player).GetField("raft", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-            return f != null && f.GetValue(Player) != null;
+            return f != null && f.GetValue(Player.Native) != null;
         }
 
         private static bool ReachableWithJump(Point t)
@@ -9902,7 +9902,7 @@ namespace AnodyneSharp.Recording
             }
             var pb = Player.Hitbox;
             pb.Inflate(1, 1);
-            var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+            var on = BotRunner.Entities().Where(e => e.exists && e != Player.Native && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                 && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant" or "Mover") && e.Hitbox.Intersects(pb)).ToList(); // (those only hurt with their cuts / shots, or only push)
             if (on.Count == 0 || (_gasPolicyFrame == BotRunner.Frame && on.All(e => e is AnodyneSharp.Entities.Enemy.Apartment.GasGuy)))
             {
@@ -10383,7 +10383,7 @@ namespace AnodyneSharp.Recording
                 : new[] { KeyFunctions.Left, KeyFunctions.Right, line.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up, line.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down };
             const float air = 0.46f; // (the jump's length, s)
             // Where the enemy bodies will be as we come down (hopping a shot into its own Slime is a sure hit for a maybe one).
-            var bodies = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+            var bodies = BotRunner.Entities().Where(e => e.exists && e != Player.Native && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                 && !IsEyeBoss(e)).Select(e =>
                 {
                     var r = e.Hitbox;
@@ -13081,7 +13081,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (trace && (keys == null || keys.Length == 0 || traceAll))
                 {
-                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerDashField?.GetValue(Player)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
+                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerDashField?.GetValue(Player.Native)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
                 }
                 yield return keys ?? K();
             }
@@ -17382,7 +17382,7 @@ namespace AnodyneSharp.Recording
                 yield return MenuEquipBroom(0);
                 yield return Fight(timeoutFrames, soft, only);
                 yield return MenuEquipBroom(3);
-                Player.transformer.Reset();
+                Player.Native.transformer.Reset();
                 BotRunner.NoAccept = noAccept;
                 yield break;
             }

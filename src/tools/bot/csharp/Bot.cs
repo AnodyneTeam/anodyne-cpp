@@ -20,7 +20,9 @@ namespace AnodyneSharp.Recording
     public static class BotRunner
     {
         public static bool Active { get; private set; }
-        public static Player Player;
+        /// <summary>The C# game's player (set by PlayState); bot code reads the player through Player (Gs.View).</summary>
+        public static Player GamePlayer;
+        public static IPlayerView Player => Gs.Player;
 
         /// <summary>PlayState has a child state (dialogue, cutscene, menu...) consuming input.</summary>
         /// <summary>ANODYNE_ROUTE=100: take the side rooms (cards, secrets) as well as the walkthrough's main path.</summary>
@@ -262,7 +264,7 @@ namespace AnodyneSharp.Recording
                 return; // text being advanced
             }
             var pc = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
-            bool near = Entities().Any(e => e.exists && e != Player && !(e is AnodyneSharp.Entities.Player) &&
+            bool near = Entities().Any(e => e.exists && e != Player.Native && !(e is AnodyneSharp.Entities.Player) &&
                 (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - pc).Length() < 40 && (e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false) ||
                  Regex.IsMatch(e.GetType().Name, "Dust|Sage|Chest|Button|Statue|Block|Console|Sentinel|Gate|Checkpoint|Treasure|Slime|Shieldy|Annoyer|Seer")));
             var key = Regex.Replace(Status ?? "", @"[\d,.\-]+", "#");
@@ -331,7 +333,7 @@ namespace AnodyneSharp.Recording
                 {
                     // everything within 40px of the player (solid or not): what a failed walk is pressing against
                     var pc = new Vector2(pl.Hitbox.Center.X, pl.Hitbox.Center.Y);
-                    lines.Add("NEAR (within 40px): " + string.Join(" ", Entities().Where(e => e.exists && e != pl && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - pc).Length() < 40)
+                    lines.Add("NEAR (within 40px): " + string.Join(" ", Entities().Where(e => e.exists && e != pl.Native && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - pc).Length() < 40)
                         .Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y},{e.Hitbox.Width}x{e.Hitbox.Height}{(e.Solid ? "S" : "")}")));
                 }
                 System.IO.File.WriteAllLines("/tmp/bot/fail_ring.txt", lines);
@@ -906,7 +908,7 @@ namespace AnodyneSharp.Recording
     {
         public abstract IEnumerable<object> Run();
 
-        protected static Player Player => BotRunner.Player;
+        protected static IPlayerView Player => BotRunner.Player;
         protected static string Map => Gs.Map;
         protected static Vector2 Pos => Player == null ? Vector2.Zero : Player.Position;
         protected static bool Talking => !string.IsNullOrEmpty(Gs.Dialogue) || BotRunner.PlayBusy;
@@ -1708,7 +1710,7 @@ namespace AnodyneSharp.Recording
                 {
                     var dsF = typeof(Player).GetField("dash_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                     var pads = string.Join(",", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && Vector2.Distance(e.Position, Pos) < 40).Select(e => $"{e.Position}:{e.opacity}"));
-                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge} dash={dsF?.GetValue(Player)} pc={Player.Center} pads={pads}");
+                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge} dash={dsF?.GetValue(Player.Native)} pc={Player.Center} pads={pads}");
                 }
                 yield return K(keys.ToArray());
             }

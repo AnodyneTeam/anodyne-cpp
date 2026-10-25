@@ -1499,7 +1499,7 @@ namespace AnodyneSharp.Recording
             var letters = new Dictionary<string, char>();
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e == pl || e is Player || !e.visible && e.width == 0)
+                if (!e.exists || e == pl.Native || e is Player || !e.visible && e.width == 0)
                 {
                     continue;
                 }

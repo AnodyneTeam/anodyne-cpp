@@ -37,6 +37,24 @@ bool Player_SkipBroom();
 bool Player_BroomOut();
 bool Player_HasFallen();
 
+// What the bot link reports of the player (Player.cs fields the C# bot reads).
+struct PlayerProbe final
+{
+    int mState;     // PlayerState
+    int mAnimState; // PlayerAnimState order (ANIM_DEFAULT, ANIM_ATK, ANIM_FALL, ANIM_DEAD, idle, walk, slumped)
+    bool mDontMove;
+    bool mOnConveyor;
+    bool mSlow;
+    fx mAddVelX;
+    fx mAddVelY;
+    bool mBroomOut; // the broom's hitbox, while it exists (a swing)
+    int mBroomX;
+    int mBroomY;
+    int mBroomW;
+    int mBroomH;
+};
+void Player_GetProbe(PlayerProbe& out);
+
 // Player.AutoJump(period, target, height): a jump that carries the player to (targetX, targetY).
 void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height = 24);
 bool Player_JustLanded();

@@ -5,9 +5,14 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
+    <!-- The bot's views use the C# game's types (Facing, PlayerState, Entity...): its built assembly, see ../cloud. -->
+    <AnodyneSharpDll Condition="'$(AnodyneSharpDll)' == ''">/home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0/AnodyneSharp.dll</AnodyneSharpDll>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.1.303" />
+    <Reference Include="AnodyneSharp">
+      <HintPath>$(AnodyneSharpDll)</HintPath>
+    </Reference>
     <Compile Include="../csharp/IGameView.cs" />
     <Compile Include="../csharp/SimGameView.cs" />
   </ItemGroup>

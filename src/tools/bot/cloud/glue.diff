@@ -260,7 +260,7 @@ index b706cb3..5d9f201 100644
              _oldEntities = new List<Entity>();
  
              _player = new Player();
-+            AnodyneSharp.Recording.BotRunner.Player = _player;
++            AnodyneSharp.Recording.BotRunner.GamePlayer = _player;
 +            AnodyneSharp.Recording.BotRunner.Entities = () => _gridEntities;
              _healthBar = new HealthBar();
  

@@ -1,3 +1,4 @@
+using AnodyneSharp.Entities;
 using Microsoft.Xna.Framework;
 
 namespace AnodyneSharp.Recording
@@ -5,8 +6,8 @@ namespace AnodyneSharp.Recording
     /// <summary>
     /// The game state the bot reads, so the same bot can play either the C# game (AnodyneGameView) or the GBA port in its
     /// simulator over the bot link (SimGameView). Bot code reads it through Gs rather than GlobalState.
-    /// Moving the bot onto this is gradual: what is here so far is the scalar state; entities, presets and the map's
-    /// collision still come from the C# game directly.
+    /// Moving the bot onto this is gradual: what is here so far is the scalar state and the player; entities, presets and
+    /// the map's collision still come from the C# game directly.
     /// </summary>
     public interface IGameView
     {
@@ -28,5 +29,50 @@ namespace AnodyneSharp.Recording
         int MapKeys { get; }
         int PuzzlesSolved { get; }
         int EnemiesKilled { get; }
+        /// <summary>The player, or null when there is none (no PlayState).</summary>
+        IPlayerView Player { get; }
+    }
+
+    /// <summary>
+    /// The player as the bot reads it. Members are named as on AnodyneSharp.Entities.Player so bot code reads the same
+    /// either way; what only the C# game has (its internals, writes) goes through Native.
+    /// </summary>
+    public interface IPlayerView
+    {
+        /// <summary>The hitbox's top-left, map pixels.</summary>
+        Vector2 Position { get; }
+        Rectangle Hitbox { get; }
+        Vector2 Center { get; }
+        Vector2 VisualCenter { get; }
+        /// <summary>Px per second.</summary>
+        Vector2 velocity { get; }
+        Vector2 additionalVel { get; }
+        Facing facing { get; }
+        PlayerState state { get; }
+        PlayerAnimState ANIM_STATE { get; }
+        Touching touching { get; }
+        string CurAnimName { get; }
+        bool exists { get; }
+        bool dontMove { get; }
+        bool reversed { get; }
+        bool ON_CONVEYOR { get; }
+        float y_push { get; }
+        int slowTicks { get; }
+        float slowMul { get; }
+        IBroomView broom { get; }
+        /// <summary>The dust the player rides, or null.</summary>
+        Entity raft { get; }
+        /// <summary>The C# game's player; null on the simulator.</summary>
+        AnodyneSharp.Entities.Player Native { get; }
+    }
+
+    public interface IBroomView
+    {
+        /// <summary>Out: a swing is on.</summary>
+        bool exists { get; }
+        Rectangle Hitbox { get; }
+        /// <summary>The dust carried or just put down, or null. (Still the C# entity: null on the simulator for now.)</summary>
+        Entity dust { get; }
+        bool just_released_dust { get; }
     }
 }

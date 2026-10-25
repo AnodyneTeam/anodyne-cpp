@@ -7,6 +7,7 @@
 #include "dialog.h"
 #include "ecs.h"
 #include "game_state.h"
+#include "player.h"
 #include "world.h"
 
 namespace
@@ -49,8 +50,23 @@ extern "C" int GameProbe_Json(char* buf, int cap)
     World_GetPlayerInfo(p);
     o.Add("{\"mode\":\"%s\",\"map\":\"%s\",\"grid\":[%d,%d],\"transition\":%s,\"dialog\":%s,", Str(gGame.mModeName),
           Str(gGame.mMapName), p.mGridX, p.mGridY, p.mTransition ? "true" : "false", Dialog_IsOpen() ? "true" : "false");
-    o.Add("\"player\":{\"x\":%d,\"y\":%d,\"facing\":%d,\"ladder\":%s,\"fallen\":%s,\"health\":%d},", p.mX, p.mY,
+    const Entity& pe = *Player_Entity();
+    PlayerProbe pp;
+    Player_GetProbe(pp);
+    const Entity* dust = Player_BroomDust();
+    o.Add("\"player\":{\"x\":%d,\"y\":%d,\"facing\":%d,\"ladder\":%s,\"fallen\":%s,\"health\":%d,", p.mX, p.mY,
           p.mFacing, p.mLadder ? "true" : "false", p.mFallen ? "true" : "false", p.mHealth);
+    // Player.cs as the C# bot reads it: position and velocity (px/s) as raw 16.16 (x, y, vx, vy, additional vx, vy),
+    // the hitbox size, the state, Facing order (LEFT RIGHT UP DOWN).
+    o.Add("\"fx16\":[%d,%d,%d,%d,%d,%d],\"w\":%d,\"h\":%d,", static_cast<int>(pe.mT->mX),
+          static_cast<int>(pe.mT->mY), static_cast<int>(pe.mT->mVelX), static_cast<int>(pe.mT->mVelY),
+          static_cast<int>(pp.mAddVelX), static_cast<int>(pp.mAddVelY), pe.mB->mW, pe.mB->mH);
+    o.Add("\"face\":%d,\"state\":%d,\"animState\":%d,\"exists\":%s,\"dontMove\":%s,\"conveyor\":%s,\"slow\":%s,"
+          "\"touching\":%d,\"anim\":\"%s\",",
+          pe.mFacing & 3, pp.mState, pp.mAnimState, pe.mExists ? "true" : "false", pp.mDontMove ? "true" : "false",
+          pp.mOnConveyor ? "true" : "false", pp.mSlow ? "true" : "false", pe.mB->mTouching, Ecs_AnimName(pe));
+    o.Add("\"broomOut\":%s,\"broomBox\":[%d,%d,%d,%d],\"dust\":%s},", pp.mBroomOut ? "true" : "false", pp.mBroomX,
+          pp.mBroomY, pp.mBroomW, pp.mBroomH, dust ? "true" : "false");
     o.Add("\"maxHealth\":%d,\"keys\":%d,\"cards\":%d,\"broom\":%d,\"canJump\":%s,\"cutscene\":%s,",
           gGame.mMaxHealth, Inventory_MapKeys(), Inventory_CardCount(), gGame.mEquippedBroom,
           gGame.mCanJump ? "true" : "false", Game_InCutscene() ? "true" : "false");
