@@ -604,6 +604,11 @@ namespace AnodyneSharp.Recording
                 catch (Exception e)
                 {
                     System.Console.Error.WriteLine("BOT FAILED: " + e.Message);
+                    if (e is not BotFatalException)
+                    {
+                        // (an exception from the bot's own code, not a give-up: where it came from)
+                        System.Console.Error.WriteLine("  " + string.Join("\n  ", (e.StackTrace ?? "").Split('\n').Take(4)).Replace("\r", ""));
+                    }
                     // which steps were running (innermost first): the enumerators on the bot's stack are the call chain of the step that threw
                     System.Console.Error.WriteLine("  step chain: " + string.Join(" <- ", _stack.Select(en => System.Text.RegularExpressions.Regex.Replace(en.GetType().Name, "^<|>d__\\d+$", ""))));
                     try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
@@ -911,6 +916,8 @@ namespace AnodyneSharp.Recording
         public abstract IEnumerable<object> Run();
 
         protected static IPlayerView Player => BotRunner.Player;
+        /// <summary>A private field of the C# game's player (reflection); null on the simulator, which has no such object.</summary>
+        protected static object PlayerField(System.Reflection.FieldInfo f) => Player?.Native == null ? null : f?.GetValue(Player.Native);
         protected static string Map => Gs.Map;
         protected static Vector2 Pos => Player == null ? Vector2.Zero : Player.Position;
         protected static bool Talking => !string.IsNullOrEmpty(Gs.Dialogue) || BotRunner.PlayBusy;
@@ -1712,7 +1719,7 @@ namespace AnodyneSharp.Recording
                 {
                     var dsF = typeof(Player).GetField("dash_state", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                     var pads = string.Join(",", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && Vector2.Distance(e.Position, Pos) < 40).Select(e => $"{e.Position}:{e.opacity}"));
-                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge} dash={dsF?.GetValue(Player.Native)} pc={Player.Center} pads={pads}");
+                    System.Console.Error.WriteLine($"    leap run w{w} c={c} state={Player.state} jumped={jumped} keys={string.Join("+", keys)} edge={edge} dash={PlayerField(dsF)} pc={Player.Center} pads={pads}");
                 }
                 yield return K(keys.ToArray());
             }
@@ -1793,11 +1800,11 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"  replan {replans}: grid {Grid} pos {Pos} hitbox {Player.Hitbox} trans {Gs.ScreenTransition}");
                 }
-                if (!Gs.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center))
+                if (!Gs.ScreenTransition && !Gs.ScreenHitbox.Contains(Player.Hitbox.Center))
                 {
                     // Outside the screen the game says we are on, not scrolling: we came in over a gate (standing on one holds it open),
                     // stepped back off it and it shut behind us. Go back out across the edge, and count the gate as shut from now on.
-                    var scr = GlobalState.ScreenHitbox;
+                    var scr = Gs.ScreenHitbox;
                     var c = Player.Hitbox.Center;
                     var outKey = c.Y < scr.Top ? KeyFunctions.Up : c.Y >= scr.Bottom ? KeyFunctions.Down : c.X < scr.Left ? KeyFunctions.Left : KeyFunctions.Right;
                     var inStep = outKey == KeyFunctions.Up ? new Point(0, 1) : outKey == KeyFunctions.Down ? new Point(0, -1) : outKey == KeyFunctions.Left ? new Point(1, 0) : new Point(-1, 0);
@@ -1807,7 +1814,7 @@ namespace AnodyneSharp.Recording
                     {
                         System.Console.Error.WriteLine($"  outside screen {Grid} at {Pos}: back out {outKey}, gate tile {shut} counted shut");
                     }
-                    for (int w = 0; w < 60 && !Gs.ScreenTransition && !GlobalState.ScreenHitbox.Contains(Player.Hitbox.Center); w++)
+                    for (int w = 0; w < 60 && !Gs.ScreenTransition && !Gs.ScreenHitbox.Contains(Player.Hitbox.Center); w++)
                     {
                         yield return K(outKey);
                     }

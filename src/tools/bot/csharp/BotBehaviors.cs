@@ -1192,7 +1192,7 @@ namespace AnodyneSharp.Recording
 
         private static float DashFactor()
         {
-            if (Player == null || DashStateField?.GetValue(Player.Native) is not Vector2 ds)
+            if (Player == null || PlayerField(DashStateField) is not Vector2 ds)
             {
                 return 1f;
             }
@@ -4224,7 +4224,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Frames until we land from the jump we are in (read off the jump's parabola clock), or null when it cannot be read.</summary>
         private static int? AirFramesLeft()
         {
-            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || JumpAnimField?.GetValue(Player.Native) is not object anim)
+            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || PlayerField(JumpAnimField) is not object anim)
             {
                 return null;
             }
@@ -4466,7 +4466,7 @@ namespace AnodyneSharp.Recording
                     return (0, 0);
                 };
             }
-            var dash0 = Player.state == PlayerState.GROUND && PlayerDashField?.GetValue(Player.Native) is Vector2 dv ? dv : Vector2.Zero;
+            var dash0 = Player.state == PlayerState.GROUND && PlayerField(PlayerDashField) is Vector2 dv ? dv : Vector2.Zero;
             int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700, survive: survive, airOk: airOk, padAt: padAt, dash0: dash0);
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
@@ -4842,7 +4842,7 @@ namespace AnodyneSharp.Recording
             typeof(AnodyneSharp.Entities.Player).GetField("IS_SINKING", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Wading in water (no raft): the game ignores the jump key then, whatever tile our position rounds to.</summary>
-        private static bool Sinking => SinkingField?.GetValue(Player.Native) is bool b && b;
+        private static bool Sinking => PlayerField(SinkingField) is bool b && b;
 
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
@@ -4876,7 +4876,7 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
-            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && DashStateField?.GetValue(Player.Native) is Vector2 dsv)
+            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && PlayerField(DashStateField) is Vector2 dsv)
             {
                 // Running off a dash pad (it lasts while the key is held): the plans below think in walking pace, so if anything is in the
                 // way of the run let go for a frame (that ends it) and plan again at a walk.
@@ -7992,7 +7992,7 @@ namespace AnodyneSharp.Recording
         private static bool HasRaft()
         {
             var f = typeof(Player).GetField("raft", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-            return f != null && f.GetValue(Player.Native) != null;
+            return f != null && PlayerField(f) != null;
         }
 
         private static bool ReachableWithJump(Point t)
@@ -13081,7 +13081,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (trace && (keys == null || keys.Length == 0 || traceAll))
                 {
-                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerDashField?.GetValue(Player.Native)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
+                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerField(PlayerDashField)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
                 }
                 yield return keys ?? K();
             }

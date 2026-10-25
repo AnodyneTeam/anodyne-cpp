@@ -148,5 +148,7 @@ namespace AnodyneSharp.Recording
         public static int PuzzlesSolved => View.PuzzlesSolved;
         public static int EnemiesKilled => View.EnemiesKilled;
         public static IPlayerView Player => View.Player;
+        /// <summary>The current screen's world rectangle (GlobalState.ScreenHitbox).</summary>
+        public static Rectangle ScreenHitbox => new(Grid.X * 160, Grid.Y * 160, 160, 160);
     }
 }

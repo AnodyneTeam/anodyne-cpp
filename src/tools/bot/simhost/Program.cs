@@ -59,6 +59,10 @@ if (part != null)
     // (each part continues from where the one before left the game, not from the title)
     Environment.SetEnvironmentVariable("ANODYNE_BOT_ONLY", "1");
     long frames = 0;
+    // SIMHOST_TRACE=FROM-TO: print every frame's keys and position in that frame range
+    var tr = (Environment.GetEnvironmentVariable("SIMHOST_TRACE") ?? "").Split('-');
+    long traceFrom = tr.Length == 2 && long.TryParse(tr[0], out long t0) ? t0 : -1;
+    long traceTo = tr.Length == 2 && long.TryParse(tr[1], out long t1) ? t1 : -1;
     string status = null;
     foreach (var name in part.Split(','))
     {
@@ -70,6 +74,10 @@ if (part != null)
             BotRunner.NextFrame();
             view.Hold(BotRunner.GbaMask, 1);
             frames++;
+            if (traceFrom >= 0 && view.Frame >= traceFrom && view.Frame <= traceTo)
+            {
+                Console.WriteLine($"  t f{view.Frame} keys={BotRunner.GbaMask:x3} {view.Map} {view.Player?.Position} [{BotRunner.Status}]");
+            }
             if (BotRunner.Status != status)
             {
                 status = BotRunner.Status;
