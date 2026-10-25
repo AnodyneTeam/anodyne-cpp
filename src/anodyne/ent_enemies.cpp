@@ -1173,21 +1173,11 @@ struct SeerData final
     fx mYTimer; // seconds
     fx mPresetX;
     fx mPresetY;
+    // The C#'s SubEntities, in its order (orbs, dusts, wave): made with the Seer, kept while they don't exist.
+    Entity* mOrbs[2];
+    Entity* mDusts[3];
+    Entity* mWave;
 };
-
-constexpr fx kTwoPi = FxF(6.2831853f);
-
-Entity* SeerChild(Entity& self, const EntityClass& cls, int index = 0)
-{
-    for (Entity* e = Ecs_First(); e; e = e->mNext)
-    {
-        if (e->mParent == &self && e->mClass == &cls && !e->mFreed && index-- == 0)
-        {
-            return e;
-        }
-    }
-    return nullptr;
-}
 
 void SeerOrbCollided(Entity& self, Entity& other)
 {
@@ -1203,6 +1193,7 @@ const EntityClass kSeerOrb = {
 
 void SeerWaveUpdate(Entity& self)
 {
+    Ecs_BaseUpdate(self);
     SeerWaveData& d = self.Data<SeerWaveData>();
     if (d.mEnd && Ecs_AnimFinished(self))
     {
@@ -1213,7 +1204,6 @@ void SeerWaveUpdate(Entity& self)
         d.mEnd = true;
         self.mExists = false;
     }
-    Ecs_BaseUpdate(self);
 }
 
 void SeerWaveCollided(Entity& self, Entity& other)
@@ -1263,51 +1253,49 @@ void SeerHorizontal(Entity& self)
 }
 
 // MoveVertical: up 32 px, then down to 80 px below the start, four times; each landing shakes the screen and drops
-// a dust (the first three). False once done.
+// a dust (the first three). Like the C# loop, a landing heads straight back up in the same frame. False once done.
 bool SeerVertical(Entity& self)
 {
     SeerData& d = self.Data<SeerData>();
-    if (!d.mDown)
+    for (;;)
     {
-        if (MoveTo(self.mT->mY, d.mPresetY - Fx(32), Fx(120)))
+        if (!d.mDown)
         {
+            if (!MoveTo(self.mT->mY, d.mPresetY - Fx(32), Fx(120)))
+            {
+                return true;
+            }
             d.mDown = true;
         }
-        return true;
-    }
-    if (!MoveTo(self.mT->mY, d.mPresetY + Fx(80), Fx(90)))
-    {
-        return true;
-    }
-    Screen_Shake(FxF(0.05f), FxF(0.3f));
-    if (d.mBounce < 3)
-    {
-        Entity* dust = Spawn_DustAt(self.mT->mX, self.mT->mY);
-        if (dust)
+        if (!MoveTo(self.mT->mY, d.mPresetY + Fx(80), Fx(90)))
         {
-            Ecs_Play(*dust, "unpoof", true);
+            return true;
+        }
+        Screen_Shake(FxF(0.05f), FxF(0.3f));
+        if (d.mBounce < 3)
+        {
+            Entity& dust = *d.mDusts[d.mBounce];
+            dust.mT->mX = dust.mT->mLastX = self.mT->mX;
+            dust.mT->mY = dust.mT->mLastY = self.mT->mY;
+            dust.mExists = true;
+            Ecs_Play(dust, "unpoof");
+        }
+        Game_PlaySfx("hit_wall");
+        d.mDown = false;
+        if (++d.mBounce > 3)
+        {
+            return false;
         }
     }
-    Game_PlaySfx("hit_wall");
-    d.mDown = false;
-    return ++d.mBounce <= 3;
 }
 
 void SeerRotateOrbs(Entity& self)
 {
-    for (int i = 0; i < 2; i++)
+    SeerData& d = self.Data<SeerData>();
+    for (Entity* orb : d.mOrbs)
     {
-        Entity* orb = SeerChild(self, kSeerOrb, i);
-        if (!orb)
-        {
-            continue;
-        }
         SeerOrbData& o = orb->Data<SeerOrbData>();
-        o.mAngle += FxStep(o.mSpeed);
-        while (o.mAngle >= kTwoPi)
-        {
-            o.mAngle -= kTwoPi;
-        }
+        o.mAngle += FxStep(o.mSpeed); // (never wrapped, as in the C#: the float rounding follows it)
         orb->mT->mX = Ecs_CenterX(self) + FxMul(o.mRadius, FxCos(o.mAngle));
         orb->mT->mY = Ecs_CenterY(self) + FxMul(o.mRadius, FxSin(o.mAngle));
     }
@@ -1315,43 +1303,25 @@ void SeerRotateOrbs(Entity& self)
 
 void SeerFadeEverything(Entity& self)
 {
+    SeerData& d = self.Data<SeerData>();
     MoveTo(self.mV->mOpacity, 0, Fx(3));
-    for (int i = 0; i < 2; i++)
+    for (Entity* orb : d.mOrbs)
     {
-        Entity* orb = SeerChild(self, kSeerOrb, i);
-        if (orb)
-        {
-            MoveTo(orb->mV->mOpacity, 0, Fx(2));
-        }
+        MoveTo(orb->mV->mOpacity, 0, Fx(2));
     }
-    Entity* wave = SeerChild(self, kSeerWave);
-    if (wave)
-    {
-        MoveTo(wave->mV->mOpacity, 0, Fx(4));
-    }
+    MoveTo(d.mWave->mV->mOpacity, 0, Fx(4));
 }
 
-void SeerSpawnOrbs(Entity& self)
+bool SeerAnyDust(const SeerData& d)
 {
-    static const fx kRadius[2] = { Fx(16), Fx(32) };
-    static const fx kSpeed[2] = { FxF(3.0f), FxF(2.4f) };
-    for (int i = 0; i < 2; i++)
+    for (const Entity* dust : d.mDusts)
     {
-        Entity* orb = Ecs_Create(kSeerOrb, self.mT->mX + kRadius[i], self.mT->mY, PART_VISUAL | PART_BRAIN, nullptr,
-                                 &self);
-        if (!orb)
+        if (dust->mExists)
         {
-            continue;
+            return true;
         }
-        Ecs_SetSheet(*orb, "light_orb");
-        orb->mV->mLayer = LAYER_FG_SPRITES;
-        Ecs_Play(*orb, "glow");
-        Ecs_SetSolid(*orb, false);
-        SeerOrbData& o = orb->Data<SeerOrbData>();
-        o.mIndex = static_cast<uint8_t>(i);
-        o.mRadius = kRadius[i];
-        o.mSpeed = kSpeed[i];
     }
+    return false;
 }
 
 void SeerEnter(Entity& self, uint8_t state)
@@ -1366,8 +1336,11 @@ void SeerEnter(Entity& self, uint8_t state)
     }
 }
 
+// StateLogic's IEnumerator: each case runs on, as the C# does until its next yield, into the next one in the same
+// frame; a break is the yield.
 void SeerUpdate(Entity& self)
 {
+    Ecs_BaseUpdate(self);
     SeerData& d = self.Data<SeerData>();
     Transform& t = *self.mT;
     if (d.mHealth <= 0 && d.mState >= SEER_STAGE1 && d.mState <= SEER_WAVE_GONE)
@@ -1397,15 +1370,15 @@ void SeerUpdate(Entity& self)
         }
         if (d.mBossRush)
         {
-            SeerEnter(self, SEER_SHAKE);
             Game_PlaySong("bedroom-boss");
             Darkness_TargetAlpha(FxF(0.1f), FxF(1.2f));
             Screen_Shake(FxF(0.01f), Fx(3));
-            break;
+            SeerEnter(self, SEER_SHAKE);
+            goto shake;
         }
         Game_ShowDialogue("sun_guy", "before_fight");
         SeerEnter(self, SEER_DIALOGUE);
-        break;
+        [[fallthrough]];
     case SEER_DIALOGUE:
         if (!Game_DialogueFinished())
         {
@@ -1418,14 +1391,18 @@ void SeerUpdate(Entity& self)
         Darkness_TargetAlpha(FxF(0.1f), FxF(1.2f));
         Screen_Shake(FxF(0.01f), Fx(3));
         SeerEnter(self, SEER_SHAKE);
-        break;
+        [[fallthrough]];
     case SEER_SHAKE:
+    shake:
         if (Screen_ShakeActive())
         {
             SeerLightScale(kFxOne, FxF(1.2f));
             break;
         }
-        SeerSpawnOrbs(self);
+        for (Entity* orb : d.mOrbs)
+        {
+            orb->mExists = true;
+        }
         d.mHorizontalBack = false;
         d.mYTimer = 0;
         SeerEnter(self, SEER_STAGE1);
@@ -1442,6 +1419,7 @@ void SeerUpdate(Entity& self)
         SeerEnter(self, SEER_POSITION);
         [[fallthrough]];
     case SEER_POSITION:
+    position:
         // (&&: the y only moves once the x is there.)
         if (!(MoveTo(t.mX, d.mPresetX, Fx(90)) && MoveTo(t.mY, d.mPresetY, Fx(12))))
         {
@@ -1453,15 +1431,11 @@ void SeerUpdate(Entity& self)
     case SEER_BOUNCE:
         if (SeerVertical(self))
         {
-            for (int i = 0; i < 2; i++)
+            for (Entity* orb : d.mOrbs)
             {
-                Entity* orb = SeerChild(self, kSeerOrb, i);
-                if (orb)
-                {
-                    SeerOrbData& o = orb->Data<SeerOrbData>();
-                    MoveTo(o.mRadius, Fx(8), Fx(30));
-                    MoveTo(o.mSpeed, Fx(240), FxF(0.6f));
-                }
+                SeerOrbData& o = orb->Data<SeerOrbData>();
+                MoveTo(o.mRadius, Fx(8), Fx(30));
+                MoveTo(o.mSpeed, Fx(240), FxF(0.6f));
             }
             SeerRotateOrbs(self);
             SeerHorizontal(self);
@@ -1471,103 +1445,77 @@ void SeerUpdate(Entity& self)
         [[fallthrough]];
     case SEER_CHARGE:
     {
+        // (&: both move every frame.)
         const bool x = MoveTo(t.mX, d.mPresetX + Fx(30), Fx(60));
         const bool y = MoveTo(t.mY, d.mPresetY - Fx(20), Fx(60));
         if (!(x && y))
         {
-            Entity* orb0 = SeerChild(self, kSeerOrb, 0);
-            Entity* orb1 = SeerChild(self, kSeerOrb, 1);
-            if (orb0)
-            {
-                MoveTo(orb0->mT->mX, t.mX + Fx(4), Fx(120));
-                MoveTo(orb0->mT->mY, t.mY + Fx(10), Fx(120));
-            }
-            if (orb1)
-            {
-                MoveTo(orb1->mT->mX, t.mX - Fx(4), Fx(120));
-                MoveTo(orb1->mT->mY, t.mY + Fx(10), Fx(120));
-            }
+            MoveTo(d.mOrbs[0]->mT->mX, t.mX + Fx(4), Fx(120));
+            MoveTo(d.mOrbs[0]->mT->mY, t.mY + Fx(10), Fx(120));
+            MoveTo(d.mOrbs[1]->mT->mX, t.mX - Fx(4), Fx(120));
+            MoveTo(d.mOrbs[1]->mT->mY, t.mY + Fx(10), Fx(120));
             break;
         }
         Game_PlaySfx("sun_guy_charge");
-        Entity* wave = Ecs_Create(kSeerWave, d.mPresetX - Fx(50), d.mPresetY - Fx(10), PART_VISUAL | PART_BRAIN,
-                                  nullptr, &self);
-        if (wave)
-        {
-            Ecs_SetSheet(*wave, "sun_guy_wave");
-            wave->mB->mW = 128;
-            wave->mB->mH = 8;
-            wave->mV->mLayer = LAYER_FG_SPRITES;
-            Ecs_SetSolid(*wave, false);
-            Ecs_Play(*wave, "play");
-            Ecs_Flicker(*wave, FxSec(3.0f));
-        }
+        Entity& wave = *d.mWave;
+        wave.mExists = true;
+        wave.Data<SeerWaveData>().mEnd = false;
+        wave.mT->mX = d.mPresetX - Fx(50);
+        wave.mT->mY = d.mPresetY - Fx(10);
+        wave.mT->mVelX = wave.mT->mVelY = 0;
+        Ecs_Play(wave, "play");
+        Ecs_Flicker(wave, FxSec(3.0f));
         SeerEnter(self, SEER_ORBS_OUT);
-        break;
     }
+        [[fallthrough]];
     case SEER_ORBS_OUT:
     {
-        Entity* wave = SeerChild(self, kSeerWave);
-        const bool ended = !wave || wave->Data<SeerWaveData>().mEnd;
-        bool done = ended;
-        if (!ended)
+        Entity& wave = *d.mWave;
+        bool& end = wave.Data<SeerWaveData>().mEnd;
+        // (&: both orbs move every frame; no shake on the frame they both get there.)
+        const bool a = MoveTo(d.mOrbs[0]->mT->mX, wave.mT->mX, Fx(18));
+        const bool b = MoveTo(d.mOrbs[1]->mT->mX, d.mPresetX + Fx(75), Fx(18));
+        if (!(a && b))
         {
-            Entity* orb0 = SeerChild(self, kSeerOrb, 0);
-            Entity* orb1 = SeerChild(self, kSeerOrb, 1);
-            const bool a = !orb0 || MoveTo(orb0->mT->mX, wave->mT->mX, Fx(18));
-            const bool b = !orb1 || MoveTo(orb1->mT->mX, d.mPresetX + Fx(75), Fx(18));
             Screen_Shake(FxF(0.02f), FxF(0.1f));
-            done = a && b;
+            if (!end)
+            {
+                break;
+            }
         }
-        if (!done)
-        {
-            break;
-        }
-        if (!ended)
+        if (!end)
         {
             Game_PlaySfx("sun_guy_death_short");
         }
-        if (wave)
-        {
-            wave->mT->mVelY = Fx(30);
-        }
+        wave.mT->mVelY = Fx(30);
         d.mHorizontalBack = false;
         SeerEnter(self, SEER_WAVE);
-        break;
     }
+        [[fallthrough]];
     case SEER_WAVE:
-    {
-        Entity* wave = SeerChild(self, kSeerWave);
-        if (wave && !wave->Data<SeerWaveData>().mEnd)
+        if (!d.mWave->Data<SeerWaveData>().mEnd)
         {
             SeerHorizontal(self);
             break;
         }
-        if (wave && wave->mExists)
+        if (d.mWave->mExists)
         {
             break;
         }
-        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        for (Entity* dust : d.mDusts)
         {
-            if ((e->mClass->mGroups & GROUP_DUST) && e->mExists && !e->mFreed)
-            {
-                Ecs_Play(*e, "poof");
-            }
+            Ecs_Play(*dust, "poof");
         }
         Player_DropBroomDust();
         SeerEnter(self, SEER_WAVE_GONE);
-        break;
-    }
+        [[fallthrough]];
     case SEER_WAVE_GONE:
-        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        if (SeerAnyDust(d))
         {
-            if ((e->mClass->mGroups & GROUP_DUST) && e->mExists && !e->mFreed)
-            {
-                return Ecs_BaseUpdate(self);
-            }
+            break;
         }
         SeerEnter(self, SEER_POSITION);
-        break;
+        goto position;
     case SEER_FADE:
         if (!Darkness_ReachedAlpha())
         {
@@ -1579,7 +1527,7 @@ void SeerUpdate(Entity& self)
             Game_ShowDialogue("sun_guy", "after_fight");
         }
         SeerEnter(self, SEER_AFTER);
-        break;
+        [[fallthrough]];
     case SEER_AFTER:
         if (!d.mBossRush && !Game_DialogueFinished())
         {
@@ -1599,20 +1547,20 @@ void SeerUpdate(Entity& self)
             Screen_Flash(FxF(2.38f));
             Screen_Shake(FxF(0.01f), kFxOne);
             Game_PlaySfx("sun_guy_death_short");
+            d.mFlashes++;
+            break;
         }
-        else if (d.mFlashes == 3)
+        if (d.mFlashes == 3)
         {
             Screen_Flash(FxF(3.3f));
             Screen_Shake(FxF(0.02f), Fx(2));
             Game_PlaySfx("sun_guy_death_long");
+            d.mFlashes++;
+            break;
         }
-        else
-        {
-            Darkness_TargetAlpha(FxF(0.75f), FxF(1.25f));
-            SeerEnter(self, SEER_LIGHT);
-        }
-        d.mFlashes++;
-        break;
+        Darkness_TargetAlpha(FxF(0.75f), FxF(1.25f));
+        SeerEnter(self, SEER_LIGHT);
+        [[fallthrough]];
     case SEER_LIGHT:
         if (!SeerLightScaleReached(Fx(4), FxF(3.6f)))
         {
@@ -1632,19 +1580,20 @@ void SeerUpdate(Entity& self)
             Preset_SetAlive(*self.mPreset, false);
         }
         self.mExists = false;
-        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        for (Entity* orb : d.mOrbs)
         {
-            if (e->mParent == &self)
-            {
-                e->mExists = false;
-            }
+            orb->mExists = false;
         }
+        for (Entity* dust : d.mDusts)
+        {
+            dust->mExists = false;
+        }
+        d.mWave->mExists = false;
         Game_PlaySong("bedroom");
         break;
     default:
         break;
     }
-    Ecs_BaseUpdate(self);
 }
 
 void SeerCollided(Entity& self, Entity& other)
@@ -1898,5 +1847,48 @@ Entity* Spawn_Seer(const MapEntity& preset, Entity&)
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     d.mPresetX = e->mT->mX;
     d.mPresetY = e->mT->mY;
+    static const fx kRadius[2] = { Fx(16), Fx(32) };
+    static const fx kSpeed[2] = { FxF(3.0f), FxF(2.4f) };
+    for (int i = 0; i < 2; i++)
+    {
+        Entity* orb = Ecs_Create(kSeerOrb, e->mT->mX + kRadius[i], e->mT->mY, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!orb)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*orb, "light_orb");
+        orb->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_Play(*orb, "glow");
+        Ecs_SetSolid(*orb, false);
+        SeerOrbData& o = orb->Data<SeerOrbData>();
+        o.mIndex = static_cast<uint8_t>(i);
+        o.mRadius = kRadius[i];
+        o.mSpeed = kSpeed[i];
+        Ecs_KeepPooled(*orb);
+        d.mOrbs[i] = orb;
+    }
+    for (Entity*& dust : d.mDusts)
+    {
+        dust = Spawn_DustAt(0, 0);
+        if (!dust)
+        {
+            return nullptr;
+        }
+        dust->mParent = e;
+        Ecs_KeepPooled(*dust);
+    }
+    Entity* wave = Ecs_Create(kSeerWave, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+    if (!wave)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*wave, "sun_guy_wave");
+    wave->mB->mW = 128;
+    wave->mB->mH = 8;
+    wave->mV->mLayer = LAYER_FG_SPRITES;
+    Ecs_SetSolid(*wave, false);
+    Ecs_Play(*wave, "play");
+    Ecs_KeepPooled(*wave);
+    d.mWave = wave;
     return e;
 }

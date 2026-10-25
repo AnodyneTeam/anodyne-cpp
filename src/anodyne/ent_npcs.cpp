@@ -410,6 +410,9 @@ const EntityClass kFollowerBro = {
 };
 
 // ---- HealthCicada (HealthCicada.cs + HealthCicadaSentinel.cs) ---------------------------------------------------
+// The sentinel is the preset (an invisible 16x16 box); the cicada and its gnaw particles are its sub-entities, whose
+// positions are the C#'s UI-space ones (the cicada starts at UI -16,30), drawn in game coordinates through their
+// draw offsets. The cicada's state logic runs in the sentinel's update, as the C#'s _child.Update() does.
 enum CicadaStep : uint8_t
 {
     CICADA_WAIT_FOR_BOSS,
@@ -417,9 +420,14 @@ enum CicadaStep : uint8_t
     CICADA_WAIT_FOR_PLAYER,
     CICADA_FLY_AWAY,
     CICADA_HEAL,
+    CICADA_FLY_TO_HEALTH,
     CICADA_GNAW,
     CICADA_FADE,
+    CICADA_WAIT_FOR_BOXES,
+    CICADA_DONE,
 };
+
+constexpr int kCicadaBoxes = 10;
 
 struct CicadaData final
 {
@@ -427,9 +435,15 @@ struct CicadaData final
     uint8_t mGnaws;
     bool mPlayerCollided;
     bool mActivated;
+    bool mPlayerAway;
+    bool mChirp;
+    bool mGameCoords; // drawInGameCoordinates
     fx mTimer;
-    fx mHomeX; // the sentinel's (the preset's) position
-    fx mHomeY;
+    fx mTargetX;
+    fx mTargetY;
+    fx mFlyStartY; // UI y when it set off for the health bar (its draw offset eases from the header's 20 px to 0)
+    Entity* mCicada;
+    Entity* mBoxes[kCicadaBoxes];
 };
 
 bool CicadaHealStep(Entity& self)
@@ -438,13 +452,72 @@ bool CicadaHealStep(Entity& self)
     return !Preset_Alive(*self.mPreset);
 }
 
+void CicadaBoxUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (MoveTo(self.mV->mOpacity, 0, FxF(0.3f)))
+    {
+        self.mExists = false;
+    }
+}
+
+const EntityClass kCicadaBox = {
+    "HealthCicadaBox", CicadaBoxUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kCicadaFly = {
+    "HealthCicada", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// UI space to the screen: drawn at the room's top-left less the 20 px header, then (as UI) over the health bar.
+void CicadaPlaceDrawing(Entity& self)
+{
+    CicadaData& d = self.Data<CicadaData>();
+    Entity& c = *d.mCicada;
+    if (d.mGameCoords)
+    {
+        c.mV->mOffX = -Fx(gGame.mGridX * 160);
+        c.mV->mOffY = -Fx(gGame.mGridY * 160 - 20);
+    }
+    else
+    {
+        // (the C#'s UI has the header above the playfield; the port's health bar is drawn on it)
+        fx header = Fx(20);
+        const fx span = d.mFlyStartY - d.mTargetY;
+        if (d.mStep >= CICADA_FLY_TO_HEALTH)
+        {
+            header = span == 0 ? 0 : FxMul(Fx(20), FxDiv(c.mT->mY - d.mTargetY, span));
+            header = header < 0 ? 0 : (header > Fx(20) ? Fx(20) : header);
+        }
+        c.mV->mOffX = -World_CamX();
+        c.mV->mOffY = -(World_CamY() - header);
+    }
+    for (Entity* box : d.mBoxes)
+    {
+        box->mV->mOffX = -World_CamX();
+        box->mV->mOffY = -World_CamY();
+    }
+}
+
 void CicadaUpdate(Entity& self)
 {
     CicadaData& d = self.Data<CicadaData>();
-    Transform& t = *self.mT;
-    Visual& v = *self.mV;
+    Entity& c = *d.mCicada;
+    Transform& t = *c.mT;
+    Visual& v = *c.mV;
     const Entity& p = *World_Player();
     Ecs_BaseUpdate(self);
+    if (!d.mPlayerAway && d.mActivated &&
+        FxLength(p.mT->mX - self.mT->mX, p.mT->mY - self.mT->mY) > Fx(80))
+    {
+        d.mPlayerAway = true;
+        d.mActivated = false;
+    }
+    // _child.Update(): the chirp, then its StateLogic until the next yield (each case runs on into the next).
+    if (d.mChirp)
+    {
+        Game_PlaySfx("cicada_chirp");
+    }
     switch (d.mStep)
     {
     case CICADA_WAIT_FOR_BOSS:
@@ -452,49 +525,46 @@ void CicadaUpdate(Entity& self)
         {
             break;
         }
+        d.mTargetX = self.mT->mX - Fx(gGame.mGridX * 160);
+        d.mTargetY = self.mT->mY - Fx(gGame.mGridY * 160) + Fx(20);
         v.mVisible = true;
-        Ecs_Play(self, "fly");
+        Ecs_Play(c, "fly");
+        d.mChirp = true;
         d.mStep = CICADA_FLY_TO_START;
-        break;
+        [[fallthrough]];
     case CICADA_FLY_TO_START:
     {
-        Game_PlaySfx("cicada_chirp");
-        const bool x = MoveTo(t.mX, d.mHomeX, Fx(30));
-        const bool y = MoveTo(t.mY, d.mHomeY, Fx(30));
-        if (x && y)
+        const bool x = MoveTo(t.mX, d.mTargetX, Fx(30));
+        const bool y = MoveTo(t.mY, d.mTargetY, Fx(30));
+        if (!(x && y))
         {
-            d.mActivated = true;
-            Ecs_Play(self, "idle");
-            d.mStep = CICADA_WAIT_FOR_PLAYER;
+            break;
         }
-        break;
+        d.mActivated = true;
+        Ecs_Play(c, "idle");
+        d.mStep = CICADA_WAIT_FOR_PLAYER;
     }
+        [[fallthrough]];
     case CICADA_WAIT_FOR_PLAYER:
-        Game_PlaySfx("cicada_chirp");
-        if (d.mActivated && FxLength(p.mT->mX - d.mHomeX, p.mT->mY - d.mHomeY) > Fx(80))
+        if (!d.mPlayerCollided)
         {
-            // HealthCicadaSentinel: the player walked away, it flies off (until the screen comes back).
-            Ecs_Play(self, "fly");
+            if (!d.mPlayerAway)
+            {
+                break;
+            }
+            Ecs_Play(c, "fly");
             t.mVelY = -Fx(100);
             d.mStep = CICADA_FLY_AWAY;
+            goto fly_away;
         }
-        else if (d.mPlayerCollided)
-        {
-            v.mLayer = LAYER_UI;
-            Ecs_Play(self, "fly");
-            d.mTimer = 0;
-            d.mStep = CICADA_HEAL;
-            Game_StartCutscene(self, CicadaHealStep);
-        }
-        break;
-    case CICADA_FLY_AWAY:
-        if (MoveTo(v.mOpacity, 0, FxF(1.2f)))
-        {
-            self.mExists = false;
-        }
-        break;
+        v.mLayer = LAYER_UI;
+        d.mGameCoords = false;
+        d.mTimer = 0;
+        Game_StartCutscene(self, CicadaHealStep);
+        Ecs_Play(c, "fly");
+        d.mStep = CICADA_HEAL;
+        [[fallthrough]];
     case CICADA_HEAL:
-        Game_PlaySfx("cicada_chirp");
         if (gGame.mCurHealth < gGame.mMaxHealth)
         {
             d.mTimer += kFxTick;
@@ -506,44 +576,96 @@ void CicadaUpdate(Entity& self)
             }
             break;
         }
-        // (The C# flies it to the health bar before it gnaws.)
-        Ecs_Play(self, "gnaw");
-        d.mTimer = FxSec(2.0f);
+        // HealthBar.GetHealthPiecePos(MAX_HEALTH), less 4.
+        d.mTargetX = Fx(155 - 11 - 8 * (7 - gGame.mMaxHealth % 8) - 7 * (gGame.mMaxHealth / 8) - 4);
+        d.mTargetY = Fx(2 + gGame.mMaxHealth / 8 * 7 - 4);
+        d.mFlyStartY = t.mY;
+        d.mChirp = false;
+        d.mStep = CICADA_FLY_TO_HEALTH;
+        [[fallthrough]];
+    case CICADA_FLY_TO_HEALTH:
+    {
+        const bool x = MoveTo(t.mX, d.mTargetX, Fx(30));
+        const bool y = MoveTo(t.mY, d.mTargetY, Fx(30));
+        if (!(x && y))
+        {
+            break;
+        }
+        Ecs_Play(c, "gnaw");
         d.mGnaws = 0;
+        d.mTimer = FxSec(2.0f); // the first one is instant
         d.mStep = CICADA_GNAW;
-        break;
+    }
+        [[fallthrough]];
     case CICADA_GNAW:
-        d.mTimer += kFxTick;
-        if (d.mTimer > FxSec(1.7f))
+        if (d.mGnaws < 3)
         {
-            d.mTimer = 0;
-            d.mGnaws++;
-            Game_PlaySfx("4sht_pop");
+            d.mTimer += kFxTick;
+            if (d.mTimer > FxSec(1.7f))
+            {
+                d.mTimer = 0;
+                d.mGnaws++;
+                Game_PlaySfx("4sht_pop");
+                for (Entity* box : d.mBoxes)
+                {
+                    // BoxFX.Spawn
+                    box->mExists = true;
+                    box->mT->mX = box->mT->mLastX = t.mX + Fx(6);
+                    box->mT->mY = box->mT->mLastY = t.mY + Fx(6);
+                    box->mV->mOpacity = kFxOne;
+                    box->mT->mAccY = Fx(Rng_Range(50, 71));
+                    box->mT->mVelX = Fx(Rng_Range(-40, 81));
+                    box->mT->mVelY = Fx(Rng_Range(10, 31));
+                }
+            }
+            break;
         }
-        if (d.mGnaws >= 3)
+        GameState_SetMaxHealth(gGame.mMaxHealth + 1);
+        GameState_SetHealth(gGame.mCurHealth + 1);
+        Ecs_Play(c, "fly");
+        t.mVelY = -Fx(40);
+        d.mStep = CICADA_FADE;
+        [[fallthrough]];
+    case CICADA_FADE:
+        if (!MoveTo(v.mOpacity, 0, FxF(0.6f)))
         {
-            GameState_SetMaxHealth(gGame.mMaxHealth + 1);
-            GameState_SetHealth(gGame.mCurHealth + 1);
-            Ecs_Play(self, "fly");
-            t.mVelY = -Fx(40);
-            d.mStep = CICADA_FADE;
+            break;
         }
+        Preset_SetAlive(*self.mPreset, false);
+        d.mStep = CICADA_WAIT_FOR_BOXES;
+        [[fallthrough]];
+    case CICADA_WAIT_FOR_BOXES:
+        for (const Entity* box : d.mBoxes)
+        {
+            if (box->mExists)
+            {
+                goto yield;
+            }
+        }
+        self.mExists = false;
+        d.mStep = CICADA_DONE;
+        break;
+    case CICADA_FLY_AWAY:
+    fly_away:
+        if (!MoveTo(v.mOpacity, 0, FxF(1.2f)))
+        {
+            break;
+        }
+        // (the sentinel goes until the screen comes back)
+        self.mExists = false;
+        d.mStep = CICADA_DONE;
         break;
     default:
-        if (MoveTo(v.mOpacity, 0, FxF(0.6f)))
-        {
-            Preset_SetAlive(*self.mPreset, false);
-            self.mExists = false;
-        }
         break;
     }
-    d.mPlayerCollided = false;
+yield:
+    CicadaPlaceDrawing(self);
 }
 
 void CicadaCollided(Entity& self, Entity&)
 {
     CicadaData& d = self.Data<CicadaData>();
-    if (d.mActivated && Player_State() == PS_GROUND)
+    if (d.mActivated && !d.mPlayerCollided && Player_State() == PS_GROUND)
     {
         d.mPlayerCollided = true;
         d.mActivated = false;
@@ -551,7 +673,8 @@ void CicadaCollided(Entity& self, Entity&)
 }
 
 const EntityClass kCicada = {
-    "HealthCicada", CicadaUpdate, nullptr, CicadaCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+    "HealthCicadaSentinel", CicadaUpdate, nullptr, CicadaCollided, nullptr, nullptr, nullptr, nullptr, 0,
+    GROUP_PLAYER,           0,
 };
 
 // ---- Big_Key (Big_Key.cs) -----------------------------------------------------------------------------------------
@@ -1113,24 +1236,40 @@ Entity* Spawn_FollowerBro(const MapEntity& preset, Entity&)
 
 Entity* Spawn_HealthCicada(const MapEntity& preset, Entity&)
 {
-    // The sentinel's hitbox at the preset; the cicada flies in from the screen's left edge (UI -16, 30 in the C#,
-    // drawn at the room's top-left minus the 20 px header).
-    const fx sx = Fx(gGame.mGridX * 160 - 16);
-    const fx sy = Fx(gGame.mGridY * 160 + 10);
-    Entity* e = Ecs_Create(kCicada, sx, sy, PART_VISUAL | PART_BRAIN, &preset);
+    Entity* e = Ecs_Create(kCicada, Fx(preset.mX), Fx(preset.mY), PART_VISUAL | PART_BRAIN, &preset);
     if (!e)
     {
         return nullptr;
     }
     e->mB->mW = e->mB->mH = 16;
     Ecs_SetSolid(*e, false);
-    Ecs_SetSheet(*e, "life_cicada");
-    Ecs_SetFrameBase(*e, preset.mFrame);
-    e->mV->mLayer = LAYER_FG_SPRITES;
     e->mV->mVisible = false;
     CicadaData& d = e->Data<CicadaData>();
-    d.mHomeX = Fx(preset.mX);
-    d.mHomeY = Fx(preset.mY);
+    d.mGameCoords = true;
+    Entity* c = Ecs_Create(kCicadaFly, -Fx(16), Fx(30), PART_VISUAL, nullptr, e);
+    if (!c)
+    {
+        return nullptr;
+    }
+    Ecs_SetSolid(*c, false);
+    Ecs_SetSheet(*c, "life_cicada");
+    Ecs_SetFrameBase(*c, preset.mFrame);
+    c->mV->mLayer = LAYER_FG_SPRITES;
+    c->mV->mVisible = false;
+    d.mCicada = c;
+    for (Entity*& box : d.mBoxes)
+    {
+        box = Ecs_Create(kCicadaBox, 0, 0, PART_VISUAL, nullptr, e);
+        if (!box)
+        {
+            return nullptr;
+        }
+        Ecs_SetSolid(*box, false);
+        Ecs_SetSheet(*box, "life_cicada_particle");
+        box->mV->mLayer = LAYER_UI;
+        Ecs_KeepPooled(*box);
+    }
+    CicadaPlaceDrawing(*e);
     return e;
 }
 

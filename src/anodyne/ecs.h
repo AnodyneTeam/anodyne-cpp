@@ -438,6 +438,7 @@ struct Entity final
     bool mOld;         // left over from the previous screen: drawn during the transition, not updated
     bool mFreed;
     bool mSpawned;      // GlobalState.SpawnEntity: in the play state's lists (updates, collisions) from the next update
+    bool mKeep;         // a pooled sub-entity (EntityPool): kept while it doesn't exist, for its owner to reuse
     uint8_t mDepthRank; // set by the renderer
     uint16_t mIndex;    // pool index
 
@@ -515,6 +516,13 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
 // Frees an entity now (and nothing else: sub-entities are freed by their owner's mDestroy or by Ecs_ClearScreen).
 void Ecs_Free(Entity& e);
 // GlobalState.SpawnEntity (_newlySpawned): left out of everything until the next Ecs_UpdateAll.
+// Pre-made, not existing until its owner sets mExists: Ecs_FreeDead leaves it be.
+inline void Ecs_KeepPooled(Entity& e)
+{
+    e.mKeep = true;
+    e.mExists = false;
+}
+
 inline void Ecs_MarkSpawned(Entity& e)
 {
     e.mSpawned = true;
@@ -620,6 +628,9 @@ void Ecs_SetRenderer(ObjVramAllocator& vram, int firstPalBank, int palBankCount)
 // Hides OAM entries firstOam .. endOam-1 (the world isn't shown).
 void Ecs_HideAll(int firstOam, int endOam);
 // Forget cached frames/palettes (map change).
+// Frees the sprite frames cached in OBJ VRAM (they reload as they are drawn), e.g. when the cache's scattered
+// blocks leave no room for something bigger.
+void Ecs_FlushFrameCache();
 void Ecs_FlushRenderCaches();
 // Peak pool usage, for the debug log.
 void Ecs_Stats(int* entities, int* visuals, int* brains);
@@ -628,3 +639,6 @@ void Ecs_Stats(int* entities, int* visuals, int* brains);
 void Map_Collide(Entity& e);
 uint8_t Map_CollisionAllowAt(fx x, fx y); // Map.GetCollisionData
 Entity* World_Player();
+// The top-left of the screen being shown (UI coordinates' origin in the world).
+fx World_CamX();
+fx World_CamY();

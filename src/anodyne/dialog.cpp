@@ -616,13 +616,8 @@ const char* Dialog_Get(const char* npc, const char* scene, int id, bool* top)
     return Dialog_GetFor(npc, gArea, scene, id, top);
 }
 
-void Dialog_Open(const char* text, bool top, bool intro)
+static bool AllocObjBlocks()
 {
-    if (!gVram || gOpen)
-    {
-        return;
-    }
-    Dialog_HideLabels();
     for (int o = 0; o < kObjCount; o++)
     {
         gObjBlock[o] = gVram->alloc((o < 3 ? 32 : 8) * ObjVramAllocator::BlockSize);
@@ -632,6 +627,25 @@ void Dialog_Open(const char* text, bool top, bool intro)
             {
                 gVram->free(gObjBlock[p]);
             }
+            return false;
+        }
+    }
+    return true;
+}
+
+void Dialog_Open(const char* text, bool top, bool intro)
+{
+    if (!gVram || gOpen)
+    {
+        return;
+    }
+    Dialog_HideLabels();
+    if (!AllocObjBlocks())
+    {
+        // (the sprite frame cache can leave OBJ VRAM too scattered for the box: drop it and try again)
+        Ecs_FlushFrameCache();
+        if (!AllocObjBlocks())
+        {
             return;
         }
     }

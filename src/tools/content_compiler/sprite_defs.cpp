@@ -488,6 +488,8 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "fly", { 0, 1 }, 14.0f, true },  // variant-relative
         { "gnaw", { 2, 3 }, 14.0f, true },  // variant-relative
     } },
+    { "life_cicada_particle", 4, 4, {
+    } },
     { "light_orb", 16, 16, {
         { "glow", { 0, 1, 2, 3, 0 }, 10.0f, true },  // variant-relative
     } },

@@ -521,6 +521,7 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
     e->mParent = parent;
     e->mExists = true;
     e->mSpawned = false;
+    e->mKeep = false;
     e->mFacing = FACE_DOWN;
     e->mT->mX = e->mT->mLastX = x;
     e->mT->mY = e->mT->mLastY = y;
@@ -611,7 +612,7 @@ void Ecs_FreeDead()
     for (Entity* e = gHead; e;)
     {
         Entity* next = e->mNext;
-        if (!e->mExists && !e->mPreset && !e->mPlayerOwned && !(e->mClass->mFlags & ECF_ENEMY))
+        if (!e->mExists && !e->mKeep && !e->mPreset && !e->mPlayerOwned && !(e->mClass->mFlags & ECF_ENEMY))
         {
             Ecs_Free(*e);
         }
@@ -1370,7 +1371,7 @@ void Ecs_SetRenderer(ObjVramAllocator& vram, int firstPalBank, int palBankCount)
     Ecs_FlushRenderCaches();
 }
 
-void Ecs_FlushRenderCaches()
+void Ecs_FlushFrameCache()
 {
     for (FrameSlot& s : gFrames)
     {
@@ -1381,6 +1382,11 @@ void Ecs_FlushRenderCaches()
         s.mSheet = nullptr;
     }
     gFrameTiles = 0;
+}
+
+void Ecs_FlushRenderCaches()
+{
+    Ecs_FlushFrameCache();
     for (int b = 0; b < kPalBanks; b++)
     {
         gBankPal[b] = nullptr;

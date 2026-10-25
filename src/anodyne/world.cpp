@@ -1342,6 +1342,16 @@ Entity* World_Player()
     return Player_Entity();
 }
 
+fx World_CamX()
+{
+    return gCamX;
+}
+
+fx World_CamY()
+{
+    return gCamY;
+}
+
 // ---- World API ---------------------------------------------------------------------------------------------------
 bool World_Init(ObjVramAllocator& vram)
 {
