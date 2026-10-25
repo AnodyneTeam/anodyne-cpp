@@ -1107,15 +1107,19 @@ void Ecs_UpdateOne(Entity& e)
     }
 }
 
+void Ecs_ReleaseSpawned()
+{
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        e->mSpawned = false;
+    }
+}
+
 void Ecs_UpdateAll(Entity* skip)
 {
     // Entities created during the loop are appended and so also update this frame, unlike the C#'s _newlySpawned;
     // stop at the entity that was last when the loop started.
     gUpdateLast = gTail;
-    for (Entity* e = gHead; e; e = e->mNext)
-    {
-        e->mSpawned = false;
-    }
     for (Entity* e = gHead; e;)
     {
         Entity* next = e->mNext;

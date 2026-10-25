@@ -885,12 +885,15 @@ struct DogData final
     uint8_t mState;
     uint8_t mPhase;
     bool mSuper;
-    bool mPlayerInArea;
     int mHealth;
-    fx mTimer;
     fx mHitTimer;
     fx mAttackX[2];
     fx mAttackY[2];
+    Entity* mRegion; // the DogRegion sub-entity: it only exists while pacing
+    // Each state object's TimerState lives as long as the dog: its clock only runs while the state does.
+    TimerState<1> mPace;   // MoveTimer
+    TimerState<1> mAlert;  // AlertTimer
+    TimerState<1> mAttack; // AttackTimer, armed once when the dog is made and never reset
 };
 
 const fx kDogAttackSpeeds[5] = { FxF(66.0f), FxF(84.0f), FxF(84.0f), FxF(96.0f), FxF(102.0f) };
@@ -903,15 +906,22 @@ void DogSetFlip(Entity& self)
 void DogEnter(Entity& self, uint8_t state)
 {
     DogData& d = self.Data<DogData>();
+    if (d.mRegion)
+    {
+        d.mRegion->mExists = state == DOG_PACE;
+    }
     d.mState = state;
-    d.mTimer = FxSec(1.0f);
     Transform& t = *self.mT;
     if (state == DOG_PACE)
     {
+        d.mPace.Reset();
+        d.mPace.Add(1.0f, 0);
         t.mVelX = t.mVelY = 0;
     }
     else if (state == DOG_ALERT)
     {
+        d.mAlert.Reset();
+        d.mAlert.Add(1.0f, 0);
         t.mVelX = t.mVelY = 0;
         Ecs_Play(self, "alert");
         Game_PlaySfx("dog_bark");
@@ -922,6 +932,7 @@ void DogEnter(Entity& self, uint8_t state)
         const Entity& p = *World_Player();
         const fx px = p.mT->mX;
         const fx py = p.mT->mY;
+        const fx tx = px - Fx(Rng_Range(38, 51));
         if (!d.mSuper)
         {
             d.mAttackX[0] = px + Fx(Rng_Range(30, 43));
@@ -929,7 +940,7 @@ void DogEnter(Entity& self, uint8_t state)
             d.mAttackX[1] = px - Fx(Rng_Range(38, 51));
             d.mAttackY[1] = py - Fx(8);
         }
-        Ecs_MoveTowards(self, px - Fx(Rng_Range(38, 51)), py - Fx(8), kDogAttackSpeeds[0]);
+        Ecs_MoveTowards(self, tx, py - Fx(8), kDogAttackSpeeds[0]);
         Ecs_Play(self, "attack");
         DogSetFlip(self);
     }
@@ -943,22 +954,16 @@ void DogUpdate(Entity& self)
     switch (d.mState)
     {
     case DOG_PACE:
-        if (d.mPlayerInArea)
+        d.mPace.Tick(kDeltaTime);
+        while (d.mPace.Pop() >= 0)
         {
-            DogEnter(self, DOG_ALERT);
-            break;
-        }
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
-        {
-            d.mTimer += FxSec(1.0f);
-            if (Rng_Unit() > FxF(0.33f))
+            if (Rng_NextDouble() > 0.33)
             {
                 Ecs_Play(self, "walk");
                 t.mVelX = Fx(20);
                 DogSetFlip(self);
             }
-            else if (Rng_Unit() > FxF(0.5f))
+            else if (Rng_NextDouble() > 0.5)
             {
                 Ecs_Play(self, "walk");
                 t.mVelX = -Fx(20);
@@ -972,22 +977,21 @@ void DogUpdate(Entity& self)
         }
         break;
     case DOG_ALERT:
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
+        d.mAlert.Tick(kDeltaTime);
+        while (d.mAlert.Pop() >= 0)
         {
             DogEnter(self, DOG_ATTACK);
         }
         break;
     default:
-        d.mTimer -= kFxTick;
-        if (d.mTimer <= 0)
+        d.mAttack.Tick(kDeltaTime);
+        while (d.mAttack.Pop() >= 0)
         {
-            d.mTimer += FxSec(1.0f);
             d.mPhase++;
             if (d.mPhase > (d.mSuper ? 4 : 2))
             {
                 DogEnter(self, DOG_PACE);
-                break;
+                continue;
             }
             Game_PlaySfx("dog_dash");
             fx tx = 0;
@@ -1018,7 +1022,6 @@ void DogUpdate(Entity& self)
         }
         break;
     }
-    d.mPlayerInArea = false;
     if (d.mHitTimer > 0)
     {
         d.mHitTimer -= kFxTick;
@@ -1068,9 +1071,10 @@ void DogRegionUpdate(Entity& self)
 void DogRegionCollided(Entity& self, Entity&)
 {
     Entity* dog = self.mParent;
+    // TriggerEvent("PlayerInArea"): only Pace handles it, there and then.
     if (dog && dog->mExists && dog->Data<DogData>().mState == DOG_PACE)
     {
-        dog->Data<DogData>().mPlayerInArea = true;
+        DogEnter(*dog, DOG_ALERT);
     }
 }
 
@@ -1788,14 +1792,17 @@ Entity* Spawn_Dog(const MapEntity& preset, Entity&)
     DogData& d = e->Data<DogData>();
     d.mHealth = 3;
     d.mSuper = Preset_TypeValue(preset)[0] == '1';
+    d.mAttack.Add(1.0f, 0);
     Ecs_Play(*e, "stop");
-    DogEnter(*e, DOG_PACE);
     Entity* region = Ecs_Create(kDogRegion, e->mT->mX, e->mT->mY, 0, nullptr, e);
     if (region)
     {
         region->mB->mW = region->mB->mH = 96;
         Ecs_SetSolid(*region, false);
+        Ecs_KeepPooled(*region);
+        d.mRegion = region;
     }
+    DogEnter(*e, DOG_PACE);
     return e;
 }
 

@@ -1465,6 +1465,7 @@ void World_SetPlayerVisible(bool visible)
 // PlayState.Update.
 void World_Update()
 {
+    Ecs_ReleaseSpawned();
     const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive;
     bool updateEntities = !gDeath.mActive;
     if (child)
@@ -1476,6 +1477,7 @@ void World_Update()
         // Child states stack: a box the cutscene itself opened pauses it (CutsceneState's DialogueEvent
         // substate, also for the frame it closes), any other box runs alongside it.
         const bool cutsceneBox = gDialogOpen && Game_DialogueIsCutscene();
+        bool cutsceneEnded = false;
         if (gDialogOpen)
         {
             if (!Dialog_Update())
@@ -1486,16 +1488,22 @@ void World_Update()
         if (gCutscene.mFn && !cutsceneBox)
         {
             Entity* owner = gCutscene.mOwner;
-            if (owner->mFreed || owner->mClass != gCutscene.mClass || gCutscene.mFn(*owner))
+            const CutsceneFn fn = gCutscene.mFn;
+            if (owner->mFreed || owner->mClass != gCutscene.mClass || fn(*owner))
             {
-                gCutscene.mFn = nullptr;
+                // (one that ends by starting the next: the C# drops its state now and adds the new one after)
+                cutsceneEnded = true;
+                if (gCutscene.mFn == fn)
+                {
+                    gCutscene.mFn = nullptr;
+                }
             }
         }
         if (gDeath.mActive)
         {
             DeathUpdate();
         }
-        if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive)
+        if (!gDialogOpen && (!gCutscene.mFn || cutsceneEnded) && !gDeath.mActive)
         {
             Player_SetDontMove(false);
             Player_SetActionsDisabled(false);

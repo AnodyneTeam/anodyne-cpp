@@ -527,6 +527,8 @@ inline void Ecs_MarkSpawned(Entity& e)
 {
     e.mSpawned = true;
 }
+// The top of PlayState.Update: _newlySpawned joins the lists, so a spawn from a collision waits a whole frame too.
+void Ecs_ReleaseSpawned();
 // All entities, in update order.
 Entity* Ecs_First();
 // PlayState.LoadGridEntities' order: the screen's presets, then the player's sub-entities.

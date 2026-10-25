@@ -608,6 +608,8 @@ struct KeyGateData final
     int8_t mStep;     // BigGate.OpeningSequence: the frame shown (-1 before the lock breaks)
     fx mTimer;
     Entity* mParts[3]; // keyhole and digits
+    Entity* mKey;      // BigKeyGate.keyAnim: the key flying into the lock
+    uint8_t mKeyStep;
 };
 
 struct SentinelData final
@@ -633,6 +635,10 @@ void KeyGateDestroy(Entity& self)
         {
             Ecs_Free(*part);
         }
+    }
+    if (d.mKey)
+    {
+        Ecs_Free(*d.mKey);
     }
 }
 
@@ -680,6 +686,67 @@ bool GateOpeningStep(Entity& gate)
     Game_PlaySfx("open");
     gate.mExists = false;
     return true;
+}
+
+const EntityClass kGateKey = {
+    "BigKeyGateKey", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// BigKeyGate.keyAnim: the key fades in over the player, flies to the lock and fades out, then OpeningSequence. (Its
+// sprite is the cutscene's own entity in the C#, not the play state's.)
+bool GateKeyStep(Entity& gate)
+{
+    KeyGateData& d = gate.Data<KeyGateData>();
+    switch (d.mKeyStep)
+    {
+    case 0:
+    {
+        const Entity& p = *World_Player();
+        d.mKey = Ecs_Create(kGateKey, p.mT->mX, p.mT->mY - Fx(16), PART_VISUAL, nullptr, &gate);
+        if (!d.mKey)
+        {
+            return true;
+        }
+        Ecs_SetSolid(*d.mKey, false);
+        Ecs_SetSheet(*d.mKey, "key_green");
+        Ecs_SetFrame(*d.mKey, d.mKeyhole * 2);
+        d.mKey->mV->mLayer = LAYER_FG_SPRITES;
+        d.mKey->mV->mOpacity = 0;
+        d.mKeyStep = 1;
+        return false;
+    }
+    case 1:
+        if (!MoveTo(d.mKey->mV->mOpacity, kFxOne, FxF(0.6f)))
+        {
+            return false;
+        }
+        Ecs_Flicker(*d.mKey, FxSec(0.5f));
+        d.mKeyStep = 2;
+        [[fallthrough]];
+    case 2:
+    {
+        Transform& t = *d.mKey->mT;
+        const bool doneX = MoveTo(t.mX, gate.mT->mX + Fx(8), Fx(6));
+        if (!(MoveTo(t.mY, gate.mT->mY, Fx(6)) && doneX))
+        {
+            return false;
+        }
+        Game_PlaySfx("player_jump_down");
+        d.mKeyStep = 3;
+        [[fallthrough]];
+    }
+    default:
+        if (!MoveTo(d.mKey->mV->mOpacity, 0, FxF(0.7f)))
+        {
+            return false;
+        }
+        Ecs_Free(*d.mKey);
+        d.mKey = nullptr;
+        d.mStep = -1;
+        d.mTimer = 0;
+        Game_StartCutscene(gate, GateOpeningStep);
+        return true;
+    }
 }
 
 bool TryUnlock(Entity& gate)
@@ -747,10 +814,8 @@ bool TryUnlock(Entity& gate)
     default:
         if (gGame.mBigKeyStatus[d.mKeyhole])
         {
-            // (The C# first flies the key into the lock.)
-            d.mStep = -1;
-            d.mTimer = 0;
-            Game_StartCutscene(gate, GateOpeningStep);
+            d.mKeyStep = 0;
+            Game_StartCutscene(gate, GateKeyStep);
             return true;
         }
         return false;
