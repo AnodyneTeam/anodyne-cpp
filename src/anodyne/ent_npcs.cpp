@@ -685,19 +685,19 @@ struct BigKeyData final
     fx mRadius;
     fx mSparkleTimer;
     fx mSparkleMax;
+    Entity* mSparkles[3]; // its EntityPool<Sparkle>
 };
 
-void SparkleUpdate(Entity& self)
+void SparklePostUpdate(Entity& self)
 {
     if (Ecs_AnimFinished(self))
     {
         self.mExists = false;
     }
-    Ecs_BaseUpdate(self);
 }
 
 const EntityClass kSparkle = {
-    "KeySparkle", SparkleUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+    "KeySparkle", nullptr, SparklePostUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
 
 void BigKeyUpdate(Entity& self)
@@ -708,28 +708,29 @@ void BigKeyUpdate(Entity& self)
     if (d.mSparkleTimer > d.mSparkleMax)
     {
         d.mSparkleTimer = 0;
-        if (Ecs_CountChildren(self, kSparkle) < 3)
+        for (Entity* s : d.mSparkles)
         {
-            Entity* s = Ecs_Create(kSparkle, self.mT->mX - Fx(2), self.mT->mY - Fx(3) - self.mV->mOffY, PART_VISUAL,
-                                   nullptr, &self);
-            if (s)
+            if (s->mExists)
             {
-                Ecs_SetSolid(*s, false);
-                Ecs_SetSheet(*s, "key_sparkle");
-                s->mV->mLayer = LAYER_FG_SPRITES;
-                s->mT->mX += FxMul(Fx(self.mB->mW + 4), Rng_Unit());
-                s->mT->mY += FxMul(Fx(self.mB->mH + 6), Rng_Unit());
-                Ecs_Play(*s, "sparkle");
-                if (!Ecs_Solid(self))
-                {
-                    const fx faster = d.mSparkleMax - FxSec(0.06f);
-                    d.mSparkleMax = faster > FxSec(0.15f) ? faster : FxSec(0.15f);
-                    s->mT->mVelY = Fx(20);
-                    static const char* const kSfx[5] = { "sparkle_1", "sparkle_1", "sparkle_2", "sparkle_2",
-                                                         "sparkle_3" };
-                    Game_PlaySfxOneOf(kSfx, 5);
-                }
+                continue;
             }
+            // Sparkle.Spawn (a reused one keeps its velocity, as in the C#)
+            s->mExists = true;
+            Ecs_Play(*s, "sparkle");
+            s->mT->mX = self.mT->mX - Fx(2);
+            s->mT->mY = self.mT->mY - Fx(3) - self.mV->mOffY;
+            s->mT->mX += FxMul(Fx(self.mB->mW + 4), Rng_Unit());
+            s->mT->mY += FxMul(Fx(self.mB->mH + 6), Rng_Unit());
+            if (!Ecs_Solid(self))
+            {
+                const fx faster = d.mSparkleMax - FxSec(0.06f);
+                d.mSparkleMax = faster > FxSec(0.15f) ? faster : FxSec(0.15f);
+                s->mT->mVelY = Fx(20);
+                static const char* const kSfx[5] = { "sparkle_1", "sparkle_1", "sparkle_2", "sparkle_2",
+                                                     "sparkle_3" };
+                Game_PlaySfxOneOf(kSfx, 5);
+            }
+            break;
         }
     }
 }
@@ -1320,7 +1321,20 @@ Entity* Spawn_BigKey(const MapEntity& preset, Entity&)
     e->mT->mX += Fx(4);
     e->mT->mLastX = e->mT->mX;
     Ecs_SetFrame(*e, preset.mFrame);
-    e->Data<BigKeyData>().mSparkleMax = FxSec(0.8f);
+    BigKeyData& d = e->Data<BigKeyData>();
+    d.mSparkleMax = FxSec(0.8f);
+    for (Entity*& s : d.mSparkles)
+    {
+        s = Ecs_Create(kSparkle, 0, 0, PART_VISUAL, nullptr, e);
+        if (!s)
+        {
+            return nullptr;
+        }
+        Ecs_SetSolid(*s, false);
+        Ecs_SetSheet(*s, "key_sparkle");
+        s->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_KeepPooled(*s);
+    }
     return e;
 }
 
