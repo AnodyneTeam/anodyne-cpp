@@ -2,6 +2,8 @@ using AnodyneSharp.Recording;
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Collections.Generic;
+using System.IO;
 
 // usage: SimHost <anodyne_sim binary> [port] [--bot PART[,PART...]]
 // Starts the simulator headless. With --bot, plays those route parts in order (BotScripts.PartNames, e.g. nexus,roadway) with the C#
@@ -15,7 +17,9 @@ var sim = Process.Start(new ProcessStartInfo(args[0], $"--headless --ipc {port}"
     RedirectStandardError = true,
     RedirectStandardOutput = true,
 });
-sim.ErrorDataReceived += (_, _) => { };
+// SIMHOST_STDERR=1: pass the simulator's stderr through (its debug prints)
+bool simStderr = Environment.GetEnvironmentVariable("SIMHOST_STDERR") == "1";
+sim.ErrorDataReceived += (_, e) => { if (simStderr && e.Data != null) Console.Error.WriteLine(e.Data); };
 sim.OutputDataReceived += (_, _) => { };
 sim.BeginErrorReadLine();
 sim.BeginOutputReadLine();
@@ -45,7 +49,14 @@ void Show(string tag)
     }
 }
 
-if (part != null)
+int replayAt = Array.IndexOf(args, "--replay");
+if (replayAt >= 0)
+{
+    Gs.View = view;
+    BotRunner.Entities = () => view.Entities;
+    Replay(args[replayAt + 1], args[replayAt + 2], replayAt + 3 < args.Length ? int.Parse(args[replayAt + 3]) : 20);
+}
+else if (part != null)
 {
     Gs.View = view;
     BotRunner.Entities = () => view.Entities;
@@ -127,3 +138,107 @@ else
 }
 view.Dispose();
 sim.Kill();
+
+// --replay GBAINPUT TRACE [N]: plays a C# run's keys (run_bot.sh's .gbainput) on the port from the frame the C# game
+// first had a map (both boot by tapping A until then), and prints where the port's trace (as BotRunner.Trace writes
+// it) first differs from the C# one, then up to N more differing frames.
+void Replay(string inputPath, string tracePath, int show)
+{
+    var masks = new List<int> { 0 }; // (frame 0: none)
+    foreach (var line in File.ReadLines(inputPath))
+    {
+        var w = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (w.Length == 2 && int.TryParse(w[0], out int n))
+        {
+            int m = Convert.ToInt32(w[1], 16);
+            masks.AddRange(Enumerable.Repeat(m, n));
+        }
+    }
+    var cs = File.ReadLines(tracePath).Skip(1).Select(l => l.Split('\t')).ToList();
+    int start = cs.FindIndex(r => r[1] != "");
+    long csFrame = long.Parse(cs[start][0]);
+    for (int n = 0; view.Mode != "play" && n < 6000; n += 12)
+    {
+        view.Hold(1, 1);
+        view.Hold(0, 11);
+    }
+    Console.WriteLine($"port in {view.Map} at its f{view.Frame}; the C# game at f{csFrame}");
+    // (the title screens draw random numbers differently: start play from the C#'s RNG position)
+    var csEnts = new Dictionary<long, string[]>();
+    string entsPath = Environment.GetEnvironmentVariable("SIMHOST_ENTS");
+    if (entsPath != null)
+    {
+        foreach (var l in File.ReadLines(entsPath))
+        {
+            var w = l.Split('\t');
+            csEnts[long.Parse(w[0])] = w;
+        }
+        if (csEnts.TryGetValue(csFrame, out var first))
+        {
+            view.SetRng(long.Parse(first[1]));
+        }
+    }
+    string Row(long f)
+    {
+        var p = view.Player;
+        return $"{f}\t{view.Map}\t{(p == null ? 0 : (int)p.Position.X)}\t{(p == null ? 0 : (int)p.Position.Y)}\t{view.Health}\t{(view.Dialogue == null ? 0 : 1)}\tb{(view.HasBroom ? 1 : 0)}k{view.MapKeys}c{view.CardCount}";
+    }
+    // SIMHOST_ENTS=the C# run's ANODYNE_ENT_TRACE file: also compare each frame's RNG draws and entities (only the
+    // types the port has shown so far: the C# also lists the ones the port has no class for yet)
+    // SIMHOST_DUMP=FROM-TO: print both games' rows and entities for those C# frames
+    long dumpFrom = -1, dumpTo = -1;
+    if (Environment.GetEnvironmentVariable("SIMHOST_DUMP") is string dump)
+    {
+        var d = dump.Split('-');
+        dumpFrom = long.Parse(d[0]);
+        dumpTo = long.Parse(d[1]);
+    }
+    var portTypes = new HashSet<string>();
+    string Types(string ents, bool learn) => string.Join(" ", ents.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(e =>
+    {
+        string t = e.Substring(0, e.IndexOf('@'));
+        if (t == "Entity")
+        {
+            return false; // plain entities (the C#'s helpers, the port's classes without a C# name): not comparable
+        }
+        if (learn)
+        {
+            portTypes.Add(t);
+        }
+        return portTypes.Contains(t);
+    }));
+    int diffs = 0;
+    bool entDiffShown = false;
+    for (int i = start; i < cs.Count && diffs <= show; i++)
+    {
+        long f = long.Parse(cs[i][0]);
+        if (i > start)
+        {
+            view.Hold(f < masks.Count ? masks[(int)f] : 0, 1);
+        }
+        string mine = Row(f), theirs = string.Join("\t", cs[i]);
+        if (f >= dumpFrom && f <= dumpTo)
+        {
+            Console.WriteLine($"f{f}\n  C#   {theirs}\t{(csEnts.TryGetValue(f, out var de) ? de[1] + " " + (de.Length > 2 ? de[2] : "") : "")}\n  port {mine}\t{BotRunner.EntLine().Replace('\t', ' ')}");
+        }
+        if (!entDiffShown && i > start && csEnts.TryGetValue(f, out var ce))
+        {
+            var mineE = BotRunner.EntLine().Split('\t');
+            string me = Types(mineE[1], true), te = Types(ce.Length > 2 ? ce[2] : "", false);
+            if (mineE[0] != ce[1] || me != te)
+            {
+                entDiffShown = true;
+                Console.WriteLine($"first entity/RNG difference at C# f{f}:\n  C#   rng={ce[1]} {te}\n  port rng={mineE[0]} {me}");
+            }
+        }
+        if (mine != theirs)
+        {
+            if (diffs++ == 0)
+            {
+                Console.WriteLine($"first difference at C# f{f}:");
+            }
+            Console.WriteLine($"  C#   {theirs}\n  port {mine}");
+        }
+    }
+    Console.WriteLine(diffs == 0 ? $"identical for {cs.Count - start} frames" : $"({diffs} differing frames shown)");
+}

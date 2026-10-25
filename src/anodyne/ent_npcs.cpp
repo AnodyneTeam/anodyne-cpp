@@ -91,14 +91,15 @@ bool SageCutscene(Entity& self)
     case 0:
         Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(20));
         d.mStep++;
-        return false;
+        // (the coroutine checks the distance straight away, before its first yield)
+        // fall through
     case 1:
         if (DistanceToPlayer(self) > d.mStopDistance)
         {
             return false;
         }
         self.mT->mVelX = self.mT->mVelY = 0;
-        Game_ShowDialogue("sage", d.mScene);
+        Game_ShowCutsceneDialogue("sage", d.mScene);
         d.mStep++;
         return d.mKind != SAGE_OVERWORLD;
     case 2:
@@ -114,7 +115,7 @@ bool SageCutscene(Entity& self)
         {
             return false;
         }
-        Game_ShowDialogue("sage", "bedroom_entrance");
+        Game_ShowCutsceneDialogue("sage", "bedroom_entrance");
         d.mStep++;
         return true;
     default:
@@ -306,7 +307,7 @@ void BounceLightUpdate(Entity& self)
         }
         t.mVelX += Rng_Unit() * 2 - kFxOne;
         t.mVelY += Rng_Unit() * 2 - kFxOne;
-        d.mLockOnTimer -= kFxOne;
+        d.mLockOnTimer -= kFxTick;
     }
     Ecs_BaseUpdate(self);
 }
@@ -358,7 +359,7 @@ void BroUpdate(Entity& self)
         }
         break;
     case BRO_APPEARING:
-        v.mOpacity += FxF(0.6f) / kFps;
+        v.mOpacity += FxStep(FxF(0.6f));
         if (v.mOpacity > FxF(0.96f))
         {
             d.mState = BRO_WALK;
@@ -385,7 +386,7 @@ void BroUpdate(Entity& self)
         }
         break;
     default:
-        v.mOpacity -= FxF(0.6f) / kFps;
+        v.mOpacity -= FxStep(FxF(0.6f));
         if (v.mOpacity <= 0)
         {
             self.mExists = false;
@@ -496,7 +497,7 @@ void CicadaUpdate(Entity& self)
         Game_PlaySfx("cicada_chirp");
         if (gGame.mCurHealth < gGame.mMaxHealth)
         {
-            d.mTimer += kFxOne;
+            d.mTimer += kFxTick;
             if (d.mTimer > FxSec(0.5f))
             {
                 d.mTimer = 0;
@@ -512,7 +513,7 @@ void CicadaUpdate(Entity& self)
         d.mStep = CICADA_GNAW;
         break;
     case CICADA_GNAW:
-        d.mTimer += kFxOne;
+        d.mTimer += kFxTick;
         if (d.mTimer > FxSec(1.7f))
         {
             d.mTimer = 0;
@@ -580,7 +581,7 @@ void BigKeyUpdate(Entity& self)
 {
     BigKeyData& d = self.Data<BigKeyData>();
     Ecs_BaseUpdate(self);
-    d.mSparkleTimer += kFxOne;
+    d.mSparkleTimer += kFxTick;
     if (d.mSparkleTimer > d.mSparkleMax)
     {
         d.mSparkleTimer = 0;
@@ -603,7 +604,7 @@ void BigKeyUpdate(Entity& self)
                     s->mT->mVelY = Fx(20);
                     static const char* const kSfx[5] = { "sparkle_1", "sparkle_1", "sparkle_2", "sparkle_2",
                                                          "sparkle_3" };
-                    Game_PlaySfx(kSfx[Rng_Range(0, 5)]);
+                    Game_PlaySfxOneOf(kSfx, 5);
                 }
             }
         }
@@ -615,7 +616,7 @@ void BigKeyOrbit(Entity& self, fx angularSpeed)
 {
     BigKeyData& d = self.Data<BigKeyData>();
     const Entity& p = *World_Player();
-    d.mAngle += angularSpeed / kFps;
+    d.mAngle += FxStep(angularSpeed);
     self.mT->mX = Ecs_CenterX(p) + FxMul(FxCos(d.mAngle), d.mRadius);
     self.mT->mY = Ecs_CenterY(p) + FxMul(FxSin(d.mAngle), d.mRadius);
 }
@@ -696,6 +697,9 @@ struct MitraData final
     bool mFacePlayer;
     bool mOnBike;
     Entity* mBike;
+    // its VolumeEvent: fades the song to mVolTarget at 0.4 a second
+    float mVolTarget;
+    bool mVolReached;
 };
 
 void MitraOnBike(Entity& self, bool on)
@@ -746,15 +750,16 @@ bool MitraEntrance(Entity& self)
     {
     case 0:
         t.mX -= Fx(20);
+        Game_PlaySong("mitra");
         Preset_SetAlive(*self.mPreset, false);
-        Game_ShowDialogue("mitra", "initial_overworld");
+        Game_ShowCutsceneDialogue("mitra", "initial_overworld");
         d.mStep++;
         return false;
     case 1:
         Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(80));
         self.mV->mVisible = true;
         d.mStep++;
-        return false;
+        [[fallthrough]];
     case 2:
         // a quarter into the screen and near the player
         if (t.mX - left < Fx(40) || p.mT->mX - t.mX > Fx(24))
@@ -764,7 +769,7 @@ bool MitraEntrance(Entity& self)
         t.mVelX = 0;
         t.mVelY = Fx(80);
         d.mStep++;
-        return false;
+        [[fallthrough]];
     case 3:
         if (t.mY - p.mT->mY < Fx(24))
         {
@@ -774,7 +779,7 @@ bool MitraEntrance(Entity& self)
         t.mVelY = 0;
         self.mB->mImmovable = false;
         d.mStep++;
-        return false;
+        [[fallthrough]];
     case 4:
         if (self.mB->mWasTouching == TOUCH_NONE)
         {
@@ -782,6 +787,7 @@ bool MitraEntrance(Entity& self)
         }
         t.mVelX = t.mVelY = 0;
         self.mB->mImmovable = true;
+        Screen_Shake(FxF(0.02f), FxSec(0.3f));
         Game_PlaySfx("sun_guy_death_short");
         MitraOnBike(self, false);
         if (d.mBike)
@@ -790,10 +796,18 @@ bool MitraEntrance(Entity& self)
             d.mBike->mT->mX = t.mX - Fx(4);
             d.mBike->mT->mY = t.mY;
         }
+        Screen_Flash(FxSec(1));
+        d.mStep++;
+        [[fallthrough]];
+    case 5:
+        if (Screen_FlashActive())
+        {
+            return false;
+        }
         t.mVelX = -Fx(20);
         d.mStep++;
-        return false;
-    case 5:
+        [[fallthrough]];
+    case 6:
         if (t.mX > p.mT->mX + Fx(3))
         {
             Ecs_FaceTowards(p, t.mX, t.mY);
@@ -801,15 +815,15 @@ bool MitraEntrance(Entity& self)
         }
         Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(20));
         d.mStep++;
-        return false;
-    case 6:
+        [[fallthrough]];
+    case 7:
         if (t.mY > p.mT->mY + Fx(26))
         {
             Ecs_FaceTowards(p, t.mX, t.mY);
             return false;
         }
         t.mVelX = t.mVelY = 0;
-        Game_ShowDialogue("mitra", "initial_overworld");
+        Game_ShowCutsceneDialogue("mitra", "initial_overworld");
         d.mState = MITRA_SECOND_WAIT;
         return true;
     default:
@@ -824,14 +838,15 @@ bool MitraExit(Entity& self)
     switch (d.mStep)
     {
     case 0:
-        Game_ShowDialogue("mitra", "initial_overworld", 3);
+        Game_ShowCutsceneDialogue("mitra", "initial_overworld", 3);
         d.mStep++;
         return false;
     case 1:
+        // back to the bike
         t.mVelX = Fx(20);
         t.mVelY = 0;
         d.mStep++;
-        return false;
+        [[fallthrough]];
     case 2:
         if (d.mBike && FxLength(t.mX - d.mBike->mT->mX, t.mY - d.mBike->mT->mY) > Fx(8))
         {
@@ -842,15 +857,26 @@ bool MitraExit(Entity& self)
         {
             d.mBike->mExists = false;
         }
+        // off the screen
         t.mVelX = 0;
         t.mVelY = Fx(50);
         d.mStep++;
-        return false;
+        [[fallthrough]];
     case 3:
         if (t.mY - Fx(gGame.mGridY * 160) < Fx(190))
         {
             return false;
         }
+        d.mVolTarget = 0.2f;
+        d.mVolReached = false;
+        d.mStep++;
+        [[fallthrough]];
+    case 4:
+        if (!d.mVolReached)
+        {
+            return false;
+        }
+        Game_PlaySong("overworld");
         self.mExists = false;
         return true;
     default:
@@ -865,7 +891,7 @@ void MitraUpdate(Entity& self)
     if (d.mState == MITRA_INITIAL_WAIT)
     {
         const fx dy = self.mT->mY - p.mT->mY;
-        if ((dy < 0 ? -dy : dy) < Fx(48))
+        if ((dy < 0 ? -dy : dy) < Fx(48) && d.mVolReached)
         {
             d.mState = MITRA_ENTRANCE;
             d.mStep = 0;
@@ -880,6 +906,13 @@ void MitraUpdate(Entity& self)
     }
     Ecs_BaseUpdate(self);
     MitraFacePlayerPose(self);
+    // (VolumeEvent.Update, the sub-entity after it)
+    if (!d.mVolReached)
+    {
+        fx volume = FxF(Game_SongVolume());
+        d.mVolReached = MoveTo(volume, FxF(d.mVolTarget), FxF(0.4f));
+        Game_SetSongVolume(volume.mV);
+    }
 }
 
 bool MitraInteract(Entity& self, Facing)
@@ -888,7 +921,7 @@ bool MitraInteract(Entity& self, Facing)
     if (Event_Get("mitra.wares") == 0)
     {
         Event_Inc("mitra.wares");
-        Game_ShowDialogue("mitra", "initial_overworld");
+        Game_ShowCutsceneDialogue("mitra", "initial_overworld");
         return true;
     }
     if (d.mState != MITRA_EXIT)
@@ -1129,6 +1162,7 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
     e->mV->mVisible = false;
     MitraData& d = e->Data<MitraData>();
     d.mFacePlayer = true;
+    d.mVolTarget = 0.3f;
     MitraOnBike(*e, true);
     d.mBike = Ecs_Create(kBike, e->mT->mX, e->mT->mY, PART_VISUAL, &preset, e);
     if (d.mBike)
@@ -1145,4 +1179,25 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
     }
     Ecs_PlayFacing(*e, "idle");
     return e;
+}
+
+const char* Npcs_ProbeName(const Entity& e)
+{
+    if (e.mClass == &kMitra)
+    {
+        return "MitraOverworld";
+    }
+    if (e.mClass != &kSage)
+    {
+        return nullptr;
+    }
+    switch (const_cast<Entity&>(e).Data<SageData>().mKind)
+    {
+    case SAGE_NEXUS:
+        return "SageNexus";
+    case SAGE_OVERWORLD:
+        return "SageOverworld";
+    default:
+        return "SageBedroom";
+    }
 }

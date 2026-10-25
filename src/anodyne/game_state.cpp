@@ -4,6 +4,7 @@
 
 #include "audio_manager.h"
 #include "dialog.h"
+#include "ecs.h"
 
 
 GameState gGame;
@@ -67,6 +68,7 @@ EventSlot* FindEvent(const char* name, bool create)
 }
 
 bool gDialogueFinished = true;
+bool gCutsceneDialogue = false;
 } // namespace
 
 void GameState_Reset()
@@ -246,7 +248,19 @@ void Game_ShowDialogue(const char* npc, const char* scene, int id)
     {
         Dialog_Open(text, top, false);
         gDialogueFinished = false;
+        gCutsceneDialogue = false;
     }
+}
+
+void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id)
+{
+    Game_ShowDialogue(npc, scene, id);
+    gCutsceneDialogue = true;
+}
+
+bool Game_DialogueIsCutscene()
+{
+    return gCutsceneDialogue;
 }
 
 void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id)
@@ -257,6 +271,7 @@ void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, 
     {
         Dialog_Open(text, top, false);
         gDialogueFinished = false;
+        gCutsceneDialogue = false;
     }
 }
 
@@ -267,6 +282,7 @@ void Game_ShowText(const char* text)
     strncpy(sText, text, sizeof(sText) - 1);
     sText[sizeof(sText) - 1] = '\0';
     Dialog_Open(sText, false, false);
+    gCutsceneDialogue = false;
     gDialogueFinished = false;
 }
 
@@ -279,11 +295,20 @@ bool Game_DialogueFinished()
     return gDialogueFinished;
 }
 
-void Game_PlaySfx(const char* name)
+void Game_PlaySfxOneOf(const char* const* names, int count)
 {
-    const int32_t id = AudioManager_FindSfx(name);
+    // (every name is one of the game's sfx: the C# drops the missing ones before picking)
+    const int32_t id = AudioManager_FindSfx(names[Rng_Range(0, count)]);
     if (id >= 0)
     {
         AudioManager_PlaySFX(static_cast<uint32_t>(id));
+    }
+}
+
+void Game_PlaySfx(const char* name)
+{
+    if (AudioManager_FindSfx(name) >= 0)
+    {
+        Game_PlaySfxOneOf(&name, 1);
     }
 }

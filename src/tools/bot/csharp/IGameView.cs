@@ -21,6 +21,8 @@ namespace AnodyneSharp.Recording
         /// <summary>The camera is scrolling to the next screen.</summary>
         bool ScreenTransition { get; }
         int Health { get; }
+        /// <summary>GlobalState.RNG draws so far (InternalSample calls), -1 if not counted: for parity traces.</summary>
+        long RngCalls { get; }
         int MaxHealth { get; }
         /// <summary>The text of the open dialogue box: null or "" when none is open.</summary>
         string Dialogue { get; }

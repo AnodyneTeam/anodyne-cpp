@@ -3,6 +3,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "dialog.h"
 #include "ecs.h"
@@ -40,6 +41,20 @@ const char* Str(const char* s)
 }
 } // namespace
 
+// The C# class name of an entity: one port class can stand for several C# ones.
+const char* ProbeName(const Entity& e)
+{
+    if (const char* name = Gadgets_ProbeName(e))
+    {
+        return name;
+    }
+    if (const char* name = Npcs_ProbeName(e))
+    {
+        return name;
+    }
+    return Str(e.mClass->mName);
+}
+
 extern "C" int GameProbe_Json(char* buf, int cap)
 {
     if (cap <= 0)
@@ -52,6 +67,9 @@ extern "C" int GameProbe_Json(char* buf, int cap)
     World_GetPlayerInfo(p);
     o.Add("{\"mode\":\"%s\",\"map\":\"%s\",\"grid\":[%d,%d],\"transition\":%s,\"dialog\":%s,", Str(gGame.mModeName),
           Str(gGame.mMapName), p.mGridX, p.mGridY, p.mTransition ? "true" : "false", Dialog_IsOpen() ? "true" : "false");
+    // GlobalState.Dialogue is set: a box that is not a cutscene's DialogueEvent
+    o.Add("\"rng\":%u,", static_cast<unsigned>(Rng_Calls()));
+    o.Add("\"globalDialog\":%s,", Dialog_IsOpen() && !Game_DialogueIsCutscene() ? "true" : "false");
     const Entity& pe = *Player_Entity();
     PlayerProbe pp;
     Player_GetProbe(pp);
@@ -61,9 +79,9 @@ extern "C" int GameProbe_Json(char* buf, int cap)
           p.mFacing, p.mLadder ? "true" : "false", p.mFallen ? "true" : "false", p.mHealth);
     // Player.cs as the C# bot reads it: position and velocity (px/s) as raw 16.16 (x, y, vx, vy, additional vx, vy),
     // the hitbox size, the state, Facing order (LEFT RIGHT UP DOWN).
-    o.Add("\"fx16\":[%d,%d,%d,%d,%d,%d],\"w\":%d,\"h\":%d,", static_cast<int>(pe.mT->mX),
-          static_cast<int>(pe.mT->mY), static_cast<int>(pe.mT->mVelX), static_cast<int>(pe.mT->mVelY),
-          static_cast<int>(pp.mAddVelX), static_cast<int>(pp.mAddVelY), pe.mB->mW, pe.mB->mH);
+    o.Add("\"fx16\":[%d,%d,%d,%d,%d,%d],\"w\":%d,\"h\":%d,", FxRaw16(pe.mT->mX),
+          FxRaw16(pe.mT->mY), FxRaw16(pe.mT->mVelX), FxRaw16(pe.mT->mVelY),
+          FxRaw16(pp.mAddVelX), FxRaw16(pp.mAddVelY), pe.mB->mW, pe.mB->mH);
     o.Add("\"face\":%d,\"state\":%d,\"animState\":%d,\"exists\":%s,\"dontMove\":%s,\"conveyor\":%s,\"slow\":%s,"
           "\"touching\":%d,\"anim\":\"%s\",",
           pe.mFacing & 3, pp.mState, pp.mAnimState, pe.mExists ? "true" : "false", pp.mDontMove ? "true" : "false",
@@ -95,13 +113,13 @@ extern "C" int GameProbe_Json(char* buf, int cap)
     bool first = true;
     for (const Entity* e = Ecs_First(); e; e = e->mNext)
     {
-        if (e->mPlayerOwned || e->mOld)
+        if (e->mPlayerOwned || e->mOld || e->mSpawned)
         {
             continue;
         }
         o.Add("%s{\"type\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"exists\":%s,\"solid\":%s,\"anim\":\"%s\","
               "\"frame\":%d,\"enemy\":%s,\"preset\":%d,",
-              first ? "" : ",", Str(e->mClass->mName), FxTrunc(e->mT->mX), FxTrunc(e->mT->mY), e->mB->mW, e->mB->mH,
+              first ? "" : ",", ProbeName(*e), FxTrunc(e->mT->mX), FxTrunc(e->mT->mY), e->mB->mW, e->mB->mH,
               e->mExists ? "true" : "false", Ecs_Solid(*e) ? "true" : "false", Ecs_AnimName(*e), Ecs_Frame(*e),
               (e->mClass->mFlags & ECF_ENEMY) ? "true" : "false", e->mPreset ? e->mPreset->mFrame : -1);
         // For the C# bot: the pool slot, the parent's (-1: none), the preset's id, position and velocity as raw 16.16,
@@ -116,10 +134,10 @@ extern "C" int GameProbe_Json(char* buf, int cap)
         o.Add("\"id\":%u,\"parent\":%d,\"gid\":%d,\"fx16\":[%d,%d,%d,%d],\"face\":%d,\"visible\":%s,\"flicker\":%s,"
               "\"opacity\":%d,\"f\":{%s}}",
               static_cast<unsigned>(e->mIndex), e->mParent ? static_cast<int>(e->mParent->mIndex) : -1,
-              e->mPreset ? e->mPreset->mGlobalId : -1, static_cast<int>(e->mT->mX),
-              static_cast<int>(e->mT->mY), static_cast<int>(e->mT->mVelX), static_cast<int>(e->mT->mVelY),
+              e->mPreset ? e->mPreset->mGlobalId : -1, FxRaw16(e->mT->mX),
+              FxRaw16(e->mT->mY), FxRaw16(e->mT->mVelX), FxRaw16(e->mT->mVelY),
               e->mFacing & 3, v && v->mVisible ? "true" : "false", v && v->mFlickering ? "true" : "false",
-              v ? static_cast<int>(v->mOpacity) : 0, fieldsLen > 0 ? fields : "");
+              v ? FxRaw16(v->mOpacity) : 0, fieldsLen > 0 ? fields : "");
         first = false;
     }
     o.Add("]}");
@@ -170,4 +188,31 @@ int GameProbe_Warp(const char* map, int x, int y)
 void GameProbe_Heal(void)
 {
     gGame.mCurHealth = gGame.mMaxHealth;
+}
+
+extern "C" int GameProbe_TraceHeader(char* buf, int cap)
+{
+    return snprintf(buf, static_cast<size_t>(cap), "frame\tmap\tx\ty\thp\tdialogue\tinv");
+}
+
+extern "C" int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap)
+{
+    // BotRunner.Trace: no map or player outside the play state; positions truncated like (int)Position.X.
+    WorldPlayerInfo p;
+    World_GetPlayerInfo(p);
+    const bool play = gGame.mModeName && !strcmp(gGame.mModeName, "play");
+    return snprintf(buf, static_cast<size_t>(cap), "%llu\t%s\t%d\t%d\t%d\t%d\tb%dk%dc%d", frame,
+                    play ? Str(gGame.mMapName) : "", play ? p.mX : 0, play ? p.mY : 0, gGame.mCurHealth,
+                    Dialog_IsOpen() && !Game_DialogueIsCutscene() ? 1 : 0, gGame.mEquippedBroom != 0 ? 1 : 0, Inventory_MapKeys(),
+                    Inventory_CardCount());
+}
+
+extern "C" void GameProbe_SetRng(unsigned draws)
+{
+    Rng_Seed(1234);
+    Screen_ResetShake();
+    for (unsigned i = 0; i < draws; i++)
+    {
+        Rng_Next();
+    }
 }

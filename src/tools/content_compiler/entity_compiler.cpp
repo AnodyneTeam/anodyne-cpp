@@ -168,6 +168,7 @@ const NamedEntity kNamed[] = {
     { "Sun_Guy", nullptr, nullptr, {}, EPT_Seer },
     { "Dog", nullptr, nullptr, {}, EPT_Dog },
     { "Rotator", nullptr, nullptr, {}, EPT_Rotator },
+    { "Door", nullptr, nullptr, {}, EPT_Door },
 };
 
 const char* const kTypeNames[] = {

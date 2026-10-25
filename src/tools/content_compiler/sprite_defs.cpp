@@ -845,6 +845,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "whirl_red", { 4, 5 }, 6.0f, true },
     } },
     { "whiteportal", 16, 16, {
+        { "a", { 0, 1, 2 }, 8.0f, true },
     } },
     { "wide_attack_v", 12, 24, {
         { "a", { 0, 1, 2, 3, 4 }, 14.0f, false },

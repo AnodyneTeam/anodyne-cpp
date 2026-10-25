@@ -61,6 +61,7 @@ struct GameState final
     uint32_t mVisitedMaps;  // EventRegister.VisitedMaps, by map index
     uint32_t mBossDefeated; // EventRegister.BossDefeated, by map index
     uint32_t mLeftAfterBoss; // EventRegister.LeftAfterBoss, by map index
+    uint32_t mNexusPortals;  // EventRegister.ActivatedNexusPortals, by map index
 
     const char* mModeName; // what anodyne.cpp's main loop is showing (for the probe)
     const char* mMapName;  // CURRENT_MAP_NAME
@@ -115,6 +116,10 @@ void Event_Inc(const char* name);
 
 // GlobalState.Dialogue = DialogueManager.GetDialogue(npc, scene, id): opens the dialogue box.
 void Game_ShowDialogue(const char* npc, const char* scene, int id = -1);
+// CutsceneState's DialogueEvent: the same box, but GlobalState.Dialogue stays empty (the C#'s traces show no dialogue).
+void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id = -1);
+// Whether the open box came from Game_ShowCutsceneDialogue.
+bool Game_DialogueIsCutscene();
 // The same with the dialogue's area given (GetDialogue(npc, area, scene, id)).
 void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id = -1);
 // GlobalState.Dialogue = text (copied).
@@ -131,5 +136,12 @@ bool Game_InCutscene();
 
 // SoundManager.PlaySoundEffect.
 void Game_PlaySfx(const char* name);
+// SoundManager.PlaySoundEffect(names...): one of them at random. Each call draws a random number (GlobalState.RNG),
+// even with one name, as the C#'s does.
+void Game_PlaySfxOneOf(const char* const* names, int count);
 // SoundManager.PlaySong / StopSong (""): until the next screen or map with other music.
-void Game_PlaySong(const char* name);
+// (also SetSongVolume(volume), even when the song is already playing)
+void Game_PlaySong(const char* name, float volume = 1.0f);
+// SoundManager.GetVolume / SetSongVolume: the song's volume, 0 to 1.
+float Game_SongVolume();
+void Game_SetSongVolume(float volume);

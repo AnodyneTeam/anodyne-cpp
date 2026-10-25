@@ -15,6 +15,7 @@ namespace AnodyneSharp.Recording
         public Point Grid => GlobalState.CurrentMapGrid;
         public bool ScreenTransition => GlobalState.ScreenTransition;
         public int Health => GlobalState.CUR_HEALTH;
+        public long RngCalls => GlobalState.RNG is CountingRandom c ? c.Calls : -1;
         public int MaxHealth => GlobalState.MAX_HEALTH;
         public string Dialogue => GlobalState.Dialogue;
         public bool LastDialogueFinished => GlobalState.LastDialogueFinished;

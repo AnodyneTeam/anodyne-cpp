@@ -23,16 +23,22 @@ void World_Update();
 void World_Enter();
 void World_SetPlayerVisible(bool visible);
 
-// Doors: when the player steps on a door, World_TakeWarp returns true once with the destination (map index,
-// player hitbox top-left in map pixels, facing 0-3 or 255). The caller loads that map (if it differs) and
-// calls World_PlaceAt.
 // The current BG scroll offsets per hardware BG (the registers are write-only).
 void World_GetBgOffsets(int16_t x[4], int16_t y[4]);
 
-// alreadyBlack: the screen is black already (dying), skip the fade out.
-bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing, bool& alreadyBlack);
+// Warps (doors, teleporters, dying) run PlayState's S_MAP_EXIT / S_MAP_ENTER inside World_Update, the world updating
+// on as in the C#. When the fade out ends the world calls the loader with the destination map (an index into kMaps)
+// and then places the player (World_PlaceAt).
+void World_SetMapLoader(void (*load)(uint8_t map));
+// The fade of the warp under way, for the screen: black_overlay's alpha (16.16, 0..1) and the pixelation (8.8, 1 =
+// none). swapped: the map was swapped this frame. False when no warp is under way.
+bool World_GetWarpFade(int& dark, int& pixelation, bool& swapped);
 void World_PlaceAt(int x, int y, uint8_t facing);
-// A warp that isn't a door (teleporting entities, dying): taken like a door's on the next World_TakeWarp.
+// The current map's door trigger of the Door preset at (presetX, presetY), nullptr if it has none.
+const MapDoor* World_FindDoor(int presetX, int presetY);
+// DoorMapPair.Warp: GlobalState.WARP to the door's linked door.
+void World_TakeDoor(const MapDoor& d);
+// A warp that isn't a door (teleporting entities, the bot link's test warp): GlobalState.WARP, taken like a door's.
 void World_RequestWarp(int map, int x, int y, uint8_t facing);
 // GlobalState.ScreenTransition: the camera is scrolling to the next screen.
 bool World_InTransition();
@@ -79,6 +85,8 @@ void World_ScreenDarken(int level);
 // GlobalState.screenShake / flash: shake the playfield by up to intensity (a fraction of the screen) for a time,
 // or flash it white (or black) and fade back over a time.
 void Screen_Shake(fx intensity, fx seconds);
+// A new game's ScreenShake (parity replays start play from the C#'s state).
+void Screen_ResetShake();
 bool Screen_ShakeActive();
 void Screen_Flash(fx seconds, bool white = true);
 bool Screen_FlashActive();

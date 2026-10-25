@@ -49,7 +49,8 @@
     X(Annoyer)                  \
     X(Seer)                     \
     X(Dog)                      \
-    X(Rotator)
+    X(Rotator)                  \
+    X(Door)
 
 enum EntityPresetType : unsigned char
 {

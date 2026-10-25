@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
+#include <type_traits>
 
 #include "map_data.h"
 #include "sprite_data.h"
@@ -21,69 +23,211 @@
 // target groups, KeepOnScreen), then Update + PostUpdate (physics) for each entity, then drawing (sorted by the C#
 // draw order and depth into OAM, with OBJ VRAM and palette banks shared between sprites through caches).
 //
-// Units: positions are 16.16 fixed point map pixels; velocities, accelerations and drag are 16.16 px per second
-// (the C#'s numbers, scaled); one update is 1/60 s. Timers count 16.16 frames (Fx(30) = half a second).
+// Units: positions are map pixels; velocities, accelerations and drag are px per second (the C#'s numbers); one
+// update is 1/60 s. Timers count seconds, ticking kFxTick (GameTimes.DeltaTime) per update like the C#'s.
+//
+// fx is a float, like the C#'s, so the port's maths rounds exactly as the C# game's does (fixed point drifts a pixel
+// off every few seconds). It is a struct rather than a bare float so nothing converts to it by accident: whole
+// numbers go through Fx(), C# float constants through FxF().
 
-using fx = int32_t;
+struct fx
+{
+    float mV;
 
-constexpr int kFxShift = 16;
-constexpr fx kFxOne = 1 << kFxShift;
+    fx() = default;
+    // Only a literal 0 converts implicitly (it is a null pointer constant); other whole numbers go through Fx().
+    constexpr fx(decltype(nullptr)) : mV(0.0f)
+    {
+    }
+    template <typename T, typename = typename std::enable_if<std::is_same<T, float>::value>::type>
+    explicit constexpr fx(T v) : mV(v)
+    {
+    }
+
+    constexpr fx operator-() const
+    {
+        return fx(-mV);
+    }
+    constexpr fx operator+(fx o) const
+    {
+        return fx(mV + o.mV);
+    }
+    constexpr fx operator-(fx o) const
+    {
+        return fx(mV - o.mV);
+    }
+    // Scaling by a whole number (the C#'s x * 2, x / 2f).
+    constexpr fx operator*(int n) const
+    {
+        return fx(mV * static_cast<float>(n));
+    }
+    constexpr fx operator/(int n) const
+    {
+        return fx(mV / static_cast<float>(n));
+    }
+    fx& operator+=(fx o)
+    {
+        mV += o.mV;
+        return *this;
+    }
+    fx& operator-=(fx o)
+    {
+        mV -= o.mV;
+        return *this;
+    }
+    fx& operator*=(int n)
+    {
+        mV *= static_cast<float>(n);
+        return *this;
+    }
+    fx& operator/=(int n)
+    {
+        mV /= static_cast<float>(n);
+        return *this;
+    }
+    friend constexpr bool operator<(fx a, fx b)
+    {
+        return a.mV < b.mV;
+    }
+    friend constexpr bool operator>(fx a, fx b)
+    {
+        return a.mV > b.mV;
+    }
+    friend constexpr bool operator<=(fx a, fx b)
+    {
+        return a.mV <= b.mV;
+    }
+    friend constexpr bool operator>=(fx a, fx b)
+    {
+        return a.mV >= b.mV;
+    }
+    friend constexpr bool operator==(fx a, fx b)
+    {
+        return a.mV == b.mV;
+    }
+    friend constexpr bool operator!=(fx a, fx b)
+    {
+        return a.mV != b.mV;
+    }
+};
+inline constexpr fx operator*(int n, fx v)
+{
+    return v * n;
+}
+
+constexpr fx kFxZero = fx(0.0f);
+constexpr fx kFxOne = fx(1.0f);
 constexpr int kFps = 60;
+// GameTimes.DeltaTime in deterministic mode.
+constexpr float kDeltaTime = 1.0f / 60.0f;
 
 constexpr fx Fx(int v)
 {
-    return v * kFxOne;
+    return fx(static_cast<float>(v));
 }
-// A C# float constant (e.g. 0.7f) as fixed point.
+// A C# float constant (e.g. 0.7f).
 constexpr fx FxF(float v)
 {
-    return static_cast<fx>(v * 65536.0f + (v < 0 ? -0.5f : 0.5f));
+    return fx(v);
 }
-// Seconds -> 16.16 frames.
+// A time in seconds (a C# float constant).
 constexpr fx FxSec(float seconds)
 {
-    return FxF(seconds * kFps);
+    return fx(seconds);
 }
+// One update's worth of a timer.
+constexpr fx kFxTick = fx(kDeltaTime);
 // Floor to whole pixels.
-constexpr int FxFloor(fx v)
-{
-    return v >> kFxShift;
-}
+int FxFloor(fx v);
 // C#'s (int) cast: towards zero.
 constexpr int FxTrunc(fx v)
 {
-    return v < 0 ? -((-v) >> kFxShift) : (v >> kFxShift);
+    return static_cast<int>(v.mV);
 }
-inline fx FxMul(fx a, fx b)
+constexpr fx FxMul(fx a, fx b)
 {
-    return static_cast<fx>((static_cast<int64_t>(a) * b) >> kFxShift);
+    return fx(a.mV * b.mV);
 }
-inline fx FxDiv(fx a, fx b)
+constexpr fx FxDiv(fx a, fx b)
 {
-    return static_cast<fx>((static_cast<int64_t>(a) << kFxShift) / b);
+    return fx(a.mV / b.mV);
 }
-// How far something moving at `perSecond` (Fx px/s) goes in one update.
-inline fx FxStep(fx perSecond)
+// How far something moving at `perSecond` (px/s) goes in one update (GameTimes.DeltaTime * v).
+constexpr fx FxStep(fx perSecond)
 {
-    return perSecond / kFps;
+    return fx(kDeltaTime * perSecond.mV);
+}
+// As raw 16.16, for the bot link's JSON.
+constexpr int FxRaw16(fx v)
+{
+    return static_cast<int>(v.mV * 65536.0f);
 }
 fx FxSqrt(fx v);
+// Vector2.Length.
 fx FxLength(fx x, fx y);
-// sin/cos of an angle in 16.16 radians, as 16.16.
+// MathF.Sin/Cos of an angle in radians.
 fx FxSin(fx radians);
 fx FxCos(fx radians);
-constexpr fx kFxPi = 205887;  // pi in 16.16
-constexpr fx kFxTau = 411775; // 2 pi
+constexpr fx kFxPi = fx(3.14159265358979f); // MathHelper.Pi
+constexpr fx kFxTau = fx(6.28318530717959f); // MathHelper.TwoPi
+
+// Parabola_Thing's offset at time t: t * (period - t) / (half_period * half_period) * height.
+inline fx ParabolaOffset(fx t, fx period, int height)
+{
+    const float half = period.mV / 2;
+    return fx(t.mV * (period.mV - t.mV) / (half * half) * static_cast<float>(height));
+}
 
 // MathUtilities.MoveTo: moves value towards target by speed (per second) * dt; true once it is there.
 bool MoveTo(fx& value, fx target, fx speedPerSecond);
 
-// Rng: the game's random numbers (GlobalState.RNG). Not the .NET generator, so runs don't repeat the C#'s rolls.
-uint32_t Rng_Next();
-// [0, 1) as 16.16.
+// Rng: the game's random numbers (GlobalState.RNG), .NET's System.Random exactly, so a run seeded like the C#'s
+// (RecordingManager.DeterministicSeed) rolls the same numbers.
+void Rng_Seed(int seed);
+// How many numbers have been drawn since Rng_Seed (the parity traces compare it with the C#'s).
+uint32_t Rng_Calls();
+// Random.Next(): [0, int.MaxValue).
+int Rng_Next();
+// Random.NextDouble().
+double Rng_NextDouble();
+// (float)Random.NextDouble().
 fx Rng_Unit();
-// [lo, hi) like System.Random.Next(lo, hi).
+// Random.Next(lo, hi).
 int Rng_Range(int lo, int hi);
+
+// RecordingManager's frame count: one a game frame (the main loop's), whatever is showing.
+void Game_CountFrame();
+uint32_t Game_Frame();
+// RecordingManager.Now - then, in seconds, for `then` a Game_Frame() (the C#'s TimeSpan of frame ticks at 60 a second).
+float Game_SecondsSince(uint32_t thenFrame);
+
+// FSM TimerState: named timers on one clock. A timer fires once the clock reaches it and is re-armed its period on
+// from the clock's time then; Advance moves the clock on without firing anything.
+struct TimerState final
+{
+    struct Timer
+    {
+        float mAt;
+        float mMax;
+        uint8_t mId;
+    };
+    float mCurrent;
+    uint8_t mCount;
+    Timer mTimers[4];
+
+    // AddTimer: due `time` from now, after the ones due at the same time.
+    void Add(float time, uint8_t id);
+    void Tick(float dt)
+    {
+        mCurrent += dt;
+    }
+    void Advance(float time)
+    {
+        mCurrent += time;
+    }
+    // The next timer due (re-armed) or -1: Update's loop, one event at a time.
+    int Pop();
+};
 
 enum Touching : uint8_t
 {
@@ -188,7 +332,7 @@ struct Visual final
     const SpriteSheetEntry* mSheet;
     int16_t mAnim; // -1: static frame
     uint16_t mAnimIndex;
-    uint16_t mTimer;
+    float mTimer;
     uint16_t mStaticFrame;
     uint16_t mFrameBase;  // added to "variant-relative" anim frames (the C#'s per-instance frame offset)
     int16_t mFpsOverride; // Play(name, force, newFramerate); 0 = the anim's own
@@ -260,6 +404,7 @@ struct Entity final
     bool mPlayerOwned; // the player's sub-entities: kept across screens and maps
     bool mOld;         // left over from the previous screen: drawn during the transition, not updated
     bool mFreed;
+    bool mSpawned;      // GlobalState.SpawnEntity: in the play state's lists (updates, collisions) from the next update
     uint8_t mDepthRank; // set by the renderer
     uint16_t mIndex;    // pool index
 
@@ -336,8 +481,15 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
                    Entity* parent = nullptr);
 // Frees an entity now (and nothing else: sub-entities are freed by their owner's mDestroy or by Ecs_ClearScreen).
 void Ecs_Free(Entity& e);
+// GlobalState.SpawnEntity (_newlySpawned): left out of everything until the next Ecs_UpdateAll.
+inline void Ecs_MarkSpawned(Entity& e)
+{
+    e.mSpawned = true;
+}
 // All entities, in update order.
 Entity* Ecs_First();
+// Moves `e` to just after `after` in the update order (a sub-entity made late that the C# has after its owner).
+void Ecs_MoveAfter(Entity& e, Entity& after);
 // Frees every entity of the previous screen (mOld) / every entity not owned by the player.
 void Ecs_FreeOld();
 void Ecs_MarkScreenOld();

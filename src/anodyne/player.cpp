@@ -1,6 +1,7 @@
 // Player.cs, Broom.cs, Shadow.cs, Parabola_Thing.cs, Foot_Overlay.cs and PlayerReflection.cs on the entity system.
 #include "player.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -67,9 +68,9 @@ struct PlayerData final
     fx mAddVelY;
     fx mActionLatency;
     fx mStepTimer;
-    fx mJumpT; // Parabola_Thing.t, in frames
+    fx mJumpT; // Parabola_Thing.t
     fx mJumpStartOff;
-    fx mJumpPeriod; // frames
+    fx mJumpPeriod;
     int mJumpHeight;
     bool mJumpHasTarget; // AutoJump: the position moves from the start to the target over the jump
     fx mJumpBaseX;
@@ -110,7 +111,7 @@ void UpdateShadow(fx jumpHeight)
     constexpr int kMaxFrame = 3;
     // (int)ceil(h * (maxFrame + 1)) - 1
     const fx scaled = jumpHeight * (kMaxFrame + 1);
-    const int frame = ((scaled + kFxOne - 1) >> kFxShift) - 1;
+    const int frame = static_cast<int>(ceilf(scaled.mV)) - 1;
     if (frame < 0)
     {
         gShadow->mV->mVisible = false;
@@ -295,7 +296,7 @@ void GroundMovement()
     SetInitVel(kFxOne);
     if (d.mBumpTimer > 0)
     {
-        d.mBumpTimer -= kFxOne;
+        d.mBumpTimer -= kFxTick;
         if (d.mBumpTimer > 0)
         {
             const Facing f = static_cast<Facing>(gPlayer->mFacing);
@@ -320,7 +321,7 @@ void SlippingLogic()
         d.mIsSlipping = false;
         return;
     }
-    d.mFallTimer -= kFxOne;
+    d.mFallTimer -= kFxTick;
     if (d.mFallTimer < 0)
     {
         Game_PlaySfx("fall_in_hole");
@@ -371,7 +372,7 @@ void UpdateActions()
     PlayerData& d = P();
     if (d.mActionLatency > 0)
     {
-        d.mActionLatency -= kFxOne;
+        d.mActionLatency -= kFxTick;
     }
     if (d.mState != PS_AIR)
     {
@@ -486,7 +487,7 @@ bool JumpStep()
     }
     if (d.mJumpStage == 1)
     {
-        d.mJumpT += kFxOne;
+        d.mJumpT += kFxTick;
         if (d.mJumpT > d.mJumpPeriod)
         {
             if (d.mJumpHasTarget)
@@ -501,13 +502,9 @@ bool JumpStep()
             d.mJumpStage = 2;
             return false;
         }
-        const int64_t t = d.mJumpT;
-        const int64_t p = d.mJumpPeriod;
-        const int64_t half = p / 2;
-        // start + t * (period - t) / half^2 * height
-        v.mOffY = d.mJumpStartOff + static_cast<fx>(t * (p - t) * d.mJumpHeight / (half * half / kFxOne));
+        v.mOffY = d.mJumpStartOff + ParabolaOffset(d.mJumpT, d.mJumpPeriod, d.mJumpHeight);
         // UpdateShadow(|0.5 - progress| * 2)
-        fx progress = static_cast<fx>((t << kFxShift) / p);
+        fx progress = FxDiv(d.mJumpT, d.mJumpPeriod);
         progress = progress > kFxOne ? kFxOne : progress;
         if (d.mJumpHasTarget)
         {
@@ -555,11 +552,12 @@ void LadderLogic()
         {
             t.mVelX = kWalkSpeed;
         }
-        d.mStepTimer -= kFxOne;
+        d.mStepTimer -= kFxTick;
         if (d.mStepTimer < 0 && t.mVelY != 0)
         {
             d.mStepTimer = FxSec(0.2f);
-            Game_PlaySfx(Rng_Range(0, 2) ? "ladder_step_1" : "ladder_step_2");
+            static const char* const kSteps[2] = { "ladder_step_1", "ladder_step_2" };
+            Game_PlaySfxOneOf(kSteps, 2);
         }
     }
     else
@@ -602,7 +600,7 @@ void Movement()
                 gPlayer->mV->mYPush = 0;
             }
         }
-        d.mStepTimer -= kFxOne;
+        d.mStepTimer -= kFxTick;
         if (d.mStepTimer < 0 && (t.mVelX != 0 || t.mVelY != 0) && d.mOnConveyor)
         {
             if (d.mSinking)
@@ -702,7 +700,7 @@ void PlayerUpdate(Entity& self)
     d.mJustLanded = false;
     if (d.mInvincibilityTime > 0)
     {
-        d.mInvincibilityTime -= kFxOne;
+        d.mInvincibilityTime -= kFxTick;
         if (d.mInvincibilityTime <= 0)
         {
             d.mInvincible = false;
@@ -859,7 +857,7 @@ void BroomAttack()
     b.mFacing = gPlayer->mFacing;
     Ecs_Play(b, "stab", true);
     static const char* const kSwing[3] = { "swing_broom_1", "swing_broom_2", "swing_broom_3" };
-    Game_PlaySfx(kSwing[Rng_Range(0, 3)]);
+    Game_PlaySfxOneOf(kSwing, 3);
     BroomUpdatePos();
     Ecs_FireEvent(GEV_BROOM_USED);
 
@@ -1221,10 +1219,10 @@ void Player_GetProbe(PlayerProbe& out)
     out.mJustReleasedDust = B().mJustReleased;
 }
 
-void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height)
+void Player_AutoJump(fx period, fx targetX, fx targetY, int height)
 {
     PlayerData& d = P();
-    d.mJumpPeriod = periodFrames;
+    d.mJumpPeriod = period;
     d.mJumpHeight = height;
     d.mJumpHasTarget = true;
     d.mJumpTargetX = targetX;

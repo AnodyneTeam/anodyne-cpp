@@ -58,6 +58,7 @@ Entity* Spawn_PewLaser(const MapEntity& preset, Entity& player);
 Entity* Spawn_Shieldy(const MapEntity& preset, Entity& player);
 Entity* Spawn_Dog(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
+Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).
 void Shieldy_ReceiveDamage(Entity& shieldy, int damage);
 
@@ -82,4 +83,8 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap);
 // For the bot link: the entity's C# state machine as the C# bot reads it (the active states' type names from the top
 // down, e.g. "ActiveState/TimerState"), or nullptr when the port doesn't report one for its class.
+// The C# class of a Door entity (one port class plays them all), nullptr for other entities.
+const char* Gadgets_ProbeName(const Entity& e);
+// The C# class of a Sage (SageNexus, SageOverworld...), nullptr for other entities.
+const char* Npcs_ProbeName(const Entity& e);
 const char* Enemies_ProbeFsm(const Entity& e);

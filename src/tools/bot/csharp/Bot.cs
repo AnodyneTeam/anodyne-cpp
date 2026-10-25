@@ -17,6 +17,29 @@ namespace AnodyneSharp.Recording
     /// IEnumerable&lt;object&gt; (a helper such as WalkTo) which is run to completion first. The runner turns each frame
     /// into the KeyState dictionary the game reads, so the result flows through the normal recorder.
     /// </summary>
+    /// <summary>GlobalState.RNG in deterministic runs: System.Random with the same numbers, counting its draws
+    /// (every number comes from one Sample() or Next() call, each one InternalSample).</summary>
+    public class CountingRandom : Random
+    {
+        public long Calls;
+
+        public CountingRandom(int seed) : base(seed)
+        {
+        }
+
+        protected override double Sample()
+        {
+            Calls++;
+            return base.Sample();
+        }
+
+        public override int Next()
+        {
+            Calls++;
+            return base.Next();
+        }
+    }
+
     public static class BotRunner
     {
         public static bool Active { get; private set; }
@@ -88,6 +111,7 @@ namespace AnodyneSharp.Recording
         private static readonly Stack<IEnumerator<object>> _stack = new();
         private static Dictionary<Keys, KeyInput.InputState> _prev;
         private static StreamWriter _trace;
+        private static StreamWriter _entTrace;
         private static long _frame;
         private static long _botFrame;
 
@@ -161,7 +185,18 @@ namespace AnodyneSharp.Recording
         {
             _trace = new StreamWriter(tracePath);
             _trace.WriteLine("frame\tmap\tx\ty\thp\tdialogue\tinv");
+            // ANODYNE_ENT_TRACE=path: also every frame's RNG draw count and entities (EntLine), for the port's parity replay
+            string ents = Environment.GetEnvironmentVariable("ANODYNE_ENT_TRACE");
+            if (ents != null)
+            {
+                _entTrace = new StreamWriter(ents);
+            }
         }
+
+        /// <summary>The RNG draws and the screen's existing entities (but the player) as Type@x,y, sorted: what the port's
+        /// parity replay compares besides the player.</summary>
+        public static string EntLine() => Gs.View.RngCalls + "\t" + string.Join(" ", Entities().Where(e => e.exists && !(e is AnodyneSharp.Entities.Player))
+            .Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}").OrderBy(s => s, StringComparer.Ordinal));
 
         /// <summary>Produces this frame's key states. Sets Active=false (and closes the game) when the script ends.</summary>
         /// <summary>Taking damage or dying (game over) is a fatal error for the bot, unless ANODYNE_BOT_ALLOW_DAMAGE is set (scene tests).</summary>
@@ -205,6 +240,7 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine($"BOT FAILED: a dialogue/cutscene ({PlayBusyName}) has been open for {_busyFrames} frames on {Gs.Map} at {p?.Position} ({Status})");
                     DumpRing();
                     _trace?.Flush();
+                    _entTrace?.Flush();
                     Environment.Exit(2);
                 }
                 _stuckSince = _botFrame;
@@ -243,6 +279,7 @@ namespace AnodyneSharp.Recording
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                 DumpRing();
                 _trace?.Flush();
+                _entTrace?.Flush();
                 Environment.Exit(2);
             }
         }
@@ -462,6 +499,7 @@ namespace AnodyneSharp.Recording
                 try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                 DumpRing();
                 _trace?.Flush();
+                _entTrace?.Flush();
                 Environment.Exit(2);
             }
         }
@@ -518,6 +556,7 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine("  slow window by status: " + string.Join("; ", _winByStatus.OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key.Trim()} {kv.Value:0}ms")));
                     DumpRing();
                     _trace?.Flush();
+                    _entTrace?.Flush();
                     Environment.Exit(4);
                 }
                 _winMs = 0; _winN = 0;
@@ -614,6 +653,7 @@ namespace AnodyneSharp.Recording
                     try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender("/tmp/bot/fail.png"); } catch { }
                     DumpRing();
                     _trace?.Flush();
+                    _entTrace?.Flush();
                     Environment.Exit(2);
                     return null;
                 }
@@ -723,9 +763,11 @@ namespace AnodyneSharp.Recording
             }
             var p = Player;
             _trace.WriteLine($"{_frame}\t{Gs.Map}\t{(p == null ? 0 : (int)p.Position.X)}\t{(p == null ? 0 : (int)p.Position.Y)}\t{Gs.Health}\t{(string.IsNullOrEmpty(Gs.Dialogue) ? 0 : 1)}\tb{(Gs.HasBroom ? 1 : 0)}k{Gs.MapKeys}c{Gs.CardCount}");
+            _entTrace?.WriteLine($"{_frame}\t{EntLine()}");
             if (!Active || _frame % 300 == 0)
             {
                 _trace.Flush();
+                _entTrace?.Flush();
             }
         }
     }

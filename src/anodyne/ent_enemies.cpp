@@ -18,30 +18,34 @@ bool IsBroom(const Entity& e)
 }
 
 // HealthDropper.Die: the preset stays dead, and maybe a heart drops where it was.
-void Die(Entity& self, fx dropChance, bool big = false)
+void Die(Entity& self, float dropChance, bool big = false)
 {
     if (self.mPreset)
     {
         Preset_SetAlive(*self.mPreset, false);
     }
     self.mExists = false;
-    if (Rng_Unit() < dropChance)
+    if (Rng_NextDouble() < dropChance)
     {
-        Spawn_HealthDrop(self.mT->mX, self.mT->mY, big);
+        // (the C#'s pickup is the dropper's sub-entity, just after it in the lists)
+        if (Entity* drop = Spawn_HealthDrop(self.mT->mX, self.mT->mY, big))
+        {
+            Ecs_MoveAfter(*drop, self);
+        }
     }
 }
 
-// Parabola_Thing: the offset that lifts a sprite `height` px at the middle of `period` frames; true when done.
+// Parabola_Thing.Tick (from offset 0): the offset that lifts a sprite `height` px at the middle of `period` seconds;
+// true when done.
 bool ParabolaTick(fx& t, fx period, int height, fx& offY)
 {
-    t += kFxOne;
-    if (t >= period)
+    t += kFxTick;
+    if (t > period)
     {
         offY = 0;
         return true;
     }
-    const int64_t half = period / 2;
-    offY = static_cast<fx>(static_cast<int64_t>(t) * (period - t) * height / (half * half / kFxOne));
+    offY = ParabolaOffset(t, period, height);
     return false;
 }
 
@@ -53,6 +57,15 @@ enum SlimeState : uint8_t
     SLIME_DYING,
 };
 
+enum SlimeTimer : uint8_t
+{
+    SLIME_MOVE_TIMER,
+    SLIME_SHOOT_TIMER,
+};
+
+constexpr int kGooPool = 8;
+constexpr int kSlimeBulletPool = 4;
+
 struct SlimeData final
 {
     uint8_t mState;
@@ -60,12 +73,17 @@ struct SlimeData final
     bool mSoundSync;
     int mHealth;
     fx mSpeed;
-    fx mMoveTimer;
-    fx mShootTimer;
+    TimerState mMove;
+    uint32_t mExitFrame;
+    // The EntityPools' entities are made with the slime, each picking its anim's framerate then.
+    uint8_t mGooRate[kGooPool];
+    uint8_t mBulletRate[kSlimeBulletPool];
 };
 
-struct GooData final
+// A pooled entity: its slot in the slime's EntityPool.
+struct PoolData final
 {
+    uint8_t mSlot;
     bool mSplash;
     fx mT;
     fx mPeriod;
@@ -73,7 +91,7 @@ struct GooData final
 
 void GooUpdate(Entity& self)
 {
-    GooData& d = self.Data<GooData>();
+    PoolData& d = self.Data<PoolData>();
     Ecs_BaseUpdate(self);
     if (!d.mSplash)
     {
@@ -99,30 +117,10 @@ const EntityClass kGoo = {
     "SlimeGoo", GooUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_MAP_COLLISION,
 };
 
-void SpawnGoo(const Entity& slime)
-{
-    Entity* g = Ecs_Create(kGoo, slime.mT->mX, slime.mT->mY, PART_VISUAL | PART_BRAIN, nullptr,
-                           const_cast<Entity*>(&slime));
-    if (!g)
-    {
-        return;
-    }
-    g->mB->mW = g->mB->mH = 6;
-    Ecs_SetSheet(*g, "slime_goo");
-    g->mV->mLayer = LAYER_PARTICLES;
-    Ecs_Play(*g, "move", true, Rng_Range(5, 10));
-    GooData& d = g->Data<GooData>();
-    d.mPeriod = FxMul(Fx(kFps), FxF(0.8f) + FxMul(FxF(0.3f), Rng_Unit()));
-    const fx vx = Fx(10) + FxMul(Fx(5), Rng_Unit());
-    const fx vy = Fx(10) + FxMul(Fx(5), Rng_Unit());
-    g->mT->mVelX = Rng_Range(0, 2) ? vx : -vx;
-    g->mT->mVelY = Rng_Range(0, 2) ? vy : -vy;
-}
-
 void SlimeBulletUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
-    self.mV->mOpacity -= FxF(0.39f) / kFps;
+    self.mV->mOpacity -= FxStep(FxF(0.39f));
     if (self.mB->mTouching != TOUCH_NONE || self.mV->mOpacity < FxF(0.3f))
     {
         self.mExists = false;
@@ -143,24 +141,74 @@ const EntityClass kSlimeBullet = {
     0,             GROUP_PLAYER,      ECF_MAP_COLLISION,
 };
 
-void SlimeShoot(Entity& slime)
+// EntityPool.Spawn: the first slot whose entity doesn't exist (-1: all in use).
+int FreePoolSlot(const Entity& slime, const EntityClass& cls, int slots)
 {
-    if (Ecs_CountChildren(slime, kSlimeBullet) >= 4)
+    uint32_t used = 0;
+    for (const Entity* e = Ecs_First(); e; e = e->mNext)
+    {
+        if (e->mParent == &slime && e->mClass == &cls && e->mExists && !e->mFreed)
+        {
+            used |= 1u << const_cast<Entity*>(e)->Data<PoolData>().mSlot;
+        }
+    }
+    for (int i = 0; i < slots; i++)
+    {
+        if (!(used & (1u << i)))
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Goo.Spawn: from the slime, into its Move state.
+void SpawnGoo(Entity& slime)
+{
+    const int slot = FreePoolSlot(slime, kGoo, kGooPool);
+    if (slot < 0)
     {
         return;
     }
-    Entity* b = Ecs_Create(kSlimeBullet, slime.mT->mX, slime.mT->mY, PART_VISUAL, nullptr, &slime);
+    Entity* g = Ecs_Create(kGoo, slime.mT->mX, slime.mT->mY, PART_VISUAL | PART_BRAIN, nullptr, &slime);
+    if (!g)
+    {
+        return;
+    }
+    g->mB->mW = g->mB->mH = 6;
+    Ecs_SetSheet(*g, "slime_goo");
+    g->mV->mLayer = LAYER_PARTICLES;
+    PoolData& d = g->Data<PoolData>();
+    d.mSlot = static_cast<uint8_t>(slot);
+    d.mPeriod = FxF(0.8f) + FxMul(FxF(0.3f), Rng_Unit());
+    const int sx = Rng_Range(0, 2) ? 1 : -1;
+    g->mT->mVelX = (Fx(10) + FxMul(Fx(5), Rng_Unit())) * sx;
+    const int sy = Rng_Range(0, 2) ? 1 : -1;
+    g->mT->mVelY = (Fx(10) + FxMul(Fx(5), Rng_Unit())) * sy;
+    Ecs_Play(*g, "move", true, slime.Data<SlimeData>().mGooRate[slot]);
+}
+
+// Bullet.Spawn: from the slime, at the player.
+void SlimeShoot(Entity& slime)
+{
+    const int slot = FreePoolSlot(slime, kSlimeBullet, kSlimeBulletPool);
+    if (slot < 0)
+    {
+        return;
+    }
+    Entity* b = Ecs_Create(kSlimeBullet, slime.mT->mX, slime.mT->mY, PART_VISUAL | PART_BRAIN, nullptr, &slime);
     if (!b)
     {
         return;
     }
+    b->Data<PoolData>().mSlot = static_cast<uint8_t>(slot);
     Game_PlaySfx("slime_shoot");
     b->mB->mW = b->mB->mH = 8;
     Ecs_SetSheet(*b, "slime_bullet");
     b->mV->mLayer = LAYER_PARTICLES;
-    Ecs_Play(*b, "move", true, Rng_Range(5, 10));
     const Entity& p = *World_Player();
     Ecs_MoveTowards(*b, p.mT->mX, p.mT->mY, Fx(40));
+    Ecs_Play(*b, "move", true, slime.Data<SlimeData>().mBulletRate[slot]);
 }
 
 void SlimeChangeDir(Entity& self)
@@ -178,12 +226,37 @@ void SlimeChangeDir(Entity& self)
     }
 }
 
+// Move's Enter: the timers carry on from when it was left, and a bullet slime gets another shoot timer each time.
+void SlimeEnterMove(Entity& self)
+{
+    SlimeData& d = self.Data<SlimeData>();
+    d.mState = SLIME_MOVE;
+    Ecs_Play(self, "Move");
+    d.mMove.Advance(Game_SecondsSince(d.mExitFrame));
+    if (d.mBullet)
+    {
+        d.mMove.Add(1.8f, SLIME_SHOOT_TIMER);
+    }
+}
+
 void SlimeUpdate(Entity& self)
 {
     SlimeData& d = self.Data<SlimeData>();
     switch (d.mState)
     {
     case SLIME_MOVE:
+        d.mMove.Tick(kDeltaTime);
+        for (int id = d.mMove.Pop(); id >= 0; id = d.mMove.Pop())
+        {
+            if (id == SLIME_MOVE_TIMER)
+            {
+                SlimeChangeDir(self);
+            }
+            else
+            {
+                SlimeShoot(self);
+            }
+        }
         if (Ecs_Frame(self) == 1 && !d.mSoundSync)
         {
             Game_PlaySfx("slime_walk");
@@ -192,21 +265,6 @@ void SlimeUpdate(Entity& self)
         else if (Ecs_Frame(self) == 0)
         {
             d.mSoundSync = false;
-        }
-        d.mMoveTimer -= kFxOne;
-        if (d.mMoveTimer <= 0)
-        {
-            d.mMoveTimer += FxSec(0.5f);
-            SlimeChangeDir(self);
-        }
-        if (d.mBullet)
-        {
-            d.mShootTimer -= kFxOne;
-            if (d.mShootTimer <= 0)
-            {
-                d.mShootTimer += FxSec(1.8f);
-                SlimeShoot(self);
-            }
         }
         break;
     case SLIME_HURT:
@@ -217,15 +275,14 @@ void SlimeUpdate(Entity& self)
         }
         else if (Ecs_AnimFinished(self))
         {
-            d.mState = SLIME_MOVE;
-            Ecs_Play(self, "Move");
+            SlimeEnterMove(self);
         }
         break;
     default:
         if (Ecs_AnimFinished(self))
         {
             Spawn_Explosion(self);
-            Die(self, FxF(0.5f));
+            Die(self, 0.5f);
         }
         break;
     }
@@ -253,6 +310,7 @@ void SlimeCollided(Entity& self, Entity& other)
         self.mT->mVelX = Fx(100) * FacingX(f);
         self.mT->mVelY = Fx(100) * FacingY(f);
         d.mState = SLIME_HURT;
+        d.mExitFrame = Game_Frame();
         Ecs_Play(self, "Hurt");
     }
 }
@@ -297,7 +355,7 @@ void FireballUpdate(Entity& self)
     FireballData& d = self.Data<FireballData>();
     if (!d.mPoof)
     {
-        self.mV->mOpacity -= FxF(0.06f) / kFps;
+        self.mV->mOpacity -= FxStep(FxF(0.06f));
         if (self.mV->mOpacity <= FxF(0.6f))
         {
             d.mPoof = true;
@@ -336,7 +394,7 @@ void AnnoyerExplosionUpdate(Entity& self)
 {
     if (Ecs_AnimFinished(self))
     {
-        Die(self, FxF(0.5f));
+        Die(self, 0.5f);
     }
     Ecs_BaseUpdate(self);
 }
@@ -380,7 +438,7 @@ void AnnoyerUpdate(Entity& self)
     Transform& t = *self.mT;
     if (d.mState != ANNOYER_HIT)
     {
-        d.mFireTimer -= kFxOne;
+        d.mFireTimer -= kFxTick;
         if (d.mFireTimer <= 0)
         {
             d.mFireTimer += FxSec(2.3f);
@@ -405,7 +463,7 @@ void AnnoyerUpdate(Entity& self)
     {
     case ANNOYER_WAIT:
     {
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             d.mTimer += FxSec(0.25f);
@@ -434,11 +492,11 @@ void AnnoyerUpdate(Entity& self)
     }
     case ANNOYER_CIRCLE:
     {
-        d.mAngle += FxF(8.4f) / kFps;
+        d.mAngle += FxStep(FxF(8.4f));
         const Entity& p = *World_Player();
         t.mX = Ecs_VisualCenterX(p) + FxMul(FxCos(d.mAngle), Fx(20));
         t.mY = Ecs_VisualCenterY(p) + FxMul(FxSin(d.mAngle), Fx(20));
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             AnnoyerEnterActive(self, ANNOYER_SWOOP);
@@ -456,7 +514,7 @@ void AnnoyerUpdate(Entity& self)
         break;
     }
     default:
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             Ecs_SetSolid(self, false);
@@ -552,7 +610,7 @@ void LaserUpdate(Entity& self)
     LaserData& d = self.Data<LaserData>();
     if (!d.mPoof)
     {
-        self.mV->mOpacity -= FxF(0.06f) / kFps;
+        self.mV->mOpacity -= FxStep(FxF(0.06f));
         if (self.mB->mTouching != TOUCH_NONE)
         {
             LaserPoof(self);
@@ -562,7 +620,7 @@ void LaserUpdate(Entity& self)
     {
         self.mExists = false;
     }
-    d.mSolidTimer -= kFxOne;
+    d.mSolidTimer -= kFxTick;
     if (d.mSolidTimer < 0)
     {
         Ecs_SetSolid(self, true);
@@ -596,7 +654,7 @@ const EntityClass kLaser = {
 void PewLaserUpdate(Entity& self)
 {
     PewLaserData& d = self.Data<PewLaserData>();
-    d.mTimer -= kFxOne;
+    d.mTimer -= kFxTick;
     if (d.mTimer < 0)
     {
         d.mTimer = FxSec(0.5f);
@@ -669,7 +727,7 @@ void ShieldyUpdate(Entity& self)
     Ecs_BaseUpdate(self);
     if (d.mHitTimer > 0)
     {
-        d.mHitTimer -= kFxOne;
+        d.mHitTimer -= kFxTick;
         if (d.mHitTimer <= 0)
         {
             Ecs_Play(self, "walk");
@@ -678,7 +736,7 @@ void ShieldyUpdate(Entity& self)
     if (d.mHealth <= 0)
     {
         Spawn_Explosion(self);
-        Die(self, FxF(0.5f));
+        Die(self, 0.5f);
     }
     if (self.mB->mTouching != TOUCH_NONE)
     {
@@ -815,7 +873,7 @@ void DogUpdate(Entity& self)
             DogEnter(self, DOG_ALERT);
             break;
         }
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             d.mTimer += FxSec(1.0f);
@@ -839,14 +897,14 @@ void DogUpdate(Entity& self)
         }
         break;
     case DOG_ALERT:
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             DogEnter(self, DOG_ATTACK);
         }
         break;
     default:
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer <= 0)
         {
             d.mTimer += FxSec(1.0f);
@@ -888,7 +946,7 @@ void DogUpdate(Entity& self)
     d.mPlayerInArea = false;
     if (d.mHitTimer > 0)
     {
-        d.mHitTimer -= kFxOne;
+        d.mHitTimer -= kFxTick;
     }
 }
 
@@ -907,7 +965,7 @@ void DogCollided(Entity& self, Entity& other)
         Game_PlaySfx("broom_hit");
         if (d.mHealth == 0)
         {
-            Die(self, kFxOne);
+            Die(self, 1.0f);
             Spawn_Explosion(self);
         }
     }
@@ -972,7 +1030,7 @@ void RotatorBulletUpdate(Entity& self)
     }
     RotatorBulletData& d = self.Data<RotatorBulletData>();
     MoveTo(d.mRadius, Fx(59), Fx(30));
-    d.mAngle += FxF(1.2f) / kFps;
+    d.mAngle += FxStep(FxF(1.2f));
     if (d.mAngle > kFxTau)
     {
         d.mAngle -= kFxTau;
@@ -1170,7 +1228,7 @@ void SeerRotateOrbs(Entity& self)
             continue;
         }
         SeerOrbData& o = orb->Data<SeerOrbData>();
-        o.mAngle += o.mSpeed / kFps;
+        o.mAngle += FxStep(o.mSpeed);
         while (o.mAngle >= kTwoPi)
         {
             o.mAngle -= kTwoPi;
@@ -1300,7 +1358,7 @@ void SeerUpdate(Entity& self)
     case SEER_STAGE1:
         if (d.mHealth > 6)
         {
-            d.mYTimer += kFxOne / kFps;
+            d.mYTimer += FxStep(kFxOne);
             t.mY = d.mPresetY + 10 * FxSin(d.mYTimer);
             SeerHorizontal(self);
             SeerRotateOrbs(self);
@@ -1541,7 +1599,7 @@ int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
     if (e.mClass == &kPewLaser)
     {
         const PewLaserData& d = const_cast<Entity&>(e).Data<PewLaserData>();
-        return snprintf(buf, static_cast<size_t>(cap), "\"_bulletTimer\":%d,\"_isFast\":%d", static_cast<int>(d.mTimer / 60),
+        return snprintf(buf, static_cast<size_t>(cap), "\"_bulletTimer\":%d,\"_isFast\":%d", FxRaw16(d.mTimer),
                         d.mFast ? 1 : 0);
     }
     if (e.mClass == &kSeer)
@@ -1601,9 +1659,20 @@ Entity* Spawn_Slime(const MapEntity& preset, Entity&)
     d.mBullet = preset.mFrame == 3;
     d.mHealth = 2;
     d.mSpeed = d.mBullet ? Fx(40) : Fx(20);
-    d.mMoveTimer = FxSec(0.5f);
-    d.mShootTimer = FxSec(1.8f);
-    Ecs_Play(*e, "Move");
+    for (uint8_t& rate : d.mGooRate)
+    {
+        rate = static_cast<uint8_t>(Rng_Range(5, 10));
+    }
+    if (d.mBullet)
+    {
+        for (uint8_t& rate : d.mBulletRate)
+        {
+            rate = static_cast<uint8_t>(Rng_Range(5, 10));
+        }
+    }
+    d.mMove.Add(0.5f, SLIME_MOVE_TIMER);
+    d.mExitFrame = Game_Frame();
+    SlimeEnterMove(*e);
     return e;
 }
 

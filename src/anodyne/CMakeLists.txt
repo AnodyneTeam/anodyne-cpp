@@ -102,6 +102,8 @@ add_custom_command(
         "$<TARGET_FILE:first_lib>"
         "$<TARGET_FILE:tonc>"
         -lc
+        # libm: the game's float maths (sqrtf/sinf/cosf/floorf/ceilf, as the C# uses MathF)
+        -lm
         -Wl,--end-group
         "${CMAKE_BINARY_DIR}/tools/audio_blob.bin.o"
         -o first.elf

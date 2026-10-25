@@ -146,7 +146,7 @@ void TreasureUpdate(Entity& self)
             }
             break;
         case 1:
-            v.mScale += FxF(0.5f) / kFps;
+            v.mScale += FxStep(FxF(0.5f));
             if (v.mScale >= kFxOne)
             {
                 v.mScale = kFxOne;
@@ -155,7 +155,7 @@ void TreasureUpdate(Entity& self)
             }
             break;
         case 2:
-            d.mTimer += kFxOne;
+            d.mTimer += kFxTick;
             if (d.mTimer > FxSec(1.0f))
             {
                 d.mCardState++;
@@ -171,8 +171,8 @@ void TreasureUpdate(Entity& self)
             }
             break;
         case 3:
-            v.mScale += FxF(3.0f) / kFps;
-            v.mOpacity -= FxF(0.5f) / kFps;
+            v.mScale += FxStep(FxF(3.0f));
+            v.mOpacity -= FxStep(FxF(0.5f));
             if (v.mOpacity <= 0)
             {
                 v.mVisible = false;
@@ -570,7 +570,7 @@ void CrackedCollided(Entity& self, Entity&)
         return;
     }
     CrackedData& d = self.Data<CrackedData>();
-    d.mTimer -= kFxOne;
+    d.mTimer -= kFxTick;
     if (d.mTimer < 0)
     {
         Game_PlaySfx("floor_crack");
@@ -779,7 +779,7 @@ void SentinelCollided(Entity& self, Entity&)
     {
         return;
     }
-    d.mActivationTime -= kFxOne;
+    d.mActivationTime -= kFxTick;
     d.mPlayerCollided = true;
     if (d.mActivationTime < 0)
     {
@@ -919,7 +919,7 @@ struct HealthData final
 
 void HealthUpdate(Entity& self)
 {
-    self.Data<HealthData>().mLatency -= kFxOne;
+    self.Data<HealthData>().mLatency -= kFxTick;
     Ecs_BaseUpdate(self);
 }
 
@@ -961,17 +961,148 @@ Entity* MakeHealth(fx x, fx y, bool big, const MapEntity* preset)
 }
 
 // ---- Explosion (Explosion.cs) -------------------------------------------------------------------------------------
+// (it stays on its last frame until the screen goes, as the C#'s does)
 void ExplosionUpdate(Entity& self)
 {
-    if (Ecs_AnimFinished(self))
-    {
-        self.mExists = false;
-    }
     Ecs_BaseUpdate(self);
 }
 
 const EntityClass kExplosion = {
     "Explosion", ExplosionUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- Doors (Door.cs, Doors/*.cs) -----------------------------------------------------------------------------------
+// Each Door preset is an entity like the C#'s; where it leads (the linked door + teleportOffset) is the content
+// compiler's MapDoor.
+enum DoorType : uint8_t
+{
+    DOOR_BLANK_PORTAL = 4,
+    DOOR_WHIRLPOOL = 7,
+    DOOR_FALL = 8,
+    DOOR_NEXUS_PAD = 16,
+    DOOR_NEXUS = 17,
+};
+
+struct DoorData final
+{
+    const MapDoor* mDoor;
+    bool mPlayerOnDoor; // player_on_door
+    bool mPadOn;        // NexusPad.playerCollission
+    bool mActivated;    // NexusDoor.activated
+};
+
+bool PlayerOn(const Entity& self)
+{
+    return Ecs_Intersects(Ecs_Hitbox(*Player_Entity()), Ecs_Hitbox(self));
+}
+
+// Door.TeleportPlayer
+void DoorTeleport(Entity& self)
+{
+    DoorData& d = self.Data<DoorData>();
+    World_TakeDoor(*d.mDoor);
+    d.mPlayerOnDoor = true;
+    const uint8_t type = d.mDoor->mType;
+    if (type == DOOR_BLANK_PORTAL || type == DOOR_NEXUS)
+    {
+        Game_PlaySfx("teleport_up");
+    }
+    else if (type != DOOR_WHIRLPOOL && type != DOOR_NEXUS_PAD)
+    {
+        Game_PlaySfx("enter_door");
+    }
+}
+
+void DoorUpdate(Entity& self)
+{
+    DoorData& d = self.Data<DoorData>();
+    Ecs_BaseUpdate(self);
+    if (!PlayerOn(self))
+    {
+        d.mPlayerOnDoor = false;
+    }
+    switch (d.mDoor->mType)
+    {
+    case DOOR_WHIRLPOOL:
+        if (Ecs_AnimFinished(self))
+        {
+            Ecs_Play(self, "whirl_red");
+        }
+        break;
+    case DOOR_NEXUS_PAD:
+        if (d.mPadOn && !PlayerOn(self))
+        {
+            d.mPadOn = false;
+            Ecs_Play(self, "off");
+        }
+        break;
+    case DOOR_NEXUS:
+        if (d.mActivated && Player_JustLanded())
+        {
+            DoorTeleport(self);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void DoorCollided(Entity& self, Entity& other)
+{
+    DoorData& d = self.Data<DoorData>();
+    if (&other != Player_Entity())
+    {
+        return;
+    }
+    switch (d.mDoor->mType)
+    {
+    case DOOR_NEXUS_PAD:
+        if (!d.mPadOn && Player_State() == PS_GROUND)
+        {
+            Ecs_Play(self, "on");
+            Game_PlaySfx("menu_select");
+            d.mPadOn = true;
+        }
+        break;
+    case DOOR_NEXUS:
+        Ecs_Separate(self, other);
+        break;
+    default:
+        // (FallDoor's CROWD-only falling sequence isn't ported: it acts as a plain door)
+        if (!d.mPlayerOnDoor)
+        {
+            DoorTeleport(self);
+        }
+        break;
+    }
+}
+
+bool DoorInteract(Entity& self, Facing playerFacing)
+{
+    DoorData& d = self.Data<DoorData>();
+    if (d.mDoor->mType == DOOR_NEXUS_PAD)
+    {
+        DoorTeleport(self);
+        return true;
+    }
+    // NexusDoor: jump into the portal of a map whose pad has been stood on
+    const bool previewExists = (gGame.mNexusPortals >> d.mDoor->mDestMap) & 1;
+    if (previewExists && playerFacing == FACE_UP && !d.mActivated)
+    {
+        d.mActivated = true;
+        const Entity& p = *Player_Entity();
+        Player_AutoJump(FxF(0.4f), p.mT->mX, p.mT->mY - Fx(16));
+        return true;
+    }
+    return false;
+}
+
+const EntityClass kDoor = {
+    "Door", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+const EntityClass kNexusDoor = {
+    "NexusDoor", DoorUpdate, nullptr, DoorCollided, DoorInteract, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,
+    ECF_INTERACTABLE,
 };
 
 // ---- Checkpoint (Checkpoint.cs) -----------------------------------------------------------------------------------
@@ -1080,7 +1211,7 @@ void CheckpointUpdate(Entity& self)
         }
         break;
     default:
-        d.mTimer -= kFxOne;
+        d.mTimer -= kFxTick;
         if (d.mTimer < 0)
         {
             CheckpointEnter(self, CPS_WAIT);
@@ -1425,6 +1556,7 @@ Entity* Spawn_Explosion(const Entity& parent)
     Entity* e = Ecs_Create(kExplosion, parent.mT->mX - Fx(4), parent.mT->mY - Fx(4), PART_VISUAL);
     if (e)
     {
+        Ecs_MarkSpawned(*e);
         Ecs_SetSolid(*e, false);
         Ecs_SetSheet(*e, "enemy_explode_2");
         e->mV->mLayer = LAYER_BG_ENTITIES;
@@ -1500,4 +1632,117 @@ Entity* Spawn_BossKeyReset(const MapEntity&, Entity&)
 {
     // InventoryManager.SetMapKeys("BOSSRUSH", 0): the boss rush map isn't in the port.
     return nullptr;
+}
+
+Entity* Spawn_Door(const MapEntity& preset, Entity& player)
+{
+    const MapDoor* door = World_FindDoor(preset.mX, preset.mY);
+    if (!door)
+    {
+        return nullptr; // OneWayDoor (a target only: exists = false) or a door with no linked door
+    }
+    const uint8_t type = door->mType;
+    const bool interactable = type == DOOR_NEXUS_PAD || type == DOOR_NEXUS;
+    const bool visible = type == DOOR_BLANK_PORTAL || type == DOOR_WHIRLPOOL || type == DOOR_NEXUS_PAD;
+    Entity* e = Ecs_Create(interactable ? kNexusDoor : kDoor, Fx(door->mX), Fx(door->mY),
+                           visible ? PART_VISUAL | PART_BRAIN : PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = door->mW;
+    e->mB->mH = door->mH;
+    e->mB->mImmovable = true;
+    DoorData& d = e->Data<DoorData>();
+    d = DoorData();
+    d.mDoor = door;
+    // The constructor's player_on_door: the base Door's hitbox, before the class resized or moved it (the frame size
+    // for the doors with a sprite; BlankPortal and UpDoor redo it after CenterOffset)
+    const Rect hit = Ecs_Hitbox(player);
+    const int baseSize = type == DOOR_NEXUS_PAD ? 32 : 16;
+    d.mPlayerOnDoor = Ecs_Intersects(hit, Rect{ preset.mX, preset.mY, baseSize, baseSize });
+    if (type == DOOR_BLANK_PORTAL || type == 5)
+    {
+        d.mPlayerOnDoor = Ecs_Intersects(hit, Ecs_Hitbox(*e));
+    }
+    if (visible)
+    {
+        e->mV->mLayer = LAYER_BG_ENTITIES;
+    }
+    switch (type)
+    {
+    case DOOR_BLANK_PORTAL:
+        // (the cell variant, frames 4-5, is the post-game's)
+        Ecs_SetSheet(*e, "whiteportal");
+        e->mV->mOffX = e->mV->mOffY = Fx(7);
+        Ecs_Play(*e, "a");
+        break;
+    case DOOR_WHIRLPOOL:
+        Ecs_SetSheet(*e, "whirlpool");
+        Ecs_Play(*e, Event_Get("fisherman.dead") != 0 ? "whirl_red" : "whirl");
+        break;
+    case DOOR_NEXUS_PAD:
+        Ecs_SetSheet(*e, "nexus_pad");
+        e->mV->mOffX = Fx(6);
+        e->mV->mOffY = Fx(4);
+        Ecs_Play(*e, "off");
+        gGame.mNexusPortals |= 1u << gGame.mCurrentMap; // ActivatedNexusPortals.Add(CURRENT_MAP_NAME)
+        break;
+    default:
+        break;
+    }
+    return e;
+}
+
+const char* Gadgets_ProbeName(const Entity& e)
+{
+    if (e.mClass == &kKeyGate)
+    {
+        switch (const_cast<Entity&>(e).Data<KeyGateData>().mKind)
+        {
+        case GK_SMALL_KEY:
+            return "SmallKeyGate";
+        case GK_CARD:
+            return "BigCardGate";
+        default:
+            return "BigKeyGate";
+        }
+    }
+    if (e.mClass != &kDoor && e.mClass != &kNexusDoor)
+    {
+        return nullptr;
+    }
+    switch (const_cast<Entity&>(e).Data<DoorData>().mDoor->mType)
+    {
+    case 1:
+        return "DownDoor";
+    case 4:
+        return "BlankPortal";
+    case 5:
+        return "UpDoor";
+    case 7:
+        return "WhirlPool";
+    case 8:
+        return "FallDoor";
+    case 9:
+        return "NoMoveDoor";
+    case 10:
+        return "LeftDoor";
+    case 11:
+        return "RightDoor";
+    case 12:
+        return "WideDownDoor";
+    case 13:
+        return "TallLeftDoor";
+    case 14:
+        return "WideUpDoor";
+    case 15:
+        return "TallRightDoor";
+    case 16:
+        return "NexusPad";
+    case 17:
+        return "NexusDoor";
+    default:
+        return "Door";
+    }
 }

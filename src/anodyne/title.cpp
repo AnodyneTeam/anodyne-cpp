@@ -5,6 +5,7 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
+#include "game_state.h"
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
 #include "sprite.h"
@@ -89,11 +90,7 @@ bool gShowTitleSprites = false;
 
 void PlaySfx(const char* name)
 {
-    const int32_t id = AudioManager_FindSfx(name);
-    if (id >= 0)
-    {
-        AudioManager_PlaySFX(static_cast<uint32_t>(id));
-    }
+    Game_PlaySfx(name);
 }
 
 // Semi-transparent OBJs (the door's spinning glow) add onto BG2/BG3/OBJ/backdrop at full weight.

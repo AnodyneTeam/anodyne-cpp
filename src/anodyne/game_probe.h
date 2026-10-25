@@ -24,6 +24,8 @@ int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap);
 int GameProbe_Warp(const char* map, int x, int y);
 // Test shortcut: back to full health.
 void GameProbe_Heal(void);
+// Parity replays: GlobalState.RNG as the C#'s is after `draws` numbers (reseeded with the deterministic seed).
+void GameProbe_SetRng(unsigned draws);
 
 #ifdef __cplusplus
 }

@@ -127,6 +127,17 @@ static void LoadWorldMap()
     Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 
+// PlayState.Warp's map load, for the world's warps.
+static void LoadWarpMap(uint8_t map)
+{
+    Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
+    if (map != gCurrentMap)
+    {
+        gCurrentMap = map;
+        LoadWorldMap();
+    }
+}
+
 static void EnterMapViewerMode()
 {
     REG_BG1CNT = 0;
@@ -290,22 +301,8 @@ int main()
     int introPhase = 0;  // 0 wait, 1 dialogue, 2 wait
     int introTimer = 0;
 
-    // Door/teleporter warps (PlayState S_MAP_EXIT / S_MAP_ENTER): the world freezes while the screen pixelates and
-    // fades to black, the map swaps, then it pixelates back in and fades up.
-    enum class WarpPhase
-    {
-        None,
-        Exit,
-        Enter
-    };
-    WarpPhase warpPhase = WarpPhase::None;
-    int warpPix = 256;  // C# Pixelation, 8.8
-    int warpDark = 0;   // C# black_overlay alpha, 16.16
-    int warpExitStep = 0;
-    uint8_t warpMap = 0;
-    uint8_t warpFacing = 0;
-    int warpX = 0;
-    int warpY = 0;
+    // Door/teleporter warps (PlayState S_MAP_EXIT / S_MAP_ENTER) run in World_Update; the screen shows their fade.
+    bool warpShown = false;
 
     // --- Audio test state ---
     uint32_t debugBgmIndex = 0;
@@ -321,6 +318,7 @@ int main()
     ObjVramAllocator objVram;
     GameState_Reset();
     World_Init(objVram);
+    World_SetMapLoader(LoadWarpMap);
     Dialog_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
@@ -348,6 +346,7 @@ int main()
         // already does) throttles this loop to once per real 60Hz frame.
         VBlankIntrWait();
         key_poll();
+        Game_CountFrame();
         {
             static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test" };
             gGame.mModeName = kModeNames[static_cast<int>(mode)];
@@ -496,6 +495,11 @@ int main()
                 galleryOn = false;
                 LoadWorldMap();
                 World_PlaceAt(77, 87, 0); // IntroState: the new game starts in BLANK at (77, 87)
+                const int street = Game_MapIndex("STREET");
+                if (street >= 0)
+                {
+                    gGame.mNexusPortals |= 1u << street; // ActivatedNexusPortals.Add("STREET")
+                }
             }
         }
         else
@@ -573,61 +577,23 @@ int main()
             }
             else
             {
-                if (warpPhase == WarpPhase::None)
-                {
-                    World_Update();
-                    bool warpBlack = false;
-                    if (World_TakeWarp(warpMap, warpX, warpY, warpFacing, warpBlack))
-                    {
-                        warpPhase = WarpPhase::Exit;
-                        warpPix = 256;
-                        warpDark = warpBlack ? 65536 - 1 : 0; // dying: the death state faded out already
-                        // transition_out: 1.568s leaving BLANK, 0.785s elsewhere
-                        warpExitStep = strcmp(kMapNames[gCurrentMap], "BLANK") == 0 ? 65536 * 1000 / 1568 / 60 : 65536 * 1000 / 785 / 60;
-                    }
-                }
-                else if (warpPhase == WarpPhase::Exit)
-                {
-                    warpPix += 30 * 256 / 60;
-                    warpDark += warpExitStep;
-                    if (warpDark >= 65536)
-                    {
-                        warpDark = 65536;
-                        World_ScreenDarken(16);
-                        Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
-                        if (warpMap != gCurrentMap)
-                        {
-                            gCurrentMap = warpMap;
-                            LoadWorldMap();
-                        }
-                        World_PlaceAt(warpX, warpY, warpFacing);
-                        World_Update(); // draw the new screen while it is still black
-                        warpPhase = WarpPhase::Enter;
-                        warpPix = 10 * 256;
-                    }
-                }
-                else
-                {
-                    warpPix -= 30 * 256 / 60;
-                    warpDark -= 65536 * 10 / 8 / 60; // transition_in 0.8s
-                    if (warpPix < 256)
-                    {
-                        warpPix = 256;
-                    }
-                    if (warpDark <= 0)
-                    {
-                        warpDark = 0;
-                        warpPhase = WarpPhase::None;
-                        Mosaic_End();
-                        World_ScreenDarken(0);
-                    }
-                }
-                if (warpPhase != WarpPhase::None)
+                World_Update();
+                int warpDark = 0;
+                int warpPix = 256;
+                bool swapped = false; // (the loader gave back the old screen's mosaic blocks)
+                if (World_GetWarpFade(warpDark, warpPix, swapped))
                 {
                     World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
                     Mosaic_Apply(warpPix, offsets);
+                    warpShown = true;
+                }
+                else if (warpShown)
+                {
+                    warpShown = false;
+                    Mosaic_End();
+                    World_ScreenDarken(0);
                 }
             }
         }

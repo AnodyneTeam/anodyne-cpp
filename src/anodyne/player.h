@@ -57,7 +57,7 @@ struct PlayerProbe final
 void Player_GetProbe(PlayerProbe& out);
 
 // Player.AutoJump(period, target, height): a jump that carries the player to (targetX, targetY).
-void Player_AutoJump(fx periodFrames, fx targetX, fx targetY, int height = 24);
+void Player_AutoJump(fx period, fx targetX, fx targetY, int height = 24);
 bool Player_JustLanded();
 void Player_SetFacing(Facing f);
 

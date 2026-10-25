@@ -120,6 +120,9 @@ struct MapDoor final
     uint8_t mFacing;
     uint8_t mInteract;
     uint8_t mPortal;
+    int16_t mSrcX; // the Door preset's own position (its entity finds its trigger by it)
+    int16_t mSrcY;
+    uint8_t mType; // the Door "type" attribute (the C# class)
 };
 
 struct MapDoorList final

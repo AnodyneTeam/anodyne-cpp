@@ -6,6 +6,7 @@
 
 #include "audio_manager.h"
 #include "dialog_data.h"
+#include "ecs.h"
 #include "title_data.h"
 
 // Read by the headless test driver (src/tools/bot/gba_drive.py).
@@ -177,7 +178,7 @@ struct Writer final
     int mCursor = 0;
     bool mNewWord = true;
     int mSpeed = 30;          // chars per second
-    int mStep = 0;            // 16.16 steps accumulated
+    float mStep = 0;          // steps accumulated (float, like the C#'s _stepProgress)
     int mFirstLineY = 0;
     bool mJustWrote = false;
     int mLineCount = 0;
@@ -387,10 +388,10 @@ void WriterUpdate()
     {
         return;
     }
-    gW.mStep += gW.mSpeed * 65536 / 60;
-    while (gW.mStep >= 65536)
+    gW.mStep += kDeltaTime * static_cast<float>(gW.mSpeed);
+    while (gW.mStep >= 1.0f)
     {
-        gW.mStep -= 65536;
+        gW.mStep -= 1.0f;
         if (!AtEndOfBox() && !AtEndOfText())
         {
             WriteStep();
@@ -417,7 +418,10 @@ Base gBase = Base::Waiting;
 Top gTopState = Top::None;
 int gNormalSpeed = 30;
 int gSpeedScale = 2;
-int gBumpTimer = 0;
+// BumpState's TimerState: the time it has been the top state and when "doBump" next fires (it fires at
+// current + 0.1 after each firing, summed in float, so it is sometimes 7 frames apart rather than 6).
+float gBumpCurrent = 0.0f;
+float gBumpNext = 0.1f;
 int gHalfBumps = 0;
 int gLinesBumped = 0;
 int gBlinkyTimer = 0;
@@ -425,10 +429,12 @@ bool gBlinkyOn = false;
 bool gBlinkyDrawn = false;
 bool gBlinkyEnabled = true;
 
+// SoundManager.PlaySoundEffect: draws a random number for its pick, so the C#'s dialogue blips do too.
 void PlaySfx(int32_t id)
 {
     if (id >= 0)
     {
+        Rng_Range(0, 1);
         AudioManager_PlaySFX(static_cast<uint32_t>(id));
     }
 }
@@ -658,7 +664,8 @@ void Dialog_Open(const char* text, bool top, bool intro)
 
     gBase = Base::Waiting;
     EnterWriting();
-    gBumpTimer = 0;
+    gBumpCurrent = 0.0f;
+    gBumpNext = 0.1f;
     gHalfBumps = 0;
     gLinesBumped = 0;
     gBlinkyTimer = 24;
@@ -832,9 +839,10 @@ bool Dialog_Update()
     }
     else if (gBase == Base::Bump)
     {
-        if (++gBumpTimer >= 6)
+        gBumpCurrent += kDeltaTime;
+        while (gBumpNext <= gBumpCurrent)
         {
-            gBumpTimer = 0;
+            gBumpNext = gBumpCurrent + 0.1f;
             DoBump();
         }
     }
@@ -855,8 +863,7 @@ bool Dialog_Update()
                 gBlinkyOn = false;
                 gLinesBumped = 0;
                 gHalfBumps = 0;
-                gBumpTimer = 0;
-                DoBump(); // the first doBump fires as the state is entered
+                DoBump(); // the first doBump fires as the state is entered (its timer runs on)
             }
             else
             {

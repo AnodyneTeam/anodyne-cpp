@@ -45,6 +45,14 @@ namespace AnodyneSharp.Recording
             ReadState();
         }
 
+        /// <summary>Puts the port's RNG where the C#'s is after that many draws (parity replays: the title screens draw
+        /// differently).</summary>
+        public bool SetRng(long draws)
+        {
+            _out.WriteLine($"rng {draws}");
+            return _in.ReadLine() == "ok";
+        }
+
         /// <summary>Saves the current frame as a PNG.</summary>
         public bool Shot(string path)
         {
@@ -127,9 +135,11 @@ namespace AnodyneSharp.Recording
         }
         public bool ScreenTransition => Bool("transition");
         public int Health => _state.GetProperty("player").GetProperty("health").GetInt32();
+        public long RngCalls => _state.TryGetProperty("rng", out var r) ? r.GetInt64() : -1;
         public int MaxHealth => Int("maxHealth");
         // The port only reports whether the box is open, not its text.
-        public string Dialogue => Bool("dialog") ? "..." : null;
+        // GlobalState.Dialogue: empty while a cutscene's DialogueEvent box is up, as in the C#
+        public string Dialogue => Bool("globalDialog") ? "..." : null;
         public bool LastDialogueFinished => !Bool("dialog");
         public bool CanJump => Bool("canJump");
         public bool HasBroom => Int("broom") != 0;
@@ -225,6 +235,7 @@ namespace AnodyneSharp.Recording
         {
             ["PewLaserBullet"] = "AnodyneSharp.Entities.Enemy.Bedroom.PewLaser+Laser",
             ["BigKey"] = "Big_Key",
+            ["Treasure"] = "TreasureChest",
             ["KeyGate"] = "SmallKeyGate",
             ["VBlocker"] = "VerticalBlocker",
             ["EyeLight"] = "Eye_Light",

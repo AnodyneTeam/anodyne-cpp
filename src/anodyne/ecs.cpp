@@ -1,5 +1,7 @@
 #include "ecs.h"
 
+#include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "tonc.h"
@@ -21,7 +23,14 @@ Pool<Brain, kMaxBrains> gBrains ECS_EWRAM;
 Entity* gHead = nullptr;
 Entity* gTail = nullptr;
 int gBaseKilled = 0;
-uint32_t gRngState = 0x2545F491u;
+struct Rng
+{
+    int mSeedArray[56];
+    int mNext;
+    int mNextP;
+    uint32_t mCalls;
+};
+Rng gRng;
 
 constexpr fx kOverlapBias = Fx(4); // GameObject.OVERLAP_BIAS
 
@@ -80,10 +89,12 @@ void AnimUpdate(Visual& v)
         v.mFinished = true; // delay 0: always "finished"
         return;
     }
-    v.mTimer += static_cast<uint16_t>(fps);
-    while (v.mTimer >= kFps)
+    // (the C#'s float timer against a float delay, strictly past it: 4 frames of 1/60 are not past 1/15)
+    const float delay = 1.0f / static_cast<float>(fps);
+    v.mTimer += kDeltaTime;
+    while (v.mTimer > delay)
     {
-        v.mTimer -= kFps;
+        v.mTimer -= delay;
         if (v.mAnimIndex + 1 >= anim->mFrameCount)
         {
             if (anim->mLoop)
@@ -106,7 +117,7 @@ void AnimUpdate(Visual& v)
 // Entity.DoFlicker: visible toggles every 0.05s (3 frames) until the timer runs out.
 void DoFlicker(Visual& v)
 {
-    v.mFlickerFreq -= kFxOne;
+    v.mFlickerFreq -= kFxTick;
     if (v.mFlickerFreq <= 0)
     {
         v.mFlickerFreq = FxSec(0.05f);
@@ -114,7 +125,7 @@ void DoFlicker(Visual& v)
     }
     if (v.mFlickerTimer > 0)
     {
-        v.mFlickerTimer -= kFxOne;
+        v.mFlickerTimer -= kFxTick;
         if (v.mFlickerTimer <= 0)
         {
             v.mFlickering = false;
@@ -294,125 +305,194 @@ void Physics(Entity& e)
 
 bool Updatable(const Entity& e)
 {
-    return e.mExists && !e.mOld && !e.mFreed;
+    return e.mExists && !e.mOld && !e.mFreed && !e.mSpawned;
 }
 } // namespace
 
 // ---- Math ----------------------------------------------------------------------------------------------------
+int FxFloor(fx v)
+{
+    return static_cast<int>(floorf(v.mV));
+}
+
 fx FxSqrt(fx v)
 {
-    if (v <= 0)
-    {
-        return 0;
-    }
-    // sqrt(v / 65536) * 65536 = sqrt(v * 65536)
-    uint64_t n = static_cast<uint64_t>(v) << kFxShift;
-    uint64_t r = 0;
-    uint64_t bit = 1ull << 62;
-    while (bit > n)
-    {
-        bit >>= 2;
-    }
-    while (bit)
-    {
-        if (n >= r + bit)
-        {
-            n -= r + bit;
-            r = (r >> 1) + bit;
-        }
-        else
-        {
-            r >>= 1;
-        }
-        bit >>= 2;
-    }
-    return static_cast<fx>(r);
+    return v.mV <= 0.0f ? kFxZero : fx(sqrtf(v.mV));
 }
 
 fx FxLength(fx x, fx y)
 {
-    const int64_t sq = static_cast<int64_t>(x) * x + static_cast<int64_t>(y) * y; // 32.32
-    if (sq <= 0)
-    {
-        return 0;
-    }
-    uint64_t n = static_cast<uint64_t>(sq);
-    uint64_t r = 0;
-    uint64_t bit = 1ull << 62;
-    while (bit > n)
-    {
-        bit >>= 2;
-    }
-    while (bit)
-    {
-        if (n >= r + bit)
-        {
-            n -= r + bit;
-            r = (r >> 1) + bit;
-        }
-        else
-        {
-            r >>= 1;
-        }
-        bit >>= 2;
-    }
-    return static_cast<fx>(r);
+    return fx(sqrtf(x.mV * x.mV + y.mV * y.mV));
 }
 
 fx FxSin(fx radians)
 {
-    // 16.16 radians -> tonc's 0x10000-per-turn angle; sin_lut is .12 with 512 entries.
-    const int64_t turns = (static_cast<int64_t>(radians) * 10430) >> kFxShift; // 65536 / (2 pi) = 10430.38
-    const uint32_t theta = static_cast<uint32_t>(turns) & 0xFFFF;
-    const int i = static_cast<int>(theta >> 7);
-    const int frac = static_cast<int>(theta & 0x7F);
-    const int a = sin_lut[i];
-    const int b = sin_lut[(i + 1) & 0x1FF];
-    return (a + (((b - a) * frac) >> 7)) * 16;
+    return fx(sinf(radians.mV));
 }
 
 fx FxCos(fx radians)
 {
-    return FxSin(radians + kFxPi / 2);
+    return fx(cosf(radians.mV));
 }
 
 bool MoveTo(fx& value, fx target, fx speedPerSecond)
 {
     const fx step = FxStep(speedPerSecond);
-    if (value < target)
-    {
-        value = value + step > target ? target : value + step;
-    }
-    else if (value > target)
+    if (value > target)
     {
         value = value - step < target ? target : value - step;
+    }
+    else
+    {
+        value = value + step > target ? target : value + step;
     }
     return value == target;
 }
 
-uint32_t Rng_Next()
+// ---- Rng: .NET's legacy System.Random (Knuth's subtractive generator), as seeded with an int ----------------
+void Rng_Seed(int seed)
 {
-    // xorshift32
-    uint32_t x = gRngState;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    gRngState = x;
-    return x;
+    constexpr int kMbig = 0x7FFFFFFF;
+    constexpr int kMseed = 161803398;
+    const int subtraction = seed == INT32_MIN ? INT32_MAX : (seed < 0 ? -seed : seed);
+    int mj = kMseed - subtraction;
+    gRng.mSeedArray[55] = mj;
+    int mk = 1;
+    int ii = 0;
+    for (int i = 1; i < 55; i++)
+    {
+        if ((ii += 21) >= 55)
+        {
+            ii -= 55;
+        }
+        gRng.mSeedArray[ii] = mk;
+        mk = mj - mk;
+        if (mk < 0)
+        {
+            mk += kMbig;
+        }
+        mj = gRng.mSeedArray[ii];
+    }
+    for (int k = 1; k < 5; k++)
+    {
+        for (int i = 1; i < 56; i++)
+        {
+            int n = i + 30;
+            if (n >= 55)
+            {
+                n -= 55;
+            }
+            gRng.mSeedArray[i] -= gRng.mSeedArray[1 + n];
+            if (gRng.mSeedArray[i] < 0)
+            {
+                gRng.mSeedArray[i] += kMbig;
+            }
+        }
+    }
+    gRng.mNext = 0;
+    gRng.mNextP = 21;
+    gRng.mCalls = 0;
+}
+
+uint32_t Rng_Calls()
+{
+    return gRng.mCalls;
+}
+
+namespace
+{
+uint32_t gGameFrame;
+
+int64_t FrameTicks(uint32_t frame)
+{
+    return static_cast<int64_t>(frame) * 10000000 / 60;
+}
+} // namespace
+
+void Game_CountFrame()
+{
+    gGameFrame++;
+}
+
+uint32_t Game_Frame()
+{
+    return gGameFrame;
+}
+
+float Game_SecondsSince(uint32_t thenFrame)
+{
+    return static_cast<float>(static_cast<double>(FrameTicks(gGameFrame) - FrameTicks(thenFrame)) / 10000000.0);
+}
+
+void TimerState::Add(float time, uint8_t id)
+{
+    if (mCount >= 4)
+    {
+        return;
+    }
+    const float at = mCurrent + time;
+    int i = mCount++;
+    for (; i > 0 && mTimers[i - 1].mAt > at; i--)
+    {
+        mTimers[i] = mTimers[i - 1];
+    }
+    mTimers[i] = { at, time, id };
+}
+
+int TimerState::Pop()
+{
+    if (mCount == 0 || mTimers[0].mAt > mCurrent)
+    {
+        return -1;
+    }
+    const Timer t = mTimers[0];
+    mCount--;
+    for (int i = 0; i < mCount; i++)
+    {
+        mTimers[i] = mTimers[i + 1];
+    }
+    Add(t.mMax, t.mId);
+    return t.mId;
+}
+
+int Rng_Next()
+{
+    constexpr int kMbig = 0x7FFFFFFF;
+    gRng.mCalls++;
+    if (++gRng.mNext >= 56)
+    {
+        gRng.mNext = 1;
+    }
+    if (++gRng.mNextP >= 56)
+    {
+        gRng.mNextP = 1;
+    }
+    int ret = gRng.mSeedArray[gRng.mNext] - gRng.mSeedArray[gRng.mNextP];
+    if (ret == kMbig)
+    {
+        ret--;
+    }
+    if (ret < 0)
+    {
+        ret += kMbig;
+    }
+    gRng.mSeedArray[gRng.mNext] = ret;
+    return ret;
+}
+
+double Rng_NextDouble()
+{
+    return Rng_Next() * (1.0 / 0x7FFFFFFF);
 }
 
 fx Rng_Unit()
 {
-    return static_cast<fx>(Rng_Next() >> 16);
+    return fx(static_cast<float>(Rng_NextDouble()));
 }
 
 int Rng_Range(int lo, int hi)
 {
-    if (hi <= lo)
-    {
-        return lo;
-    }
-    return lo + static_cast<int>(Rng_Next() % static_cast<uint32_t>(hi - lo));
+    return static_cast<int>(Rng_NextDouble() * (static_cast<int64_t>(hi) - lo)) + lo;
 }
 
 int FacingX(Facing f)
@@ -469,6 +549,7 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
     e->mPreset = preset;
     e->mParent = parent;
     e->mExists = true;
+    e->mSpawned = false;
     e->mFacing = FACE_DOWN;
     e->mT->mX = e->mT->mLastX = x;
     e->mT->mY = e->mT->mLastY = y;
@@ -565,6 +646,26 @@ void Ecs_FreeDead()
         }
         e = next;
     }
+}
+
+void Ecs_MoveAfter(Entity& e, Entity& after)
+{
+    if (&e == &after)
+    {
+        return;
+    }
+    Unlink(&e);
+    e.mPrev = &after;
+    e.mNext = after.mNext;
+    if (after.mNext)
+    {
+        after.mNext->mPrev = &e;
+    }
+    else
+    {
+        gTail = &e;
+    }
+    after.mNext = &e;
 }
 
 int Ecs_CountChildren(const Entity& parent, const EntityClass& cls)
@@ -784,8 +885,10 @@ void Ecs_MoveTowards(Entity& e, fx tx, fx ty, fx speed)
         e.mT->mVelX = e.mT->mVelY = 0;
         return;
     }
-    e.mT->mVelX = static_cast<fx>(static_cast<int64_t>(dx) * speed / len);
-    e.mT->mVelY = static_cast<fx>(static_cast<int64_t>(dy) * speed / len);
+    // Vector2.Normalize (x and y times 1 / length), then * speed
+    const float inv = 1.0f / len.mV;
+    e.mT->mVelX = fx(dx.mV * inv * speed.mV);
+    e.mT->mVelY = fx(dy.mV * inv * speed.mV);
 }
 
 void Ecs_FaceTowards(Entity& e, fx tx, fx ty)
@@ -884,25 +987,55 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
         e->mB->mAllow = allow;
     }
 
-    // Collider -> target groups.
-    for (Entity* c = gHead; c; c = c->mNext)
+    // Collider -> target groups, a group at a time (CollisionGroups' dictionary, one group per target type): in the
+    // order the screen's registration first named them - the player's, then each entity's own and the ones it collides
+    // with, in list order.
+    uint32_t order[32];
+    int groups = 0;
+    uint32_t seen = 0;
+    auto note = [&](uint32_t bits)
     {
-        if (!Updatable(*c) || c->mClass->mCollidesWith == 0 || !c->mClass->mCollided)
+        for (uint32_t b = 1; b != 0; b <<= 1)
         {
-            continue;
+            if ((bits & b) && !(seen & b))
+            {
+                seen |= b;
+                order[groups++] = b;
+            }
         }
-        for (Entity* t = gHead; t; t = t->mNext)
+    };
+    if (player)
+    {
+        note(player->mClass->mGroups);
+        note(player->mClass->mCollidesWith);
+    }
+    for (const Entity* e = gHead; e; e = e->mNext)
+    {
+        note(e->mClass->mGroups);
+        note(e->mClass->mCollidesWith);
+    }
+    for (int g = 0; g < groups; g++)
+    {
+        const uint32_t group = order[g];
+        for (Entity* c = gHead; c; c = c->mNext)
         {
-            if (t == c || !Updatable(*t) || (t->mClass->mGroups & c->mClass->mCollidesWith) == 0)
+            if (!Updatable(*c) || (c->mClass->mCollidesWith & group) == 0 || !c->mClass->mCollided)
             {
                 continue;
             }
-            if (Ecs_Intersects(Ecs_Hitbox(*c), Ecs_Hitbox(*t)))
+            for (Entity* t = gHead; t; t = t->mNext)
             {
-                c->mClass->mCollided(*c, *t);
-                if (!Updatable(*c))
+                if (t == c || !Updatable(*t) || (t->mClass->mGroups & group) == 0)
                 {
-                    break;
+                    continue;
+                }
+                if (Ecs_Intersects(Ecs_Hitbox(*c), Ecs_Hitbox(*t)))
+                {
+                    c->mClass->mCollided(*c, *t);
+                    if (!Updatable(*c))
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -985,6 +1118,10 @@ void Ecs_UpdateAll(Entity* skip)
     // Entities created during the loop are appended and so also update this frame, unlike the C#'s _newlySpawned;
     // stop at the entity that was last when the loop started.
     Entity* last = gTail;
+    for (Entity* e = gHead; e; e = e->mNext)
+    {
+        e->mSpawned = false;
+    }
     for (Entity* e = gHead; e;)
     {
         Entity* next = e->mNext;
@@ -1331,10 +1468,12 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             const fx c = FxCos(e.mT->mRot);
             const fx s = FxSin(e.mT->mRot);
             const fx inv = FxDiv(kFxOne, v.mScale);
-            int pa = FxMul(c, inv) >> 8;
-            int pb = FxMul(s, inv) >> 8;
-            int pc = -(FxMul(s, inv) >> 8);
-            int pd = FxMul(c, inv) >> 8;
+            const int cs = static_cast<int>(FxMul(c, inv).mV * 256); // 8.8
+            const int sn = static_cast<int>(FxMul(s, inv).mV * 256);
+            int pa = cs;
+            int pb = sn;
+            int pc = -sn;
+            int pd = cs;
             if (v.mHFlip)
             {
                 pa = -pa;

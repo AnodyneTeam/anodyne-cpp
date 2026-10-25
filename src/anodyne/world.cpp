@@ -21,7 +21,6 @@ constexpr int kScreenPx = 160;               // SCREEN_WIDTH/HEIGHT_IN_PIXELS
 constexpr int kScreenCells = kScreenPx / kTileSize; // 10x10 tiles per screen
 constexpr int kViewX = (240 - kScreenPx) / 2; // playfield is centred on the 240x160 GBA screen
 constexpr fx kScrollSpeed = Fx(250);         // PlayState.Scroll_Speed, px/s
-constexpr int kFrac = kFxShift;
 
 // CollisionEventType, same values as the C# enum.
 enum : uint8_t
@@ -72,6 +71,7 @@ const uint8_t* gClasses = nullptr;
 const char* gMapName = "";
 const MapAudioData* gAudio = nullptr;
 const char* gMusicPlaying = nullptr;
+float gSongVolume = 1.0f;
 
 fx gCamX = 0; // top-left of the current screen being shown, Fx
 fx gCamY = 0;
@@ -87,8 +87,8 @@ int gHw[kRoleCount] = { 2, 1, 0, 3 };
 int gPrio[kRoleCount] = { 3, 2, 0, 3 };
 
 const MapScrollData* gScroll = nullptr; // null: no scrolling background on this map
-int gScrollPosX = 0;                    // ScrollingTex.Position, Fx (0 down to -160, wrapping)
-int gScrollPosY = 0;
+fx gScrollPosX = 0;                     // ScrollingTex.Position (0 down to -160, wrapping)
+fx gScrollPosY = 0;
 int gScrollTX = 0;                      // ring origin (tile coordinates) of the scroll layer
 int gScrollTY = 0;
 
@@ -240,9 +240,9 @@ void UpdateHealthBar(bool hidden)
 // ---- ScreenShake / FlashEffect ----------------------------------------------------------------------------------
 struct Shake final
 {
-    fx mTime;      // frames left
+    fx mTime;      // seconds left
     fx mIntensity; // fraction of the screen
-    fx mUpdate;
+    fx mUpdate;    // _shakeUpdate: runs on from the last shake
     int mX;
     int mY;
 };
@@ -258,16 +258,19 @@ Flash gFlash = {};
 
 void UpdateScreenEffects()
 {
+    // ScreenShake.Update (only while Active)
     if (gShake.mTime > 0)
     {
-        gShake.mTime -= kFxOne;
-        gShake.mUpdate += kFxOne;
+        gShake.mTime -= kFxTick;
+        gShake.mUpdate += kFxTick;
         if (gShake.mUpdate >= FxSec(1 / 30.0f))
         {
             gShake.mUpdate = 0;
-            const fx px = FxMul(gShake.mIntensity, Fx(kScreenPx));
-            gShake.mX = FxTrunc(FxMul(Rng_Unit() * 2 - kFxOne, px));
-            gShake.mY = FxTrunc(FxMul(Rng_Unit() * 2 - kFxOne, px));
+            // _pos = (float)RNG.NextDouble() * 2 * _intensity - _intensity, times the screen size when drawn
+            const fx x = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
+            const fx y = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
+            gShake.mX = FxTrunc(FxMul(x, Fx(kScreenPx)));
+            gShake.mY = FxTrunc(FxMul(y, Fx(kScreenPx)));
         }
     }
     if (gShake.mTime <= 0)
@@ -284,8 +287,8 @@ void UpdateScreenEffects()
 // Screen x of world x 0 is kViewX - camera, so the BG origin is the camera minus the playfield's left margin.
 void UpdateBackground(bool force)
 {
-    const int vx = (gCamX >> kFrac) - kViewX;
-    const int vy = gCamY >> kFrac;
+    const int vx = FxFloor(gCamX) - kViewX;
+    const int vy = FxFloor(gCamY);
     if (force)
     {
         BgFull(vx >> 3, vy >> 3);
@@ -379,8 +382,8 @@ void UpdateScroll(bool advance, bool force)
 
     if (advance)
     {
-        gScrollPosX += gScroll->mVelocityX * 65536 / kFps;
-        gScrollPosY += gScroll->mVelocityY * 65536 / kFps;
+        gScrollPosX += FxStep(Fx(gScroll->mVelocityX));
+        gScrollPosY += FxStep(Fx(gScroll->mVelocityY));
         if (gScrollPosX < -Fx(160)) // Position.X < -Texture.Width / 2
         {
             gScrollPosX = 0;
@@ -396,8 +399,8 @@ void UpdateScroll(bool advance, bool force)
     }
 
     // (int) cast truncates towards zero
-    const int posX = gScrollPosX < 0 ? -((-gScrollPosX) >> kFrac) : (gScrollPosX >> kFrac);
-    const int posY = gScrollPosY < 0 ? -((-gScrollPosY) >> kFrac) : (gScrollPosY >> kFrac);
+    const int posX = FxTrunc(gScrollPosX);
+    const int posY = FxTrunc(gScrollPosY);
     const int vx = -kViewX - posX;
     const int vy = -posY;
     if (force)
@@ -463,11 +466,7 @@ void ApplyDisplayRegs(bool windowOn)
 // ---- Audio ---------------------------------------------------------------------------------------------------
 void PlaySfx(const char* name)
 {
-    const int32_t id = AudioManager_FindSfx(name);
-    if (id >= 0)
-    {
-        AudioManager_PlaySFX(static_cast<uint32_t>(id));
-    }
+    Game_PlaySfx(name);
 }
 
 // Map.ReloadSettings: the music for where the player is - the first Settings.json area containing the player's
@@ -492,6 +491,8 @@ void UpdateMusic()
         }
     }
 
+    // (PlaySong sets the area's MusicVolume even when the song carries on: not compiled yet, so 1)
+    Game_SetSongVolume(1.0f);
     if (gMusicPlaying != nullptr && strcmp(music, gMusicPlaying) == 0)
     {
         return;
@@ -616,7 +617,7 @@ void PlayerLightUpdate(Entity& self)
     const Entity& p = *Player_Entity();
     self.mT->mX = Ecs_CenterX(p);
     self.mT->mY = Ecs_CenterY(p);
-    d.mFlickerTimer -= kFxOne;
+    d.mFlickerTimer -= kFxTick;
     if (d.mFlickerTimer < 0)
     {
         if (self.mV->mScale != Fx(2))
@@ -661,11 +662,11 @@ const uint8_t* ClassAtCell(int cx, int cy)
     return gClasses + gCollisionGrid[cy * gCellsW + cx] * 3;
 }
 
-// Map.GetCollisionData: the sides the tile under a world point blocks (point in Fx).
-uint8_t AllowAt(int fxX, int fxY)
+// Map.GetCollisionData: the sides the tile under a world point blocks.
+uint8_t AllowAt(fx x, fx y)
 {
-    const int px = fxX >> kFrac;
-    const int py = fxY >> kFrac;
+    const int px = FxFloor(x);
+    const int py = FxFloor(y);
     return ClassAtCell(px >> 4, py >> 4)[0];
 }
 
@@ -854,58 +855,82 @@ void CollideTile(int cx, int cy, Entity& e)
 
 // ---- Doors ----------------------------------------------------------------------------------------------------
 const MapDoorList* gDoors = nullptr;
-bool gDoorLatch = false; // Door.player_on_door: no re-trigger until the player has left every door
+
+// GlobalState.WARP and PlayState's states around it (S_MAP_EXIT, S_MAP_ENTER), with its fade as the C# floats.
+enum WarpState : uint8_t
+{
+    WARP_NONE,
+    WARP_EXIT,
+    WARP_ENTER,
+};
 
 struct PendingWarp final
 {
-    bool mPending = false;
+    bool mPending = false; // GlobalState.WARP: set by the door, cleared when S_MAP_ENTER ends
     uint8_t mMap = 0;
     int mX = 0;
     int mY = 0;
     uint8_t mFacing = 0;
-    bool mBlack = false; // the screen is already black (death): no fade out
+    uint8_t mState = WARP_NONE;
+    bool mSwapped = false;    // the map was swapped this frame
+    float mAlpha = 0.0f;      // black_overlay.alpha
+    float mPixelation = 1.0f; // GlobalState.pixelation
 } gWarp;
+void (*gMapLoader)(uint8_t map) = nullptr;
 
-// Door.Collided: stepping onto a door (or pressing B on an interactive one) warps the player.
-void CheckDoors()
+// PlayState.Warp: the new map (if it is another one), the player at the destination, its screen's entities.
+void WarpNow()
 {
-    if (!gDoors || gWarp.mPending)
+    const PendingWarp w = gWarp;
+    if (gMapLoader)
     {
-        return;
+        gMapLoader(w.mMap);
     }
-    const Rect hit = Ecs_Hitbox(*Player_Entity());
-    bool touching = false;
-    for (uint32_t i = 0; i < gDoors->mCount; i++)
+    World_PlaceAt(w.mX, w.mY, w.mFacing);
+    gWarp = w; // (loading a map resets the doors' state)
+    gWarp.mSwapped = true;
+}
+
+// PlayState S_MAP_EXIT: pixelate and fade to black, then warp.
+void WarpExit()
+{
+    Player_SetInvincible(true);
+    Player_SetDontMove(true);
+    Player_SetActionsDisabled(true);
+    gWarp.mPixelation = gWarp.mPixelation + 30.0f * kDeltaTime;
+    gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
+    const float transitionOut = gMapName && strcmp(gMapName, "BLANK") == 0 ? 1.568f : 0.785f;
+    const float alpha = gWarp.mAlpha + (1.0f / transitionOut) * kDeltaTime;
+    gWarp.mAlpha = alpha > 1.0f ? 1.0f : alpha;
+    if (gWarp.mAlpha == 1.0f)
     {
-        const MapDoor& d = gDoors->mDoors[i];
-        const Rect door = { d.mX, d.mY, d.mW, d.mH };
-        if (!Ecs_Intersects(hit, door))
-        {
-            continue;
-        }
-        touching = true;
-        if (gDoorLatch || (d.mInteract && !key_hit(KEY_A)))
-        {
-            continue;
-        }
-        PlaySfx(d.mPortal || d.mInteract ? "teleport_up" : "enter_door");
-        gWarp.mPending = true;
-        gWarp.mMap = d.mDestMap;
-        gWarp.mX = d.mDestX;
-        gWarp.mY = d.mDestY;
-        gWarp.mFacing = d.mFacing;
-        gDoorLatch = true;
-        Player_SetDontMove(true); // PlayState S_MAP_EXIT
-        Player_SetActionsDisabled(true);
+        WarpNow();
         Player_SetInvincible(true);
-        return;
-    }
-    if (!touching)
-    {
-        gDoorLatch = false;
+        Player_SetDontMove(true);
+        Player_SetActionsDisabled(true);
+        gWarp.mState = WARP_ENTER;
+        gWarp.mPixelation = 10.0f;
     }
 }
 
+// PlayState S_MAP_ENTER: back from black; the player gets control when it is clear.
+void WarpEnter()
+{
+    gWarp.mPixelation = gWarp.mPixelation - 30.0f * kDeltaTime;
+    gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
+    const float alpha = gWarp.mAlpha + (-1.0f / 0.8f) * kDeltaTime;
+    gWarp.mAlpha = alpha < 0.0f ? 0.0f : alpha;
+    if (gWarp.mAlpha == 0.0f)
+    {
+        gWarp.mState = WARP_NONE;
+        Player_SetDontMove(false);
+        Player_SetInvincible(false);
+        Player_SetActionsDisabled(false);
+        gWarp.mPending = false;
+    }
+}
+
+// Door.Collided: stepping onto a door (or pressing B on an interactive one) warps the player.
 // ---- PlayState: screens ----------------------------------------------------------------------------------------
 void MoveCameraToGrid()
 {
@@ -1119,8 +1144,11 @@ void DeathUpdate()
                 x = FxTrunc(gDeathFallbackX);
                 y = FxTrunc(gDeathFallbackY);
             }
+            // (PlayState: the death state's exit warps at once and goes on in S_MAP_ENTER, the screen black already)
             World_RequestWarp(map, x, y, 255);
-            gWarp.mBlack = true;
+            WarpNow();
+            gWarp.mState = WARP_ENTER;
+            gWarp.mAlpha = 1.0f;
         }
         SetDeathBlend(false, d.mFade);
         return;
@@ -1165,13 +1193,14 @@ void DrawWorld()
 {
     UpdateBackground(false);
     UpdateHealthBar(gDeath.mActive);
-    Entities_Draw(gCamX >> kFrac, gCamY >> kFrac, kViewX, gShake.mX, gShake.mY);
+    Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY);
     gShown = true;
 }
 } // namespace
 
-void Game_PlaySong(const char* name)
+void Game_PlaySong(const char* name, float volume)
 {
+    Game_SetSongVolume(volume);
     gMusicPlaying = name;
     const int32_t id = name[0] ? AudioManager_FindBgm(name) : -1;
     if (id >= 0)
@@ -1184,11 +1213,27 @@ void Game_PlaySong(const char* name)
     }
 }
 
+float Game_SongVolume()
+{
+    return gSongVolume;
+}
+
+void Game_SetSongVolume(float volume)
+{
+    gSongVolume = volume < 0 ? 0 : (volume > 1 ? 1 : volume);
+}
+
 void Screen_Shake(fx intensity, fx seconds)
 {
-    gShake = Shake();
-    gShake.mTime = FxMul(seconds, Fx(kFps));
+    // (ScreenShake.Shake: _shakeUpdate carries on)
+    gShake.mTime = seconds;
     gShake.mIntensity = intensity;
+    gShake.mX = gShake.mY = 0;
+}
+
+void Screen_ResetShake()
+{
+    gShake = Shake();
 }
 
 bool Screen_ShakeActive()
@@ -1320,7 +1365,6 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     gMap = &map;
     gMapName = mapName;
     gDoors = &doors;
-    gDoorLatch = false;
     gWarp.mPending = false;
     gAudio = &audio;
 
@@ -1457,16 +1501,24 @@ void World_Update()
         {
             StateTransition();
         }
-        else if (!gWarp.mPending)
+        else if (gWarp.mState == WARP_EXIT)
+        {
+            WarpExit();
+        }
+        else if (gWarp.mState == WARP_ENTER)
+        {
+            WarpEnter();
+        }
+        else if (gWarp.mPending)
+        {
+            gWarp.mState = WARP_EXIT; // StateNormal: GlobalState.WARP -> S_MAP_EXIT, and nothing else this frame
+        }
+        else
         {
             CheckForTransition();
         }
         // No player-map collision during a screen transition.
         Ecs_DoCollisions(wasTransition || gTransition, gGridX * kScreenPx, gGridY * kScreenPx);
-        if (!gTransition)
-        {
-            CheckDoors();
-        }
     }
 
     // PlayState.EntityUpdate
@@ -1497,12 +1549,28 @@ void World_Update()
         DeathStart();
     }
 
-    // The darkness fades on, and its BLD stands until something else (death, a warp) takes over.
-    // A flash whitens everything over it.
-    UpdateScreenEffects();
-    if (!gDeath.mActive && !(gWarp.mPending && gWarp.mBlack))
+    // The darkness fades on (Map.Update), and its BLD stands until something else (death, a warp) takes over.
+    if (!gDeath.mActive)
     {
         MoveTo(gDark.mAlpha, gDark.mTarget, gDark.mVel);
+    }
+    // PlayState._map_specific_update
+    if (gMapName && strcmp(gMapName, "BLANK") == 0)
+    {
+        if (Rng_NextDouble() < 0.05)
+        {
+            Screen_Shake(FxF(0.007f), FxF(0.1f));
+        }
+        if (Rng_NextDouble() < 0.005)
+        {
+            Darkness_ForceAlpha(FxF(0.1f));
+            Darkness_TargetAlpha(kFxZero);
+        }
+    }
+    // The full screen effects update after the game state (AnodyneGame.Update). A flash whitens everything.
+    UpdateScreenEffects();
+    if (!gDeath.mActive)
+    {
         if (gFlash.mAlpha > 0)
         {
             if (gLightWindows)
@@ -1544,20 +1612,18 @@ bool Game_InCutscene()
     return gCutscene.mFn != nullptr;
 }
 
-bool World_TakeWarp(uint8_t& destMap, int& destX, int& destY, uint8_t& facing, bool& alreadyBlack)
+void World_SetMapLoader(void (*load)(uint8_t map))
 {
-    if (!gWarp.mPending)
-    {
-        return false;
-    }
-    gWarp.mPending = false;
-    destMap = gWarp.mMap;
-    destX = gWarp.mX;
-    destY = gWarp.mY;
-    facing = gWarp.mFacing;
-    alreadyBlack = gWarp.mBlack;
-    gWarp.mBlack = false;
-    return true;
+    gMapLoader = load;
+}
+
+bool World_GetWarpFade(int& dark, int& pixelation, bool& swapped)
+{
+    swapped = gWarp.mSwapped;
+    gWarp.mSwapped = false;
+    dark = static_cast<int>(gWarp.mAlpha * 65536.0f);
+    pixelation = static_cast<int>(gWarp.mPixelation * 256.0f);
+    return gWarp.mState != WARP_NONE;
 }
 
 bool World_InTransition()
@@ -1572,16 +1638,30 @@ void World_RequestWarp(int map, int x, int y, uint8_t facing)
     gWarp.mX = x;
     gWarp.mY = y;
     gWarp.mFacing = facing;
-    Player_SetDontMove(true);
-    Player_SetActionsDisabled(true);
-    Player_SetInvincible(true);
+}
+
+const MapDoor* World_FindDoor(int presetX, int presetY)
+{
+    for (uint32_t i = 0; gDoors && i < gDoors->mCount; i++)
+    {
+        const MapDoor& d = gDoors->mDoors[i];
+        if (d.mSrcX == presetX && d.mSrcY == presetY)
+        {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
+void World_TakeDoor(const MapDoor& d)
+{
+    World_RequestWarp(d.mDestMap, d.mDestX, d.mDestY, d.mFacing);
 }
 
 void World_PlaceAt(int x, int y, uint8_t facing)
 {
     // World facing order (0 down, 1 right, 2 up, 3 left) -> Facing.
     static const int kFacing[4] = { FACE_DOWN, FACE_RIGHT, FACE_UP, FACE_LEFT };
-    gDoorLatch = true; // Door's constructor: starting on a door doesn't trigger it
     gTransition = false;
     Player_Reset(gMapName);
     Player_PlaceAt(Fx(x), Fx(y), facing <= 3 ? kFacing[facing] : -1);

@@ -89,6 +89,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BigKey;
     case EPT_MitraOverworld:
         return Spawn_MitraOverworld;
+    case EPT_Door:
+        return Spawn_Door;
     default:
         return nullptr;
     }

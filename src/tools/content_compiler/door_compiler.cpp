@@ -136,9 +136,9 @@ std::string BuildDoorTables(const ContentPaths& contentPaths, const std::vector<
         }
 
         char buf[256];
-        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, %d, %d, %d, %d, %d },\n", d.mX + kind->mHx, d.mY + kind->mHy,
-                 kind->mW, kind->mH, dest->mX + kind->mOffX, dest->mY + offY, dest->mMap, kind->mFacing,
-                 kind->mInteract, d.mType == 4 ? 1 : 0);
+        snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d },\n", d.mX + kind->mHx,
+                 d.mY + kind->mHy, kind->mW, kind->mH, dest->mX + kind->mOffX, dest->mY + offY, dest->mMap,
+                 kind->mFacing, kind->mInteract, d.mType == 4 ? 1 : 0, d.mX, d.mY, d.mType);
         perMap[d.mMap].push_back(buf);
         emitted++;
     }

@@ -1,25 +1,109 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+index b00ba97..5068cd4 100644
+--- a/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
++++ b/AnodyneSharp/AnodyneSharp.Multiplatform/Program.cs
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Logging;
++using AnodyneSharp.Logging;
+ using AnodyneSharp.Resources;
+ using System;
+ using System.Collections.Generic;
+@@ -10,10 +10,22 @@ namespace AnodyneSharp.Multiplatform
+     public static class Program
+     {
+         [STAThread]
+-        static void Main()
++        static void Main(string[] args)
+         {
+             try
+             {
++                AnodyneSharp.Recording.RecordingManager.ParseCommandLine(args);
++                string saveDir = Environment.GetEnvironmentVariable("ANODYNE_BOT_SAVEDIR");
++                if (saveDir == null && AnodyneSharp.Recording.RecordingManager.Deterministic)
++                {
++                    // Bot runs never continue an old save: a throwaway save directory each time.
++                    saveDir = Path.Combine(Path.GetTempPath(), "anodyne_bot_" + Guid.NewGuid().ToString("N"));
++                }
++                if (saveDir != null)
++                {
++                    Directory.CreateDirectory(saveDir);
++                    AnodyneSharp.Registry.GameConstants.SavePath = saveDir.TrimEnd('/') + "/";
++                }
+                 ResourceManager.BaseDir = AppDomain.CurrentDomain.BaseDirectory;
+ 
+                 using AnodyneGame game = new AnodyneGame();
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
-index f25975b..f7cd04d 100644
+index 588030f..30177ea 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
-@@ -152,6 +152,10 @@ namespace AnodyneSharp
- 
- 
-             RecordingManager.FrameUpdate();
-+            if (RecordingManager.ResumeAt >= 0 && RecordingManager.CurrentFrame >= RecordingManager.ResumeAt && !BotRunner.Active)
-+            {
-+                BotRunner.Start("keysonly"); // the recording has played up to the frame of interest: the bot takes over from this exact state
-+            }
-             if (BotRunner.Active)
+@@ -1,4 +1,4 @@
+-﻿#region Using Statements
++#region Using Statements
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -6,6 +6,7 @@ using AnodyneSharp.Entities;
+ using AnodyneSharp.Entities.Gadget;
+ using AnodyneSharp.Input;
+ using AnodyneSharp.Modding;
++using AnodyneSharp.Recording;
+ using AnodyneSharp.Registry;
+ using AnodyneSharp.Resources;
+ using AnodyneSharp.Resources.Loading;
+@@ -123,6 +124,8 @@ namespace AnodyneSharp
              {
-                 RecordingManager.CurrentInput = BotRunner.NextFrame();
-@@ -335,6 +339,12 @@ namespace AnodyneSharp
-                 graphics.SynchronizeWithVerticalRetrace = false;
+                 effect.Load(Content, graphics.GraphicsDevice);
+             }
++
++            RecordingManager.Start();
+         }
+ 
+         /// <summary>
+@@ -139,17 +142,33 @@ namespace AnodyneSharp
+             GameTimes.UpdateTimes(gameTime);
+             KeyInput.Update();
+ 
+-            if (GlobalState.settings.pause_on_unfocus && !IsActive)
++            if (RecordingManager.Deterministic)
++            {
++                GameTimes.ForceDeltaTime(RecordingManager.FixedStep);
++            }
++            RecordingManager.FrameUpdate();
++            if (BotRunner.Active)
++            {
++                KeyInput.KeyState = BotRunner.NextFrame();
++            }
++
++            if (GlobalState.settings.pause_on_unfocus && !IsActive && !RecordingManager.Deterministic)
+             {
+                 return;
              }
  
-+            if (RecordingManager.Fast || RecordingManager.BotPath != null)
+             CurrentState.Update();
+ 
++            if (RecordingManager.Fast && RecordingManager.DrawEvery > 1 && RecordingManager.CurrentFrame % RecordingManager.DrawEvery != 0)
 +            {
-+                // Bot/replay runs must not slow down (or sleep) when their window has no focus.
++                SuppressDraw(); // headless bot runs: rendering (software GL) is most of the frame time
++            }
++
+             foreach (var effect in GlobalState.AllEffects.Where(e => e.Active()))
+             {
+                 effect.Update();
+             }
++            BotRunner.Trace(); // (after the effects: ScreenShake draws random numbers too)
+ 
+             if (KeyInput.JustPressedKey(Keys.F12))
+             {
+@@ -263,6 +282,15 @@ namespace AnodyneSharp
+                     break;
+             }
+ 
++            if (RecordingManager.Deterministic)
++            {
++                // Bot runs: a fixed 60 fps step, or as fast as possible with -fast; never slowed down without focus.
++                IsFixedTimeStep = !RecordingManager.Fast;
++                TargetElapsedTime = TimeSpan.FromSeconds(RecordingManager.FixedStep);
++                graphics.SynchronizeWithVerticalRetrace = false;
 +                InactiveSleepTime = TimeSpan.Zero;
 +            }
 +
@@ -27,63 +111,153 @@ index f25975b..f7cd04d 100644
          }
  
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-index f41eeba..540dc7a 100644
+index 53f5cbc..ad2acb1 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
 +++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-@@ -291,6 +291,10 @@
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest2.cs" />
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\Fields.cs" />
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\Beach.cs" />
-+    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedSea.cs" />
-+    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedCave.cs" />
+@@ -328,6 +328,26 @@
+     <Compile Include="$(MSBuildThisFileDirectory)Utilities\MathUtilities.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)FSM\TimerState.cs" />
+     <Compile Include="$(MSBuildThisFileDirectory)Utilities\TextUtilities.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Beach.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest2.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Bot.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RecordingManager.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotBehaviors.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\BotNav.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Fields.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\GameView.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\IGameView.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\SimGameView.cs" />
 +    <Compile Include="$(MSBuildThisFileDirectory)Recording\FightPolicies.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\NexusToRoadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedCave.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\RedSea.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Roadway.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\SeerPolicy.cs" />
 +    <Compile Include="$(MSBuildThisFileDirectory)Recording\SpaceTime.cs" />
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\StartToNexus.cs" />
-     <Compile Include="$(MSBuildThisFileDirectory)Recording\RecordingManager.cs" />
-diff --git a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
-index 3564914..75e6e20 100644
---- a/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
-+++ b/AnodyneSharp/AnodyneSharp.Shared/Recording/RecordingManager.cs
-@@ -31,6 +31,10 @@ namespace AnodyneSharp.Recording
-         public static bool Fast { get; private set; }
-         public static bool ExitWhenPlaybackDone => Fast || BotPath != null || TracePath != null;
-         public static string BotPath { get; private set; }
-+
-+        /// <summary>Dev: -resumeat=N with -playback=: play the recording for N frames, then hand the game to the bot (ANODYNE_BOT_KEYS) from that exact state.</summary>
-+        public static long ResumeAt { get; private set; } = -1;
-+        public static long CurrentFrame => _frameNumber;
-         public static string TracePath { get; private set; }
-         public static string GbaInputPath { get; private set; }
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\StartToNexus.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)Recording\Temple.cs" />
+   </ItemGroup>
+   <ItemGroup>
+     <MonoGameContentReference Include="$(MSBuildThisFileDirectory)Content\Content.mgcb" />
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Slime.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Slime.cs
+index 90822d3..f2a54eb 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Slime.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Slime.cs
+@@ -36,7 +36,7 @@ namespace AnodyneSharp.Entities.Enemy
+         private class MoveState : TimerState
+         {
+             public bool move_frame_sound_sync = false;
+-            public DateTime exit_time = DateTime.Now;
++            public DateTime exit_time = AnodyneSharp.Recording.RecordingManager.Now;
+             public MoveState()
+             {
+                 AddTimer(0.5f, "MoveTimer");
+@@ -80,7 +80,7 @@ namespace AnodyneSharp.Entities.Enemy
+                     .Enter((state) =>
+                     {
+                         Play("Move");
+-                        state.Advance((float)(DateTime.Now - state.exit_time).TotalSeconds);
++                        state.Advance((float)(AnodyneSharp.Recording.RecordingManager.Now - state.exit_time).TotalSeconds);
+                         if (_type == SlimeType.Bullet)
+                         {
+                             state.AddTimer(1.8f, "ShootTimer");
+@@ -93,7 +93,7 @@ namespace AnodyneSharp.Entities.Enemy
+                     .Event<CollisionEvent<Broom>>("Hit", (state, b) => GetHit(b.entity))
+                     .Exit((s) =>
+                     {
+-                        s.exit_time = DateTime.Now;
++                        s.exit_time = AnodyneSharp.Recording.RecordingManager.Now;
+                     })
+                 .End()
+                 .State("Hurt")
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+index 432bb3f..d305409 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/MapData/Map.cs
+@@ -109,6 +109,28 @@ namespace AnodyneSharp.MapData
+             return ret;
+         }
  
-@@ -38,7 +42,6 @@ namespace AnodyneSharp.Recording
-         public const int DeterministicSeed = 1234;
- 
-         public static RecordingMode Mode => _mode;
--        public static long FrameNumber => _frameNumber;
- 
-         /// <summary>
-         /// Parse command-line arguments for recording/playback options.
-@@ -76,6 +79,10 @@ namespace AnodyneSharp.Recording
-                 {
-                     Fast = true;
-                 }
-+                else if (arg.StartsWith("-resumeat=", StringComparison.OrdinalIgnoreCase))
++        /// <summary>Bot: the collision directions and event of a tile (BG, with BG2 on top when it is not empty).</summary>
++        public (Touching, CollisionEventType) GetTileClass(Point p)
++        {
++            if (p.X < 0 || p.Y < 0 || p.X >= WidthInTiles || p.Y >= HeightInTiles)
++            {
++                return (Touching.ANY, CollisionEventType.NONE); // off the map: a wall (keeps the bot's searches bounded)
++            }
++            Tile bg = _tileObjects[GetTile(Layer.BG, p)];
++            Touching al = bg.allowCollisions;
++            CollisionEventType ev = bg.collisionEventType;
++            int bg2 = GetTile(Layer.BG2, p);
++            if (bg2 != 0)
++            {
++                al |= _tileObjects[bg2].allowCollisions;
++                if (_tileObjects[bg2].collisionEventType != CollisionEventType.NONE)
 +                {
-+                    ResumeAt = long.Parse(arg.Substring("-resumeat=".Length));
++                    ev = _tileObjects[bg2].collisionEventType;
 +                }
-                 else if (arg.StartsWith("-bot=", StringComparison.OrdinalIgnoreCase))
-                 {
-                     BotPath = arg.Substring("-bot=".Length);
++            }
++            return (al, ev);
++        }
++
+         public int GetTile(Layer layer, Point pos)
+         {
+             int current = mapLayers[(int)layer].GetTile(pos);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Sounds/SoundManager.cs b/AnodyneSharp/AnodyneSharp.Shared/Sounds/SoundManager.cs
+index 8d04df6..67eaa8d 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Sounds/SoundManager.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Sounds/SoundManager.cs
+@@ -107,6 +107,14 @@ namespace AnodyneSharp.Sounds
+ 
+         public static SoundEffectInstance PlaySoundEffect(params string[] names)
+         {
++            if (AnodyneSharp.Recording.RecordingManager.Deterministic)
++            {
++                // Deterministic runs: pick among the sounds that exist, not just the ones not playing (which sounds are
++                // still playing follows the wall clock), so the random number drawn is the same every run.
++                var known = names.Where((n) => ResourceManager.GetSFX().ContainsKey(n)).ToArray();
++                if (known.Length == 0) return null;
++                return CreateSoundInstance(ResourceManager.GetSFX(known[GlobalState.RNG.Next(0, known.Length)]));
++            }
+             var sfx = names.Select((n) => ResourceManager.GetSFX(n)).Where((n) => n != null).ToArray();
+             if (sfx.Length == 0) return null;
+ 
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
-index f244f53..5d9f201 100644
+index b706cb3..15ccec0 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/States/PlayState.cs
-@@ -270,6 +270,7 @@ namespace AnodyneSharp.States
+@@ -1,4 +1,4 @@
+-﻿using AnodyneSharp.Cheatz;
++using AnodyneSharp.Cheatz;
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -103,6 +103,8 @@ namespace AnodyneSharp.States
+             _oldEntities = new List<Entity>();
+ 
+             _player = new Player();
++            AnodyneSharp.Recording.BotRunner.GamePlayer = _player;
++            AnodyneSharp.Recording.BotRunner.Entities = () => _gridEntities;
+             _healthBar = new HealthBar();
+ 
+             _iconPos = new Vector2(2, 3);
+@@ -267,6 +269,9 @@ namespace AnodyneSharp.States
+             _newlySpawned.Clear();
  
              bool updateEntities = _childStates.All(s => s.UpdateEntities);
-             AnodyneSharp.Recording.BotRunner.PlayBusy = _childStates.Count > 0;
++            AnodyneSharp.Recording.BotRunner.PlayBusy = _childStates.Count > 0;
 +            AnodyneSharp.Recording.BotRunner.PlayBusyName = _childStates.Count > 0 ? string.Join("+", _childStates.Select(c => c.GetType().Name)) : "";
-             AnodyneSharp.Recording.BotRunner.InDeathMenu = _childStates.Any(s => s is DeathState);
++            AnodyneSharp.Recording.BotRunner.InDeathMenu = _childStates.Any(s => s is DeathState);
  
              if (_childStates.Count > 0)
+             {
+@@ -279,6 +284,7 @@ namespace AnodyneSharp.States
+                     s.Update();
+                     if (s.Exit && s is DeathState)
+                     {
++                        AnodyneSharp.Recording.BotRunner.Deaths++;
+                         Warp();
+                         _state = PlayStateState.S_MAP_ENTER;
+                     }

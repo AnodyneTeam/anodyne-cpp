@@ -214,6 +214,11 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
         {
             SendLine(GameProbe_Warp(arg, static_cast<int>(a), static_cast<int>(b)) ? "ok" : "error no such map");
         }
+        else if (!strcmp(cmd, "rng") && sscanf(line.c_str(), "rng %u", &a) == 1)
+        {
+            GameProbe_SetRng(a);
+            SendLine("ok");
+        }
         else if (!strcmp(cmd, "heal"))
         {
             GameProbe_Heal();
