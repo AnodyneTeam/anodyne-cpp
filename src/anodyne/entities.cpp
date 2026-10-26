@@ -1,4 +1,5 @@
 #include "entities.h"
+#include "dialog.h"
 
 #include "entity_classes.h"
 #include "player.h"
@@ -9,7 +10,7 @@
 namespace
 {
 constexpr int kFirstOam = 0;
-constexpr int kOamEnd = 120; // 120-127: the dialogue box (dialog.cpp)
+// (the dialogue box, a menu's labels and panel take the entries from Dialog_FirstReservedOam on)
 constexpr int kFirstPalBank = 0;
 constexpr int kPalBankCount = 13; // 13-15: the HUD and the dialogue box
 
@@ -149,7 +150,7 @@ void Entities_Clear()
 {
     if (gShown)
     {
-        Ecs_HideAll(kFirstOam, kOamEnd);
+        Ecs_HideAll(kFirstOam, Dialog_FirstReservedOam());
         gShown = false;
     }
 }
@@ -225,6 +226,6 @@ void Entities_EndTransition()
 
 void Entities_Draw(int camX, int camY, int screenX, int shakeX, int shakeY)
 {
-    Ecs_Draw(camX, camY, screenX, kFirstOam, kOamEnd, shakeX, shakeY);
+    Ecs_Draw(camX, camY, screenX, kFirstOam, Dialog_FirstReservedOam(), shakeX, shakeY);
     gShown = true;
 }

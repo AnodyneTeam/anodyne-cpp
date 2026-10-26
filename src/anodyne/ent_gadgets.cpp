@@ -2574,14 +2574,15 @@ bool Detected(Entity* detector)
 
 void ElevatorMenuDraw(const ElevatorData& d)
 {
-    // (the C#'s lines are 1.3 font lines apart round the middle of its 136x126 panel at (15, 40); the GBA's label
-    // canvas is 44 px high, so they sit 9 px apart there)
+    // The C#'s lines are 1.3 font lines apart round the middle of its 136x126 panel at (15, 40) of the screen, which
+    // is (15, 20) of the playfield.
     static char numbers[kMaxFloors][8];
     const char* lines[kMaxFloors + 2];
     int xs[kMaxFloors + 2];
     int ys[kMaxFloors + 2];
     const int count = d.mFloorCount + 2;
-    const int top = 40 + 63 - count * 9 / 2;
+    const float lineHeight = 8 * 1.3f;
+    const float yOffset = 126 / 2 - (lineHeight * static_cast<float>(count)) / 2;
     lines[0] = Dialog_GetFor("misc", "any", "elevator", 0);
     for (int i = 0; i < d.mFloorCount; i++)
     {
@@ -2593,9 +2594,11 @@ void ElevatorMenuDraw(const ElevatorData& d)
     {
         const int w = lines[i] ? static_cast<int>(strlen(lines[i])) * 7 : 0;
         xs[i] = 15 + 68 - w / 2;
-        ys[i] = top + i * 9;
+        ys[i] = 20 + static_cast<int>(yOffset + static_cast<float>(i) * lineHeight);
     }
+    const int top = ys[0];
     const int sel = d.mSel + 1;
+    Dialog_ShowPanel(15, 20, 136, 126);
     Dialog_ShowLabels(lines, xs, ys, count, top, xs[sel] - 7, ys[sel] + 2, true);
 }
 
@@ -2638,6 +2641,7 @@ bool ElevatorMenuStep(Entity& self)
     if (d.mMenuExit)
     {
         Dialog_HideLabels();
+        Dialog_HidePanel();
         return true;
     }
     ElevatorMenuDraw(d);

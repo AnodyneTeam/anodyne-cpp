@@ -43,6 +43,11 @@ bool Dialog_Update();
 void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
                        int selectorY, bool white = false);
 void Dialog_HideLabels();
+// A menu's panel (pop_menu) at (x, y) of the playfield, under the labels; at most 160x128.
+void Dialog_ShowPanel(int x, int y, int w, int h);
+void Dialog_HidePanel();
+// The first OAM entry the box, labels and panel may use: the entities draw below it.
+int Dialog_FirstReservedOam();
 
 // Closes the box immediately (hides the OBJs, frees the VRAM, restores the blend registers).
 void Dialog_Close();

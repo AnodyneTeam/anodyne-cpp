@@ -53,6 +53,7 @@ constexpr int kMaxLineChars = 24;
 constexpr int kFirstOam = 120;
 constexpr int kObjCount = 8;
 constexpr int kCanvasTiles = 3 * 32 + 5 * 8;
+constexpr int kCanvasH = 48;
 constexpr int kPalBank = 15;
 
 // Palette indices.
@@ -63,8 +64,16 @@ constexpr uint32_t kRedLight = 4;
 constexpr uint32_t kRedDark = 5;
 constexpr uint32_t kPromptRed = 6;
 
+// A menu's panel (pop_menu: the box's colours, 32x32 OBJs) takes OAM 108-127 and moves the labels to 100-107.
+constexpr int kPanelFirstOam = 108;
+constexpr int kPanelObjs = 20;
+constexpr int kPanelLabelOam = kPanelFirstOam - kObjCount;
+constexpr int kPanelTiles = 16; // one 32x32 OBJ, for each of the 9 kinds: left/middle/right by top/middle/bottom
+
 ObjVramAllocator* gVram = nullptr;
 int gObjBlock[kObjCount];
+int gObjOam = kFirstOam; // where the box or labels' OBJs are
+int gPanelBlock = -1;    // the 9 kinds' tiles
 bool gOpen = false;
 bool gLabels = false; // Dialog_ShowLabels holds the OBJs
 bool gTop = false;
@@ -92,7 +101,7 @@ uint32_t* TileWord(int x, int y)
 
 void SetPixel(uint32_t* buf, int x, int y, uint32_t c)
 {
-    if (x < 0 || x >= 160 || y < 0 || y >= 48)
+    if (x < 0 || x >= 160 || y < 0 || y >= kCanvasH)
     {
         return;
     }
@@ -139,7 +148,7 @@ void DrawGlyph(char c, int gx, int gy, uint32_t ink, bool shadow)
         for (int r = 0; r < 8; r++)
         {
             const int y = gy + r + (pass == 0 ? 1 : 0);
-            if (y < 0 || y >= kBoxH)
+            if (y < 0 || y >= (gLabels ? kCanvasH : kBoxH))
             {
                 continue;
             }
@@ -525,7 +534,33 @@ void HideObjs()
 {
     for (int o = 0; o < kObjCount; o++)
     {
-        obj_hide(&oam_mem[kFirstOam + o]);
+        obj_hide(&oam_mem[gObjOam + o]);
+    }
+}
+
+// One kind of panel OBJ: kx/ky 0 = the left/top edge, 1 = the middle, 2 = the right/bottom edge.
+void BuildPanelTiles(uint32_t* tiles, int kx, int ky)
+{
+    memset(tiles, 0, kPanelTiles * 32);
+    for (int y = 0; y < 32; y++)
+    {
+        for (int x = 0; x < 32; x++)
+        {
+            // distance to the panel's edge (99: not near one)
+            const int ex = kx == 0 ? x : (kx == 2 ? 31 - x : 99);
+            const int ey = ky == 0 ? y : (ky == 2 ? 31 - y : 99);
+            uint32_t c = kFill;
+            if (ex == 0 && ey == 0)
+            {
+                continue; // the rounded corner
+            }
+            if (ex == 0 || ey == 0 || (ex == 1 && ey == 1))
+            {
+                c = kBlack;
+            }
+            uint32_t& w = tiles[((y >> 3) * 4 + (x >> 3)) * 8 + (y & 7)];
+            w |= c << ((x & 7) * 4);
+        }
     }
 }
 
@@ -772,12 +807,17 @@ void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, i
         }
     }
     Upload();
+    if (gObjOam != (gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam))
+    {
+        HideObjs();
+        gObjOam = gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam;
+    }
     for (int o = 0; o < kObjCount; o++)
     {
         const int px = o < 3 ? 40 + o * 64 : 40 + (o - 3) * 32;
         const int py = o < 3 ? top : top + 32;
         const uint16_t a1 = o < 3 ? ATTR1_SIZE_64 : ATTR1_SIZE_32;
-        obj_set_attr(&oam_mem[kFirstOam + o], ATTR0_Y(py) | ATTR0_4BPP | ATTR0_WIDE, ATTR1_X(px) | a1,
+        obj_set_attr(&oam_mem[gObjOam + o], ATTR0_Y(py) | ATTR0_4BPP | ATTR0_WIDE, ATTR1_X(px) | a1,
                      ATTR2_ID(gObjBlock[o]) | ATTR2_PRIO(0) | ATTR2_PALBANK(kPalBank));
     }
 }
@@ -789,11 +829,75 @@ void Dialog_HideLabels()
         return;
     }
     HideObjs();
+    gObjOam = kFirstOam;
     for (int o = 0; o < kObjCount; o++)
     {
         gVram->free(gObjBlock[o]);
     }
     gLabels = false;
+}
+
+void Dialog_ShowPanel(int x, int y, int w, int h)
+{
+    if (!gVram || gOpen)
+    {
+        return;
+    }
+    if (gPanelBlock < 0)
+    {
+        gPanelBlock = gVram->alloc(9 * kPanelTiles * ObjVramAllocator::BlockSize);
+        if (gPanelBlock < 0)
+        {
+            return;
+        }
+        uint32_t tiles[kPanelTiles * 8];
+        for (int k = 0; k < 9; k++)
+        {
+            BuildPanelTiles(tiles, k % 3, k / 3);
+            memcpy32(gVram->ptr(gPanelBlock + k * kPanelTiles), tiles, kPanelTiles * 8);
+        }
+    }
+    pal_obj_mem[kPalBank * 16 + kFill] = RGB15(5, 5, 6);
+    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    // 32x32 OBJs across and down, the last column and row overlapping the one before to end at the edge
+    const int cols = (w + 31) / 32;
+    const int rows = (h + 31) / 32;
+    int o = 0;
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols && o < kPanelObjs; c++, o++)
+        {
+            const int px = 40 + x + (c == cols - 1 ? w - 32 : c * 32);
+            const int py = y + (r == rows - 1 ? h - 32 : r * 32);
+            const int kind = (r == 0 ? 0 : (r == rows - 1 ? 2 : 1)) * 3 + (c == 0 ? 0 : (c == cols - 1 ? 2 : 1));
+            obj_set_attr(&oam_mem[kPanelFirstOam + o], ATTR0_Y(py & 255) | ATTR0_4BPP | ATTR0_SQUARE,
+                         ATTR1_X(px) | ATTR1_SIZE_32,
+                         ATTR2_ID(gPanelBlock + kind * kPanelTiles) | ATTR2_PRIO(0) | ATTR2_PALBANK(kPalBank));
+        }
+    }
+    for (; o < kPanelObjs; o++)
+    {
+        obj_hide(&oam_mem[kPanelFirstOam + o]);
+    }
+}
+
+void Dialog_HidePanel()
+{
+    if (gPanelBlock < 0)
+    {
+        return;
+    }
+    for (int o = 0; o < kPanelObjs; o++)
+    {
+        obj_hide(&oam_mem[kPanelFirstOam + o]);
+    }
+    gVram->free(gPanelBlock);
+    gPanelBlock = -1;
+}
+
+int Dialog_FirstReservedOam()
+{
+    return gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam;
 }
 
 bool Dialog_IsOpen()
