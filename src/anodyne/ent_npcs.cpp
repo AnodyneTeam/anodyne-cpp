@@ -2952,3 +2952,405 @@ Entity* Spawn_WindmillConsole(const MapEntity& preset, Entity&)
     e->mT->mLastY = e->mT->mY;
     return e;
 }
+
+// ---- The Suburb's people (Npc/Suburb/*.cs, Enemy/Suburb/SuburbKiller.cs, QuestNPCs/SuburbQuest.cs) -------------------
+namespace
+{
+// FaceTowards(Position - FacingDirection(playerFacing)): turn to the player who's talking.
+void FacePlayerTalking(Entity& self, Facing playerFacing)
+{
+    Ecs_FaceTowards(self, self.mT->mX - Fx(FacingX(playerFacing)), self.mT->mY - Fx(FacingY(playerFacing)));
+}
+
+void SeparateFromAny(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+// ---- SuburbWalker: walks round in squares until the broom finds it
+struct SuburbWalkerData final
+{
+    float mWalkMax;
+    float mWalk;
+    Entity* mBlood;
+};
+
+void SuburbWalkerSpawnBlood(Entity& self)
+{
+    Entity& blood = *self.Data<SuburbWalkerData>().mBlood;
+    blood.mExists = true;
+    const int x = Rng_Range(-3, 4);
+    const int y = Rng_Range(-3, 4);
+    blood.mT->mX = self.mT->mX + Fx(x);
+    blood.mT->mY = self.mT->mY + Fx(y);
+}
+
+void SuburbWalkerUpdate(Entity& self)
+{
+    SuburbWalkerData& d = self.Data<SuburbWalkerData>();
+    Transform& t = *self.mT;
+    Ecs_BaseUpdate(self);
+    if (Preset_Alive(*self.mPreset))
+    {
+        if (self.mB->mTouching != TOUCH_NONE)
+        {
+            d.mWalk = 0;
+        }
+        const float gx = InGrid(t.mX);
+        const float gy = InGrid(t.mY);
+        if ((gx < 5 && t.mVelX < 0) || (gx + static_cast<float>(self.mB->mW) > 155 && t.mVelX > 0) ||
+            (gy < 5 && t.mVelY < 0) || (gy + static_cast<float>(self.mB->mH) > 155 && t.mVelY > 0))
+        {
+            d.mWalk = 0;
+        }
+        d.mWalk -= kDeltaTime;
+        if (d.mWalk <= 0)
+        {
+            const fx vx = t.mVelX;
+            t.mVelX = t.mVelY;
+            t.mVelY = -vx;
+            Ecs_FaceTowards(self, t.mX + t.mVelX, t.mY + t.mVelY);
+            Ecs_PlayFacing(self, "walk");
+            d.mWalk = d.mWalkMax;
+        }
+    }
+    else if (Ecs_AnimFinished(self) && !d.mBlood->mExists)
+    {
+        SuburbWalkerSpawnBlood(self);
+    }
+}
+
+bool SuburbWalkerInteract(Entity& self, Facing)
+{
+    if (Ecs_Frame(*self.Data<SuburbWalkerData>().mBlood) != 66)
+    {
+        return false;
+    }
+    const int frame = self.mPreset->mFrame;
+    Game_ShowRandomDialogue("suburb_walker", frame < 2 ? "words_adult" : (frame < 4 ? "words_teen" : "words_kid"));
+    return true;
+}
+
+void SuburbWalkerCollided(Entity& self, Entity& other)
+{
+    if (&other == World_Player())
+    {
+        // (pushes the player out without being pushed, and keeps its own touching)
+        self.mB->mImmovable = true;
+        const uint8_t old = self.mB->mTouching;
+        Ecs_Separate(self, other);
+        self.mB->mTouching = old;
+        self.mB->mImmovable = false;
+    }
+    else if (Preset_Alive(*self.mPreset))
+    {
+        Preset_SetAlive(*self.mPreset, false);
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Ecs_Play(self, "die");
+        Game_PlaySfx("broom_hit");
+        Game_PlaySfx("fall_in_hole");
+        Event_Inc("SuburbKilled");
+    }
+}
+
+const EntityClass kSuburbWalker = {
+    "SuburbWalker", SuburbWalkerUpdate, nullptr, SuburbWalkerCollided, SuburbWalkerInteract, nullptr, nullptr, nullptr,
+    0, GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_ALWAYS_SPAWN | ECF_INTERACTABLE,
+};
+
+const EntityClass kSuburbPart = {
+    "Entity", Ecs_BaseUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- SuburbKiller: stands still until the player comes close, then follows
+struct SuburbKillerData final
+{
+    bool mMoving;
+    float mMoveTimer;
+};
+
+void SuburbKillerUpdate(Entity& self)
+{
+    SuburbKillerData& d = self.Data<SuburbKillerData>();
+    const Entity& p = *World_Player();
+    Ecs_BaseUpdate(self);
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    if (!d.mMoving)
+    {
+        Ecs_PlayFacing(self, "idle");
+        d.mMoving = FxLength(self.mT->mX - p.mT->mX, self.mT->mY - p.mT->mY) < Fx(36);
+    }
+    else
+    {
+        Ecs_PlayFacing(self, "walk");
+        d.mMoveTimer += kDeltaTime;
+        if (d.mMoveTimer > 0.5f)
+        {
+            d.mMoveTimer = 0;
+            Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(30));
+        }
+    }
+}
+
+void SuburbKillerCollided(Entity&, Entity& other)
+{
+    if (&other == World_Player())
+    {
+        Player_ReceiveDamage(6);
+    }
+}
+
+const EntityClass kSuburbKiller = {
+    "SuburbKiller", SuburbKillerUpdate, nullptr, SuburbKillerCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,       0,
+};
+
+// ---- SuburbBlocker: won't let the player by until enough of the Suburb is dead
+struct SuburbBlockerData final
+{
+    bool mDying;
+};
+
+void SuburbBlockerUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (self.Data<SuburbBlockerData>().mDying && MoveTo(self.mV->mOpacity, 0, FxF(0.6f)))
+    {
+        self.mExists = false;
+    }
+}
+
+bool SuburbBlockerInteract(Entity& self, Facing playerFacing)
+{
+    SuburbBlockerData& d = self.Data<SuburbBlockerData>();
+    if (d.mDying)
+    {
+        return false;
+    }
+    FacePlayerTalking(self, playerFacing);
+    Ecs_PlayFacing(self, "walk");
+    const int killed = Event_Get("SuburbKilled");
+    const int dialog = killed < 6 ? 0 : (killed < 9 ? 1 : (killed < 10 ? 2 : 3));
+    Game_ShowDialogue("suburb_blocker", "one", dialog);
+    if (dialog == 3)
+    {
+        Ecs_Flicker(self, FxSec(0.5f));
+        d.mDying = true;
+        Preset_SetAlive(*self.mPreset, false);
+    }
+    return true;
+}
+
+const EntityClass kSuburbBlocker = {
+    "SuburbBlocker", SuburbBlockerUpdate, nullptr, SeparateFromAny, SuburbBlockerInteract, nullptr, nullptr, nullptr,
+    0,               GROUP_PLAYER,        ECF_INTERACTABLE,
+};
+
+// ---- SuburbIndoors: the people at home (SuburbAlive turns to talk; SuburbDead and SuburbHanged don't)
+struct SuburbIndoorsData final
+{
+    const char* mScene;
+    int8_t mLine;
+    bool mTurns;
+};
+
+bool SuburbIndoorsInteract(Entity& self, Facing playerFacing)
+{
+    const SuburbIndoorsData& d = self.Data<SuburbIndoorsData>();
+    if (d.mTurns)
+    {
+        FacePlayerTalking(self, playerFacing);
+        Ecs_PlayFacing(self, "walk");
+    }
+    Game_ShowDialogue("suburb_walker", d.mScene, d.mLine);
+    return true;
+}
+
+const EntityClass kSuburbAlive = {
+    "SuburbAlive", Ecs_BaseUpdate, nullptr, SeparateFromAny, SuburbIndoorsInteract, nullptr, nullptr, nullptr,
+    0,             GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+const EntityClass kSuburbDead = {
+    "SuburbDead", Ecs_BaseUpdate, nullptr, SeparateFromAny, SuburbIndoorsInteract, nullptr, nullptr, nullptr,
+    0,            GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+const EntityClass kSuburbHanged = {
+    "SuburbHanged", Ecs_BaseUpdate, nullptr, SeparateFromAny, SuburbIndoorsInteract, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+
+// ---- SuburbQuest
+struct SuburbQuestData final
+{
+    bool mPlayedQuest;
+};
+
+bool SuburbQuestInteract(Entity& self, Facing)
+{
+    SuburbQuestData& d = self.Data<SuburbQuestData>();
+    const int progress = Event_Get("GoQuestProgress");
+    if ((progress == 5 || progress == 6) && !d.mPlayedQuest)
+    {
+        d.mPlayedQuest = true;
+        Game_ShowDialogue("generic_npc", "quest_event");
+        if (progress == 5)
+        {
+            Event_Inc("GoQuestProgress");
+        }
+    }
+    else
+    {
+        Game_ShowDialogue("generic_npc", "quest_normal");
+    }
+    return true;
+}
+
+const EntityClass kSuburbQuest = {
+    "SuburbQuest", Ecs_BaseUpdate, nullptr, SeparateFromAny, SuburbQuestInteract, nullptr, nullptr, nullptr,
+    0,             GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_SuburbWalker(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSuburbWalker, preset, "suburb_walkers");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, preset.mFrame * 9);
+    Ecs_Play(*e, "walk_d");
+    e->mT->mVelY = Fx(20);
+    SuburbWalkerData& d = e->Data<SuburbWalkerData>();
+    d = SuburbWalkerData();
+    d.mWalkMax = 1.0f + static_cast<float>(Rng_NextDouble());
+    d.mWalk = d.mWalkMax;
+    d.mBlood = Ecs_Create(kSuburbPart, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+    if (!d.mBlood)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mBlood, "suburb_walkers");
+    d.mBlood->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_Play(*d.mBlood, "a@3");
+    Ecs_KeepPooled(*d.mBlood);
+    if (!Preset_Alive(preset))
+    {
+        e->mT->mVelX = e->mT->mVelY = 0;
+        Ecs_Play(*e, "dead");
+        SuburbWalkerSpawnBlood(*e);
+    }
+    return e;
+}
+
+Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity&)
+{
+    const int look = Rng_Range(0, 7);
+    Entity* e = Spawn_Basic(kSuburbKiller, preset, "suburb_killers");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, look * 9);
+    Ecs_Play(*e, "idle_d");
+    e->mB->mW = e->mB->mH = 6;
+    e->mV->mOffX = e->mV->mOffY = Fx(5);
+    e->mT->mX += Fx(5);
+    e->mT->mY += Fx(5);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->Data<SuburbKillerData>() = SuburbKillerData();
+    return e;
+}
+
+Entity* Spawn_SuburbBlocker(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSuburbBlocker, preset, "suburb_walkers");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "walk_d");
+    e->mB->mImmovable = true;
+    e->Data<SuburbBlockerData>() = SuburbBlockerData();
+    return e;
+}
+
+Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity&)
+{
+    const int frame = preset.mFrame;
+    const EntityClass& cls = frame == 6 ? kSuburbHanged : ((frame == 4 || frame == 7) ? kSuburbDead : kSuburbAlive);
+    Entity* e = Spawn_Basic(cls, preset, "suburb_walkers");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    SuburbIndoorsData& d = e->Data<SuburbIndoorsData>();
+    d = SuburbIndoorsData();
+    d.mLine = -1;
+    if (&cls == &kSuburbHanged)
+    {
+        Ecs_Play(*e, "hanged");
+        d.mScene = "hanged";
+        for (int i = 0; i < 3; i++)
+        {
+            Entity* r = Ecs_Create(kSuburbPart, e->mT->mX, e->mT->mY - Fx(16 * (i + 1)), PART_VISUAL | PART_BRAIN,
+                                   nullptr, e);
+            if (r)
+            {
+                Ecs_SetSheet(*r, "suburb_walkers");
+                r->mV->mLayer = LAYER_ENTITIES;
+                Ecs_Play(*r, "a@2");
+            }
+        }
+    }
+    else if (&cls == &kSuburbDead)
+    {
+        Ecs_SetFrameBase(*e, frame == 4 ? 9 : 0);
+        Ecs_Play(*e, "dead");
+        d.mScene = "dead";
+        d.mLine = frame == 4 ? 0 : 1;
+    }
+    else
+    {
+        static const int kOffset[6] = { 0, 4, 1, 2, 0, 0 };
+        Ecs_SetFrameBase(*e, kOffset[frame < 6 ? frame : 0] * 9);
+        Ecs_Play(*e, "walk_d");
+        d.mTurns = true;
+        switch (frame)
+        {
+        case 0:
+            d.mScene = "paranoid";
+            break;
+        case 1:
+            d.mScene = "family";
+            d.mLine = 1;
+            break;
+        case 2:
+            d.mScene = "family";
+            d.mLine = 0;
+            break;
+        case 3:
+            d.mScene = "older_kid";
+            break;
+        default:
+            d.mScene = "festive";
+            break;
+        }
+    }
+    return e;
+}
+
+Entity* Spawn_SuburbQuest(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSuburbQuest, preset, "suburb_walkers");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "a");
+    e->mB->mImmovable = true;
+    e->Data<SuburbQuestData>() = SuburbQuestData();
+    return e;
+}

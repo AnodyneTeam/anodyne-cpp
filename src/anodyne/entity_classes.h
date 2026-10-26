@@ -93,6 +93,11 @@ Entity* Spawn_SageRedCave(const MapEntity& preset, Entity& player);
 Entity* Spawn_SageCrowd(const MapEntity& preset, Entity& player);
 Entity* Spawn_BioFilm(const MapEntity& preset, Entity& player);
 Entity* Spawn_WindmillConsole(const MapEntity& preset, Entity& player);
+Entity* Spawn_SuburbWalker(const MapEntity& preset, Entity& player);
+Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity& player);
+Entity* Spawn_SuburbBlocker(const MapEntity& preset, Entity& player);
+Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity& player);
+Entity* Spawn_SuburbQuest(const MapEntity& preset, Entity& player);
 // GlobalState.SpawnEntity(new DoorToggle(position, w, h)).
 void Spawn_DoorToggle(fx x, fx y, int w, int h);
 Entity* Spawn_Bunny(const MapEntity& preset, Entity& player);

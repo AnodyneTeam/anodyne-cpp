@@ -76,6 +76,11 @@
     X(SageCrowd)                \
     X(BioFilm)                  \
     X(WindmillConsole)          \
+    X(SuburbWalker)            \
+    X(SuburbKiller)            \
+    X(SuburbBlocker)           \
+    X(SuburbIndoors)           \
+    X(SuburbQuest)             \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

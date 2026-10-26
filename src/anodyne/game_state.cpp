@@ -296,6 +296,17 @@ void Game_ShowDialogue(const char* npc, const char* scene, int id)
     }
 }
 
+void Game_ShowRandomDialogue(const char* npc, const char* scene)
+{
+    const int length = Dialog_SceneLength(npc, scene);
+    if (length < 0)
+    {
+        Game_ShowText("No text available.");
+        return;
+    }
+    Game_ShowDialogue(npc, scene, Rng_Range(0, length));
+}
+
 void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id)
 {
     Game_ShowDialogue(npc, scene, id);

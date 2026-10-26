@@ -65,10 +65,18 @@ bool IsEnemyType(uint8_t type)
     case EPT_Frog:
     case EPT_Slasher:
     case EPT_Mover:
+    case EPT_RedBoss:
+    case EPT_WallBoss:
         return true;
     default:
         return false;
     }
+}
+
+// The classes with [AlwaysSpawn]: made even when their preset is dead.
+static bool IsAlwaysSpawnType(uint8_t type)
+{
+    return type == EPT_SuburbWalker;
 }
 
 void FreeScreen()
@@ -178,7 +186,7 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
     for (uint32_t i = 0; i < gList.mCount; i++)
     {
         const MapEntity& p = gList.mEntities[i];
-        if (!Preset_OnGrid(p, gx, gy) || !Preset_Alive(p))
+        if (!Preset_OnGrid(p, gx, gy) || (!Preset_Alive(p) && !IsAlwaysSpawnType(p.mType)))
         {
             continue;
         }

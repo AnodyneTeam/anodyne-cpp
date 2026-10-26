@@ -101,6 +101,16 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BioFilm;
     case EPT_WindmillConsole:
         return Spawn_WindmillConsole;
+    case EPT_SuburbWalker:
+        return Spawn_SuburbWalker;
+    case EPT_SuburbKiller:
+        return Spawn_SuburbKiller;
+    case EPT_SuburbBlocker:
+        return Spawn_SuburbBlocker;
+    case EPT_SuburbIndoors:
+        return Spawn_SuburbIndoors;
+    case EPT_SuburbQuest:
+        return Spawn_SuburbQuest;
     case EPT_Bunny:
         return Spawn_Bunny;
     case EPT_BunnyRun:

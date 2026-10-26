@@ -614,6 +614,13 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
     return line;
 }
 
+int Dialog_SceneLength(const char* npc, const char* scene)
+{
+    unsigned index = 0;
+    const DialogSceneData* s = FindScene(npc, gArea, scene, &index);
+    return s ? s->mLineCount : -1;
+}
+
 const char* Dialog_Get(const char* npc, const char* scene, int id, bool* top)
 {
     return Dialog_GetFor(npc, gArea, scene, id, top);

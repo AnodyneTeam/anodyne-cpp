@@ -146,6 +146,8 @@ void Game_ShowDialogue(const char* npc, const char* scene, int id = -1);
 void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id = -1);
 // Whether the open box came from Game_ShowCutsceneDialogue.
 bool Game_DialogueIsCutscene();
+// DialogueManager.RandomDialogue: one of the scene's lines at random (it draws a number).
+void Game_ShowRandomDialogue(const char* npc, const char* scene);
 // The same with the dialogue's area given (GetDialogue(npc, area, scene, id)).
 void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id = -1);
 // GlobalState.Dialogue = text (copied).

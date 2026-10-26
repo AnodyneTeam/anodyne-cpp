@@ -1392,6 +1392,7 @@ bool World_Init(ObjVramAllocator& vram)
     gPlayerLight->mPlayerOwned = true;
     Darkness_MakeLight(*gPlayerLight, "player-light");
     gPlayerLight->mV->mScale = Fx(2);
+    gPlayerLight->Data<PlayerLightData>().mFlickerTimer = FxSec(6 / 30.0f);
     gPlayerLight->mExists = false;
     CreateHealthBar();
     return true;
