@@ -3,6 +3,7 @@ set(ANODYNE_GAME_SOURCES
     anodyne.cpp
     dialog.cpp
     credits.cpp
+    save.cpp
     audio_manager.cpp
     audio_decode_core.cpp
     sprite.cpp

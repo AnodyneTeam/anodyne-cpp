@@ -6,6 +6,7 @@
 #include "dialog.h"
 #include "ecs.h"
 #include "pause.h"
+#include "save.h"
 
 
 GameState gGame;
@@ -85,6 +86,43 @@ void GameState_Reset()
     gEventCount = 0;
     gDialogueFinished = true;
     Pause_Reset();
+}
+
+void GameState_Save(SaveWriter& w)
+{
+    // (the whole struct: a save is only read back by the ROM that wrote it)
+    GameState g = gGame;
+    g.mModeName = nullptr;
+    g.mMapName = nullptr;
+    w.Put(&g, sizeof(g));
+    w.Put(gDead, sizeof(gDead));
+    w.Put(gActivated, sizeof(gActivated));
+    w.Put(&gEventCount, sizeof(gEventCount));
+    w.Put(gEvents, static_cast<int>(sizeof(EventSlot)) * gEventCount);
+}
+
+void GameState_Load(SaveReader& r)
+{
+    GameState g;
+    r.Get(&g, sizeof(g));
+    // What the play state sets up afresh stays as it is.
+    g.mModeName = gGame.mModeName;
+    g.mMapName = gGame.mMapName;
+    g.mCurrentMap = gGame.mCurrentMap;
+    g.mGridX = gGame.mGridX;
+    g.mGridY = gGame.mGridY;
+    g.mPuzzlesSolved = 0;
+    g.mEnemiesKilled = 0;
+    g.mDisableMenu = false;
+    g.mInDeathRoom = false;
+    g.mEquippedBroomChanged = true;
+    gGame = g;
+    r.Get(gDead, sizeof(gDead));
+    r.Get(gActivated, sizeof(gActivated));
+    r.Get(&gEventCount, sizeof(gEventCount));
+    gEventCount = gEventCount < 0 ? 0 : (gEventCount > kMaxEvents ? kMaxEvents : gEventCount);
+    r.Get(gEvents, static_cast<int>(sizeof(EventSlot)) * gEventCount);
+    gDialogueFinished = true;
 }
 
 void GameState_SetHealth(int health)

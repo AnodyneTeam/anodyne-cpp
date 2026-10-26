@@ -1448,6 +1448,9 @@ void Player_Reset(const char* mapName)
     strncpy(gMapName, mapName ? mapName : "", sizeof(gMapName) - 1);
     gMapName[sizeof(gMapName) - 1] = '\0';
     PlayerData& d = P();
+    // (a new PlayState's player: there and opaque, whatever the last one was left as)
+    gPlayer->mExists = true;
+    gPlayer->mV->mOpacity = kFxOne;
     Player_BeIdle();
     FootUseWater();
     gPlayer->mT->mVelX = gPlayer->mT->mVelY = 0;

@@ -7,6 +7,7 @@
 #include "audio_manager.h"
 #include "dialog_data.h"
 #include "ecs.h"
+#include "save.h"
 #include "title_data.h"
 
 // Read by the headless test driver (src/tools/bot/gba_drive.py).
@@ -743,6 +744,27 @@ bool Dialog_IsSceneFinished(const char* npc, const char* scene)
 {
     unsigned index = 0;
     return FindScene(npc, gArea, scene, &index) && gSceneFinished[index] != 0;
+}
+
+void Dialog_ResetProgress()
+{
+    memset(gSceneLine, 0, sizeof(gSceneLine));
+    memset(gSceneFinished, 0, sizeof(gSceneFinished));
+    memset(gSceneDirty, 0, sizeof(gSceneDirty));
+}
+
+void Dialog_SaveState(SaveWriter& w)
+{
+    w.Put(gSceneLine, sizeof(gSceneLine));
+    w.Put(gSceneFinished, sizeof(gSceneFinished));
+    w.Put(gSceneDirty, sizeof(gSceneDirty));
+}
+
+void Dialog_LoadState(SaveReader& r)
+{
+    r.Get(gSceneLine, sizeof(gSceneLine));
+    r.Get(gSceneFinished, sizeof(gSceneFinished));
+    r.Get(gSceneDirty, sizeof(gSceneDirty));
 }
 
 bool Dialog_IsSceneDirty(const char* npc, const char* scene)

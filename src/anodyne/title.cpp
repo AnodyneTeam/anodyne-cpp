@@ -6,6 +6,7 @@
 
 #include "audio_manager.h"
 #include "game_state.h"
+#include "save.h"
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
 #include "sprite.h"
@@ -388,7 +389,7 @@ void DrawMenu()
     }
     if (gMenuIndex < 3)
     {
-        PutText(kViewX / 8 + 6, 5 + gMenuIndex * 2, "New Game", 15);
+        PutText(kViewX / 8 + 6, 5 + gMenuIndex * 2, Save_Exists(gMenuIndex) ? "Continue" : "New Game", 15);
     }
     PutText(kViewX / 8 + 1, 17, "A: select  B: back", 14);
     if (gHaveArrow)
@@ -696,6 +697,10 @@ bool Title_Update(int* slot)
             if (gMenuIndex < 3)
             {
                 *slot = gMenuIndex;
+                if (Save_Exists(gMenuIndex))
+                {
+                    return true; // (the file is loaded: no intro)
+                }
                 gState = State::IntroFade;
                 gTimer = 0;
             }

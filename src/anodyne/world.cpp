@@ -1400,9 +1400,25 @@ static bool gGameFadeWhite = false;
 static bool gGameFadeSparesUi = false;
 static fx gEndingBlack = 0;
 
+int World_Deaths()
+{
+    return gDeaths;
+}
+
+void World_SetDeaths(int deaths)
+{
+    gDeaths = deaths;
+}
+
 void Screen_SetFadeSparesUi(bool on)
 {
     gGameFadeSparesUi = on;
+}
+
+void Screen_EndEnding()
+{
+    gGameFadeSparesUi = false;
+    gEndingBlack = 0;
 }
 
 // The screen is all white under it by then: the BGs go and the backdrop stands in for them, darkened with the sprites.

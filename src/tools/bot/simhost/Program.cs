@@ -228,16 +228,44 @@ void Replay(string inputPath, string tracePath, int show)
     }));
     int diffs = 0;
     bool entDiffShown = false;
+    // After the credits both games sit on the title, whose menus draw random numbers and take frames differently:
+    // wait for the C# to load the save (its row stops repeating the last one before the title, and has a map again), then
+    // boot the port
+    // the same way as at the start and take the C#'s RNG position again
+    string[] titleRow = null;
     for (int i = start; i < cs.Count && diffs <= show; i++)
     {
         long f = long.Parse(cs[i][0]);
-        if (i > start)
+        if (titleRow != null)
+        {
+            if (cs[i][1] == "" || (cs[i][1] == titleRow[1] && cs[i][2] == titleRow[2] && cs[i][3] == titleRow[3]))
+            {
+                continue;
+            }
+            titleRow = null;
+            for (int n = 0; view.Mode != "play" && n < 6000; n += 12)
+            {
+                view.Hold(1, 1);
+                view.Hold(0, 11);
+            }
+            Console.WriteLine($"port loaded its save into {view.Map}; the C# game at f{f}");
+            if (csEnts.TryGetValue(f, out var re))
+            {
+                view.SetRng(long.Parse(re[1]));
+            }
+        }
+        else if (i > start)
         {
             if (checkpoints.TryGetValue(f, out var cp))
             {
                 view.SetCheckpoint(cp[0], int.Parse(cp[1]), int.Parse(cp[2]));
             }
             view.Hold(f < masks.Count ? masks[(int)f] : 0, 1);
+            if (view.Mode == "title")
+            {
+                titleRow = cs[i];
+                continue;
+            }
         }
         string mine = Row(f), theirs = string.Join("\t", cs[i]);
         if (f >= dumpFrom && f <= dumpTo)

@@ -107,7 +107,12 @@ void Screen_SetFadeWhite(bool white);
 // The ending (EndingSage): the game screen's white fade leaves the sprites alone (the sage there is UI), and
 // GlobalState.black_overlay darkens the whitened screen (alpha 0-1; 0 is off).
 void Screen_SetFadeSparesUi(bool on);
+// GlobalState.DeathCount (kept in a save).
+int World_Deaths();
+void World_SetDeaths(int deaths);
 void Screen_SetEndingBlack(fx alpha);
+// Both off again (leaving the play state).
+void Screen_EndEnding();
 // GlobalState.wave.active: the screen's rows ripple sideways (a GasGuy's gas, the Red Boss).
 void Screen_SetWave(bool on);
 bool Screen_Wave();

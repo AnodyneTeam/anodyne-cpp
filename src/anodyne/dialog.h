@@ -26,6 +26,14 @@ int Dialog_SceneLength(const char* npc, const char* scene);
 bool Dialog_IsSceneFinished(const char* npc, const char* scene);
 void Dialog_SetSceneProgress(const char* npc, const char* scene, int id);
 
+// DialogueManager.SceneTree in a save: each scene's progress.
+struct SaveWriter;
+struct SaveReader;
+void Dialog_SaveState(SaveWriter& w);
+void Dialog_LoadState(SaveReader& r);
+// A new game: every scene from its start.
+void Dialog_ResetProgress();
+
 // Opens the box and starts typing `text` (must stay valid while open: ROM strings are). `intro` = IntroState's
 // box: 4x speed-up and a red button prompt instead of the blinking arrow. Needs OBJ VRAM; does nothing if it is
 // full. Opened while a box is open, the new box shows over it and both type (PlayState's two DialogueStates); a

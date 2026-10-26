@@ -8,6 +8,7 @@
 #include "ending_data.h"
 #include "ecs.h"
 #include "game_state.h"
+#include "save.h"
 #include "soft_mosaic.hpp"
 #include "sprite.h"
 #include "title_data.h"
@@ -424,7 +425,7 @@ void Credits_Enter(ObjVramAllocator& vram)
     Mosaic_End();
     // SetState: every effect is deactivated.
     Screen_StopWave();
-    Screen_SetFadeSparesUi(false);
+    Screen_EndEnding();
     Screen_SetFadeWhite(false);
     Screen_SetFade(0);
     REG_DISPCNT = DCNT_MODE0 | DCNT_OBJ | DCNT_OBJ_1D;
@@ -583,7 +584,7 @@ bool Credits_Update()
             if (gC.mYes)
             {
                 Event_Set("SeenCredits", 1);
-                // TODO: GlobalState.SaveGame() (the port has no saves yet)
+                Save_Write(Save_Slot());
             }
             Game_PlaySfx("menu_select");
             done = true;

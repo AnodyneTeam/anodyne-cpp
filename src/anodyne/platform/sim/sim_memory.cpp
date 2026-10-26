@@ -28,6 +28,7 @@ const Region kRegions[] = {
     { kPalBase, kPalSize },
     { kVramBase, kVramSize },
     { kOamBase, kOamSize },
+    { 0x0E000000, 0x10000 }, // cart SRAM (save.cpp); starts zeroed, so no slot holds a save
 };
 
 uint8_t* gIoAlias = nullptr; // the simulator's writable view of the IO page

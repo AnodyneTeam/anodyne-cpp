@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "credits.h"
+#include "save.h"
 #include "dialog.h"
 #include "tonc.h"
 
@@ -498,8 +499,31 @@ int main()
         else if (mode == AppMode::Title)
         {
             int slot = 0;
-            if (Title_Update(&slot))
+            const bool chosen = Title_Update(&slot);
+            if (chosen && Save_Exists(slot))
             {
+                // MainMenuState: a file with a save goes back to its checkpoint (GlobalState.LoadSave).
+                ScreenBlack(true);
+                Title_Exit(objVram);
+                oam_init(oam_mem, 128);
+                blackFrames = 2;
+                GameState_Reset();
+                Dialog_ResetProgress();
+                Save_SetSlot(slot);
+                Save_Read(slot);
+                gCurrentMap = gGame.mCheckpointMap >= 0 ? static_cast<uint32_t>(gGame.mCheckpointMap) : 0;
+                mode = AppMode::MapViewer;
+                EnterMapViewerMode();
+                galleryOn = false;
+                LoadWorldMap(true);
+                World_PlaceAt(gGame.mCheckpointX, gGame.mCheckpointY, 0);
+            }
+            else if (chosen)
+            {
+                // A new game in this file.
+                GameState_Reset();
+                Dialog_ResetProgress();
+                Save_SetSlot(slot);
                 ScreenBlack(true);
                 Title_Exit(objVram);
                 oam_init(oam_mem, 128);

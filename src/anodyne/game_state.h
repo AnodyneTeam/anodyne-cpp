@@ -102,6 +102,12 @@ bool Game_IsDungeon();
 // New game (GlobalState.ResetValues + EntityManager.State cleared).
 void GameState_Reset();
 
+// The progress a save keeps (GlobalState.Save): GameState, the presets' Alive/Activated, the events.
+struct SaveWriter;
+struct SaveReader;
+void GameState_Save(SaveWriter& w);
+void GameState_Load(SaveReader& r);
+
 void GameState_SetHealth(int health);
 void GameState_SetMaxHealth(int maxHealth);
 
