@@ -673,6 +673,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "walk_l", { 6, 7 }, 4.0f, true },
     } },
     { "redwalker", 32, 48, {
+        { "walk", { 0, 1, 2, 3, 4 }, 5.0f, true }, // (RedWalker starts it on a random frame)
     } },
     { "sadman", 16, 16, {
         { "a", { 0, 1 }, 2.0f, true },

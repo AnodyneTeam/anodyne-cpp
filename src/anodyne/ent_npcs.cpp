@@ -261,6 +261,108 @@ const EntityClass kFisherman = {
     GROUP_PLAYER | GROUP_BROOM | GROUP_WHIRLPOOL, 0,
 };
 
+// ---- Red Sea: RedWalker, BombDude, HairDude, Sign -----------------------------------------------------------------
+void RedWalkerUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        self.mT->mVelX = -self.mT->mVelX;
+        self.mT->mVelY = -self.mT->mVelY;
+        self.mV->mHFlip = !self.mV->mHFlip;
+    }
+}
+
+void RedWalkerCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+    self.mB->mTouching = TOUCH_NONE;
+}
+
+const EntityClass kRedWalker = {
+    "RedWalker", RedWalkerUpdate, nullptr, RedWalkerCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,
+    ECF_KEEP_ON_SCREEN,
+};
+
+bool BombDudeInteract(Entity& self, Facing)
+{
+    if (Dialog_IsSceneFinished("generic_npc", "bomb"))
+    {
+        Spawn_Explosion(self);
+        Player_ReceiveDamage(1, true, true);
+        self.mExists = false;
+        Preset_SetAlive(*self.mPreset, false);
+    }
+    else
+    {
+        Game_ShowDialogue("generic_npc", "bomb");
+    }
+    return true;
+}
+
+void SeparateSelfFirst(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kBombDude = {
+    "BombDude", nullptr, nullptr, SeparateSelfFirst, BombDudeInteract, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,
+    ECF_INTERACTABLE,
+};
+
+// QuestNPCHelper.NeedsSecond: a quest NPC says its second line once its first is done and a boss has fallen since
+// (or six have, or the second was already seen).
+bool NeedsSecond(const char* name, const char* normal, const char* second)
+{
+    char event[48];
+    snprintf(event, sizeof(event), "%s-QuestCounter", name);
+    const int previous = Event_Get(event);
+    const int current = __builtin_popcount(gGame.mBossDefeated);
+    if (Dialog_IsSceneDirty("generic_npc", normal))
+    {
+        const bool seenSecond = Dialog_IsSceneDirty("generic_npc", second);
+        const bool finishedFirst = Dialog_IsSceneFinished("generic_npc", normal);
+        if (finishedFirst && (current >= 6 || current > previous || seenSecond))
+        {
+            Event_Set(event, current);
+            return true;
+        }
+        return false;
+    }
+    Event_Set(event, current);
+    return false;
+}
+
+void HairDudeUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    const Entity& p = *Player_Entity();
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    Ecs_PlayFacing(self, "walk");
+}
+
+bool HairDudeInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("generic_npc", NeedsSecond("hairdude", "first", "second") ? "second" : "first");
+    return true;
+}
+
+const EntityClass kHairDude = {
+    "HairDude", HairDudeUpdate, nullptr, SeparateSelfFirst, HairDudeInteract, nullptr, nullptr, nullptr, 0,
+    GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+bool SignInteract(Entity& self, Facing)
+{
+    Game_ShowDialogueFor("misc", "any", "solidsprite", self.mPreset->mFrame - 2);
+    return true;
+}
+
+const EntityClass kSign = {
+    "Sign", nullptr, nullptr, SeparateSelfFirst, SignInteract, nullptr, nullptr, nullptr, 0, 0,
+    ECF_PART_OF_MAP | ECF_INTERACTABLE,
+};
+
 // ---- Rock / Statue / Sadbro / DungeonStatue -----------------------------------------------------------------------
 bool RockInteract(Entity& self, Facing)
 {
@@ -2403,5 +2505,65 @@ Entity* Spawn_Fisherman(const MapEntity& preset, Entity&)
     d = FishermanData();
     d.mHealth = 2;
     Ecs_Play(*e, "idle");
+    return e;
+}
+
+Entity* Spawn_RedWalker(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRedWalker, preset, "redwalker", 32, 48);
+    if (!e)
+    {
+        return nullptr;
+    }
+    // GetSprite: "walk" through the 5 frames from a random one
+    const int start = Rng_Range(0, 5);
+    Ecs_Play(*e, "walk");
+    e->mV->mAnimIndex = static_cast<uint16_t>(start);
+    e->mT->mVelX = Fx(5 + Rng_Range(0, 15));
+    e->mB->mW = 20;
+    e->mB->mH = 8;
+    e->mV->mOffX = Fx(4);
+    e->mV->mOffY = Fx(40);
+    e->mT->mX += Fx(4);
+    e->mT->mY += Fx(40);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_RedseaNpc(const MapEntity& preset, Entity&)
+{
+    if (preset.mFrame == 10)
+    {
+        Entity* e = Spawn_Basic(kBombDude, preset, "redsea_npcs");
+        if (!e)
+        {
+            return nullptr;
+        }
+        e->mB->mImmovable = true;
+        Ecs_Play(*e, "walk");
+        Dialog_SetSceneProgress("generic_npc", "bomb", 0);
+        return e;
+    }
+    Entity* e = Spawn_Basic(kHairDude, preset, "redsea_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, "walk_d");
+    return e;
+}
+
+Entity* Spawn_Sign(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSign, preset, "note_rock");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_SetFrame(*e, preset.mFrame);
     return e;
 }

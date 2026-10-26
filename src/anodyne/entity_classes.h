@@ -73,6 +73,10 @@ Entity* Spawn_DashTrap(const MapEntity& preset, Entity& player);
 Entity* Spawn_FourShooter(const MapEntity& preset, Entity& player);
 Entity* Spawn_Slasher(const MapEntity& preset, Entity& player);
 Entity* Spawn_Fisherman(const MapEntity& preset, Entity& player);
+Entity* Spawn_RedWalker(const MapEntity& preset, Entity& player);
+Entity* Spawn_RedseaNpc(const MapEntity& preset, Entity& player);
+Entity* Spawn_Sign(const MapEntity& preset, Entity& player);
+Entity* Spawn_RedCaveEntrance(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
 Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).

@@ -1173,6 +1173,7 @@ struct DoorData final
     bool mPlayerOnDoor; // player_on_door
     bool mPadOn;        // NexusPad.playerCollission
     bool mActivated;    // NexusDoor.activated
+    bool mInactive;     // !Door.Active (a DoorToggle shut it)
 };
 
 bool PlayerOn(const Entity& self)
@@ -1253,7 +1254,7 @@ void DoorCollided(Entity& self, Entity& other)
         break;
     default:
         // (FallDoor's CROWD-only falling sequence isn't ported: it acts as a plain door)
-        if (!d.mPlayerOnDoor)
+        if (!d.mPlayerOnDoor && !d.mInactive)
         {
             DoorTeleport(self);
         }
@@ -1282,14 +1283,51 @@ bool DoorInteract(Entity& self, Facing playerFacing)
 }
 
 const EntityClass kDoor = {
-    "Door", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+    "Door", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, GROUP_DOOR, GROUP_PLAYER, 0,
 };
+// DoorToggle: flips Active on every door it overlaps, then goes (its Update runs after the collisions).
+struct DoorToggleData final
+{
+    bool mHitDoor;
+};
+
+void DoorToggleUpdate(Entity& self)
+{
+    if (self.Data<DoorToggleData>().mHitDoor)
+    {
+        self.mExists = false;
+    }
+}
+
+void DoorToggleCollided(Entity& self, Entity& other)
+{
+    DoorData& d = other.Data<DoorData>();
+    d.mInactive = !d.mInactive;
+    self.Data<DoorToggleData>().mHitDoor = true;
+}
+
+const EntityClass kDoorToggle = {
+    "DoorToggle", DoorToggleUpdate, nullptr, DoorToggleCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_DOOR, 0,
+};
+
+// RedCaveEntrance (Solid_Sprite red_cave_*_ss): the cave mouth, there once its map event reached the count; until then
+// it isn't, and its door is shut.
+void RedCaveEntranceCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kRedCaveEntrance = {
+    "RedCaveEntrance", nullptr, nullptr, RedCaveEntranceCollided, nullptr, nullptr, nullptr, nullptr, 0, 0,
+    ECF_PART_OF_MAP,
+};
+
 // WhirlPool: a Door the Fisherman collides with.
 const EntityClass kWhirlPool = {
-    "WhirlPool", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, GROUP_WHIRLPOOL, GROUP_PLAYER, 0,
+    "WhirlPool", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, GROUP_WHIRLPOOL | GROUP_DOOR, GROUP_PLAYER, 0,
 };
 const EntityClass kNexusDoor = {
-    "NexusDoor", DoorUpdate, nullptr, DoorCollided, DoorInteract, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,
+    "NexusDoor", DoorUpdate, nullptr, DoorCollided, DoorInteract, nullptr, nullptr, nullptr, GROUP_DOOR, GROUP_PLAYER,
     ECF_INTERACTABLE,
 };
 
@@ -1877,6 +1915,48 @@ void WhirlPool_DoTransition(Entity& pool)
 {
     Event_Inc("fisherman.dead");
     Ecs_Play(pool, "transition");
+}
+
+Entity* Spawn_RedCaveEntrance(const MapEntity& preset, Entity&)
+{
+    const char* type = Preset_TypeValue(preset);
+    int required = 1; // red_cave_l_ss, red_cave_r_ss
+    if (strcmp(type, "red_cave_c_ss") == 0)
+    {
+        required = 0;
+    }
+    else if (strcmp(type, "red_cave_n_ss") == 0)
+    {
+        required = 2;
+    }
+    Entity* e = Spawn_Basic(kRedCaveEntrance, preset, "red_cave_left", 64, 64);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mOffX = Fx(4);
+    e->mV->mOffY = Fx(32);
+    e->mT->mX += Fx(4);
+    e->mT->mY += Fx(32);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mB->mW = 56;
+    e->mB->mH = 28;
+    e->mB->mImmovable = true;
+    Ecs_SetFrame(*e, 0);
+    if (Event_Get(type) < required)
+    {
+        e->mExists = false;
+        Entity* t = Ecs_Create(kDoorToggle, e->mT->mX, e->mT->mY, PART_BRAIN);
+        if (t)
+        {
+            Ecs_MarkSpawned(*t);
+            t->mB->mW = 56;
+            t->mB->mH = 28;
+            t->Data<DoorToggleData>() = DoorToggleData();
+        }
+    }
+    return e;
 }
 
 Entity* Spawn_Door(const MapEntity& preset, Entity& player)

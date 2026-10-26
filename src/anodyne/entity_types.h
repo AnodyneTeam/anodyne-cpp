@@ -62,6 +62,10 @@
     X(FourShooter)              \
     X(Slasher)                  \
     X(Fisherman)                \
+    X(RedWalker)                \
+    X(RedseaNpc)                \
+    X(Sign)                     \
+    X(RedCaveEntrance)          \
     X(Rotator)                  \
     X(Door)
 

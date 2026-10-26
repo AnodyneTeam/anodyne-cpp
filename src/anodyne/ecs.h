@@ -315,6 +315,7 @@ enum CollisionGroup : uint32_t
     GROUP_SHIELDY = 1u << 3,
     GROUP_DASH_TRAP = 1u << 4,
     GROUP_WHIRLPOOL = 1u << 5,
+    GROUP_DOOR = 1u << 6,
 };
 
 // Map tile events (Map.CollideTile -> the Entity virtuals).
