@@ -97,6 +97,9 @@ Entity* gShadow = nullptr;
 Entity* gFoot = nullptr;
 Entity* gReflection = nullptr;
 Entity* gBroomReflection = nullptr;
+Entity* gTransformer = nullptr;
+Entity* gSelector = nullptr;     // Transformer.selector: the tile in front of the player
+Entity* gSelectedTile = nullptr; // Transformer.selected_tile: the first tile picked
 char gMapName[24];
 
 PlayerData& P()
@@ -115,6 +118,88 @@ void ShadowUpdate(Entity& self)
 
 const EntityClass kShadowClass = {
     "Shadow", ShadowUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- Transformer (Transformer.cs): swaps two tiles of the map, where the map's Swapper.dat allows -----------------
+void TransformerReset()
+{
+    gSelectedTile->mExists = false;
+    gSelector->mExists = false;
+}
+
+void TransformerUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    // selector.Position = (player.Center / 16 + FacingDirection(player.facing)).ToPoint() * 16
+    const Facing f = static_cast<Facing>(gPlayer->mFacing);
+    gSelector->mT->mX = Fx((FxFloor(Ecs_CenterX(*gPlayer)) / 16 + FacingX(f)) * 16);
+    gSelector->mT->mY = Fx((FxFloor(Ecs_CenterY(*gPlayer)) / 16 + FacingY(f)) * 16);
+}
+
+void TransformerOnEvent(Entity&, int gameEvent)
+{
+    // (and PlayState.FinalizeTransition, as the old screen goes)
+    if (gameEvent == GEV_START_SCREEN_TRANSITION || gameEvent == GEV_END_SCREEN_TRANSITION)
+    {
+        TransformerReset();
+    }
+}
+
+// Transformer.OnAction
+void TransformerAction()
+{
+    const int sx = FxFloor(gSelector->mT->mX) / 16;
+    const int sy = FxFloor(gSelector->mT->mY) / 16;
+    const uint8_t check = World_CheckSwapper(sx, sy);
+    if (check == SWAP_DISALLOW_SILENTLY)
+    {
+        return;
+    }
+    if (Event_Get("SeenCredits") == 0)
+    {
+        if (check != SWAP_ALLOW)
+        {
+            Game_ShowDialogueFor("misc", "any", "swap", 2);
+            return;
+        }
+    }
+    else if (check == SWAP_DISALLOW)
+    {
+        Game_ShowDialogueFor("misc", "any", "swap", strcmp(gMapName, "DEBUG") == 0 ? 0 : 1);
+        return;
+    }
+
+    if (!gSelector->mExists)
+    {
+        gSelector->mExists = true;
+    }
+    else if (!gSelectedTile->mExists)
+    {
+        gSelectedTile->mT->mX = gSelector->mT->mX;
+        gSelectedTile->mT->mY = gSelector->mT->mY;
+        gSelectedTile->mExists = true;
+        Game_PlaySfx("menu_move");
+    }
+    else
+    {
+        const int tx = FxFloor(gSelectedTile->mT->mX) / 16;
+        const int ty = FxFloor(gSelectedTile->mT->mY) / 16;
+        const int t1 = World_GetTile(0, sx, sy);
+        const int t2 = World_GetTile(0, tx, ty);
+        World_ChangeTile(0, sx, sy, t2);
+        World_ChangeTile(0, tx, ty, t1);
+        gSelector->mExists = false;
+        gSelectedTile->mExists = false;
+        Game_PlaySfx("menu_select");
+    }
+}
+
+const EntityClass kTransformerClass = {
+    "Transformer", TransformerUpdate, nullptr, nullptr, nullptr, nullptr, TransformerOnEvent, nullptr, 0, 0, 0,
+};
+
+const EntityClass kSelectorClass = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
 
 // jumpHeight 0..1: how high up.
@@ -437,7 +522,11 @@ void UpdateActions()
         if (key_hit(KEY_A) && d.mActionLatency <= 0 && !d.mSkipBroom)
         {
             const uint8_t broom = Inventory_EquippedBroom();
-            if (broom != BROOM_NONE && broom != BROOM_TRANSFORMER && !gBroom->mExists)
+            if (broom == BROOM_TRANSFORMER)
+            {
+                TransformerAction();
+            }
+            else if (broom != BROOM_NONE && !gBroom->mExists)
             {
                 BroomAttack();
                 d.mActionLatency = kActionLatencyMax;
@@ -1271,8 +1360,8 @@ Entity* Player_Create()
     PlayerPlay("idle_u");
     P().mAnimState = AS_IDLE;
 
-    // Created before the player's own sub-entities' update order matters: broom, transformer (not yet), shadow,
-    // foot overlay, reflection.
+    // Created before the player's own sub-entities' update order matters: broom, transformer, shadow, foot overlay,
+    // reflection.
     gBroom = CreateOwned(kBroomClass, PART_VISUAL | PART_BRAIN);
     Ecs_SetSheet(*gBroom, "broom", 16, 16);
     gBroom->mB->mW = gBroom->mB->mH = 16;
@@ -1290,6 +1379,26 @@ Entity* Player_Create()
         extra->mV->mLayer = LAYER_PARTICLES;
         extra->mV->mVisible = false;
         Ecs_SetSolid(*extra, false);
+    }
+
+    gTransformer = CreateOwned(kTransformerClass, PART_BRAIN);
+    gTransformer->mB->mW = gTransformer->mB->mH = 0;
+    Ecs_SetSolid(*gTransformer, false);
+    gSelector = CreateOwned(kSelectorClass, PART_VISUAL);
+    Ecs_SetSheet(*gSelector, "selector", 16, 16);
+    gSelector->mB->mW = gSelector->mB->mH = 16;
+    gSelector->mV->mLayer = LAYER_ENTITIES;
+    Ecs_Play(*gSelector, "a");
+    gSelectedTile = CreateOwned(kSelectorClass, PART_VISUAL);
+    Ecs_SetSheet(*gSelectedTile, "selector", 16, 16);
+    gSelectedTile->mB->mW = gSelectedTile->mB->mH = 16;
+    gSelectedTile->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_SetFrame(*gSelectedTile, 1);
+    Entity* const tiles[2] = { gSelector, gSelectedTile };
+    for (Entity* tile : tiles)
+    {
+        Ecs_SetSolid(*tile, false);
+        tile->mExists = false;
     }
 
     gShadow = CreateOwned(kShadowClass, PART_VISUAL);
@@ -1606,6 +1715,11 @@ void Player_SetAdditionalVel(fx x, fx y)
 
 void Player_UpdateBroomType()
 {
+    // PlayState.Refreshes: any broom but the transformer puts its selection away
+    if (Inventory_EquippedBroom() != BROOM_TRANSFORMER)
+    {
+        TransformerReset();
+    }
     // Broom.UpdateBroomType (the sheet follows the broom type when it is drawn)
     Entity& b = *gBroom;
     b.mT->mX = gPlayer->mT->mX - Fx(10);

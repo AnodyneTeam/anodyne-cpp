@@ -133,6 +133,31 @@ struct MapDoorList final
     const MapDoor* mDoors;
 };
 
+// SwapperControl (the map's Swapper.dat): where the transformer may swap tiles. A region is a map-pixel rectangle; the
+// first one holding a tile's top-left decides, none = default.
+enum SwapperState : uint8_t
+{
+    SWAP_DEFAULT,
+    SWAP_ALLOW,
+    SWAP_DISALLOW,
+    SWAP_DISALLOW_SILENTLY,
+};
+
+struct MapSwapRegion final
+{
+    uint8_t mState; // SwapperState
+    int16_t mX;
+    int16_t mY;
+    int16_t mW;
+    int16_t mH;
+};
+
+struct MapSwapperList final
+{
+    uint32_t mCount;
+    const MapSwapRegion* mRegions;
+};
+
 // A map entity preset (Entities.xml, resolved to a class by the content compiler like the C# EntityManager).
 // Positions are map pixels. mGlobalId indexes the game's per-preset state (EntityPreset.Alive / Activated) and is
 // unique over all maps. A placeholder (an entity the port doesn't implement yet) draws static frame mLookFrame of

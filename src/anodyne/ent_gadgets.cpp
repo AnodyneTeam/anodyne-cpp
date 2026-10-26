@@ -2849,6 +2849,72 @@ const EntityClass kDashPad = {
 };
 } // namespace
 
+namespace
+{
+// ---- GoDetector (GoDetector.cs): the GO tile puzzle. Solved once the BG tiles at its offsets read 60, 61, 62...
+struct GoDetectorData final
+{
+    int8_t mChecks[8][2];
+    uint8_t mCount;
+};
+
+void GoDetectorUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    const GoDetectorData& d = self.Data<GoDetectorData>();
+    const int bx = FxFloor(self.mT->mX) / 16;
+    const int by = FxFloor(self.mT->mY) / 16;
+    for (int i = 0; i < d.mCount; i++)
+    {
+        if (World_GetTile(0, bx + d.mChecks[i][0], by + d.mChecks[i][1]) != 60 + i)
+        {
+            return;
+        }
+    }
+    gGame.mPuzzlesSolved++;
+    Preset_SetAlive(*self.mPreset, false);
+    self.mExists = false;
+}
+
+const EntityClass kGoDetector = {
+    "GoDetector", GoDetectorUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_GoDetector(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kGoDetector, preset, nullptr);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mVisible = false;
+    Ecs_SetSolid(*e, false);
+    // the type is "x,y;x,y;..."
+    GoDetectorData& d = e->Data<GoDetectorData>();
+    d = GoDetectorData();
+    const char* p = Preset_TypeValue(preset);
+    while (*p && d.mCount < 8)
+    {
+        int x = 0;
+        int y = 0;
+        if (sscanf(p, "%d,%d", &x, &y) != 2)
+        {
+            break;
+        }
+        d.mChecks[d.mCount][0] = static_cast<int8_t>(x);
+        d.mChecks[d.mCount][1] = static_cast<int8_t>(y);
+        d.mCount++;
+        p = strchr(p, ';');
+        if (!p)
+        {
+            break;
+        }
+        p++;
+    }
+    return e;
+}
+
 Entity* Spawn_DashPad(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kDashPad, preset, "dash_pads", 16, 16);

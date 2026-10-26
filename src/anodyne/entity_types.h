@@ -111,6 +111,7 @@
     X(CircusFolks)             \
     X(SageBoss)                \
     X(DashPad)                 \
+    X(GoDetector)              \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

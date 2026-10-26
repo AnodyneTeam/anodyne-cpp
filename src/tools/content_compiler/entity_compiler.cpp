@@ -175,6 +175,7 @@ const NamedEntity kNamed[] = {
     { "Circus_Folks", nullptr, nullptr, { 2 }, EPT_CircusFolks },
     { "Sage_Boss", nullptr, nullptr, {}, EPT_SageBoss },
     { "Dash_Pad", nullptr, nullptr, {}, EPT_DashPad },
+    { "Go_Detector", nullptr, nullptr, {}, EPT_GoDetector },
     { "NPC", "generic", nullptr, { 6 }, EPT_CliffDog },
     { "NPC", "Cell_Body", nullptr, {}, EPT_CellBody },
     { "Steam_Pipe", nullptr, nullptr, {}, EPT_SteamPipe },

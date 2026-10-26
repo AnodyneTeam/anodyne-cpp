@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include "dialog_compiler.hpp"
 #include "map_compiler.hpp"
@@ -700,6 +702,73 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     }
     fprintf(f, "};\n\n");
     fputs(BuildDoorTables(contentPaths, mapNames).c_str(), f);
+    // SwapperControl: each map's Swapper.dat (tab-separated: state, x, y, width, height)
+    std::unordered_set<std::string> swapperMaps;
+    for (const auto& name : mapNames)
+    {
+        std::ifstream in(std::filesystem::path(contentPaths.GetBasePath()) / "Maps" / name / "Swapper.dat");
+        std::string line;
+        std::string rows;
+        bool first = true;
+        while (std::getline(in, line))
+        {
+            if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+            {
+                line.erase(0, 3); // (StreamReader skips the BOM)
+            }
+            first = false;
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+            std::vector<std::string> fields;
+            std::stringstream ss(line);
+            std::string field;
+            while (std::getline(ss, field, '\t'))
+            {
+                fields.push_back(field);
+            }
+            if (fields.size() != 5)
+            {
+                continue;
+            }
+            static const char* const kStates[] = { "Default", "Allow", "Disallow", "DisallowSilently" };
+            int state = -1;
+            for (int s = 0; s < 4; s++)
+            {
+                state = fields[0] == kStates[s] ? s : state;
+            }
+            if (state < 0)
+            {
+                fprintf(stderr, "%s/Swapper.dat: unknown state %s\n", name.c_str(), fields[0].c_str());
+                continue;
+            }
+            char row[96];
+            snprintf(row, sizeof(row), "    { %d, %d, %d, %d, %d },\n", state, static_cast<int>(std::stof(fields[1])),
+                     static_cast<int>(std::stof(fields[2])), static_cast<int>(std::stof(fields[3])),
+                     static_cast<int>(std::stof(fields[4])));
+            rows += row;
+        }
+        if (!rows.empty())
+        {
+            swapperMaps.insert(name);
+            fprintf(f, "static const MapSwapRegion kSwapRegions_%s[] =\n{\n%s};\n", name.c_str(), rows.c_str());
+        }
+    }
+    fprintf(f, "static const MapSwapperList kMapSwapper[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        if (swapperMaps.count(name) != 0)
+        {
+            fprintf(f, "    { sizeof(kSwapRegions_%s) / sizeof(kSwapRegions_%s[0]), kSwapRegions_%s },\n", name.c_str(),
+                    name.c_str(), name.c_str());
+        }
+        else
+        {
+            fprintf(f, "    { 0, nullptr },\n");
+        }
+    }
+    fprintf(f, "};\n\n");
     fputs(BuildEntityTables(contentPaths, mapNames).c_str(), f);
     fprintf(f, "\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");

@@ -172,6 +172,7 @@ static void LoadWorldMap(bool placedAfter = false)
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
     World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap],
                kMapDark[gCurrentMap], !placedAfter);
+    World_SetSwapper(kMapSwapper[gCurrentMap]);
     Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 

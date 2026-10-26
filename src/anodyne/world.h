@@ -78,6 +78,11 @@ void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event);
 // Map.ChangeTile: tile (cx, cy) of a layer (0 BG, 1 BG2, 2 FG) becomes `tile` until the map loads again (collision
 // and drawing follow).
 void World_ChangeTile(int layer, int cx, int cy, int tile);
+// TileMap.GetTile: tile (cx, cy) of a layer, 0 outside it.
+int World_GetTile(int layer, int cx, int cy);
+// The map's SwapperControl (set with the map), and Map.CheckSwapper for tile (cx, cy): a SwapperState.
+void World_SetSwapper(const MapSwapperList& swapper);
+uint8_t World_CheckSwapper(int cx, int cy);
 
 // Darkness (GlobalState.darkness): the screen darkens by alpha (0-1) except inside lights. Map settings set it as
 // the player moves; entities (the Seer) drive it too.

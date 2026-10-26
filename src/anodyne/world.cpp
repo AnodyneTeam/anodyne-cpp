@@ -920,6 +920,7 @@ void CollideTile(int cx, int cy, Entity& e)
 
 // ---- Doors ----------------------------------------------------------------------------------------------------
 const MapDoorList* gDoors = nullptr;
+const MapSwapperList* gSwapper = nullptr;
 
 // GlobalState.WARP and PlayState's states around it (S_MAP_EXIT, S_MAP_ENTER), with its fade as the C# floats.
 enum WarpState : uint8_t
@@ -2178,4 +2179,34 @@ void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event)
     const uint8_t* c = ClassAtCell(cx, cy);
     allow = c[0];
     event = c[1];
+}
+
+int World_GetTile(int layer, int cx, int cy)
+{
+    if (layer < 0 || layer >= kLayerCount || cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
+    {
+        return 0;
+    }
+    return gLayerTiles[layer][cy * gLayerW[layer] + cx];
+}
+
+void World_SetSwapper(const MapSwapperList& swapper)
+{
+    gSwapper = &swapper;
+}
+
+uint8_t World_CheckSwapper(int cx, int cy)
+{
+    // SwapperControl.CheckCoord(tile * 16): the first region holding the point (Rectangle.Contains)
+    const int x = cx * 16;
+    const int y = cy * 16;
+    for (uint32_t i = 0; gSwapper && i < gSwapper->mCount; i++)
+    {
+        const MapSwapRegion& r = gSwapper->mRegions[i];
+        if (x >= r.mX && x < r.mX + r.mW && y >= r.mY && y < r.mY + r.mH)
+        {
+            return r.mState;
+        }
+    }
+    return SWAP_DEFAULT;
 }

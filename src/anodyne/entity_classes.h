@@ -125,6 +125,7 @@ Entity* Spawn_JavieraDead(const MapEntity& preset, Entity& player);
 Entity* Spawn_CircusFolks(const MapEntity& preset, Entity& player);
 Entity* Spawn_SageBoss(const MapEntity& preset, Entity& player);
 Entity* Spawn_DashPad(const MapEntity& preset, Entity& player);
+Entity* Spawn_GoDetector(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbBlocker(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity& player);

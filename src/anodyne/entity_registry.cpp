@@ -147,6 +147,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_SageBoss;
     case EPT_DashPad:
         return Spawn_DashPad;
+    case EPT_GoDetector:
+        return Spawn_GoDetector;
     case EPT_SplitBoss:
         return Spawn_SplitBoss;
     case EPT_Rat:
