@@ -22,6 +22,9 @@ var simStart = new ProcessStartInfo(args[0], $"--headless --ipc {port}" + (noRen
 // The C# game sees the bot's held keys as fresh presses every frame (headless, KeyInput.Update clears the key history
 // the bot keeps in the same dictionary): the port gets them the same way.
 simStart.Environment["ANODYNE_SIM_KEY_REPEAT"] = "1";
+// RecordingManager.Now counts the C# game's frames, which start 340 after the port's (the port's boot and title):
+// Slime's move timer truncates each frame's ticks, so the port counts the same way.
+simStart.Environment["ANODYNE_SIM_NOW_OFFSET"] = "340";
 var sim = Process.Start(simStart);
 // SIMHOST_STDERR=1: pass the simulator's stderr through (its debug prints)
 bool simStderr = Environment.GetEnvironmentVariable("SIMHOST_STDERR") == "1";

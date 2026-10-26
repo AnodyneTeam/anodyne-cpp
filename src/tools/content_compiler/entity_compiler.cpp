@@ -125,6 +125,7 @@ struct NamedEntity final
 
 const NamedEntity kNamed[] = {
     { "Console", nullptr, nullptr, { 0 }, EPT_Console },
+    { "Console", nullptr, "WINDMILL", { 0 }, EPT_WindmillConsole },
     { "Console", nullptr, "BLANK", { 1 }, EPT_BlankConsole },
     { "Gate", nullptr, nullptr, {}, EPT_Gate },
     { "Button", nullptr, nullptr, {}, EPT_Button },

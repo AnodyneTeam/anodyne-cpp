@@ -75,6 +75,7 @@
     X(SageRedCave)              \
     X(SageCrowd)                \
     X(BioFilm)                  \
+    X(WindmillConsole)          \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

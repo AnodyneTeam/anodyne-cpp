@@ -2712,3 +2712,243 @@ Entity* Spawn_BioFilm(const MapEntity& preset, Entity&)
     }
     return e;
 }
+
+// ---- Windmill Console (Npc/Windmill/Console.cs) ----------------------------------------------------------------------
+// Switching it on plays the cutscene that shows each dungeon's statue sliding aside, then opens the windmill.
+namespace
+{
+enum WindmillStep : uint8_t
+{
+    WM_START,
+    WM_QUIET,     // the song fading out
+    WM_FADE_OUT,  // to black
+    WM_STATUE,    // the next statue's warp
+    WM_SHOW,      // fading in part way
+    WM_REVEAL,    // all the way
+    WM_MOVE,      // the statue slides
+    WM_HIDE,      // back to black
+    WM_RETURN,
+    WM_FADE_BACK, // in again, with the song
+};
+
+struct WindmillConsoleData final
+{
+    uint8_t mStep;
+    uint8_t mStatue; // which dungeon's
+    bool mVolumeDone; // VolumeEvent.ReachedTarget
+    fx mVolumeTarget;
+    fx mVolumeSpeed;
+    fx mFade; // gameScreenFade.alpha
+    fx mTargetX;
+    fx mTargetY;
+    Entity* mStatueEntity;
+};
+
+const EntityClass kWindmillStatue = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// The coroutine's MoveNext: false at each yield, true once it is done.
+bool WindmillCutsceneStep(Entity& self)
+{
+    struct StatueLoc
+    {
+        const char* mMap;
+        int mGx;
+        int mGy;
+        int mTx;
+        int mTy;
+    };
+    static const StatueLoc kLocs[3] = {
+        { "BEDROOM", 4, 0, 5, 2 },
+        { "REDCAVE", 6, 2, 4, 4 },
+        { "CROWD", 9, 4, 4, 2 },
+    };
+    WindmillConsoleData& d = self.Data<WindmillConsoleData>();
+    Entity* statue = d.mStatueEntity;
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case WM_START:
+            d.mVolumeTarget = 0;
+            d.mVolumeSpeed = FxF(0.6f);
+            d.mVolumeDone = false;
+            d.mStatueEntity = Ecs_Create(kWindmillStatue, 0, 0, PART_VISUAL);
+            if (d.mStatueEntity)
+            {
+                d.mStatueEntity->mCutsceneOwned = true;
+                Ecs_MarkSpawned(*d.mStatueEntity);
+                Ecs_SetSheet(*d.mStatueEntity, "big_statue", 32, 48);
+                d.mStatueEntity->mV->mLayer = LAYER_ENTITIES;
+                d.mStatueEntity->mV->mVisible = false;
+            }
+            d.mStep = WM_QUIET; // yield EntityEvent
+            return false;
+        case WM_QUIET:
+            if (!d.mVolumeDone)
+            {
+                return false;
+            }
+            d.mStep = WM_FADE_OUT;
+            [[fallthrough]];
+        case WM_FADE_OUT:
+            if (!MoveTo(d.mFade, kFxOne, FxF(0.6f)))
+            {
+                return false;
+            }
+            d.mStatue = 0;
+            d.mStep = WM_STATUE;
+            [[fallthrough]];
+        case WM_STATUE:
+        {
+            if (d.mStatue == 3)
+            {
+                if (statue)
+                {
+                    statue->mExists = false;
+                }
+                World_CutsceneReturn(); // yield ReturnWarp
+                d.mStep = WM_RETURN;
+                return false;
+            }
+            const StatueLoc& loc = kLocs[d.mStatue];
+            if (statue)
+            {
+                statue->mT->mX = Fx(loc.mGx * 160 + loc.mTx * 16);
+                statue->mT->mY = Fx(loc.mGy * 160 + loc.mTy * 16);
+                Ecs_SetFrame(*statue, d.mStatue);
+                statue->mV->mVisible = true;
+            }
+            World_CutsceneWarp(Game_MapIndex(loc.mMap), loc.mGx, loc.mGy); // yield WarpEvent
+            d.mStep = WM_SHOW;
+            return false;
+        }
+        case WM_SHOW:
+            if (!MoveTo(d.mFade, FxF(0.45f), FxF(0.6f)))
+            {
+                return false;
+            }
+            Game_PlaySfx("red_cave_rise");
+            d.mStep = WM_REVEAL;
+            [[fallthrough]];
+        case WM_REVEAL:
+            if (!MoveTo(d.mFade, 0, FxF(0.6f)))
+            {
+                return false;
+            }
+            if (statue)
+            {
+                // DungeonStatue.MoveDir: the bedroom's goes up, the others right
+                d.mTargetX = statue->mT->mX + Fx(d.mStatue == 0 ? 0 : 32);
+                d.mTargetY = statue->mT->mY - Fx(d.mStatue == 0 ? 32 : 0);
+            }
+            d.mStep = WM_MOVE;
+            [[fallthrough]];
+        case WM_MOVE:
+            if (statue)
+            {
+                // (|: both move every frame)
+                const bool x = MoveTo(statue->mT->mX, d.mTargetX, Fx(12));
+                const bool y = MoveTo(statue->mT->mY, d.mTargetY, Fx(12));
+                if (!x || !y)
+                {
+                    return false;
+                }
+            }
+            Screen_Shake(FxF(0.05f), FxF(0.5f));
+            Game_PlaySfx("wb_hit_ground");
+            d.mStep = WM_HIDE;
+            [[fallthrough]];
+        case WM_HIDE:
+            if (!MoveTo(d.mFade, kFxOne, FxF(0.6f)))
+            {
+                return false;
+            }
+            if (statue)
+            {
+                statue->mV->mVisible = false;
+            }
+            d.mStatue++;
+            d.mStep = WM_STATUE;
+            break;
+        case WM_RETURN:
+            d.mVolumeTarget = kFxOne;
+            d.mVolumeDone = false;
+            d.mStep = WM_FADE_BACK;
+            [[fallthrough]];
+        default:
+        {
+            // (|: the fade moves every frame)
+            const bool faded = MoveTo(d.mFade, 0, FxF(0.6f));
+            if (!faded || !d.mVolumeDone)
+            {
+                return false;
+            }
+            Game_PlaySong("windmill");
+            Event_Inc("WindmillOpened");
+            if (statue)
+            {
+                Ecs_Free(*statue);
+                d.mStatueEntity = nullptr;
+            }
+            return true;
+        }
+        }
+    }
+}
+
+// The cutscene's frame: its step, then its own entities (the VolumeEvent) update; the screen fade follows.
+bool WindmillCutscene(Entity& self)
+{
+    WindmillConsoleData& d = self.Data<WindmillConsoleData>();
+    const bool done = WindmillCutsceneStep(self);
+    if (!d.mVolumeDone)
+    {
+        fx volume = FxF(Game_SongVolume());
+        d.mVolumeDone = MoveTo(volume, d.mVolumeTarget, d.mVolumeSpeed);
+        Game_SetSongVolume(volume.mV);
+    }
+    Screen_SetFade(d.mFade);
+    return done;
+}
+
+bool WindmillConsoleInteract(Entity& self, Facing)
+{
+    if (Ecs_AnimIs(self, "active"))
+    {
+        WindmillConsoleData& d = self.Data<WindmillConsoleData>();
+        d = WindmillConsoleData();
+        Game_StartCutscene(self, WindmillCutscene);
+        Ecs_Play(self, "idle");
+    }
+    Game_PlaySfx("get_small_health");
+    return true;
+}
+
+const EntityClass kWindmillConsole = {
+    "Console", Ecs_BaseUpdate, nullptr, nullptr, WindmillConsoleInteract, nullptr, nullptr, nullptr,
+    0,         0,              ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_WindmillConsole(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kWindmillConsole, preset, "windmill_inside", 48, 48);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_Play(*e, "idle");
+    if (Event_Get("WindmillOpened") == 0)
+    {
+        Ecs_Play(*e, "active");
+    }
+    e->mV->mOffX = e->mV->mOffY = Fx(16);
+    e->mT->mX += Fx(16);
+    e->mT->mY += Fx(16);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    return e;
+}

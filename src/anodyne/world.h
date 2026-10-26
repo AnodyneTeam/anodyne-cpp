@@ -92,6 +92,8 @@ void Darkness_SetPlayerLight(Entity& light);
 void Darkness_MakeLight(Entity& e, const char* sheet);
 // A full-screen darken (0-16) for warps that also covers the lights; 0 leaves just the darkness.
 void World_ScreenDarken(int level);
+// GlobalState.gameScreenFade's alpha (0-1, black).
+void Screen_SetFade(fx alpha);
 
 // GlobalState.screenShake / flash: shake the playfield by up to intensity (a fraction of the screen) for a time,
 // or flash it white (or black) and fade back over a time.

@@ -99,6 +99,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_SageCrowd;
     case EPT_BioFilm:
         return Spawn_BioFilm;
+    case EPT_WindmillConsole:
+        return Spawn_WindmillConsole;
     case EPT_Bunny:
         return Spawn_Bunny;
     case EPT_BunnyRun:

@@ -1322,8 +1322,19 @@ void Darkness_MakeLight(Entity& e, const char* sheet)
     Ecs_SetSolid(e, false);
 }
 
+// GlobalState.gameScreenFade (black): over everything but the UI.
+static fx gGameFade = 0;
+
+void Screen_SetFade(fx alpha)
+{
+    gGameFade = alpha;
+    World_ScreenDarken(0);
+}
+
 void World_ScreenDarken(int level)
 {
+    const int fade = FxFloor(gGameFade * 16 + kFxOne / 2);
+    level = fade > level ? fade : level;
     const int dark = DarkLevel();
     const bool lights = level == 0 && dark > 0;
     if (lights != gLightWindows)

@@ -409,6 +409,22 @@ const EntityClass kChest = {
     0,          GROUP_PLAYER, ECF_INTERACTABLE,
 };
 
+// WindmillTreasureChest: shut until the windmill is opened
+bool WindmillChestInteract(Entity& self, Facing playerFacing)
+{
+    if (Event_Get("WindmillOpened") == 0)
+    {
+        Game_ShowDialogueFor("misc", "any", "treasure", 0);
+        return true;
+    }
+    return ChestInteract(self, playerFacing);
+}
+
+const EntityClass kWindmillChest = {
+    "WindmillTreasureChest", nullptr, nullptr, ChestCollided, WindmillChestInteract, nullptr, nullptr, nullptr,
+    0,                       GROUP_PLAYER,    ECF_INTERACTABLE,
+};
+
 // ---- Button (Button.cs) ---------------------------------------------------------------------------------------
 struct ButtonData final
 {
@@ -1859,7 +1875,8 @@ Entity* Spawn_SageBlank(const MapEntity& preset, Entity&)
 
 Entity* Spawn_Treasure(const MapEntity& preset, Entity&)
 {
-    Entity* e = Spawn_Basic(kChest, preset, "treasureboxes");
+    const bool windmill = gGame.mMapName && strcmp(gGame.mMapName, "WINDMILL") == 0;
+    Entity* e = Spawn_Basic(windmill ? kWindmillChest : kChest, preset, "treasureboxes");
     if (!e)
     {
         return nullptr;

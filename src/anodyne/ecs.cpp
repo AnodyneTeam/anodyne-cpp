@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tonc.h"
@@ -405,8 +406,15 @@ namespace
 {
 uint32_t gGameFrame;
 
+// RecordingManager.Now: frame * TicksPerSecond / 60, truncated frame by frame, so what a difference comes to depends
+// on the frame numbers themselves. A parity replay counts them the C# game's way (it is that many frames behind).
 int64_t FrameTicks(uint32_t frame)
 {
+#ifdef ANODYNE_SIM
+    static const char* const sOffset = getenv("ANODYNE_SIM_NOW_OFFSET");
+    static const uint32_t sBehind = sOffset ? static_cast<uint32_t>(atoi(sOffset)) : 0;
+    frame -= sBehind;
+#endif
     return static_cast<int64_t>(frame) * 10000000 / 60;
 }
 } // namespace
