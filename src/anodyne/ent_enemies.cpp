@@ -208,6 +208,7 @@ void SpawnGoo(Entity& slime)
     }
     g->mB->mW = g->mB->mH = 6;
     Ecs_SetSheet(*g, "slime_goo");
+    Ecs_SetFrameBase(*g, Game_IsCell() ? 4 : 0);
     g->mV->mLayer = LAYER_PARTICLES;
     PoolData& d = g->Data<PoolData>();
     d.mSlot = static_cast<uint8_t>(slot);
@@ -264,7 +265,7 @@ void SlimeEnterMove(Entity& self)
 {
     SlimeData& d = self.Data<SlimeData>();
     d.mState = SLIME_MOVE;
-    Ecs_Play(self, "Move");
+    Ecs_Play(self, Game_IsCell() ? "Move@cell" : "Move");
     d.mMove.Advance(Game_SecondsSince(d.mExitFrame));
     if (d.mBullet)
     {
@@ -304,7 +305,7 @@ void SlimeUpdate(Entity& self)
         if (d.mHealth <= 0)
         {
             d.mState = SLIME_DYING;
-            Ecs_Play(self, "Dying");
+            Ecs_Play(self, Game_IsCell() ? "Dying@cell" : "Dying");
         }
         else if (Ecs_AnimFinished(self))
         {
@@ -344,7 +345,7 @@ void SlimeCollided(Entity& self, Entity& other)
         self.mT->mVelY = Fx(100) * FacingY(f);
         d.mState = SLIME_HURT;
         d.mExitFrame = Game_Frame();
-        Ecs_Play(self, "Hurt");
+        Ecs_Play(self, Game_IsCell() ? "Hurt@cell" : "Hurt");
     }
 }
 
@@ -545,7 +546,9 @@ void AnnoyerUpdate(Entity& self)
                 Ecs_MoveAfter(*ex, *after);
                 Ecs_SetSolid(*ex, false);
                 Ecs_SetSheet(*ex, "enemy_explode_2");
-                Ecs_Play(*ex, "explode");
+                // (GlobalState.IsCell: the CELL's frames, 5 on, at 10 fps)
+                Ecs_SetFrameBase(*ex, Game_IsCell() ? 5 : 0);
+                Ecs_Play(*ex, "explode", true, Game_IsCell() ? 10 : 0); // (forced: the rate only sticks on a Play that restarts)
             }
             Game_PlaySfx("hit_wall");
         }
@@ -4685,7 +4688,7 @@ const EntityClass kWallBoss = {
 // GlobalState.IsCell ? o : 0: the CELL's sprites sit `o` frames on.
 int CellFrames(int o)
 {
-    return gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0 ? o : 0;
+    return Game_IsCell() ? o : 0;
 }
 
 // AnimationChanged: the _l anims are the _r ones mirrored.
@@ -11340,7 +11343,7 @@ Entity* Spawn_Annoyer(const MapEntity& preset, Entity&)
     d.mActive.Add(2.3f, ANNOYER_FIRE);
     d.mCircle.Add(3.0f, ANNOYER_SWOOP_TIMER);
     AnnoyerEnterActive(*e);
-    Ecs_Play(*e, preset.mFrame == kAnnoyerSuper ? "flap_super" : "flap");
+    Ecs_Play(*e, Game_IsCell() ? "flap@cell" : (preset.mFrame == kAnnoyerSuper ? "flap_super" : "flap"));
     return e;
 }
 

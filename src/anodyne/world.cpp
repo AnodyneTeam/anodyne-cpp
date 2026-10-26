@@ -1068,6 +1068,7 @@ void CheckForTransition()
     t.mX = newX;
     t.mY = newY;
     Ecs_FireEvent(GEV_START_SCREEN_TRANSITION);
+    World_TileChangesStart();
     UpdateMusic(true); // ReloadSettings(player position) as the screen changes
     UpdateDarkness(true);
     Player_SetGridEntrance();
@@ -1088,6 +1089,7 @@ void StateTransition()
         Player_SetInvincible(false);
         Player_SetDontMove(false);
         gTransition = false;
+        World_TileChangesEnd(); // (FinalizeTransition)
         Entities_EndTransition();
     }
 }
@@ -1121,12 +1123,15 @@ const EntityClass kDieDummyClass = {
     "PlayerDieDummy", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
 
-void SetDeathBlend(bool white, fx level)
+// The DeathFadeIn (white, or the CELL's black) leaves the sprites (the dummy) alone; the black overlay after
+// covers everything.
+void SetDeathBlend(bool fadeIn, fx level)
 {
     int y = FxFloor(level * 16 + kFxOne / 2);
     y = y < 0 ? 0 : (y > 16 ? 16 : y);
+    const bool white = fadeIn && !Game_IsCell();
     REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_BACKDROP | (white ? BLD_WHITE : BLD_BLACK) |
-                 (white ? 0 : BLD_OBJ);
+                 (fadeIn ? 0 : BLD_OBJ);
     REG_BLDY = static_cast<uint16_t>(y);
 }
 
@@ -1158,7 +1163,7 @@ void DeathStart()
     {
         Entity& d = *gDeath.mDummy;
         d.mPlayerOwned = true; // kept until the death state ends
-        Ecs_SetSheet(d, "young_player", 16, 16);
+        Ecs_SetSheet(d, Game_IsCell() ? "young_player_cell" : "young_player", 16, 16);
         d.mV->mOffX = Fx(3);
         d.mV->mOffY = Fx(4);
         d.mV->mLayer = LAYER_UI;
@@ -1265,7 +1270,7 @@ void DeathUpdate()
     static const char* const kLines[3] = { "Continue?", "Yes", "No.." };
     static const int kX[3] = { 50, 69, 67 };
     static const int kY[3] = { 40, 48, 56 };
-    Dialog_ShowLabels(kLines, kX, kY, 3, 38, 53, (d.mNo ? kY[2] : kY[1]) + 2);
+    Dialog_ShowLabels(kLines, kX, kY, 3, 38, 53, (d.mNo ? kY[2] : kY[1]) + 2, Game_IsCell()); // (white on the CELL's black)
 }
 
 void DrawWorld()
@@ -1275,6 +1280,27 @@ void DrawWorld()
     Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY);
     gShown = true;
 }
+// TileMap.changedTiles / oldChangedTiles: each tile's value from before its first change on this screen. As a screen
+// transition ends, the old screen's are put back (so swaps, and anything else that changes tiles, last only while
+// you stay on the screen).
+struct TileChange final
+{
+    uint8_t mLayer;
+    uint16_t mX;
+    uint16_t mY;
+    uint16_t mOld;
+};
+constexpr int kMaxTileChanges = 256;
+TileChange gTileChanges[2][kMaxTileChanges] __attribute__((section(".sbss"))); // (EWRAM)
+int gTileChangeCount[2] = {};
+int gTileChangesCur = 0;
+
+void ResetTileChanges()
+{
+    gTileChangeCount[0] = 0;
+    gTileChangeCount[1] = 0;
+}
+
 } // namespace
 
 void Game_PlaySong(const char* name, float volume)
@@ -1630,11 +1656,17 @@ bool World_Init(ObjVramAllocator& vram)
     gPlayerLight = Ecs_Create(kPlayerLightClass, 0, 0, PART_VISUAL | PART_BRAIN);
     gPlayerLight->mPlayerOwned = true;
     Darkness_MakeLight(*gPlayerLight, "player-light");
-    gPlayerLight->mV->mScale = Fx(2);
-    gPlayerLight->Data<PlayerLightData>().mFlickerTimer = FxSec(6 / 30.0f);
     gPlayerLight->mExists = false;
+    World_NewPlayState();
     CreateHealthBar();
     return true;
+}
+
+void World_NewPlayState()
+{
+    // (the title starts a new PlayState, with a new Player and so a new PlayerLight)
+    gPlayerLight->mV->mScale = Fx(2);
+    gPlayerLight->Data<PlayerLightData>().mFlickerTimer = FxSec(6 / 30.0f);
 }
 
 // The map's palette, tileset and layers (into VRAM / EWRAM): what the BG layers draw.
@@ -1651,6 +1683,7 @@ static void LoadMapGraphics(const MapEntry& map)
     memcpy16(tile_mem, map.mTileSetData.mTileSetData, tilesetBytes / 2);
 
     // Layers, unpacked into EWRAM.
+    ResetTileChanges();
     gTile16Entries = map.mScreenBlockData.mTile16Entries;
     gTile16Count = map.mScreenBlockData.mTile16Count;
     for (int layer = 0; layer < kLayerCount; layer++)
@@ -1913,6 +1946,7 @@ void World_Update()
         {
             gWarp.mState = WARP_EXIT; // StateNormal: GlobalState.WARP -> S_MAP_EXIT, and nothing else this frame
             Ecs_FireEvent(GEV_START_WARP);
+            World_TileChangesStart();
         }
         else
         {
@@ -2153,13 +2187,10 @@ void World_GetCellsSize(int& w, int& h)
     h = gCellsH;
 }
 
-void World_ChangeTile(int layer, int cx, int cy, int tile)
+namespace
 {
-    // TileMap.ChangeTile: outside the layer does nothing
-    if (layer < 0 || layer >= kLayerCount || cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
-    {
-        return;
-    }
+void SetTile(int layer, int cx, int cy, int tile)
+{
     const_cast<uint16_t*>(gLayerTiles[layer])[cy * gLayerW[layer] + cx] = static_cast<uint16_t>(tile);
 
     // The cell's class again, merged from BG and BG2 like the content compiler's
@@ -2224,6 +2255,46 @@ void World_ChangeTile(int layer, int cx, int cy, int tile)
             WriteBgTile(cx * 2 + (i & 1), cy * 2 + (i >> 1));
         }
     }
+}
+} // namespace
+
+void World_ChangeTile(int layer, int cx, int cy, int tile)
+{
+    // TileMap.ChangeTile: outside the layer does nothing
+    if (layer < 0 || layer >= kLayerCount || cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
+    {
+        return;
+    }
+    TileChange* changes = gTileChanges[gTileChangesCur];
+    int& count = gTileChangeCount[gTileChangesCur];
+    int i = 0;
+    while (i < count && !(changes[i].mLayer == layer && changes[i].mX == cx && changes[i].mY == cy))
+    {
+        i++;
+    }
+    if (i == count && count < kMaxTileChanges)
+    {
+        changes[count++] = { static_cast<uint8_t>(layer), static_cast<uint16_t>(cx), static_cast<uint16_t>(cy),
+                             static_cast<uint16_t>(World_GetTile(layer, cx, cy)) };
+    }
+    SetTile(layer, cx, cy, tile);
+}
+
+void World_TileChangesStart()
+{
+    gTileChangesCur ^= 1;
+    gTileChangeCount[gTileChangesCur] = 0;
+}
+
+void World_TileChangesEnd()
+{
+    const int old = gTileChangesCur ^ 1;
+    for (int i = 0; i < gTileChangeCount[old]; i++)
+    {
+        const TileChange& c = gTileChanges[old][i];
+        SetTile(c.mLayer, c.mX, c.mY, c.mOld);
+    }
+    gTileChangeCount[old] = 0;
 }
 
 void World_SetMapOffsetX(int px)

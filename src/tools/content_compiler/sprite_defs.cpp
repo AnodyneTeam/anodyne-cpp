@@ -34,6 +34,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "annoyer", 16, 16, {
         { "flap", { 0, 1, 2, 3, 4, 5 }, 8.0f, true },
         { "flap_super", { 12, 13, 14, 15, 16, 17 }, 8.0f, true },
+        { "flap@cell", { 6, 7 }, 4.0f, true },
     } },
     { "arrows", 7, 7, {
         { "disabledRight", { 2 }, 1.0f, true },
@@ -165,6 +166,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "broom_cell", 16, 16, {
+        { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "burst_plant", 16, 16, {
         { "idle", { 0 }, 1.0f, true },
@@ -482,6 +484,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "Open", { 16, 17, 18, 19, 20 }, 10.0f, false },
     } },
     { "knife", 16, 16, {
+        { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "life_cicada", 16, 16, {
         { "idle", { 2, 3, 2, 3, 2, 2, 2, 2 }, 8.0f, true },  // variant-relative
@@ -737,6 +740,9 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "Move", { 0, 1 }, 3.0f, true },  // variant-relative
         { "Hurt", { 0, 6, 0, 6 }, 15.0f, false },  // variant-relative
         { "Dying", { 0, 6, 0, 6 }, 12.0f, false },  // variant-relative
+        { "Move@cell", { 4, 5 }, 3.0f, true },
+        { "Hurt@cell", { 4, 6, 4, 6 }, 15.0f, false },
+        { "Dying@cell", { 4, 6, 4, 6 }, 12.0f, false },
     } },
     { "slime_bullet", 8, 8, {
         { "move", { 0, 1 }, 10.0f, true },
@@ -850,6 +856,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     } },
     { "whiteportal", 16, 16, {
         { "a", { 0, 1, 2 }, 8.0f, true },
+        { "a@cell", { 4, 5 }, 8.0f, true },
     } },
     { "wide_attack_v", 12, 24, {
         { "a", { 0, 1, 2, 3, 4 }, 14.0f, false },
@@ -889,6 +896,29 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "die", { 25, 26, 27, 24, 25, 26, 27, 24, 25, 26, 27, 32 }, 12.0f, false },
     } },
     { "young_player_cell", 16, 16, {
+        { "walk_d", { 1, 0 }, 6.0f, true },
+        { "walk_r", { 2, 3 }, 8.0f, true },
+        { "walk_u", { 4, 5 }, 6.0f, true },
+        { "walk_l", { 6, 7 }, 8.0f, true },
+        { "attack_d", { 8, 9 }, 10.0f, false },
+        { "attack_r", { 10, 11 }, 10.0f, false },
+        { "attack_u", { 12, 13 }, 10.0f, false },
+        { "attack_l", { 14, 15 }, 10.0f, false },
+        { "fall", { 28, 29, 30, 31 }, 5.0f, false },
+        { "slumped", { 32 }, 1.0f, true },
+        { "whirl", { 25, 26, 27, 24 }, 12.0f, true },
+        { "idle_d", { 24 }, 4.0f, true },
+        { "idle_r", { 25 }, 4.0f, true },
+        { "idle_u", { 26 }, 4.0f, true },
+        { "idle_l", { 27 }, 4.0f, true },
+        { "jump_d", { 16, 17 }, 4.0f, true },
+        { "jump_r", { 18, 19 }, 4.0f, true },
+        { "jump_u", { 20, 21 }, 4.0f, true },
+        { "jump_l", { 22, 23 }, 4.0f, true },
+        { "enter_fall", { 2 }, 1.0f, true },
+        { "idle_climb", { 33 }, 1.0f, true },
+        { "climb", { 34, 35 }, 8.0f, true },
+        { "die", { 25, 26, 27, 24, 25, 26, 27, 24, 25, 26, 27, 32 }, 12.0f, false },
     } },
     { "young_player_reflection", 16, 16, {
     } },

@@ -212,6 +212,11 @@ int Inventory_CardCount()
     return n;
 }
 
+bool Game_IsCell()
+{
+    return gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0;
+}
+
 bool Game_CanChangeBroom()
 {
     const char* map = gGame.mMapName ? gGame.mMapName : "";

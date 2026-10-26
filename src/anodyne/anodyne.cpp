@@ -511,6 +511,7 @@ int main()
                 Dialog_ResetProgress();
                 Save_SetSlot(slot);
                 Save_Read(slot);
+                World_NewPlayState();
                 gCurrentMap = gGame.mCheckpointMap >= 0 ? static_cast<uint32_t>(gGame.mCheckpointMap) : 0;
                 mode = AppMode::MapViewer;
                 EnterMapViewerMode();
@@ -522,6 +523,7 @@ int main()
             {
                 // A new game in this file.
                 GameState_Reset();
+                World_NewPlayState();
                 Dialog_ResetProgress();
                 Save_SetSlot(slot);
                 ScreenBlack(true);

@@ -1177,6 +1177,7 @@ Entity* MakeHealth(fx x, fx y, bool big, const MapEntity* preset)
         return nullptr;
     }
     Ecs_SetSheet(*e, big ? "big_health_pickup" : "small_health_pickup");
+    Ecs_SetFrameBase(*e, Game_IsCell() ? 4 : 0);
     e->mB->mW = static_cast<int16_t>(big ? 16 : 10);
     e->mB->mH = 16;
     Ecs_Play(*e, "float");
@@ -1913,7 +1914,7 @@ Entity* Spawn_Treasure(const MapEntity& preset, Entity&)
         return nullptr;
     }
     e->mB->mImmovable = true;
-    int frame = 0;
+    int frame = Game_IsCell() ? 4 : 0;
     if (Preset_Activated(preset))
     {
         frame++;
@@ -2112,7 +2113,9 @@ Entity* Spawn_Explosion(const Entity& parent)
         Ecs_SetSolid(*e, false);
         Ecs_SetSheet(*e, "enemy_explode_2");
         e->mV->mLayer = LAYER_BG_ENTITIES;
-        Ecs_Play(*e, "explode");
+        // (GlobalState.IsCell: the CELL's frames, 5 on, at 10 fps)
+        Ecs_SetFrameBase(*e, Game_IsCell() ? 5 : 0);
+        Ecs_Play(*e, "explode", true, Game_IsCell() ? 10 : 0);
     }
     return e;
 }
@@ -2124,6 +2127,7 @@ Entity* Spawn_Checkpoint(const MapEntity& preset, Entity& player)
     {
         return nullptr;
     }
+    Ecs_SetFrameBase(*e, Game_IsCell() ? 4 : 0);
     e->mB->mW = e->mB->mH = 8;
     e->mV->mOffX = e->mV->mOffY = Fx(4);
     e->mT->mX += Fx(4);
@@ -2288,10 +2292,9 @@ Entity* Spawn_Door(const MapEntity& preset, Entity& player)
     switch (type)
     {
     case DOOR_BLANK_PORTAL:
-        // (the cell variant, frames 4-5, is the post-game's)
         Ecs_SetSheet(*e, "whiteportal");
         e->mV->mOffX = e->mV->mOffY = Fx(7);
-        Ecs_Play(*e, "a");
+        Ecs_Play(*e, Game_IsCell() ? "a@cell" : "a");
         break;
     case DOOR_WHIRLPOOL:
         Ecs_SetSheet(*e, "whirlpool");
@@ -2299,6 +2302,7 @@ Entity* Spawn_Door(const MapEntity& preset, Entity& player)
         break;
     case DOOR_NEXUS_PAD:
         Ecs_SetSheet(*e, "nexus_pad");
+        Ecs_SetFrameBase(*e, Game_IsCell() ? 2 : 0);
         e->mV->mOffX = Fx(6);
         e->mV->mOffY = Fx(4);
         Ecs_Play(*e, "off");
@@ -2923,8 +2927,7 @@ Entity* Spawn_DashPad(const MapEntity& preset, Entity&)
         return nullptr;
     }
     e->mV->mLayer = LAYER_BG_ENTITIES;
-    const bool cell = gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0;
-    Ecs_SetFrame(*e, preset.mFrame + 4 + (cell ? 4 : 0));
+    Ecs_SetFrame(*e, preset.mFrame + 4 + (Game_IsCell() ? 4 : 0));
     static const Facing kFacings[4] = { FACE_UP, FACE_RIGHT, FACE_DOWN, FACE_LEFT };
     e->mFacing = kFacings[preset.mFrame < 3 ? preset.mFrame : 3];
     e->Data<DashPadData>() = DashPadData();

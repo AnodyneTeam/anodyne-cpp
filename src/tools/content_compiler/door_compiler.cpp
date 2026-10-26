@@ -134,6 +134,10 @@ std::string BuildDoorTables(const ContentPaths& contentPaths, const std::vector<
         {
             offY = -36;
         }
+        else if (d.mType == 4 && mapNames[d.mMap] == "CELL")
+        {
+            offY = -12; // (BlankPortal: GlobalState.IsCell)
+        }
 
         char buf[256];
         snprintf(buf, sizeof(buf), "    { %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d },\n", d.mX + kind->mHx,

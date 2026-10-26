@@ -47,9 +47,9 @@ namespace AnodyneSharp.Recording
 
         /// <summary>Puts the port's RNG where the C#'s is after that many draws (parity replays: the title screens draw
         /// differently).</summary>
-        public bool SetRng(long draws)
+        public bool SetRng(long draws, bool keepShake = false)
         {
-            _out.WriteLine($"rng {draws}");
+            _out.WriteLine(keepShake ? $"rng {draws} keep" : $"rng {draws}");
             return _in.ReadLine() == "ok";
         }
 

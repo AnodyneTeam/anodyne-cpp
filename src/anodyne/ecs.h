@@ -563,6 +563,8 @@ int Ecs_CountChildren(const Entity& parent, const EntityClass& cls);
 
 // Entity.Play / SetFrame / PlayFacing on the visual. Play returns true when the anim changed (AnimationChanged).
 bool Ecs_SetSheet(Entity& e, const char* sheet, int frameW = 0, int frameH = 0);
+// AnimatedSpriteRenderer.SetTexture: another sheet with the same anims (the one playing carries on).
+bool Ecs_SetTexture(Entity& e, const char* sheet, int frameW = 0, int frameH = 0);
 bool Ecs_Play(Entity& e, const char* anim, bool force = false, int fps = 0);
 // `variant`: "@N" for a sheet's Nth anim set of that name.
 void Ecs_PlayFacing(Entity& e, const char* prefix, const char* variant = nullptr);

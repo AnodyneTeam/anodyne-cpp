@@ -1443,6 +1443,16 @@ void Player_BeIdle()
     PlayerPlayFacing("idle");
 }
 
+namespace
+{
+// Broom.UpdateBroomType's texture: the CELL's, the SUBURB's knife, or the broom.
+void BroomTexture()
+{
+    const char* sheet = strcmp(gMapName, "CELL") == 0 ? "broom_cell" : (strcmp(gMapName, "SUBURB") == 0 ? "knife" : "broom");
+    Ecs_SetTexture(*gBroom, sheet, 16, 16);
+}
+} // namespace
+
 void Player_Reset(const char* mapName)
 {
     strncpy(gMapName, mapName ? mapName : "", sizeof(gMapName) - 1);
@@ -1480,6 +1490,9 @@ void Player_Reset(const char* mapName)
         PlayerPlay("enter_fall");
     }
     d.mEnterFall = false;
+    const bool cell = strcmp(gMapName, "CELL") == 0;
+    Ecs_SetTexture(*gPlayer, cell ? "young_player_cell" : "young_player", 16, 16);
+    BroomTexture();
     if (d.mRaft)
     {
         Dust_SetRaft(*d.mRaft, false);
@@ -1742,6 +1755,7 @@ void Player_UpdateBroomType()
     b.mB->mW = b.mB->mH = 16;
     b.mV->mOffX = 0;
     b.mV->mOffY = 0;
+    BroomTexture();
 }
 
 void Player_DropBroomDust()

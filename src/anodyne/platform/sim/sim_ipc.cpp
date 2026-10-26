@@ -216,7 +216,8 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
         }
         else if (!strcmp(cmd, "rng") && sscanf(line.c_str(), "rng %u", &a) == 1)
         {
-            GameProbe_SetRng(a);
+            // ("rng N keep": the screen shake carries on, as when a replay picks up again after the title)
+            GameProbe_SetRng(a, sscanf(line.c_str(), "rng %*u %63s", arg) == 1 && !strcmp(arg, "keep"));
             SendLine("ok");
         }
         else if (!strcmp(cmd, "checkpoint") && sscanf(line.c_str(), "checkpoint %63s %u %u", arg, &a, &b) == 3)

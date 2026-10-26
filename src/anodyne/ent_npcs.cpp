@@ -2372,11 +2372,13 @@ Entity* Spawn_SageCrowd(const MapEntity& preset, Entity&)
 
 Entity* Spawn_Rock(const MapEntity& preset, Entity&)
 {
-    Entity* e = Spawn_Basic(kRock, preset, "note_rock");
+    // Rock.GetSprite: SPACE's rocks are on its NPC sheet, the CELL's a frame on
+    const bool space = gGame.mMapName && strcmp(gGame.mMapName, "SPACE") == 0;
+    Entity* e = Spawn_Basic(kRock, preset, space ? "space_npcs" : "note_rock");
     if (e)
     {
         e->mB->mImmovable = true;
-        Ecs_SetFrame(*e, 0);
+        Ecs_SetFrame(*e, space ? (preset.mX / 160 > 5 ? 31 : 30) : (Game_IsCell() ? 1 : 0));
     }
     return e;
 }

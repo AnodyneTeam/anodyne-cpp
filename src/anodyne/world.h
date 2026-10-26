@@ -10,6 +10,8 @@
 
 // Creates the player sprite and its overlays. The world uses OAM slots 0-9 and OBJ palette banks 0-3.
 bool World_Init(ObjVramAllocator& vram);
+// The title screen starts a new play state: what the C# makes afresh with it (the player's light).
+void World_NewPlayState();
 
 // Loads the map's palette/tileset into VRAM and its collision into RAM, then puts the player on a free spot.
 // mapName (e.g. "FIELDS") selects the map's foot-overlay sprites; `audio` is its music/ambience settings and `scroll` its scrolling background (if any).
@@ -78,6 +80,10 @@ void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event);
 // Map.ChangeTile: tile (cx, cy) of a layer (0 BG, 1 BG2, 2 FG) becomes `tile` until the map loads again (collision
 // and drawing follow).
 void World_ChangeTile(int layer, int cx, int cy, int tile);
+// Map.OnTransitionStart / OnTransitionEnd: the tiles changed on the screen being left are put back as the
+// transition ends.
+void World_TileChangesStart();
+void World_TileChangesEnd();
 // Map.offset.X (a multiple of 16): the map is drawn, and collides, shifted left by it.
 void World_SetMapOffsetX(int px);
 // TileMap.GetTile: tile (cx, cy) of a layer, 0 outside it.

@@ -118,6 +118,8 @@ void Inventory_RemoveMapKey();
 int Inventory_CardCount();
 // GlobalState.CanChangeBroom: not in the death room, CELL or SUBURB (there only the plain broom or the transformer).
 bool Game_CanChangeBroom();
+// GlobalState.IsCell: the CELL's own sprites (and some timings).
+bool Game_IsCell();
 // InventoryManager.HasBroomType / HasAnyBroom.
 bool Inventory_HasBroomType(uint8_t type);
 bool Inventory_HasAnyBroom();

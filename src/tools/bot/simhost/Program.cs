@@ -233,6 +233,7 @@ void Replay(string inputPath, string tracePath, int show)
     // boot the port
     // the same way as at the start and take the C#'s RNG position again
     string[] titleRow = null;
+    long resynced = -1; // (SetRng lands with the next frame: no RNG comparison on this one)
     for (int i = start; i < cs.Count && diffs <= show; i++)
     {
         long f = long.Parse(cs[i][0]);
@@ -249,9 +250,10 @@ void Replay(string inputPath, string tracePath, int show)
                 view.Hold(0, 11);
             }
             Console.WriteLine($"port loaded its save into {view.Map}; the C# game at f{f}");
+            resynced = f;
             if (csEnts.TryGetValue(f, out var re))
             {
-                view.SetRng(long.Parse(re[1]));
+                view.SetRng(long.Parse(re[1]), keepShake: true);
             }
         }
         else if (i > start)
@@ -272,7 +274,7 @@ void Replay(string inputPath, string tracePath, int show)
         {
             Console.WriteLine($"f{f}\n  C#   {theirs}\t{(csEnts.TryGetValue(f, out var de) ? de[1] + " " + (de.Length > 2 ? de[2] : "") : "")}\n  port {mine}\t{BotRunner.EntLine().Replace('\t', ' ')}");
         }
-        if (!entDiffShown && i > start && csEnts.TryGetValue(f, out var ce))
+        if (!entDiffShown && i > start && f != resynced && csEnts.TryGetValue(f, out var ce))
         {
             var mineE = BotRunner.EntLine().Split('\t');
             string me = Types(mineE[1], true), te = Types(ce.Length > 2 ? ce[2] : "", false);

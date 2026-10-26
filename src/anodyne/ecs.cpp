@@ -723,6 +723,21 @@ bool Ecs_SetSheet(Entity& e, const char* sheet, int frameW, int frameH)
     return true;
 }
 
+bool Ecs_SetTexture(Entity& e, const char* sheet, int frameW, int frameH)
+{
+    const SpriteSheetEntry* s = e.mV ? Sprite_FindSheet(sheet, frameW, frameH) : nullptr;
+    if (!s)
+    {
+        return false;
+    }
+    if (!e.mV->mSheet || s->mAnimCount != e.mV->mSheet->mAnimCount)
+    {
+        return Ecs_SetSheet(e, sheet, frameW, frameH);
+    }
+    e.mV->mSheet = s; // (the same anims, so the one playing carries on)
+    return true;
+}
+
 bool Ecs_Play(Entity& e, const char* anim, bool force, int fps)
 {
     Visual* v = e.mV;
