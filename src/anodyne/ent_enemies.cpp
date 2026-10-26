@@ -2695,6 +2695,939 @@ const EntityClass kSeer = {
     "Seer",       SeerUpdate, nullptr, SeerCollided, nullptr, nullptr, nullptr, nullptr,
     0,            GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
 };
+
+// ---- Red_Boss (Redcave/Red_Boss.cs) -----------------------------------------------------------------------------
+// The boss and its sub-entities, in the C#'s SubEntities order: Ripple, SmallWave, BigWave, the four SplashBullets
+// (each with its Shadow), the four ProximitySensors and the four Tentacles (each with its tentacle Entity).
+constexpr int kRedBossPool = 4;
+constexpr float kRedBossPushTick = 0.15f;
+
+enum RedBossState : uint8_t
+{
+    RB_START,
+    RB_WAIT_PLAYER, // until the player is 48 px into the room
+    RB_DIALOGUE,    // rising while "before_fight" shows
+    RB_RISE,        // (boss rush) rising without it
+    RB_FIGHT,
+    RB_AFTER,       // "after_fight"
+    RB_SINK,
+    RB_FINAL,
+    RB_DONE,
+};
+
+enum RedBossFsm : uint8_t
+{
+    RBF_SPLASH,
+    RBF_DASH,
+    RBF_STUN,
+};
+
+enum RedBossTimer : uint8_t
+{
+    RBT_SPLASH,
+    RBT_TENTACLES,
+    RBT_END_DASH,
+};
+
+struct RedBossData final
+{
+    uint8_t mState;
+    uint8_t mFsm;
+    uint8_t mStun; // StunStateLogic's step
+    int8_t mHealth;
+    uint8_t mProximity;  // proximity_hits (Touching)
+    uint8_t mSplashClose; // SplashState.got_too_close
+    uint8_t mDashClose;   // DashState.got_too_close
+    bool mBossRush;
+    bool mLoopSfx;
+    bool mVolume; // its VolumeEvent(0, 3) is fading the song out
+    float mInvincible;
+    float mAmp;
+    float mPushdown;
+    float mPushTimer;
+    float mFinalTimer;
+    fx mTargetX; // StunStateLogic's target
+    fx mTargetY;
+    TimerState<2> mSplash; // Splash and Tentacles, every 3 s
+    TimerState<2> mDash;   // Tentacles every 1.5 s, EndDash every 5 s
+    Entity* mRipple;
+    Entity* mSmallWave;
+    Entity* mBigWave;
+};
+
+struct SplashBulletData final
+{
+    uint8_t mState;
+    fx mStartX;
+    fx mStartY;
+    fx mT; // its Parabola_Thing
+    fx mPeriod;
+    Entity* mShadow;
+};
+
+enum SplashBulletState : uint8_t
+{
+    SB_SHADOW, // the shadow flickers where it will land
+    SB_ARC,
+    SB_EXPLODE,
+    SB_DONE,
+};
+
+struct TentacleData final
+{
+    uint8_t mIndex;
+    uint8_t mState;
+    float mDropTimer;
+    float mEndTimer;
+    Entity* mTentacle; // the tentacle itself: just visual flair
+};
+
+enum TentacleState : uint8_t
+{
+    TENT_WARN, // flickering
+    TENT_DROP,
+    TENT_HOLD,
+    TENT_RAISE,
+    TENT_END,
+    TENT_DONE,
+};
+
+struct ProximitySensorData final
+{
+    uint8_t mDir; // Touching
+    fx mOffX;
+    fx mOffY;
+};
+
+struct BigWaveData final
+{
+    bool mDisablePlayerHit;
+};
+
+fx RoomLeft()
+{
+    return Fx(gGame.mGridX * 160);
+}
+
+fx RoomTop()
+{
+    return Fx(gGame.mGridY * 160);
+}
+
+// MapUtilities.GetInGridPosition (each axis against its own room).
+fx InGrid(fx v)
+{
+    return fx(v.mV - static_cast<float>(static_cast<int>(v.mV / 160) * 160));
+}
+
+void BubbleSfx()
+{
+    static const char* const kBubbles[] = { "bubble_1", "bubble_1", "bubble_2", "bubble_3" };
+    Game_PlaySfxOneOf(kBubbles, 4);
+}
+
+// Shadow.UpdateShadow (ShadowType.Normal): jumpHeight 0..1.
+void UpdateEntityShadow(Entity& shadow, fx jumpHeight)
+{
+    const int frame = static_cast<int>(ceilf((jumpHeight * 4).mV)) - 1;
+    if (frame < 0)
+    {
+        shadow.mV->mVisible = false;
+    }
+    else
+    {
+        shadow.mV->mVisible = true;
+        Ecs_SetFrame(shadow, frame);
+    }
+}
+
+// (the shadow's Update and flicker run in its bullet's base.Update)
+void EntityShadowUpdate(Entity&)
+{
+}
+
+const EntityClass kEntityShadow = {
+    "Shadow", EntityShadowUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void RippleUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    self.mT->mX = self.mParent->mT->mX - Fx(11);
+    self.mT->mY = self.mParent->mT->mY + Fx(17);
+}
+
+const EntityClass kRipple = {
+    "Ripple", RippleUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- SmallWave
+void SmallWaveUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mT->mVelX = self.mT->mVelY = 0;
+        self.mExists = false;
+        return;
+    }
+    if (InGrid(self.mT->mX) < Fx(32))
+    {
+        Ecs_Play(self, "fall");
+    }
+}
+
+void SmallWaveCollided(Entity&, Entity& other)
+{
+    MoveTo(other.mT->mX, 0, Fx(30));
+}
+
+const EntityClass kSmallWave = {
+    "SmallWave", SmallWaveUpdate, nullptr, SmallWaveCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+void SmallWaveRise(Entity& w)
+{
+    w.mT->mX = RoomLeft() + Fx(96);
+    w.mT->mY = RoomTop() + Fx(48);
+    Ecs_Play(w, "rise");
+    w.mExists = true;
+}
+
+void SmallWaveLaunch(Entity& w)
+{
+    w.mT->mVelX = -Fx(20);
+    Screen_Shake(FxF(0.03f), kFxOne);
+    Ecs_Play(w, "move");
+    Game_PlaySfx("small_wave");
+}
+
+// ---- BigWave
+void BigWaveLaunch(Entity& w)
+{
+    w.mT->mVelX = -Fx(40);
+    Screen_Shake(FxF(0.05f), kFxOne);
+    Ecs_Play(w, "move");
+    Game_PlaySfx("big_wave");
+    w.Data<BigWaveData>().mDisablePlayerHit = false;
+}
+
+void BigWaveUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        if (Ecs_AnimIs(self, "fall"))
+        {
+            self.mT->mVelX = self.mT->mVelY = 0;
+            self.mExists = false;
+            return;
+        }
+        BigWaveLaunch(self); // (rise)
+    }
+    if (InGrid(self.mT->mX) < Fx(32))
+    {
+        Ecs_Play(self, "fall");
+        self.Data<BigWaveData>().mDisablePlayerHit = true;
+    }
+}
+
+void BigWaveCollided(Entity& self, Entity& other)
+{
+    BigWaveData& d = self.Data<BigWaveData>();
+    if (IsPlayer(other) && !d.mDisablePlayerHit)
+    {
+        Game_PlaySfx("player_hit_1");
+        // target = p.Position + ((16, 128) - GetInGridPosition(p.Position))
+        const fx px = other.mT->mX;
+        const fx py = other.mT->mY;
+        Player_AutoJump(kFxOne, px + (Fx(16) - InGrid(px)), py + (Fx(8 * 16) - InGrid(py)), 50, -Fx(500));
+        d.mDisablePlayerHit = true;
+    }
+}
+
+const EntityClass kBigWave = {
+    "BigWave", BigWaveUpdate, nullptr, BigWaveCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+void BigWaveRise(Entity& w)
+{
+    w.mT->mX = RoomLeft() + Fx(80);
+    w.mT->mY = RoomTop() + Fx(48);
+    Ecs_Play(w, "rise");
+    w.mExists = true;
+}
+
+// ---- SplashBullet
+void SplashBulletSetExists(Entity& b, bool exists)
+{
+    b.mExists = exists;
+    b.Data<SplashBulletData>().mShadow->mExists = exists;
+}
+
+// EntityPool.Spawn: Spawn, i.e. Logic up to its first yield.
+void SplashBulletStart(Entity& b)
+{
+    SplashBulletData& d = b.Data<SplashBulletData>();
+    Entity& shadow = *d.mShadow;
+    SplashBulletSetExists(b, true);
+    d.mT = 0;
+    b.mT->mX = d.mStartX;
+    b.mT->mY = d.mStartY;
+    b.mT->mVelX = b.mT->mVelY = 0;
+    b.mV->mVisible = false;
+    shadow.mV->mVisible = true;
+    Ecs_Flicker(shadow, FxSec(0.5f));
+    Ecs_Play(b, "move");
+    d.mState = SB_SHADOW;
+}
+
+void SplashBulletUpdate(Entity& self)
+{
+    SplashBulletData& d = self.Data<SplashBulletData>();
+    Entity& shadow = *d.mShadow;
+    Ecs_BaseUpdate(self);
+    // shadow.Update: Position = parent.Position - (offset - sprite size / 4), then its flicker
+    shadow.mT->mX = self.mT->mX + Fx(2);
+    shadow.mT->mY = self.mT->mY + Fx(2);
+    Ecs_BaseUpdate(shadow);
+    switch (d.mState)
+    {
+    case SB_SHADOW:
+        if (shadow.mV->mFlickering)
+        {
+            break;
+        }
+        self.mV->mVisible = true;
+        BubbleSfx();
+        self.mT->mVelX = Fx(Rng_Range(10, 18));
+        d.mState = SB_ARC;
+        [[fallthrough]];
+    case SB_ARC:
+    {
+        // Parabola_Thing.Tick, with the shadow following the height
+        d.mT += kFxTick;
+        if (d.mT <= d.mPeriod)
+        {
+            self.mV->mOffY = ParabolaOffset(d.mT, d.mPeriod, 48);
+            fx progress = FxDiv(d.mT, d.mPeriod);
+            progress = progress > kFxOne ? kFxOne : progress;
+            const fx fromMiddle = kFxOne / 2 - progress;
+            UpdateEntityShadow(shadow, (fromMiddle < 0 ? -fromMiddle : fromMiddle) * 2);
+            break;
+        }
+        self.mV->mOffY = 0;
+        UpdateEntityShadow(shadow, 0);
+        Ecs_Play(self, "explode");
+        d.mState = SB_EXPLODE;
+    }
+        [[fallthrough]];
+    case SB_EXPLODE:
+        if (!Ecs_AnimFinished(self))
+        {
+            break;
+        }
+        BubbleSfx();
+        SplashBulletSetExists(self, false);
+        d.mState = SB_DONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void SplashBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && self.mV->mVisible && self.mV->mOffY < Fx(10))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kSplashBullet = {
+    "SplashBullet", SplashBulletUpdate, nullptr, SplashBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,       0,
+};
+
+// ---- Tentacle (the tentacle's base, for collision: the tentacle itself is just visual flair)
+const EntityClass kTentacleFlair = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void TentacleStart(Entity& t, uint8_t dir, const Entity& boss)
+{
+    TentacleData& d = t.Data<TentacleData>();
+    const fx i = Fx(d.mIndex);
+    const fx bx = boss.mT->mX;
+    const fx by = boss.mT->mY;
+    if (dir & TOUCH_UP)
+    {
+        t.mT->mX = bx + (16 * i - Fx(14));
+        t.mT->mY = by - Fx(13);
+    }
+    else if (dir & TOUCH_LEFT)
+    {
+        t.mT->mX = bx - Fx(14);
+        t.mT->mY = by + (16 * i - Fx(16));
+    }
+    else if (dir & TOUCH_RIGHT)
+    {
+        t.mT->mX = bx + Fx(boss.mB->mW + 2);
+        t.mT->mY = by + (16 * i - Fx(16));
+    }
+    else if (dir & TOUCH_DOWN)
+    {
+        t.mT->mX = bx + (16 * i - Fx(14));
+        t.mT->mY = by + Fx(boss.mB->mH + 2);
+    }
+    else
+    {
+        // the player isn't close in any direction, so random locations
+        t.mT->mX = RoomLeft() + Fx(16) + Fx(12 * (1 + d.mIndex)) + Fx(Rng_Range(-5, 6));
+        const int row = Rng_Range(1, 4);
+        const int jitter = Rng_Range(-5, 6);
+        t.mT->mY = RoomTop() + Fx(16 * row) + Fx(jitter) + Fx(64) - Fx(10);
+    }
+    Entity& flair = *d.mTentacle;
+    flair.mT->mX = t.mT->mX;
+    flair.mT->mY = t.mT->mY + Fx(10 - 3 - 64);
+    flair.mV->mYPush = Fx(64);
+    Ecs_Flicker(t, FxF(0.7f) + Rng_Unit());
+    d.mState = TENT_WARN;
+}
+
+void TentacleUpdate(Entity& self)
+{
+    TentacleData& d = self.Data<TentacleData>();
+    Entity& flair = *d.mTentacle;
+    Ecs_BaseUpdate(self);
+    switch (d.mState)
+    {
+    case TENT_WARN:
+        if (self.mV->mFlickering)
+        {
+            break;
+        }
+        BubbleSfx();
+        flair.mExists = true;
+        d.mDropTimer = 1.0f;
+        d.mState = TENT_DROP;
+        [[fallthrough]];
+    case TENT_DROP:
+        if (!MoveTo(flair.mV->mYPush, 0, Fx(120)))
+        {
+            d.mDropTimer -= kDeltaTime;
+            break;
+        }
+        d.mState = TENT_HOLD;
+        [[fallthrough]];
+    case TENT_HOLD:
+        if (d.mDropTimer > 0)
+        {
+            d.mDropTimer -= kDeltaTime;
+            break;
+        }
+        d.mEndTimer = 0.3f;
+        d.mState = TENT_RAISE;
+        [[fallthrough]];
+    case TENT_RAISE:
+        if (!MoveTo(flair.mV->mYPush, Fx(64), Fx(180)))
+        {
+            d.mEndTimer -= kDeltaTime;
+            break;
+        }
+        d.mState = TENT_END;
+        [[fallthrough]];
+    case TENT_END:
+        if (d.mEndTimer > 0)
+        {
+            d.mEndTimer -= kDeltaTime;
+            break;
+        }
+        self.mExists = false;
+        flair.mExists = false;
+        d.mState = TENT_DONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void TentacleCollided(Entity& self, Entity& other)
+{
+    if (!self.mV->mFlickering && IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kTentacle = {
+    "Tentacle", TentacleUpdate, nullptr, TentacleCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+void TentacleDespawn(Entity& t)
+{
+    t.mExists = false;
+    t.Data<TentacleData>().mTentacle->mExists = false;
+}
+
+// ---- ProximitySensor
+void ProximitySensorUpdate(Entity& self)
+{
+    const ProximitySensorData& d = self.Data<ProximitySensorData>();
+    Ecs_BaseUpdate(self);
+    self.mT->mX = self.mParent->mT->mX + d.mOffX;
+    self.mT->mY = self.mParent->mT->mY + d.mOffY;
+}
+
+void ProximitySensorCollided(Entity& self, Entity&)
+{
+    self.mParent->Data<RedBossData>().mProximity |= self.Data<ProximitySensorData>().mDir;
+}
+
+const EntityClass kProximitySensor = {
+    "ProximitySensor", ProximitySensorUpdate, nullptr, ProximitySensorCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                 GROUP_PLAYER,          0,
+};
+
+// ---- Red_Boss
+// The boss's pooled sub-entities of one class, in order.
+template <typename Fn>
+void ForRedBossPool(Entity& boss, const EntityClass& cls, Fn fn)
+{
+    for (Entity* e = Ecs_First(); e; e = e->mNext)
+    {
+        if (e->mParent == &boss && e->mClass == &cls)
+        {
+            fn(*e);
+        }
+    }
+}
+
+void RedBossSpawnBullets(Entity& self)
+{
+    ForRedBossPool(self, kSplashBullet, [](Entity& b) {
+        if (!b.mExists)
+        {
+            SplashBulletStart(b);
+        }
+    });
+}
+
+void RedBossSpawnTentacles(Entity& self)
+{
+    if (Ecs_CountChildren(self, kTentacle) != 0)
+    {
+        return;
+    }
+    const uint8_t dir = self.Data<RedBossData>().mProximity;
+    ForRedBossPool(self, kTentacle, [&](Entity& t) {
+        t.mExists = true;
+        TentacleStart(t, dir, self);
+    });
+}
+
+void RedBossChangeState(Entity& self, uint8_t state)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    if (d.mFsm == RBF_DASH)
+    {
+        self.mT->mVelX = self.mT->mVelY = 0; // Dash's Exit
+    }
+    d.mFsm = state;
+    switch (state)
+    {
+    case RBF_SPLASH:
+        d.mAmp = 5;
+        break;
+    case RBF_DASH:
+        d.mAmp = 0;
+        self.mT->mVelX = Fx(30);
+        self.mT->mVelY = Fx(20);
+        Ecs_Play(self, "bob");
+        break;
+    default:
+        d.mStun = 0; // a new StunStateLogic
+        break;
+    }
+}
+
+// Dash's Update: bounce off the room's inner walls, shaking along the axes that bounced.
+void RedBossDashUpdate(Entity& self)
+{
+    Transform& t = *self.mT;
+    uint8_t dirs = SHAKE_NONE;
+    const fx tlX = InGrid(t.mX);
+    const fx tlY = InGrid(t.mY);
+    const fx brX = InGrid(t.mX + Fx(self.mB->mW));
+    const fx brY = InGrid(t.mY + Fx(self.mB->mH));
+    if (tlY < Fx(2 * 16))
+    {
+        t.mVelY = Fx(60);
+        dirs |= SHAKE_VERTICAL;
+    }
+    else if (brY > Fx(16 * 8))
+    {
+        t.mVelY = -Fx(60);
+        dirs |= SHAKE_VERTICAL;
+    }
+    if (tlX < Fx(2 * 16))
+    {
+        t.mVelX = Fx(60);
+        dirs |= SHAKE_HORIZONTAL;
+    }
+    else if (brX > Fx(16 * 8))
+    {
+        t.mVelX = -Fx(60);
+        dirs |= SHAKE_HORIZONTAL;
+    }
+    Screen_Shake(FxF(0.05f), FxF(0.1f), dirs);
+}
+
+// StunStateLogic: each case runs on into the next in the same frame; a return true is the yield, false the end.
+bool RedBossStunStep(Entity& self)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    Transform& t = *self.mT;
+    const fx yPush = self.mV->mYPush;
+    switch (d.mStun)
+    {
+    case 0:
+        Ecs_Play(self, "warn");
+        d.mAmp = 5;
+        d.mTargetX = RoomLeft() + Fx(6 * 16);
+        d.mTargetY = RoomTop() + Fx(4 * 16);
+        SmallWaveRise(*d.mSmallWave);
+        d.mStun = 1;
+        [[fallthrough]];
+    case 1:
+    {
+        // (&: both move every frame)
+        const bool x = MoveTo(t.mX, d.mTargetX, Fx(30));
+        const bool y = MoveTo(t.mY, d.mTargetY, Fx(30));
+        if (!(x && y))
+        {
+            return true;
+        }
+        d.mStun = 2;
+    }
+        [[fallthrough]];
+    case 2:
+        if (yPush != 0)
+        {
+            return true;
+        }
+        d.mLoopSfx = true;
+        d.mAmp = 13;
+        d.mStun = 3;
+        [[fallthrough]];
+    case 3:
+        if (yPush < FxF(d.mAmp))
+        {
+            return true;
+        }
+        SmallWaveLaunch(*d.mSmallWave);
+        d.mStun = 4;
+        [[fallthrough]];
+    case 4:
+        if (yPush != 0)
+        {
+            return true;
+        }
+        d.mAmp = 20;
+        d.mStun = 5;
+        [[fallthrough]];
+    case 5:
+        if (yPush < Fx(18))
+        {
+            return true;
+        }
+        BigWaveRise(*d.mBigWave);
+        d.mStun = 6;
+        [[fallthrough]];
+    case 6:
+        if (d.mBigWave->mT->mVelX == 0 && d.mBigWave->mT->mVelY == 0)
+        {
+            return true;
+        }
+        Ecs_Play(self, "close_eyes");
+        d.mStun = 7;
+        [[fallthrough]];
+    case 7:
+        if (yPush > Fx(2))
+        {
+            return true;
+        }
+        d.mAmp = 5;
+        d.mStun = 8;
+        [[fallthrough]];
+    case 8:
+        if (d.mSmallWave->mExists || d.mBigWave->mExists)
+        {
+            return true;
+        }
+        d.mTargetX -= Fx(16);
+        d.mStun = 9;
+        [[fallthrough]];
+    case 9:
+    {
+        const bool x = MoveTo(t.mX, d.mTargetX, Fx(30));
+        const bool y = MoveTo(t.mY, d.mTargetY, Fx(30));
+        if (!(x && y))
+        {
+            return true;
+        }
+        d.mLoopSfx = false;
+        d.mStun = 10;
+        return false;
+    }
+    default:
+        return false;
+    }
+}
+
+// The FSM's Update: TimerState fires its timers (on the state that owns them, even once one changed the state),
+// then base.Update runs that state's Update.
+void RedBossFsmUpdate(Entity& self)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    switch (d.mFsm)
+    {
+    case RBF_SPLASH:
+    {
+        d.mSplash.Tick(kDeltaTime);
+        int ev;
+        while ((ev = d.mSplash.Pop()) >= 0)
+        {
+            if (ev == RBT_SPLASH)
+            {
+                RedBossSpawnBullets(self);
+                continue;
+            }
+            RedBossSpawnTentacles(self);
+            if (d.mProximity != TOUCH_NONE && ++d.mSplashClose == 2)
+            {
+                d.mSplashClose = 0;
+                RedBossChangeState(self, RBF_STUN);
+            }
+        }
+        break;
+    }
+    case RBF_DASH:
+    {
+        d.mDash.Tick(kDeltaTime);
+        int ev;
+        while ((ev = d.mDash.Pop()) >= 0)
+        {
+            if (ev == RBT_END_DASH)
+            {
+                RedBossChangeState(self, RBF_STUN);
+                continue;
+            }
+            RedBossSpawnTentacles(self);
+            if (d.mProximity != TOUCH_NONE && ++d.mDashClose == 2)
+            {
+                d.mDashClose = 0;
+                RedBossChangeState(self, RBF_SPLASH);
+            }
+        }
+        RedBossDashUpdate(self);
+        break;
+    }
+    default:
+        if (!RedBossStunStep(self))
+        {
+            RedBossChangeState(self, RBF_DASH);
+        }
+        break;
+    }
+}
+
+// The intro's rise: a pixel up every 0.15 s, with a little shake.
+void RedBossPushTick(Entity& self)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    d.mPushTimer += kDeltaTime;
+    if (d.mPushTimer >= kRedBossPushTick)
+    {
+        d.mPushTimer = 0;
+        if (self.mV->mYPush > 0)
+        {
+            Screen_Shake(FxF(0.021f), FxF(0.1f));
+            self.mV->mYPush -= kFxOne;
+        }
+    }
+}
+
+// State()'s IEnumerator: each case runs on into the next one in the same frame; a break is the yield.
+void RedBossStep(Entity& self)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    Visual& v = *self.mV;
+    switch (d.mState)
+    {
+    case RB_START:
+        d.mPushTimer = 0;
+        v.mYPush = Fx(Ecs_SpriteHeight(self));
+        Player_SetGridEntranceAt(RoomLeft() + Fx(20), RoomTop() + Fx(20));
+        d.mVolume = true; // GlobalState.SpawnEntity(new VolumeEvent(0, 3))
+        d.mState = RB_WAIT_PLAYER;
+        [[fallthrough]];
+    case RB_WAIT_PLAYER:
+        if (InGrid(World_Player()->mT->mX) < Fx(48))
+        {
+            break;
+        }
+        d.mLoopSfx = true;
+        if (d.mBossRush)
+        {
+            d.mState = RB_RISE;
+            goto rise;
+        }
+        Game_ShowDialogue("redboss", "before_fight");
+        d.mState = RB_DIALOGUE;
+        [[fallthrough]];
+    case RB_DIALOGUE:
+        if (!Game_DialogueFinished())
+        {
+            RedBossPushTick(self);
+            break;
+        }
+        goto fight;
+    case RB_RISE:
+    rise:
+        if (v.mYPush > 0)
+        {
+            RedBossPushTick(self);
+            break;
+        }
+    fight:
+        d.mLoopSfx = false;
+        Game_PlaySong("redcave-boss");
+        Ecs_Play(self, "bob");
+        RedBossChangeState(self, RBF_SPLASH);
+        RedBossSpawnBullets(self); // TriggerEvent("Splash"): the first splash is instant
+        d.mState = RB_FIGHT;
+        [[fallthrough]];
+    case RB_FIGHT:
+        if (d.mHealth > 0)
+        {
+            RedBossFsmUpdate(self);
+            d.mPushdown += kDeltaTime * 3;
+            v.mYPush = Fx(static_cast<int>(d.mAmp + FxSin(fx(d.mPushdown)).mV * d.mAmp));
+            break;
+        }
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Game_PlaySong("");
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("redboss", "after_fight");
+        }
+        Screen_Shake(FxF(0.05f), FxF(0.1f));
+        Screen_Flash(kFxOne, FLASH_RED);
+        d.mSmallWave->mExists = false;
+        ForRedBossPool(self, kSplashBullet, [](Entity& b) { SplashBulletSetExists(b, false); });
+        ForRedBossPool(self, kTentacle, [](Entity& t) { TentacleDespawn(t); });
+        d.mBigWave->mExists = false;
+        d.mState = RB_AFTER;
+        [[fallthrough]];
+    case RB_AFTER:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            break;
+        }
+        Ecs_Play(self, "die");
+        Game_PlaySfx("redboss_death");
+        // TODO: GlobalState.wave (the screen's wobble while it sinks)
+        v.mYPush = 0;
+        d.mState = RB_SINK;
+        [[fallthrough]];
+    case RB_SINK:
+        if (v.mYPush < Fx(Ecs_SpriteHeight(self)))
+        {
+            MoveTo(d.mRipple->mV->mOpacity, 0, FxF(0.3f));
+            d.mPushTimer += kDeltaTime;
+            if (d.mPushTimer >= kRedBossPushTick)
+            {
+                d.mPushTimer = 0;
+                v.mYPush += kFxOne;
+            }
+            break;
+        }
+        d.mFinalTimer = 2.0f;
+        d.mState = RB_FINAL;
+        [[fallthrough]];
+    case RB_FINAL:
+        if (d.mFinalTimer > 0)
+        {
+            d.mFinalTimer -= kDeltaTime;
+            break;
+        }
+        if (self.mPreset)
+        {
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        self.mExists = false;
+        if (!d.mBossRush)
+        {
+            Game_SetBossDefeated("REDCAVE");
+            Game_PlaySong("redcave");
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+        }
+        d.mState = RB_DONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void RedBossUpdate(Entity& self)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    Ecs_BaseUpdate(self);
+    // (its VolumeEvent: spawned on the first update, so it starts on the next)
+    if (d.mVolume && d.mState != RB_START)
+    {
+        fx volume = FxF(Game_SongVolume());
+        d.mVolume = !MoveTo(volume, 0, Fx(3));
+        Game_SetSongVolume(volume.mV);
+    }
+    d.mInvincible -= kDeltaTime;
+    RedBossStep(self);
+    d.mProximity = TOUCH_NONE;
+    if (d.mLoopSfx)
+    {
+        Game_PlaySfx("bubble_loop"); // each frame, to loop a sound effect
+    }
+}
+
+void RedBossCollided(Entity& self, Entity& other)
+{
+    RedBossData& d = self.Data<RedBossData>();
+    if (d.mHealth == 0)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other) && d.mInvincible < 0)
+    {
+        Ecs_Flicker(self, FxSec(0.5f));
+        d.mInvincible = 1.3f;
+        d.mHealth--;
+        Game_PlaySfx("redboss_moan");
+    }
+}
+
+const EntityClass kRedBoss = {
+    "Red_Boss", RedBossUpdate, nullptr, RedBossCollided, nullptr, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
+};
 } // namespace
 
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
@@ -2713,6 +3646,10 @@ int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
     if (e.mClass == &kAnnoyer)
     {
         return snprintf(buf, static_cast<size_t>(cap), "\"_health\":%d", const_cast<Entity&>(e).Data<AnnoyerData>().mHealth);
+    }
+    if (e.mClass == &kRedBoss)
+    {
+        return snprintf(buf, static_cast<size_t>(cap), "\"health\":%d", const_cast<Entity&>(e).Data<RedBossData>().mHealth);
     }
     if (e.mClass == &kLaser && e.mParent && e.mParent->mClass == &kPewLaser)
     {
@@ -3220,5 +4157,145 @@ Entity* Spawn_OnOffLaser(const MapEntity& preset, Entity&)
     v.mVisible = false;
     Ecs_Play(*laser, "idle");
     OnOffEnter(*e, ONOFF_IDLE);
+    return e;
+}
+
+Entity* Spawn_RedBoss(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRedBoss, preset, "red_boss", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 26;
+    e->mB->mH = 19;
+    e->mV->mOffX = Fx(3);
+    e->mV->mOffY = Fx(13);
+    Ecs_Play(*e, "close_eyes");
+    RedBossData& d = e->Data<RedBossData>();
+    d = RedBossData();
+    d.mHealth = 12;
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    d.mSplash.Add(3.0f, RBT_SPLASH);
+    d.mSplash.Add(3.0f, RBT_TENTACLES);
+    d.mDash.Add(1.5f, RBT_TENTACLES);
+    d.mDash.Add(5.0f, RBT_END_DASH);
+
+    // (a sub-entity of the boss: made now, kept while it doesn't exist)
+    auto make = [e](const EntityClass& cls, const char* sheet, int w, int h, uint8_t layer, uint8_t parts) -> Entity* {
+        Entity* s = Ecs_Create(cls, 0, 0, parts, nullptr, e);
+        if (!s)
+        {
+            return nullptr;
+        }
+        if (sheet)
+        {
+            Ecs_SetSheet(*s, sheet, w, h);
+            s->mV->mLayer = layer;
+        }
+        s->mB->mW = static_cast<int16_t>(w);
+        s->mB->mH = static_cast<int16_t>(h);
+        return s;
+    };
+
+    Entity* ripple = make(kRipple, "red_boss_ripple", 48, 8, LAYER_BG_ENTITIES, PART_VISUAL | PART_BRAIN);
+    if (!ripple)
+    {
+        return nullptr;
+    }
+    ripple->mT->mX = ripple->mT->mLastX = e->mT->mX;
+    ripple->mT->mY = ripple->mT->mLastY = e->mT->mY;
+    Ecs_Play(*ripple, "a");
+    d.mRipple = ripple;
+
+    d.mSmallWave = make(kSmallWave, "red_boss_small_wave", 16, 64, LAYER_BG_ENTITIES, PART_VISUAL | PART_BRAIN);
+    d.mBigWave = make(kBigWave, "red_boss_big_wave", 32, 80, LAYER_BG_ENTITIES, PART_VISUAL | PART_BRAIN);
+    if (!d.mSmallWave || !d.mBigWave)
+    {
+        return nullptr;
+    }
+    Entity* const waves[2] = { d.mSmallWave, d.mBigWave };
+    for (Entity* w : waves)
+    {
+        w->mB->mImmovable = true;
+        Ecs_Play(*w, "move");
+        Ecs_KeepPooled(*w);
+    }
+    d.mBigWave->Data<BigWaveData>().mDisablePlayerHit = true;
+
+    for (int i = 0; i < kRedBossPool; i++)
+    {
+        Entity* b = make(kSplashBullet, "red_boss_bullet", 8, 8, LAYER_FG_SPRITES, PART_VISUAL | PART_BRAIN);
+        Entity* shadow = make(kEntityShadow, "8x8_shadow", 8, 8, LAYER_SHADOWS, PART_VISUAL);
+        if (!b || !shadow)
+        {
+            return nullptr;
+        }
+        shadow->mParent = b;
+        SplashBulletData& sb = b->Data<SplashBulletData>();
+        sb = SplashBulletData();
+        sb.mShadow = shadow;
+        // (the screen being loaded: the boss's own)
+        sb.mStartX = e->mT->mX - InGrid(e->mT->mX) + Fx(2 * 16) + Fx(3);
+        sb.mStartY = e->mT->mY - InGrid(e->mT->mY) + Fx((3 + i) * 16) + Fx(3);
+        b->mT->mX = b->mT->mLastX = sb.mStartX;
+        b->mT->mY = b->mT->mLastY = sb.mStartY;
+        sb.mPeriod = FxF(1.2f) + Rng_Unit();
+        sb.mState = SB_DONE;
+        Ecs_Play(*b, "move");
+        Ecs_KeepPooled(*b);
+        Ecs_KeepPooled(*shadow);
+    }
+
+    // ProximitySensor: (direction, width, height, offset from the boss)
+    struct SensorDef
+    {
+        uint8_t mDir;
+        int mW;
+        int mH;
+        int mX;
+        int mY;
+    };
+    const int bw = e->mB->mW;
+    const int bh = e->mB->mH;
+    const SensorDef kSensors[4] = {
+        { TOUCH_LEFT, 12, bh + 20, -18, -10 },
+        { TOUCH_RIGHT, 8, bh + 16, bw + 7, -8 },
+        { TOUCH_UP, bw, 8, 0, -21 },
+        { TOUCH_DOWN, bw + 4, 12, 0, bh + 8 },
+    };
+    for (const SensorDef& def : kSensors)
+    {
+        Entity* s = make(kProximitySensor, nullptr, def.mW, def.mH, 0, PART_BRAIN);
+        if (!s)
+        {
+            return nullptr;
+        }
+        ProximitySensorData& sd = s->Data<ProximitySensorData>();
+        sd.mDir = def.mDir;
+        sd.mOffX = Fx(def.mX);
+        sd.mOffY = Fx(def.mY);
+    }
+
+    for (int i = 0; i < kRedBossPool; i++)
+    {
+        Entity* t = make(kTentacle, "red_boss_warning", 10, 10, LAYER_ENTITIES, PART_VISUAL | PART_BRAIN);
+        Entity* flair = make(kTentacleFlair, "red_boss_tentacle", 10, 64, LAYER_ENTITIES, PART_VISUAL);
+        if (!t || !flair)
+        {
+            return nullptr;
+        }
+        flair->mParent = t;
+        t->mB->mImmovable = true;
+        Ecs_Play(*t, "move");
+        Ecs_Play(*flair, "move");
+        TentacleData& td = t->Data<TentacleData>();
+        td = TentacleData();
+        td.mIndex = static_cast<uint8_t>(i);
+        td.mTentacle = flair;
+        td.mState = TENT_DONE;
+        Ecs_KeepPooled(*t);
+        Ecs_KeepPooled(*flair);
+    }
     return e;
 }

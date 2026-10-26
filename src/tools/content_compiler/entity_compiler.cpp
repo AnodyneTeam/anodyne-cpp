@@ -157,6 +157,8 @@ const NamedEntity kNamed[] = {
     { "Sage", nullptr, "NEXUS", {}, EPT_SageNexus },
     { "Sage", nullptr, "OVERWORLD", {}, EPT_SageOverworld },
     { "Sage", nullptr, "BEDROOM", {}, EPT_SageBedroom },
+    { "Sage", nullptr, "REDCAVE", {}, EPT_SageRedCave },
+    { "Sage", nullptr, "CROWD", {}, EPT_SageCrowd },
     { "Mitra", nullptr, "OVERWORLD", {}, EPT_MitraOverworld },
     { "Mitra", nullptr, "FIELDS", {}, EPT_MitraFields },
     { "Trade_NPC", nullptr, nullptr, { 0 }, EPT_MiaoXiao },
@@ -192,6 +194,7 @@ const NamedEntity kNamed[] = {
     { "Mover", nullptr, nullptr, {}, EPT_Mover },
     { "On_Off_Laser", nullptr, nullptr, {}, EPT_OnOffLaser },
     { "Rotator", nullptr, nullptr, {}, EPT_Rotator },
+    { "Red_Boss", nullptr, nullptr, {}, EPT_RedBoss },
     { "Door", nullptr, nullptr, {}, EPT_Door },
 };
 

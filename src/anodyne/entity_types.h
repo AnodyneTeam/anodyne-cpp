@@ -70,6 +70,9 @@
     X(Mover)                    \
     X(OnOffLaser)               \
     X(Rotator)                  \
+    X(RedBoss)                  \
+    X(SageRedCave)              \
+    X(SageCrowd)                \
     X(Door)
 
 enum EntityPresetType : unsigned char

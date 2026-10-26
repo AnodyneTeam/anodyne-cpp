@@ -244,6 +244,7 @@ struct Shake final
     fx mTime;      // seconds left
     fx mIntensity; // fraction of the screen
     fx mUpdate;    // _shakeUpdate: runs on from the last shake
+    uint8_t mDirs; // ShakeDirs
     int mX;
     int mY;
 };
@@ -268,10 +269,16 @@ void UpdateScreenEffects()
         {
             gShake.mUpdate = 0;
             // _pos = (float)RNG.NextDouble() * 2 * _intensity - _intensity, times the screen size when drawn
-            const fx x = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
-            const fx y = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
-            gShake.mX = FxTrunc(FxMul(x, Fx(kScreenPx)));
-            gShake.mY = FxTrunc(FxMul(y, Fx(kScreenPx)));
+            if (gShake.mDirs & SHAKE_HORIZONTAL)
+            {
+                const fx x = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
+                gShake.mX = FxTrunc(FxMul(x, Fx(kScreenPx)));
+            }
+            if (gShake.mDirs & SHAKE_VERTICAL)
+            {
+                const fx y = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
+                gShake.mY = FxTrunc(FxMul(y, Fx(kScreenPx)));
+            }
         }
     }
     if (gShake.mTime <= 0)
@@ -1231,11 +1238,12 @@ void Game_SetSongVolume(float volume)
     gSongVolume = volume < 0 ? 0 : (volume > 1 ? 1 : volume);
 }
 
-void Screen_Shake(fx intensity, fx seconds)
+void Screen_Shake(fx intensity, fx seconds, uint8_t dirs)
 {
     // (ScreenShake.Shake: _shakeUpdate carries on)
     gShake.mTime = seconds;
     gShake.mIntensity = intensity;
+    gShake.mDirs = dirs;
     gShake.mX = gShake.mY = 0;
 }
 
@@ -1249,11 +1257,11 @@ bool Screen_ShakeActive()
     return gShake.mTime > 0;
 }
 
-void Screen_Flash(fx seconds, bool white)
+void Screen_Flash(fx seconds, FlashColour colour)
 {
     gFlash.mAlpha = kFxOne;
     gFlash.mStep = FxDiv(kFxOne, FxMul(seconds, Fx(kFps)));
-    gFlash.mWhite = white;
+    gFlash.mWhite = colour != FLASH_BLACK;
 }
 
 bool Screen_FlashActive()

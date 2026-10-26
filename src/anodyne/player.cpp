@@ -1228,6 +1228,12 @@ void Player_SetGridEntrance()
     P().mGridEntranceY = gPlayer->mT->mY;
 }
 
+void Player_SetGridEntranceAt(fx x, fx y)
+{
+    P().mGridEntranceX = x;
+    P().mGridEntranceY = y;
+}
+
 void Player_SetDontMove(bool on)
 {
     P().mDontMove = on;
@@ -1286,7 +1292,7 @@ void Player_GetProbe(PlayerProbe& out)
     out.mJustReleasedDust = B().mJustReleased;
 }
 
-void Player_AutoJump(fx period, fx targetX, fx targetY, int height)
+void Player_AutoJump(fx period, fx targetX, fx targetY, int height, fx rotationSpeed)
 {
     PlayerData& d = P();
     d.mJumpPeriod = period;
@@ -1298,6 +1304,7 @@ void Player_AutoJump(fx period, fx targetX, fx targetY, int height)
     d.mState = PS_AUTO_JUMP;
     Ecs_SetSolid(*gPlayer, false);
     gPlayer->mT->mVelX = gPlayer->mT->mVelY = 0;
+    gPlayer->mT->mAngVel = rotationSpeed;
     gPlayer->mV->mYPush = 0;
     gShadow->mV->mVisible = true;
 }

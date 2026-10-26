@@ -48,6 +48,8 @@ enum SageKind : uint8_t
     SAGE_NEXUS,
     SAGE_OVERWORLD,
     SAGE_BEDROOM,
+    SAGE_REDCAVE,
+    SAGE_CROWD,
 };
 
 struct SageData final
@@ -2223,6 +2225,27 @@ Entity* Spawn_SageBedroom(const MapEntity& preset, Entity&)
     return SpawnSage(preset, SAGE_BEDROOM, 48, 24, "after_boss");
 }
 
+// DungeonSage: gone once the player has left the dungeon after its boss.
+Entity* SpawnDungeonSage(const MapEntity& preset, uint8_t kind, int init, int stop, const char* scene)
+{
+    if (Game_LeftAfterBoss(gGame.mMapName))
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    return SpawnSage(preset, kind, init, stop, scene);
+}
+
+Entity* Spawn_SageRedCave(const MapEntity& preset, Entity&)
+{
+    return SpawnDungeonSage(preset, SAGE_REDCAVE, 28, 16, "one");
+}
+
+Entity* Spawn_SageCrowd(const MapEntity& preset, Entity&)
+{
+    return SpawnDungeonSage(preset, SAGE_CROWD, 46, 24, "one");
+}
+
 Entity* Spawn_Rock(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kRock, preset, "note_rock");
@@ -2488,6 +2511,10 @@ const char* Npcs_ProbeName(const Entity& e)
         return "SageNexus";
     case SAGE_OVERWORLD:
         return "SageOverworld";
+    case SAGE_REDCAVE:
+        return "SageRedCave";
+    case SAGE_CROWD:
+        return "SageCrowd";
     default:
         return "SageBedroom";
     }

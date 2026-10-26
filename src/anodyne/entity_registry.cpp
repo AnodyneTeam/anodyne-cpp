@@ -93,6 +93,10 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_SageOverworld;
     case EPT_SageBedroom:
         return Spawn_SageBedroom;
+    case EPT_SageRedCave:
+        return Spawn_SageRedCave;
+    case EPT_SageCrowd:
+        return Spawn_SageCrowd;
     case EPT_Rock:
         return Spawn_Rock;
     case EPT_Statue:
@@ -105,6 +109,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BedroomBounceLight;
     case EPT_Seer:
         return Spawn_Seer;
+    case EPT_RedBoss:
+        return Spawn_RedBoss;
     case EPT_EyeLight:
         return Spawn_EyeLight;
     case EPT_FollowerBro:

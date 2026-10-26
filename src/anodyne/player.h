@@ -25,6 +25,8 @@ void Player_Reset(const char* mapName);
 // The grid entrance (where falling or drowning respawns) becomes this spot.
 void Player_PlaceAt(fx x, fx y, int facing);
 void Player_SetGridEntrance();
+// Player.grid_entrance = (x, y): where falling or drowning on this screen respawns (bosses set their own).
+void Player_SetGridEntranceAt(fx x, fx y);
 
 // The flags PlayState sets on the player around transitions, warps and dialogue.
 void Player_SetDontMove(bool on);
@@ -57,7 +59,8 @@ struct PlayerProbe final
 void Player_GetProbe(PlayerProbe& out);
 
 // Player.AutoJump(period, target, height): a jump that carries the player to (targetX, targetY).
-void Player_AutoJump(fx period, fx targetX, fx targetY, int height = 24);
+// rotationSpeed: the player spins at that many radians a second until it lands.
+void Player_AutoJump(fx period, fx targetX, fx targetY, int height = 24, fx rotationSpeed = 0);
 bool Player_JustLanded();
 void Player_SetFacing(Facing f);
 

@@ -91,9 +91,23 @@ void World_ScreenDarken(int level);
 
 // GlobalState.screenShake / flash: shake the playfield by up to intensity (a fraction of the screen) for a time,
 // or flash it white (or black) and fade back over a time.
-void Screen_Shake(fx intensity, fx seconds);
+// ScreenShake.Directions: the axes that shake (each draws its own number).
+enum ShakeDirs : uint8_t
+{
+    SHAKE_NONE = 0,
+    SHAKE_HORIZONTAL = 1,
+    SHAKE_VERTICAL = 2,
+    SHAKE_BOTH = 3,
+};
+void Screen_Shake(fx intensity, fx seconds, uint8_t dirs = SHAKE_BOTH);
 // A new game's ScreenShake (parity replays start play from the C#'s state).
 void Screen_ResetShake();
 bool Screen_ShakeActive();
-void Screen_Flash(fx seconds, bool white = true);
+enum FlashColour : uint8_t
+{
+    FLASH_WHITE,
+    FLASH_BLACK,
+    FLASH_RED, // (drawn white for now: BLDY only fades to white or black)
+};
+void Screen_Flash(fx seconds, FlashColour colour = FLASH_WHITE);
 bool Screen_FlashActive();
