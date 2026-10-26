@@ -70,6 +70,7 @@ EventSlot* FindEvent(const char* name, bool create)
 
 bool gDialogueFinished = true;
 bool gCutsceneDialogue = false;
+int gFinishedAtOpen = 0; // Dialog_FinishedCount when the last line was set
 } // namespace
 
 void GameState_Reset()
@@ -292,6 +293,7 @@ void Game_ShowDialogue(const char* npc, const char* scene, int id)
     {
         Dialog_Open(text, top, false);
         gDialogueFinished = false;
+        gFinishedAtOpen = Dialog_FinishedCount();
         gCutsceneDialogue = false;
     }
 }
@@ -326,24 +328,31 @@ void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, 
     {
         Dialog_Open(text, top, false);
         gDialogueFinished = false;
+        gFinishedAtOpen = Dialog_FinishedCount();
         gCutsceneDialogue = false;
     }
 }
 
 void Game_ShowText(const char* text)
 {
-    // Dialog_Open keeps the pointer: copy, so callers can build the text on the stack.
-    static char sText[512];
-    strncpy(sText, text, sizeof(sText) - 1);
-    sText[sizeof(sText) - 1] = '\0';
-    Dialog_Open(sText, false, false);
+    // Dialog_Open keeps the pointer: copy, so callers can build the text on the stack (two buffers: a second box can
+    // open over the first).
+    static char sText[2][512];
+    static int sNext = 0;
+    char* buf = sText[sNext];
+    sNext ^= 1;
+    strncpy(buf, text, sizeof(sText[0]) - 1);
+    buf[sizeof(sText[0]) - 1] = '\0';
+    Dialog_Open(buf, false, false);
     gCutsceneDialogue = false;
     gDialogueFinished = false;
+    gFinishedAtOpen = Dialog_FinishedCount();
 }
 
 bool Game_DialogueFinished()
 {
-    if (!gDialogueFinished && !Dialog_IsOpen())
+    // (any box finishing sets GlobalState.Dialogue = "", even one under a newer box)
+    if (!gDialogueFinished && (!Dialog_IsOpen() || Dialog_FinishedCount() != gFinishedAtOpen))
     {
         gDialogueFinished = true;
     }

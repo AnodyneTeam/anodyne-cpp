@@ -178,6 +178,9 @@ void DrawGlyph(char c, int gx, int gy, uint32_t ink, bool shadow)
     }
 }
 
+// Updating the box under the shown one (a second DialogueState opened over it): its typing draws nothing.
+bool gHidden = false;
+
 // ---- Writer (TextWriter.cs) ---------------------------------------------------------------------------------------
 struct Writer final
 {
@@ -228,6 +231,10 @@ void ResetWriter(const char* text)
 
 void RedrawText()
 {
+    if (gHidden)
+    {
+        return;
+    }
     memcpy(gCanvas, gBoxImage, sizeof(gCanvas));
     for (int l = 0; l < gW.mLineCount; l++)
     {
@@ -355,8 +362,11 @@ void WriteStep()
         gW.mLines[gW.mLine][n] = c;
         gW.mLineX[gW.mLine][n] = static_cast<uint8_t>(gW.mCursor > 255 ? 255 : gW.mCursor);
         gW.mLineLen[gW.mLine]++;
-        DrawGlyph(c, kTextX + gW.mCursor, kTextY + gW.mFirstLineY + gW.mLine * kLineSep, kWhite, true);
-        gUploadNeeded = true;
+        if (!gHidden)
+        {
+            DrawGlyph(c, kTextX + gW.mCursor, kTextY + gW.mFirstLineY + gW.mLine * kLineSep, kWhite, true);
+            gUploadNeeded = true;
+        }
     }
     gW.mProgress++;
     if ((c == '.' || c == '!' || c == '?') && gW.mProgress < gW.mLen && gW.mText[gW.mProgress] == ' ')
@@ -439,6 +449,70 @@ bool gBlinkyOn = false;
 bool gBlinkyDrawn = false;
 bool gBlinkyEnabled = true;
 
+// Everything one box's DialogueState holds, to keep the box under the shown one (PlayState can run two DialogueStates
+// at once: a line set while a box is open opens a second one over it, and both read the keys and type).
+struct BoxState final
+{
+    Writer mW;
+    Base mBase;
+    Top mTopState;
+    int mNormalSpeed;
+    int mSpeedScale;
+    float mBumpCurrent;
+    float mBumpNext;
+    int mHalfBumps;
+    int mLinesBumped;
+    int mBlinkyTimer;
+    bool mBlinkyOn;
+    bool mBlinkyDrawn;
+    bool mBlinkyEnabled;
+    bool mTop;
+    bool mIntro;
+};
+BoxState gUnder __attribute__((section(".sbss")));
+BoxState gSwap __attribute__((section(".sbss")));
+bool gHasUnder = false;
+int gFinishedCount = 0; // boxes that reached Done (GlobalState.Dialogue = "")
+bool gOpenedNew = false; // a box opened since Dialog_TakeOpened
+
+void SaveBox(BoxState& b)
+{
+    b.mW = gW;
+    b.mBase = gBase;
+    b.mTopState = gTopState;
+    b.mNormalSpeed = gNormalSpeed;
+    b.mSpeedScale = gSpeedScale;
+    b.mBumpCurrent = gBumpCurrent;
+    b.mBumpNext = gBumpNext;
+    b.mHalfBumps = gHalfBumps;
+    b.mLinesBumped = gLinesBumped;
+    b.mBlinkyTimer = gBlinkyTimer;
+    b.mBlinkyOn = gBlinkyOn;
+    b.mBlinkyDrawn = gBlinkyDrawn;
+    b.mBlinkyEnabled = gBlinkyEnabled;
+    b.mTop = gTop;
+    b.mIntro = gIntro;
+}
+
+void LoadBox(const BoxState& b)
+{
+    gW = b.mW;
+    gBase = b.mBase;
+    gTopState = b.mTopState;
+    gNormalSpeed = b.mNormalSpeed;
+    gSpeedScale = b.mSpeedScale;
+    gBumpCurrent = b.mBumpCurrent;
+    gBumpNext = b.mBumpNext;
+    gHalfBumps = b.mHalfBumps;
+    gLinesBumped = b.mLinesBumped;
+    gBlinkyTimer = b.mBlinkyTimer;
+    gBlinkyOn = b.mBlinkyOn;
+    gBlinkyDrawn = b.mBlinkyDrawn;
+    gBlinkyEnabled = b.mBlinkyEnabled;
+    gTop = b.mTop;
+    gIntro = b.mIntro;
+}
+
 // SoundManager.PlaySoundEffect: draws a random number for its pick, so the C#'s dialogue blips do too.
 void PlaySfx(int32_t id)
 {
@@ -461,6 +535,10 @@ bool AcceptOrCancelHit()
 
 void DrawBlinky(bool on)
 {
+    if (gHidden)
+    {
+        return;
+    }
     if (gIntro)
     {
         // UILabel prompt "A" in red, bottom-right.
@@ -699,41 +777,14 @@ static bool AllocObjBlocks()
     return true;
 }
 
-void Dialog_Open(const char* text, bool top, bool intro)
+namespace
 {
-    if (!gVram || gOpen)
-    {
-        return;
-    }
-    Dialog_HideLabels();
-    if (!AllocObjBlocks())
-    {
-        // (the sprite frame cache can leave OBJ VRAM too scattered for the box: drop it and try again)
-        Ecs_FlushFrameCache();
-        if (!AllocObjBlocks())
-        {
-            return;
-        }
-    }
+// DialogueState's constructor: a fresh box typing `text`.
+void StartBox(const char* text, bool top, bool intro)
+{
     gTop = top;
     gIntro = intro;
-    gOpen = true;
-    gDialogueOpen = 1;
-
-    pal_obj_mem[kPalBank * 16 + 0] = 0;
-    pal_obj_mem[kPalBank * 16 + kFill] = RGB15(5, 5, 6);
-    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
-    pal_obj_mem[kPalBank * 16 + kWhite] = RGB15(31, 31, 31);
-    pal_obj_mem[kPalBank * 16 + kRedLight] = RGB15(31, 11, 9);
-    pal_obj_mem[kPalBank * 16 + kRedDark] = RGB15(24, 0, 7);
-    pal_obj_mem[kPalBank * 16 + kPromptRed] = RGB15(31, 4, 4);
-
-    // Semi-transparent OBJs blend with everything beneath (the box texture is 80% opaque on the PC).
-    gSavedBldCnt = REG_BLDCNT;
-    gSavedBldAlpha = REG_BLDALPHA;
-    REG_BLDCNT = (BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP) << 8;
-    REG_BLDALPHA = BLDA_BUILD(13, 3);
-
+    gOpenedNew = true;
     gNormalSpeed = 30;
     gSpeedScale = intro ? 4 : 2;
     ResetWriter(text);
@@ -752,6 +803,54 @@ void Dialog_Open(const char* text, bool top, bool intro)
     gBlinkyOn = false;
     gBlinkyDrawn = false;
     gBlinkyEnabled = true;
+}
+} // namespace
+
+void Dialog_Open(const char* text, bool top, bool intro)
+{
+    if (!gVram)
+    {
+        return;
+    }
+    if (gOpen)
+    {
+        // A second DialogueState over the open one (only two at a time here).
+        if (gHasUnder)
+        {
+            return;
+        }
+        SaveBox(gUnder);
+        gHasUnder = true;
+        StartBox(text, top, intro);
+        return;
+    }
+    Dialog_HideLabels();
+    if (!AllocObjBlocks())
+    {
+        // (the sprite frame cache can leave OBJ VRAM too scattered for the box: drop it and try again)
+        Ecs_FlushFrameCache();
+        if (!AllocObjBlocks())
+        {
+            return;
+        }
+    }
+    gOpen = true;
+    gDialogueOpen = 1;
+
+    pal_obj_mem[kPalBank * 16 + 0] = 0;
+    pal_obj_mem[kPalBank * 16 + kFill] = RGB15(5, 5, 6);
+    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    pal_obj_mem[kPalBank * 16 + kWhite] = RGB15(31, 31, 31);
+    pal_obj_mem[kPalBank * 16 + kRedLight] = RGB15(31, 11, 9);
+    pal_obj_mem[kPalBank * 16 + kRedDark] = RGB15(24, 0, 7);
+    pal_obj_mem[kPalBank * 16 + kPromptRed] = RGB15(31, 4, 4);
+
+    // Semi-transparent OBJs blend with everything beneath (the box texture is 80% opaque on the PC).
+    gSavedBldCnt = REG_BLDCNT;
+    gSavedBldAlpha = REG_BLDALPHA;
+    REG_BLDCNT = (BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP) << 8;
+    REG_BLDALPHA = BLDA_BUILD(13, 3);
+    StartBox(text, top, intro);
 }
 
 void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
@@ -919,16 +1018,15 @@ void Dialog_Close()
     REG_BLDCNT = gSavedBldCnt;
     REG_BLDALPHA = gSavedBldAlpha;
     gOpen = false;
+    gHasUnder = false;
     gDialogueOpen = 0;
 }
 
-bool Dialog_Update()
+namespace
 {
-    if (!gOpen)
-    {
-        return false;
-    }
-
+// DialogueState.Update for the box in the globals. Returns true once it is Done.
+bool UpdateBox()
+{
     // DialogueState.Update: hold Accept/Cancel to type faster.
     gW.mSpeed = AcceptOrCancelHeld() ? gNormalSpeed * gSpeedScale : gNormalSpeed;
 
@@ -1027,14 +1125,71 @@ bool Dialog_Update()
         gBlinkyEnabled = true;
     }
 
-    if (gUploadNeeded)
+    if (gUploadNeeded && !gHidden)
     {
         Upload();
     }
     if (gBase == Base::Done)
     {
-        Dialog_Close();
+        gFinishedCount++;
+        return true;
+    }
+    return false;
+}
+} // namespace
+
+bool Dialog_Update()
+{
+    if (!gOpen)
+    {
         return false;
     }
-    return true;
+    // (PlayState updates its child states oldest first: the box underneath types first)
+    if (gHasUnder)
+    {
+        SaveBox(gSwap);
+        LoadBox(gUnder);
+        gHidden = true;
+        const bool done = UpdateBox();
+        gHidden = false;
+        if (!done)
+        {
+            SaveBox(gUnder);
+        }
+        gHasUnder = !done;
+        LoadBox(gSwap);
+    }
+    if (!UpdateBox())
+    {
+        return true;
+    }
+    if (gHasUnder)
+    {
+        // The shown box is done: the one underneath shows again.
+        LoadBox(gUnder);
+        gHasUnder = false;
+        RedrawText();
+        gBlinkyDrawn = gBlinkyOn;
+        if (gBlinkyOn)
+        {
+            DrawBlinky(true);
+        }
+        PlaceObjs();
+        Upload();
+        return true;
+    }
+    Dialog_Close();
+    return false;
+}
+
+int Dialog_FinishedCount()
+{
+    return gFinishedCount;
+}
+
+bool Dialog_TakeOpened()
+{
+    const bool opened = gOpenedNew;
+    gOpenedNew = false;
+    return opened;
 }

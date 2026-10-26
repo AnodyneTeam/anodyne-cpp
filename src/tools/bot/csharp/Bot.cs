@@ -560,6 +560,11 @@ namespace AnodyneSharp.Recording
                     DumpRing();
                     _trace?.Flush();
                     _entTrace?.Flush();
+                    if (_gba != null && _gbaRun > 0)
+                    {
+                        _gba.WriteLine($"{_gbaRun} {_gbaMask:x3}"); // (the run so far, so a replay covers the whole trace)
+                    }
+                    _gba?.Flush();
                     Environment.Exit(4);
                 }
                 _winMs = 0; _winN = 0;

@@ -28,10 +28,15 @@ void Dialog_SetSceneProgress(const char* npc, const char* scene, int id);
 
 // Opens the box and starts typing `text` (must stay valid while open: ROM strings are). `intro` = IntroState's
 // box: 4x speed-up and a red button prompt instead of the blinking arrow. Needs OBJ VRAM; does nothing if it is
-// full. Only one dialogue at a time.
+// full. Opened while a box is open, the new box shows over it and both type (PlayState's two DialogueStates); a
+// third is dropped.
 void Dialog_Open(const char* text, bool top = false, bool intro = false);
 
 bool Dialog_IsOpen();
+// How many boxes have finished so far (each sets GlobalState.Dialogue = "").
+int Dialog_FinishedCount();
+// Whether a box opened since the last call (GlobalState.SetDialogueMode).
+bool Dialog_TakeOpened();
 
 // Per frame while open (also on the frame it closes). Returns true while the box is still open afterwards.
 bool Dialog_Update();

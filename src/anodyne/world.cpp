@@ -1896,10 +1896,15 @@ void World_Update()
     }
 
     // GlobalState.SetDialogueMode: something opened the dialogue box this frame.
-    if (!gDialogOpen && !Pause_IsOpen() && Dialog_IsOpen())
+    if (!Pause_IsOpen() && Dialog_IsOpen())
     {
-        gDialogOpen = true;
-        Player_BeIdle();
+        // (a second box over an open one is a new DialogueState too)
+        const bool opened = Dialog_TakeOpened();
+        if (!gDialogOpen || opened)
+        {
+            gDialogOpen = true;
+            Player_BeIdle();
+        }
     }
     gGame.mEnemiesKilled = Ecs_KilledEnemies();
 
