@@ -171,5 +171,9 @@ void Game_PlaySfxOneOf(const char* const* names, int count);
 // (also SetSongVolume(volume), even when the song is already playing)
 void Game_PlaySong(const char* name, float volume = 1.0f);
 // SoundManager.GetVolume / SetSongVolume: the song's volume, 0 to 1.
+// SoundManager.CurrentSongName ("" when stopped).
+const char* Game_CurrentSong();
+// Map.IgnoreMusicNextUpdate: the next screen transition keeps the music playing.
+void Game_IgnoreMusicNextUpdate();
 float Game_SongVolume();
 void Game_SetSongVolume(float volume);

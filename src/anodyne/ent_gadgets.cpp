@@ -1,9 +1,12 @@
 // Gadgets and events (AnodyneSharp Entities/Gadget, Entities/Events).
 #include "entity_classes.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "dialog.h"
+#include "entities.h"
 #include "player.h"
 
 namespace
@@ -2506,5 +2509,280 @@ Entity* Spawn_StopMarker(const MapEntity& preset, Entity&)
     {
         e->mB->mW = e->mB->mH = 16;
     }
+    return e;
+}
+
+// ---- Elevator (Interactive/Elevator.cs) ------------------------------------------------------------------------------
+// The doors open as the player walks up; stepping in opens the floor menu (ElevatorMenu, a ListSubstate), and a floor
+// warps to that floor's elevator.
+namespace
+{
+enum ElevatorState : uint8_t
+{
+    ELEV_CLOSE,
+    ELEV_OPEN,
+    ELEV_MENU,
+    ELEV_LEAVING,
+    ELEV_NONE, // PopState
+};
+
+constexpr int kMaxFloors = 4;
+
+struct ElevatorData final
+{
+    uint8_t mState;
+    // ElevatorMenu
+    bool mMenuExit;
+    int8_t mChosen;   // index into mFloors, -1: none
+    uint8_t mSel;     // ListSubstate.state (kept from one ride to the next)
+    uint8_t mLastSel; // _lastState
+    uint8_t mFloorCount;
+    const MapEntity* mFloors[kMaxFloors]; // the group's other elevators, by frame
+    Entity* mMenuDetector;
+    Entity* mOpenDetector;
+};
+
+struct DetectorData final
+{
+    bool mHit;
+};
+
+void DetectorUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    self.Data<DetectorData>().mHit = false;
+}
+
+void DetectorCollided(Entity& self, Entity&)
+{
+    self.Data<DetectorData>().mHit = true;
+}
+
+const EntityClass kPlayerDetector = {
+    "PlayerDetector", DetectorUpdate, nullptr, DetectorCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                GROUP_PLAYER,   0,
+};
+
+const EntityClass kElevatorFrame = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+bool Detected(Entity* detector)
+{
+    return detector->Data<DetectorData>().mHit;
+}
+
+void ElevatorMenuDraw(const ElevatorData& d)
+{
+    // (the C#'s lines are 1.3 font lines apart round the middle of its 136x126 panel at (15, 40); the GBA's label
+    // canvas is 44 px high, so they sit 9 px apart there)
+    static char numbers[kMaxFloors][8];
+    const char* lines[kMaxFloors + 2];
+    int xs[kMaxFloors + 2];
+    int ys[kMaxFloors + 2];
+    const int count = d.mFloorCount + 2;
+    const int top = 40 + 63 - count * 9 / 2;
+    lines[0] = Dialog_GetFor("misc", "any", "elevator", 0);
+    for (int i = 0; i < d.mFloorCount; i++)
+    {
+        snprintf(numbers[i], sizeof(numbers[i]), "%d", d.mFloors[i]->mFrame + 1);
+        lines[i + 1] = numbers[i];
+    }
+    lines[count - 1] = Dialog_GetFor("misc", "any", "elevator", 1);
+    for (int i = 0; i < count; i++)
+    {
+        const int w = lines[i] ? static_cast<int>(strlen(lines[i])) * 7 : 0;
+        xs[i] = 15 + 68 - w / 2;
+        ys[i] = top + i * 9;
+    }
+    const int sel = d.mSel + 1;
+    Dialog_ShowLabels(lines, xs, ys, count, top, xs[sel] - 7, ys[sel] + 2, true);
+}
+
+// The ElevatorMenu child state's frame (HandleInput, then ListSubstate.Update); true once it exits.
+bool ElevatorMenuStep(Entity& self)
+{
+    ElevatorData& d = self.Data<ElevatorData>();
+    const int options = d.mFloorCount + 1;
+    if (key_hit(KEY_UP))
+    {
+        if (d.mSel > 0)
+        {
+            d.mSel--;
+        }
+    }
+    else if (key_hit(KEY_DOWN))
+    {
+        if (d.mSel < options - 1)
+        {
+            d.mSel++;
+        }
+    }
+    else if (key_hit(KEY_A))
+    {
+        // Select: the ActionOption's action
+        d.mChosen = d.mSel < d.mFloorCount ? static_cast<int8_t>(d.mSel) : -1;
+        d.mMenuExit = true;
+        Game_PlaySfx("menu_select");
+    }
+    else if (key_hit(KEY_B))
+    {
+        d.mMenuExit = true; // ExitSubState
+        Game_PlaySfx("menu_select");
+    }
+    if (d.mLastSel != d.mSel)
+    {
+        d.mLastSel = d.mSel;
+        Game_PlaySfx("menu_move");
+    }
+    if (d.mMenuExit)
+    {
+        Dialog_HideLabels();
+        return true;
+    }
+    ElevatorMenuDraw(d);
+    return false;
+}
+
+void ElevatorEnter(Entity& self, uint8_t state)
+{
+    ElevatorData& d = self.Data<ElevatorData>();
+    d.mState = state;
+    switch (state)
+    {
+    case ELEV_CLOSE:
+        if (Ecs_Frame(self) != 0)
+        {
+            Ecs_Play(self, "close");
+            Game_PlaySfx("elevator_close");
+        }
+        break;
+    case ELEV_OPEN:
+        if (!Ecs_AnimIs(self, "open"))
+        {
+            Ecs_Play(self, "open");
+            Game_PlaySfx("elevator_open");
+        }
+        break;
+    case ELEV_MENU:
+        d.mMenuExit = false;
+        d.mLastSel = d.mSel; // GetControl
+        Game_StartCutscene(self, ElevatorMenuStep);
+        ElevatorMenuDraw(d);
+        break;
+    case ELEV_LEAVING:
+        Ecs_Play(self, "open");
+        Game_PlaySfx("elevator_open");
+        break;
+    default:
+        break;
+    }
+}
+
+void ElevatorUpdate(Entity& self)
+{
+    ElevatorData& d = self.Data<ElevatorData>();
+    Ecs_BaseUpdate(self);
+    // (the FSM's conditions in order, each seeing the state the one before left: a Close that opens can also go on to
+    // the menu in the same frame, as RSG's AbstractState.Update runs them all)
+    switch (d.mState)
+    {
+    case ELEV_CLOSE:
+        if (Detected(d.mOpenDetector))
+        {
+            ElevatorEnter(self, ELEV_OPEN);
+        }
+        if (Detected(d.mMenuDetector))
+        {
+            ElevatorEnter(self, ELEV_MENU);
+        }
+        break;
+    case ELEV_OPEN:
+        if (!Detected(d.mOpenDetector))
+        {
+            ElevatorEnter(self, ELEV_CLOSE);
+        }
+        break;
+    case ELEV_MENU:
+        if (d.mMenuExit)
+        {
+            if (d.mChosen >= 0)
+            {
+                const MapEntity& next = *d.mFloors[d.mChosen];
+                World_RequestWarp(gGame.mCurrentMap, next.mX + 8, next.mY + 30, 255);
+                d.mState = ELEV_NONE;
+            }
+            else
+            {
+                ElevatorEnter(self, ELEV_LEAVING);
+            }
+        }
+        break;
+    case ELEV_LEAVING:
+        if (!Detected(d.mMenuDetector))
+        {
+            ElevatorEnter(self, ELEV_OPEN);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+const EntityClass kElevator = {
+    "Elevator", ElevatorUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+Entity* MakeDetector(Entity& parent, int x, int y, int w, int h)
+{
+    Entity* e = Ecs_Create(kPlayerDetector, Fx(x), Fx(y), PART_BRAIN, nullptr, &parent);
+    if (e)
+    {
+        e->mB->mW = static_cast<int16_t>(w);
+        e->mB->mH = static_cast<int16_t>(h);
+        Ecs_SetSolid(*e, false);
+    }
+    return e;
+}
+} // namespace
+
+Entity* Spawn_Elevator(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kElevator, preset, "elevator_doors", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 32;
+    ElevatorData& d = e->Data<ElevatorData>();
+    d = ElevatorData();
+    d.mChosen = -1;
+    // The link group's others (every elevator of the map: one group a map), by frame.
+    const MapEntityList& list = Entities_Presets();
+    for (uint32_t i = 0; i < list.mCount && d.mFloorCount < kMaxFloors; i++)
+    {
+        const MapEntity& p = list.mEntities[i];
+        if (p.mType == EPT_Elevator && &p != &preset)
+        {
+            int at = d.mFloorCount++;
+            for (; at > 0 && d.mFloors[at - 1]->mFrame > p.mFrame; at--)
+            {
+                d.mFloors[at] = d.mFloors[at - 1];
+            }
+            d.mFloors[at] = &p;
+        }
+    }
+    // SubEntities: menuDetector, openDetector, elevator_frame
+    d.mMenuDetector = MakeDetector(*e, preset.mX, preset.mY, 32, 20);
+    d.mOpenDetector = MakeDetector(*e, preset.mX, preset.mY + 32, 32, 32);
+    Entity* frame = Ecs_Create(kElevatorFrame, Fx(preset.mX), Fx(preset.mY), PART_VISUAL, nullptr, e);
+    if (!d.mMenuDetector || !d.mOpenDetector || !frame)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*frame, "elevator", 32, 32);
+    Ecs_SetFrame(*frame, preset.mFrame);
+    Ecs_SetSolid(*frame, false);
+    ElevatorEnter(*e, ELEV_CLOSE);
     return e;
 }

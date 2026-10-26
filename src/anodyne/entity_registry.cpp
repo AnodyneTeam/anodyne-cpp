@@ -109,6 +109,12 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_EyebossPreview;
     case EPT_HotelGuy:
         return Spawn_HotelGuy;
+    case EPT_Elevator:
+        return Spawn_Elevator;
+    case EPT_EyeBossWater:
+        return Spawn_EyeBossWater;
+    case EPT_EyeBossLand:
+        return Spawn_EyeBossLand;
     case EPT_SplitBoss:
         return Spawn_SplitBoss;
     case EPT_Rat:

@@ -71,8 +71,10 @@ Entity* Player_BroomDust();
 void Player_LoseBroomDust();
 // PlayState.Refreshes after the equipped broom changed: Broom.UpdateBroomType.
 void Player_UpdateBroomType();
-// slowMul = 0.5 for the next `ticks` updates and the one after (a Person in the way).
-void Player_SetSlowFor(int ticks);
+// slowMul = mul for the next `ticks` updates and the one after (a Person in the way, an eye boss splash).
+void Player_SetSlowFor(int ticks, float mul = 0.5f);
+// Player.invincible (just hurt).
+bool Player_Invincible();
 // Player.reversed = true (a GasGuy's gas): the d-pad is backwards until 0.9 s have passed.
 void Player_Reverse();
 // Player.offset.Y (the height drawn above the shadow).

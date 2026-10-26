@@ -720,7 +720,7 @@ void Dialog_Open(const char* text, bool top, bool intro)
 }
 
 void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
-                       int selectorY)
+                       int selectorY, bool white)
 {
     if (!gVram || gOpen)
     {
@@ -744,6 +744,8 @@ void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, i
     }
     pal_obj_mem[kPalBank * 16 + 0] = 0;
     pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    pal_obj_mem[kPalBank * 16 + kWhite] = RGB15(31, 31, 31);
+    const uint32_t ink = white ? kWhite : kBlack;
     memset(gCanvas, 0, sizeof(gCanvas));
     for (int i = 0; i < count; i++)
     {
@@ -752,7 +754,7 @@ void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, i
         {
             if (HasGlyph(*c) && *c != ' ')
             {
-                DrawGlyph(*c, x, ys[i] - top, kBlack, false);
+                DrawGlyph(*c, x, ys[i] - top, ink, white);
             }
             x += kCharW;
         }
@@ -765,7 +767,7 @@ void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, i
             const int len = r < 3 ? r + 1 : 5 - r;
             for (int c = 0; c < len; c++)
             {
-                SetPixel(gCanvas, selectorX + c, selectorY - top + r, kBlack);
+                SetPixel(gCanvas, selectorX + c, selectorY - top + r, ink);
             }
         }
     }

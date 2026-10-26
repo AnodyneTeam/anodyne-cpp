@@ -1,6 +1,8 @@
 // Enemies (AnodyneSharp Entities/Enemy): the ones met before the first boss.
 #include "entity_classes.h"
 
+#include "dialog.h"
+#include "entities.h"
 #include "player.h"
 
 #include <math.h>
@@ -6322,6 +6324,915 @@ bool MakeEyeParts(Entity& eye, Entity*& pupil, Entity*& eyelids)
     eyelids->mV->mLayerOffset = 2;
     return true;
 }
+
+// ---- The eye boss (Hotel/Boss/*.cs): WaterPhase swims round the pool, then LandPhase (on the screen below) walks out
+// of it. Each phase has an EnemyMarker, an invisible [Enemy] the gates count once the whole boss is beaten.
+constexpr int kEyeBullets = 8;
+constexpr int kEyeSplashes = 18;
+
+const EntityClass kEnemyMarker = {
+    "EnemyMarker", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_ENEMY,
+};
+
+Entity* MakeEnemyMarker(Entity& owner)
+{
+    return Ecs_Create(kEnemyMarker, 0, 0, 0, nullptr, &owner);
+}
+
+// WaterPhase.KeepInRect: bounces the velocity off the rectangle's sides; true if it bounced.
+bool KeepInRect(Entity& e, const Rect& r)
+{
+    bool ret = false;
+    const Rect h = Ecs_Hitbox(e);
+    Transform& t = *e.mT;
+    if ((h.mX < r.mX && t.mVelX < 0) || (h.mX + h.mW > r.mX + r.mW && t.mVelX > 0))
+    {
+        t.mVelX = -t.mVelX;
+        ret = true;
+    }
+    if ((h.mY < r.mY && t.mVelY < 0) || (h.mY + h.mH > r.mY + r.mH && t.mVelY > 0))
+    {
+        t.mVelY = -t.mVelY;
+        ret = true;
+    }
+    return ret;
+}
+
+// The other preset of the boss's link group (EntityManager.GetLinkGroup).
+const MapEntity* EyeBossOtherPhase(const MapEntity& preset)
+{
+    const MapEntityList& list = Entities_Presets();
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        const MapEntity& p = list.mEntities[i];
+        if (&p != &preset && p.mLinkId == preset.mLinkId && (p.mType == EPT_EyeBossWater || p.mType == EPT_EyeBossLand))
+        {
+            return &p;
+        }
+    }
+    return nullptr;
+}
+
+// ---- WaterPhase and its Bullets
+struct EyeWaterBulletData final
+{
+    Rect mArea;
+};
+
+void EyeWaterBulletUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+    KeepInRect(self, self.Data<EyeWaterBulletData>().mArea);
+}
+
+// Bullet.Collided (also called with no one to pop them all when the eye goes down).
+void EyeWaterBulletPop(Entity& self, Entity* other)
+{
+    if (self.mT->mVelX == 0 && self.mT->mVelY == 0)
+    {
+        return;
+    }
+    self.mT->mVelX = self.mT->mVelY = 0;
+    Ecs_Play(self, "pop@2");
+    Game_PlaySfx("dustpoof");
+    if (other && IsPlayer(*other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+void EyeWaterBulletCollided(Entity& self, Entity& other)
+{
+    EyeWaterBulletPop(self, &other);
+}
+
+const EntityClass kEyeWaterBullet = {
+    "Bullet", EyeWaterBulletUpdate, nullptr, EyeWaterBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER | GROUP_BROOM, 0,
+};
+
+enum WaterPhaseStep : uint8_t
+{
+    WP_START,
+    WP_WAIT_PLAYER, // until the player walks in
+    WP_DIALOGUE,
+    WP_FIGHT_START,
+    WP_FIGHT,
+    WP_SINK,
+    WP_FADE,
+    WP_DONE,
+};
+
+struct WaterPhaseData final
+{
+    uint8_t mStep;
+    bool mSpeedUp; // FightLogic: in SpeedUpOnHit (else WaitingOnHit)
+    int8_t mHealth;
+    bool mBossRush;
+    bool mBroomHit;
+    bool mPlayerHit;
+    bool mVolume; // its VolumeEvent(0, 0.42), quiet, is fading the song out
+    bool mVolumeLive;
+    float mT; // SpeedUpOnHit's tm, WaitingOnHit's t
+    fx mTlX;  // the pool's top left
+    fx mTlY;
+    Entity* mPupil;
+    Entity* mEyelids;
+    Entity* mMarker;
+    // (the pool: there's only ever one eye boss, so it lives outside the brain data)
+    static Entity* mBullets[kEyeBullets];
+};
+
+Entity* WaterPhaseData::mBullets[kEyeBullets];
+
+// The eye's CompositeSpriteRenderer: the pupil and eyelids are drawn with the sclera.
+void EyePartsFollow(const Entity& eye, Entity& pupil, Entity& eyelids)
+{
+    const Visual& v = *eye.mV;
+    eyelids.mT->mX = eye.mT->mX - v.mOffX;
+    eyelids.mT->mY = eye.mT->mY - v.mOffY;
+    Entity* const parts[2] = { &pupil, &eyelids };
+    for (Entity* part : parts)
+    {
+        part->mExists = eye.mExists;
+        part->mV->mVisible = v.mVisible;
+        part->mV->mOpacity = v.mOpacity;
+        part->mV->mYPush = v.mYPush;
+    }
+}
+
+// bullets.Spawn(b => b.Spawn(Position))
+bool EyeWaterShoot(const Entity& self)
+{
+    for (Entity* b : WaterPhaseData::mBullets)
+    {
+        if (b->mExists)
+        {
+            continue;
+        }
+        b->mExists = true;
+        b->mT->mX = self.mT->mX;
+        b->mT->mY = self.mT->mY;
+        b->mT->mVelX = b->mT->mVelY = Fx(50);
+        Ecs_Play(*b, "move@2");
+        Game_PlaySfx("gasguy_shoot");
+        return true;
+    }
+    return false;
+}
+
+// FightLogic: SpeedUpOnHit then WaitingOnHit, round and round, each running on into the next in the same frame.
+void EyeFightStep(Entity& self, WaterPhaseData& d)
+{
+    static const float kShootTimes[7] = { 0, 0.65f, 0.7f, 0.8f, 0.9f, 0.95f, 1.1f };
+    Transform& t = *self.mT;
+    for (;;)
+    {
+        if (d.mSpeedUp)
+        {
+            // SpeedUpOnHit: each hit speeds the eye up, until 0.8 s pass without one
+            if (static_cast<double>(d.mT) < 0.8)
+            {
+                d.mT += kDeltaTime;
+                if (d.mPlayerHit)
+                {
+                    Player_ReceiveDamage(1);
+                }
+                if (d.mBroomHit)
+                {
+                    d.mT = 0;
+                    t.mVelX = fx(t.mVelX.mV * 1.5f);
+                    t.mVelY = fx(t.mVelY.mV * 1.5f);
+                }
+                return;
+            }
+            Ecs_Play(*d.mEyelids, "blink");
+            t.mVelX = t.mVelY = fx(static_cast<float>(6 - d.mHealth) * 15);
+            d.mSpeedUp = false;
+            d.mT = 0;
+        }
+        // WaitingOnHit: shoots until the broom hits it, then it's knocked away
+        if (!d.mBroomHit)
+        {
+            d.mT += kDeltaTime;
+            if (d.mT >= kShootTimes[d.mHealth])
+            {
+                d.mT = 0;
+                if (EyeWaterShoot(self))
+                {
+                    Ecs_Play(*d.mEyelids, "blink");
+                }
+            }
+            return;
+        }
+        Ecs_Play(*d.mEyelids, "closed");
+        float vx = fminf(20, static_cast<float>(Rng_Range(0, 100)));
+        float vy = sqrtf(100 * 100 - vx * vx);
+        if (Player_Facing() == FACE_UP)
+        {
+            vy = -vy;
+        }
+        if (Player_Facing() == FACE_RIGHT)
+        {
+            vx = -vx;
+        }
+        t.mVelX = fx(vx);
+        t.mVelY = fx(vy);
+        d.mSpeedUp = true;
+        d.mT = 0;
+    }
+}
+
+void WaterPhaseStep(Entity& self, WaterPhaseData& d)
+{
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    switch (d.mStep)
+    {
+    case WP_START:
+        d.mVolume = true;
+        d.mStep = WP_WAIT_PLAYER;
+        [[fallthrough]];
+    case WP_WAIT_PLAYER:
+        if (World_Player()->mT->mY < d.mTlY + Fx(24))
+        {
+            return;
+        }
+        d.mStep = WP_FIGHT_START;
+        if (!d.mBossRush && !Dialog_IsSceneDirty("eyeboss", "before_fight"))
+        {
+            Game_ShowDialogue("eyeboss", "before_fight");
+            d.mStep = WP_DIALOGUE;
+        }
+        [[fallthrough]];
+    case WP_DIALOGUE:
+        if (d.mStep == WP_DIALOGUE && !Game_DialogueFinished())
+        {
+            return;
+        }
+        [[fallthrough]];
+    case WP_FIGHT_START:
+        d.mVolume = false;
+        Game_PlaySong("hotel-boss");
+        Game_IgnoreMusicNextUpdate();
+        Ecs_Play(*d.mEyelids, "open");
+        d.mSpeedUp = true;
+        d.mT = 0;
+        d.mStep = WP_FIGHT;
+        [[fallthrough]];
+    case WP_FIGHT:
+        if (d.mHealth > 0)
+        {
+            EyeFightStep(self, d);
+            const Rect box = { FxTrunc(d.mTlX) + 12, FxTrunc(d.mTlY) + 16, 16 * 7 + 4 - 12, 16 * 8 - 16 };
+            if (KeepInRect(self, box))
+            {
+                Game_PlaySfx("wb_tap_ground");
+            }
+            return;
+        }
+        t.mVelX = 0;
+        t.mVelY = Fx(40);
+        if (!d.mBossRush)
+        {
+            if (Entity* h = Spawn_HealthDrop(t.mX, t.mY, true))
+            {
+                Ecs_MarkSpawned(*h);
+            }
+        }
+        for (Entity* b : d.mBullets)
+        {
+            EyeWaterBulletPop(*b, nullptr);
+        }
+        d.mStep = WP_SINK;
+        [[fallthrough]];
+    case WP_SINK:
+        if (t.mY < d.mTlY + Fx(16 * 6))
+        {
+            return;
+        }
+        d.mStep = WP_FADE;
+        [[fallthrough]];
+    case WP_FADE:
+        if (!MoveTo(v.mOpacity, 0, Fx(3)))
+        {
+            v.mYPush = fx(v.mYPush.mV + kDeltaTime * 60);
+            return;
+        }
+        gGame.mPuzzlesSolved++;
+        self.mExists = false;
+        Preset_SetAlive(*self.mPreset, false);
+        if (const MapEntity* land = EyeBossOtherPhase(*self.mPreset))
+        {
+            Preset_SetActivated(*land, false); // the land phase climbs out of the pool
+        }
+        d.mStep = WP_DONE;
+        return;
+    default:
+        return;
+    }
+}
+
+void WaterPhaseUpdate(Entity& self)
+{
+    WaterPhaseData& d = self.Data<WaterPhaseData>();
+    Ecs_BaseUpdate(self);
+    WaterPhaseStep(self, d);
+    // (its VolumeEvent: spawned on the first update, so it starts on the next, after the eye)
+    if (d.mVolume)
+    {
+        if (d.mVolumeLive)
+        {
+            fx volume = FxF(Game_SongVolume());
+            MoveTo(volume, 0, FxF(0.007f * 60));
+            Game_SetSongVolume(volume.mV);
+        }
+        d.mVolumeLive = true;
+    }
+    d.mBroomHit = d.mPlayerHit = false;
+    EyeLookAtPlayer(self, *d.mPupil);
+    EyePartsFollow(self, *d.mPupil, *d.mEyelids);
+}
+
+void WaterPhaseCollided(Entity& self, Entity& other)
+{
+    WaterPhaseData& d = self.Data<WaterPhaseData>();
+    if (IsBroom(other) && !self.mV->mFlickering)
+    {
+        d.mBroomHit = true;
+        d.mHealth--;
+        Game_PlaySfx("broom_hit");
+        Ecs_Flicker(self, FxSec(2.3f));
+    }
+    else if (IsPlayer(other))
+    {
+        d.mPlayerHit = true;
+    }
+}
+
+const EntityClass kWaterPhase = {
+    "WaterPhase", WaterPhaseUpdate, nullptr, WaterPhaseCollided, nullptr, nullptr, nullptr, nullptr,
+    0,            GROUP_PLAYER | GROUP_BROOM, 0,
+};
+
+// ---- LandPhase, its Bullets and their BulletSplashes
+struct EyeArcData final
+{
+    Parabola mArc;
+    Entity* mShadow;
+};
+
+void EyeArcSetExists(Entity& e, bool exists)
+{
+    e.mExists = exists;
+    e.Data<EyeArcData>().mShadow->mExists = exists;
+}
+
+// shadow.Update: Position = parent.Position - (offset - sprite size / 4)
+void EyeArcShadowFollow(Entity& self, int dx, int dy)
+{
+    Entity& shadow = *self.Data<EyeArcData>().mShadow;
+    shadow.mT->mX = self.mT->mX + Fx(dx);
+    shadow.mT->mY = self.mT->mY + Fx(dy);
+}
+
+void EyeSplashUpdate(Entity& self)
+{
+    EyeArcData& d = self.Data<EyeArcData>();
+    Ecs_BaseUpdate(self);
+    EyeArcShadowFollow(self, 2, 2);
+    if (Ecs_AnimIs(self, "move") && ParabolaTick(d.mArc, self, d.mShadow, 3))
+    {
+        Ecs_Play(self, "pop");
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        EyeArcSetExists(self, false);
+        Game_PlaySfx("4sht_pop");
+    }
+}
+
+void EyeSplashCollided(Entity& self, Entity&)
+{
+    if (self.mV->mOffY < Fx(9) && !Player_Invincible())
+    {
+        Player_SetSlowFor(100, 0.3f);
+        BubbleSfx();
+    }
+}
+
+const EntityClass kEyeSplash = {
+    "BulletSplash", EyeSplashUpdate, nullptr, EyeSplashCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,    0,
+};
+
+void EyeSplashSpawn(Entity& s, fx x, fx y)
+{
+    EyeArcData& d = s.Data<EyeArcData>();
+    EyeArcSetExists(s, true);
+    s.mT->mX = x;
+    s.mT->mY = y;
+    Ecs_Play(s, "move");
+    d.mArc.mT = 0;
+    const float vx = static_cast<float>(Rng_Range(-20, 21));
+    float vy = sqrtf(20 * 20 - vx * vx);
+    if (Rng_Unit() < FxF(0.5f))
+    {
+        vy = -vy;
+    }
+    s.mT->mVelX = fx(vx);
+    s.mT->mVelY = fx(vy);
+}
+
+enum LandCoroutine : uint8_t
+{
+    LP_TO_LAND,
+    LP_LAND,
+    LP_DIE,
+    LP_NONE, // yield break
+};
+
+struct LandPhaseData final
+{
+    uint8_t mCo;   // the running coroutine
+    uint8_t mStep; // its step
+    uint8_t mGen;  // bumped by each new coroutine
+    uint8_t mDeathRound;
+    int8_t mHealth;
+    bool mBossRush;
+    bool mBroomHit;
+    bool mPaceWaiting;  // Pace: inside its MoveTo(t, 1, 1) loop
+    bool mBlinkWaiting; // Blink: inside its wait
+    fx mT;              // Die's t
+    fx mPaceT;
+    float mBlinkT;
+    fx mPaceX; // Pace's pos
+    fx mPaceY;
+    fx mBaseX; // LandLogic's base_pt
+    fx mBaseY;
+    fx mTlX;
+    fx mTlY;
+    Parabola mJump;
+    Entity* mShadow;
+    Entity* mMarker;
+    static Entity* mBullets[kEyeBullets];
+    static Entity* mSplashes[kEyeSplashes];
+};
+
+Entity* LandPhaseData::mBullets[kEyeBullets];
+Entity* LandPhaseData::mSplashes[kEyeSplashes];
+
+void EyeLandBulletUpdate(Entity& self)
+{
+    EyeArcData& d = self.Data<EyeArcData>();
+    Ecs_BaseUpdate(self);
+    EyeArcShadowFollow(self, 2, 4);
+    if (Ecs_AnimIs(self, "move"))
+    {
+        if (ParabolaTick(d.mArc, self, d.mShadow, 3))
+        {
+            Ecs_Play(self, "pop");
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        EyeArcSetExists(self, false);
+        Game_PlaySfx("4sht_shoot");
+        // splashes.Spawn(s => s.Spawn(Position), 4)
+        int n = 0;
+        for (Entity* s : LandPhaseData::mSplashes)
+        {
+            if (n == 4)
+            {
+                break;
+            }
+            if (!s->mExists)
+            {
+                EyeSplashSpawn(*s, self.mT->mX, self.mT->mY);
+                n++;
+            }
+        }
+    }
+}
+
+void EyeLandBulletCollided(Entity& self, Entity&)
+{
+    if (self.mV->mOffY < Fx(7))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kEyeLandBullet = {
+    "Bullet", EyeLandBulletUpdate, nullptr, EyeLandBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER,        0,
+};
+
+// ShootBullet: bullets.Spawn(b => b.Spawn(Position + (width, 2), player.Position), amount)
+void LandShoot(const Entity& self, int amount)
+{
+    const Entity& p = *World_Player();
+    const fx x = self.mT->mX + Fx(self.mB->mW);
+    const fx y = self.mT->mY + Fx(2);
+    for (Entity* b : LandPhaseData::mBullets)
+    {
+        if (amount == 0)
+        {
+            break;
+        }
+        if (b->mExists)
+        {
+            continue;
+        }
+        amount--;
+        EyeArcData& d = b->Data<EyeArcData>();
+        EyeArcSetExists(*b, true);
+        Ecs_Play(*b, "move");
+        b->mT->mX = x;
+        b->mT->mY = y;
+        const float vx = (p.mT->mX - x).mV / 1.5f;
+        const float vy = (p.mT->mY - y).mV / 1.5f;
+        const float rx = Rng_Unit().mV * 5;
+        const float ry = Rng_Unit().mV * 5;
+        b->mT->mVelX = fx(vx + rx);
+        b->mT->mVelY = fx(vy + ry);
+        d.mArc.mT = 0;
+    }
+}
+
+void LandStart(LandPhaseData& d, uint8_t co)
+{
+    d.mCo = co;
+    d.mStep = 0;
+    d.mGen++;
+}
+
+// shadowPos: the shadow shrinks the higher the eye is.
+void LandShadowFrame(const Entity& self, Entity& shadow)
+{
+    const fx off = self.mV->mOffY;
+    Ecs_SetFrame(shadow, off <= Fx(20) ? 4 : (off <= Fx(40) ? 3 : 2));
+}
+
+// ToLand: rises out of the pool, hops up and crashes down onto the land.
+bool LandToLandStep(Entity& self, LandPhaseData& d)
+{
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    switch (d.mStep)
+    {
+    case 0:
+        // (the constructor's MoveNext: the initial setup)
+        Ecs_Play(self, "closed");
+        Ecs_SetSolid(self, false);
+        t.mX = d.mTlX + Fx(44);
+        t.mY = d.mTlY - Fx(32);
+        d.mStep = 1;
+        return true;
+    case 1:
+        t.mVelY = Fx(8);
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+    {
+        const bool pushed = MoveTo(v.mYPush, Fx(22), Fx(40));
+        const bool shown = MoveTo(v.mOpacity, kFxOne, FxF(1.8f));
+        if (!pushed || !shown)
+        {
+            return true;
+        }
+        d.mStep = 3;
+    }
+        [[fallthrough]];
+    case 3:
+        if (t.mY < d.mTlY)
+        {
+            return true;
+        }
+        t.mVelX = t.mVelY = 0;
+        Ecs_Play(self, "walk");
+        v.mYPush = 0;
+        Game_PlaySfx("bubble_triple");
+        d.mShadow->mV->mVisible = true;
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (!MoveTo(v.mOffY, Fx(90), Fx(90)))
+        {
+            LandShadowFrame(self, *d.mShadow);
+            return true;
+        }
+        t.mX = d.mTlX + Fx(16);
+        t.mY = d.mTlY + Fx(75);
+        Game_PlaySfx("fall_1");
+        d.mStep = 5;
+        [[fallthrough]];
+    default:
+        if (!MoveTo(v.mOffY, 0, Fx(180)))
+        {
+            LandShadowFrame(self, *d.mShadow);
+            return true;
+        }
+        d.mShadow->mV->mVisible = false;
+        Screen_Shake(FxF(0.03f), FxF(0.5f));
+        Preset_SetActivated(*self.mPreset, true); // back from a quick look upstairs, it's already on land
+        LandStart(d, LP_LAND);
+        return false;
+    }
+}
+
+// Pace's MoveNext: a new spot on a 3x3 grid now and then (70%), each second.
+void LandPaceNext(LandPhaseData& d)
+{
+    for (;;)
+    {
+        if (!d.mPaceWaiting)
+        {
+            d.mPaceT = 0;
+            d.mPaceWaiting = true;
+        }
+        if (!MoveTo(d.mPaceT, kFxOne, kFxOne))
+        {
+            return;
+        }
+        d.mPaceWaiting = false;
+        if (Rng_NextDouble() < 0.7)
+        {
+            d.mPaceX = d.mBaseX;
+            d.mPaceY = d.mBaseY;
+            d.mPaceX += Fx(Rng_Range(0, 3) * 16);
+            d.mPaceY += Fx(Rng_Range(0, 3) * 16);
+        }
+    }
+}
+
+// Blink's MoveNext: blinks and shoots, quicker as it gets hurt.
+void LandBlinkNext(Entity& self, LandPhaseData& d)
+{
+    static const float kTimes[6] = { 1, 1, 0.9f, 0.8f, 0.7f, 0.65f };
+    for (;;)
+    {
+        if (!d.mBlinkWaiting)
+        {
+            d.mBlinkT = 0;
+            d.mBlinkWaiting = true;
+        }
+        if (d.mBlinkT < kTimes[6 - d.mHealth])
+        {
+            d.mBlinkT += kDeltaTime;
+            if (Ecs_AnimIs(self, "blink_land") && Ecs_AnimFinished(self))
+            {
+                Ecs_Play(self, "walk");
+            }
+            return;
+        }
+        d.mBlinkWaiting = false;
+        Ecs_Play(self, "blink_land");
+        Game_PlaySfx("slasher_atk");
+        LandShoot(self, 1);
+    }
+}
+
+// LandLogic: paces about blinking bullets; a hit sends it hopping to the right edge to fire three.
+bool LandLogicStep(Entity& self, LandPhaseData& d)
+{
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            Ecs_SetSolid(self, true);
+            self.mB->mH = 11;
+            v.mOffY = Fx(Ecs_SpriteHeight(self) - 11);
+            t.mX += v.mOffX;
+            t.mY += v.mOffY;
+            d.mBaseX = t.mX - Fx(16);
+            d.mBaseY = t.mY - Fx(16);
+            d.mPaceX = d.mBaseX + Fx(16);
+            d.mPaceY = d.mBaseY + Fx(16);
+            d.mPaceWaiting = d.mBlinkWaiting = false;
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (!d.mBroomHit)
+            {
+                LandPaceNext(d);
+                MoveTo(t.mX, d.mPaceX, Fx(60));
+                MoveTo(t.mY, d.mPaceY, Fx(60));
+                LandBlinkNext(self, d);
+                return true;
+            }
+            if (World_Player()->mT->mX <= t.mX)
+            {
+                d.mStep = 3;
+                break;
+            }
+            d.mShadow->mV->mVisible = true;
+            d.mShadow->mV->mOffX = Fx(4);
+            d.mShadow->mV->mOffY = Fx(10);
+            ParabolaInit(d.mJump, self, 16, 0.6f);
+            t.mVelX = -Fx(20);
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (!ParabolaTick(d.mJump, self, d.mShadow, 4))
+            {
+                return true;
+            }
+            t.mVelX = t.mVelY = 0;
+            Game_PlaySfx("wb_tap_ground");
+            d.mShadow->mV->mVisible = false;
+            d.mStep = 3;
+            [[fallthrough]];
+        default:
+        {
+            const bool xDone = MoveTo(t.mX, d.mTlX + Fx(16 * 8 - self.mB->mW), FxF(1.7f * 60));
+            const bool yDone = MoveTo(t.mY, d.mTlY + Fx(57), Fx(60));
+            if (!xDone || !yDone)
+            {
+                return true;
+            }
+            Screen_Shake(FxF(0.05f), FxF(0.3f));
+            Game_PlaySfx("hit_ground_1");
+            LandShoot(self, 3);
+            d.mStep = 1;
+            return true;
+        }
+        }
+    }
+}
+
+// DeathCutscene: the player can walk about (still not hit by the last bullets) while the eye blows up.
+bool LandDeathCutscene(Entity& owner)
+{
+    if (!owner.mExists)
+    {
+        return true;
+    }
+    Player_SetDontMove(false);
+    Player_SetActionsDisabled(false);
+    return false;
+}
+
+int EyeLandAlive()
+{
+    int n = 0;
+    for (const Entity* b : LandPhaseData::mBullets)
+    {
+        n += b->mExists ? 1 : 0;
+    }
+    for (const Entity* s : LandPhaseData::mSplashes)
+    {
+        n += s->mExists ? 1 : 0;
+    }
+    return n;
+}
+
+bool LandDieStep(Entity& self, LandPhaseData& d)
+{
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            Ecs_SetSolid(self, false);
+            Game_StartCutscene(self, LandDeathCutscene);
+            Game_PlaySong("");
+            Game_PlaySfx("sun_guy_death_long");
+            Screen_Flash(kFxOne, FLASH_WHITE);
+            t.mVelX = t.mVelY = 0;
+            if (!d.mBossRush)
+            {
+                Game_ShowDialogue("eyeboss", "after_fight");
+            }
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (!d.mBossRush && !Game_DialogueFinished())
+            {
+                return true;
+            }
+            v.mOffX = v.mOffY = Fx(5);
+            d.mDeathRound = 0;
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (d.mDeathRound >= 10)
+            {
+                d.mStep = 4;
+                break;
+            }
+            d.mT = 0;
+            d.mStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (!MoveTo(d.mT, FxF(0.3f), kFxOne))
+            {
+                return true;
+            }
+            t.mX += Fx(Rng_Range(-4, 5));
+            t.mY += Fx(Rng_Range(-4, 5));
+            Spawn_Explosion(self);
+            d.mDeathRound++;
+            d.mStep = 2;
+            return true;
+        case 4:
+            Screen_Flash(Fx(2), FLASH_WHITE);
+            v.mVisible = false;
+            Game_PlaySfx("sun_guy_death_long");
+            d.mShadow->mExists = false;
+            d.mStep = 5;
+            [[fallthrough]];
+        default:
+            if (EyeLandAlive() > 0)
+            {
+                return true;
+            }
+            self.mExists = false;
+            if (d.mBossRush)
+            {
+                Game_PlaySong("bedroom");
+                Event_Set("BossRushLandDefeated", 1);
+            }
+            else
+            {
+                Preset_SetAlive(*self.mPreset, false);
+                Game_SetBossDefeated(gGame.mMapName);
+                Game_PlaySong("hotel");
+            }
+            d.mMarker->mExists = false;
+            return false;
+        }
+    }
+}
+
+void LandPhaseUpdate(Entity& self)
+{
+    LandPhaseData& d = self.Data<LandPhaseData>();
+    Ecs_BaseUpdate(self);
+    // shadow.Update: Position = parent.Position - ((6, -8) - sprite size / 4)
+    d.mShadow->mT->mX = self.mT->mX;
+    d.mShadow->mT->mY = self.mT->mY + Fx(14);
+    const uint8_t gen = d.mGen;
+    bool running = true;
+    switch (d.mCo)
+    {
+    case LP_TO_LAND:
+        running = LandToLandStep(self, d);
+        break;
+    case LP_LAND:
+        running = LandLogicStep(self, d);
+        break;
+    case LP_DIE:
+        running = LandDieStep(self, d);
+        break;
+    default:
+        break;
+    }
+    if (!running && d.mGen == gen)
+    {
+        d.mCo = LP_NONE;
+    }
+    d.mBroomHit = false;
+}
+
+void LandPhaseCollided(Entity& self, Entity& other)
+{
+    LandPhaseData& d = self.Data<LandPhaseData>();
+    if (!Ecs_Solid(self))
+    {
+        return;
+    }
+    if (IsBroom(other) && !self.mV->mFlickering)
+    {
+        d.mBroomHit = true;
+        d.mHealth--;
+        Game_PlaySfx("broom_hit");
+        Ecs_Flicker(self, FxSec(1.0f));
+        if (d.mHealth == 0)
+        {
+            LandStart(d, LP_DIE);
+        }
+    }
+    else if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kLandPhase = {
+    "LandPhase", LandPhaseUpdate, nullptr, LandPhaseCollided, nullptr, nullptr, nullptr, nullptr,
+    0,           GROUP_PLAYER | GROUP_BROOM, 0,
+};
 } // namespace
 
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
@@ -7735,5 +8646,160 @@ Entity* Spawn_EyebossPreview(const MapEntity& preset, Entity&)
     {
         Event_Inc("EyebossPreviewPlayed");
     }
+    return e;
+}
+
+Entity* Spawn_EyeBossWater(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kWaterPhase, Fx(preset.mX), Fx(preset.mY), PART_VISUAL | PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    WaterPhaseData& d = e->Data<WaterPhaseData>();
+    d = WaterPhaseData();
+    if (!MakeEyeParts(*e, d.mPupil, d.mEyelids))
+    {
+        return nullptr;
+    }
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    d.mPupil->mT->mX = e->mT->mX + Fx(7);
+    d.mPupil->mT->mY = e->mT->mY + Fx(8);
+    d.mMarker = MakeEnemyMarker(*e);
+    if (!d.mMarker)
+    {
+        return nullptr;
+    }
+    d.mHealth = 6;
+    if (Game_BossDefeated(gGame.mMapName) || Event_Get("BossRushLandDefeated") == 1)
+    {
+        // the whole boss is beaten: both gates open
+        e->mExists = false;
+        d.mMarker->mExists = false;
+        gGame.mPuzzlesSolved++;
+        EyePartsFollow(*e, *d.mPupil, *d.mEyelids);
+        return e;
+    }
+    if (strcmp(Game_CurrentSong(), "hotel-boss") == 0)
+    {
+        // back up from the land phase's screen
+        Game_IgnoreMusicNextUpdate();
+        gGame.mPuzzlesSolved++;
+        Preset_SetAlive(preset, false);
+        e->mExists = false;
+        EyePartsFollow(*e, *d.mPupil, *d.mEyelids);
+        return e;
+    }
+    Preset_SetAlive(preset, true);
+    // (the screen being loaded: the boss's own)
+    d.mTlX = Fx(preset.mX / 160 * 160 + 16);
+    d.mTlY = Fx(preset.mY / 160 * 160 + 16);
+    Player_SetGridEntranceAt(d.mTlX + Fx(80), d.mTlY + Fx(20));
+    const Rect area = { FxTrunc(d.mTlX), FxTrunc(d.mTlY), 16 * 8, 16 * 9 };
+    for (Entity*& b : d.mBullets)
+    {
+        b = Ecs_Create(kEyeWaterBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*b, "eye_boss_bullet", 16, 16);
+        b->mV->mLayer = LAYER_FG_SPRITES;
+        b->mB->mW = b->mB->mH = 8;
+        Ecs_CenterOffset(*b);
+        b->Data<EyeWaterBulletData>().mArea = area;
+        Ecs_KeepPooled(*b);
+    }
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    return e;
+}
+
+Entity* Spawn_EyeBossLand(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kLandPhase, Fx(preset.mX), Fx(preset.mY), PART_VISUAL | PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*e, "eye_boss_water", 24, 24);
+    e->mB->mW = e->mB->mH = 24;
+    LandPhaseData& d = e->Data<LandPhaseData>();
+    d = LandPhaseData();
+    // (the water phase starts the boss song, and keeps its preset alive until it is beaten)
+    const MapEntity* water = EyeBossOtherPhase(preset);
+    const bool waterDead = water && !Preset_Alive(*water);
+    if (strcmp(Game_CurrentSong(), "hotel-boss") != 0 || !waterDead || Event_Get("BossRushLandDefeated") == 1)
+    {
+        // (no sub-entities, so no marker; the C# sets ENEMIES_KILLED itself so the key shows)
+        gGame.mEnemiesKilled = 1;
+        e->mExists = false;
+        return e;
+    }
+    Game_IgnoreMusicNextUpdate(); // the music stays if the player goes back up
+    d.mTlX = Fx(preset.mX / 160 * 160 + 16);
+    d.mTlY = Fx(preset.mY / 160 * 160 + 16);
+    Player_SetGridEntranceAt(d.mTlX + Fx(70), d.mTlY + Fx(50));
+    d.mShadow = Ecs_Create(kEntityShadow, e->mT->mX, e->mT->mY + Fx(14), PART_VISUAL, nullptr, e);
+    d.mMarker = MakeEnemyMarker(*e);
+    if (!d.mShadow || !d.mMarker)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mShadow, "28x10_shadow", 28, 10);
+    d.mShadow->mV->mLayer = LAYER_SHADOWS;
+    d.mShadow->mV->mVisible = false;
+    Ecs_SetSolid(*d.mShadow, false);
+    // (the bullets come before the splashes in SubEntities; the splashes, made first, roll their arcs' periods)
+    auto makeArc = [e](Entity*& out, const EntityClass& cls, const char* sheet, int size, int w) -> bool {
+        out = Ecs_Create(cls, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        Entity* shadow = out ? Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, out) : nullptr;
+        if (!shadow)
+        {
+            return false;
+        }
+        Ecs_SetSheet(*out, sheet, size, size);
+        out->mV->mLayer = LAYER_FG_SPRITES;
+        out->mB->mW = out->mB->mH = static_cast<int16_t>(w);
+        Ecs_SetSheet(*shadow, "8x8_shadow", 8, 8);
+        shadow->mV->mLayer = LAYER_SHADOWS;
+        Ecs_SetSolid(*shadow, false);
+        EyeArcData& ad = out->Data<EyeArcData>();
+        ad = EyeArcData();
+        ad.mShadow = shadow;
+        Ecs_KeepPooled(*out);
+        Ecs_KeepPooled(*shadow);
+        return true;
+    };
+    for (Entity*& b : d.mBullets)
+    {
+        if (!makeArc(b, kEyeLandBullet, "eye_boss_bullet", 16, 8))
+        {
+            return nullptr;
+        }
+        Ecs_CenterOffset(*b);
+        ParabolaInit(b->Data<EyeArcData>().mArc, *b, 45, 1.5f);
+    }
+    for (Entity*& s : d.mSplashes)
+    {
+        if (!makeArc(s, kEyeSplash, "eye_boss_splash", 8, 8))
+        {
+            return nullptr;
+        }
+        ParabolaInit(s->Data<EyeArcData>().mArc, *s, 36, 1 + 0.4f * Rng_Unit().mV);
+    }
+    d.mHealth = 6;
+    if (Preset_Activated(preset))
+    {
+        Ecs_Play(*e, "walk");
+        e->mT->mX = d.mTlX + Fx(16);
+        e->mT->mY = d.mTlY + Fx(75);
+        LandStart(d, LP_LAND);
+    }
+    else
+    {
+        LandStart(d, LP_TO_LAND);
+        LandToLandStep(*e, d); // the initial setup
+    }
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     return e;
 }

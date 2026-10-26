@@ -2,6 +2,7 @@
 #include "audio_manager.h"
 #include "audio_decode_core.hpp"
 #include "soft_mosaic.hpp"
+#include "world.h"
 
 #include "tonc.h"
 
@@ -151,6 +152,7 @@ static void AudioManager_OnVBlank()
     // The pixelate effect's per-frame register/palette writes have to land inside VBlank, which the (late) main loop
     // can't promise while sound effects are decoding; this is a few hundred cycles.
     Mosaic_OnVBlank();
+    Screen_WaveOnVBlank();
 
     // --- 2. Mix every active stream for the next VBlank ---
     sAccumulatorQ16 += sSamplesPerVBlankQ16;

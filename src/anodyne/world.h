@@ -100,6 +100,8 @@ void Screen_SetFadeWhite(bool white);
 // GlobalState.wave.active: the screen's rows ripple sideways (a GasGuy's gas, the Red Boss).
 void Screen_SetWave(bool on);
 bool Screen_Wave();
+// The VBlank interrupt: arms the wave's HBlank DMA for the frame about to show (or stops it).
+void Screen_WaveOnVBlank();
 
 // GlobalState.screenShake / flash: shake the playfield by up to intensity (a fraction of the screen) for a time,
 // or flash it white (or black) and fade back over a time.

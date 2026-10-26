@@ -159,6 +159,9 @@ const NamedEntity kNamed[] = {
     { "Rat", nullptr, nullptr, {}, EPT_Rat },
     { "Splitboss", nullptr, nullptr, {}, EPT_SplitBoss },
     { "Dustmaid", nullptr, nullptr, {}, EPT_Dustmaid },
+    { "Elevator", nullptr, nullptr, {}, EPT_Elevator },
+    { "Eye_Boss", nullptr, nullptr, { 0 }, EPT_EyeBossWater },
+    { "Eye_Boss", nullptr, nullptr, { 4 }, EPT_EyeBossLand },
     { "Steam_Pipe", nullptr, nullptr, {}, EPT_SteamPipe },
     { "NPC", "generic", nullptr, { 5 }, EPT_EyebossPreview },
     { "NPC", "generic", nullptr, { 12 }, EPT_HotelGuy },
@@ -537,6 +540,11 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
                     linkId = c != m->second.end() ? c->second : -1;
                 }
             }
+        }
+        if (linkId >= 0 && (type == EPT_EyeBossWater || type == EPT_EyeBossLand))
+        {
+            // EntityManager.GetLinkGroup: the group's members share an id
+            linkId = findGroup(linkId);
         }
         const int permanence = attr("p").empty() ? PERM_GRID_LOCAL : std::atoi(attr("p").c_str());
 

@@ -75,6 +75,7 @@ int gClassCount = 0;
 const char* gMapName = "";
 const MapAudioData* gAudio = nullptr;
 const char* gMusicPlaying = nullptr;
+bool gIgnoreMusic = false; // Map.ignore_music
 float gSongVolume = 1.0f;
 
 fx gCamX = 0; // top-left of the current screen being shown, Fx
@@ -481,10 +482,17 @@ void PlaySfx(const char* name)
 }
 
 // Map.ReloadSettings: the music for where the player is - the first Settings.json area containing the player's
-// position, else the map's default. Only restarts the music when the track actually changes.
-void UpdateMusic()
+// position, else the map's default. Only restarts the music when the track actually changes. A screen transition
+// after IgnoreMusicNextUpdate leaves the music be.
+void UpdateMusic(bool screenTransition = false)
 {
     if (!gAudio)
+    {
+        return;
+    }
+    const bool ignore = screenTransition && gIgnoreMusic;
+    gIgnoreMusic = false;
+    if (ignore)
     {
         return;
     }
@@ -1010,7 +1018,7 @@ void CheckForTransition()
     t.mX = newX;
     t.mY = newY;
     Ecs_FireEvent(GEV_START_SCREEN_TRANSITION);
-    UpdateMusic(); // ReloadSettings(player position) as the screen changes
+    UpdateMusic(true); // ReloadSettings(player position) as the screen changes
     UpdateDarkness(true);
     Player_SetGridEntrance();
     Player_SetDontMove(true);
@@ -1076,6 +1084,7 @@ void DeathStart()
 {
     gDeath = Death();
     gDeath.mActive = true;
+    Screen_SetWave(false); // DeathState: wave.Deactivate()
     gGame.mDisableMenu = true;
     AudioManager_StopBGM();
     Entity& p = *Player_Entity();
@@ -1231,6 +1240,16 @@ void Game_PlaySong(const char* name, float volume)
     }
 }
 
+const char* Game_CurrentSong()
+{
+    return gMusicPlaying ? gMusicPlaying : "";
+}
+
+void Game_IgnoreMusicNextUpdate()
+{
+    gIgnoreMusic = true;
+}
+
 float Game_SongVolume()
 {
     return gSongVolume;
@@ -1337,7 +1356,97 @@ void Screen_SetFade(fx alpha)
     World_ScreenDarken(0);
 }
 
-static bool gWave = false;
+// ---- Wave (Drawing/Effects/Wave.cs) --------------------------------------------------------------------------
+// The shader shifts each row of the 160x180 screen sideways by 3 - |phase| px: a triangle wave of 15-row steps that
+// loops every two seconds. Here an HBlank DMA rewrites the BG scroll registers on every line (the sprites don't
+// wave). The main loop fills a table for the next frame; the VBlank interrupt arms it.
+namespace
+{
+struct WaveOfs final
+{
+    uint16_t mX;
+    uint16_t mY;
+};
+constexpr int kWaveRows = kScreenPx + 1; // line 0 by hand, then one HBlank transfer before each further line
+constexpr int kWaveNone = -1;            // nothing new for the interrupt
+constexpr int kWaveOff = -2;             // the interrupt stops the DMA
+alignas(4) WaveOfs gWaveTable[2][kWaveRows][4] __attribute__((section(".sbss")));
+volatile int gWaveReady = kWaveNone;
+int gWaveArmed = -1; // the table the DMA reads (interrupt side)
+int gWaveWrite = 0;
+bool gWave = false;
+float gWaveTimer = 0;
+
+// Wave.Update (every frame, on or not), then the table for what was just drawn.
+void UpdateWave()
+{
+    gWaveTimer += kDeltaTime * 0.5f;
+    if (gWaveTimer > 1)
+    {
+        gWaveTimer -= 1;
+    }
+    if (!gWave)
+    {
+        if (gWaveArmed >= 0)
+        {
+            gWaveReady = kWaveOff;
+        }
+        return;
+    }
+    const int phaseOffset = static_cast<int>(gWaveTimer * 180);
+    WaveOfs(*table)[4] = gWaveTable[gWaveWrite];
+    for (int line = 0; line < kWaveRows; line++)
+    {
+        // (the C#'s screen has its 20-row HUD strip above the playfield)
+        const int yloc = (line + 20 - phaseOffset + 180) % 180;
+        const int phase = (yloc / 15) % 12 - 6;
+        const int shift = 3 - (phase < 0 ? -phase : phase);
+        for (int bg = 0; bg < 4; bg++)
+        {
+            table[line][bg].mX = static_cast<uint16_t>(gBgOfsX[bg] + shift);
+            table[line][bg].mY = static_cast<uint16_t>(gBgOfsY[bg]);
+        }
+    }
+    gWaveReady = gWaveWrite;
+    gWaveWrite ^= 1;
+}
+} // namespace
+
+void Screen_WaveOnVBlank()
+{
+    const int ready = gWaveReady;
+    if (ready == kWaveOff)
+    {
+        gWaveReady = kWaveNone;
+        REG_DMA0CNT = 0;
+        gWaveArmed = -1;
+        for (int bg = 0; bg < 4; bg++)
+        {
+            REG_BG_OFS[bg].x = static_cast<uint16_t>(gBgOfsX[bg]);
+            REG_BG_OFS[bg].y = static_cast<uint16_t>(gBgOfsY[bg]);
+        }
+        return;
+    }
+    if (ready >= 0)
+    {
+        gWaveArmed = ready;
+        gWaveReady = kWaveNone;
+    }
+    if (gWaveArmed < 0)
+    {
+        return;
+    }
+    const WaveOfs(*table)[4] = gWaveTable[gWaveArmed];
+    REG_DMA0CNT = 0;
+    for (int bg = 0; bg < 4; bg++)
+    {
+        REG_BG_OFS[bg].x = table[0][bg].mX;
+        REG_BG_OFS[bg].y = table[0][bg].mY;
+    }
+    REG_DMA0SAD = static_cast<u32>(reinterpret_cast<uintptr_t>(&table[1][0]));
+    REG_DMA0DAD = static_cast<u32>(reinterpret_cast<uintptr_t>(&REG_BG_OFS[0]));
+    REG_DMA0CNT = (sizeof(table[0]) / 4) | DMA_DST_RELOAD | DMA_REPEAT | DMA_32 | DMA_AT_HBLANK | DMA_ENABLE;
+}
 
 void Screen_SetWave(bool on)
 {
@@ -1806,6 +1915,7 @@ void World_Update()
 
     UpdateScroll(true, false);
     DrawWorld();
+    UpdateWave();
 }
 
 void Game_StartCutscene(Entity& owner, CutsceneFn fn)

@@ -92,6 +92,9 @@
     X(SteamPipe)               \
     X(EyebossPreview)          \
     X(HotelGuy)                \
+    X(Elevator)                \
+    X(EyeBossWater)            \
+    X(EyeBossLand)             \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

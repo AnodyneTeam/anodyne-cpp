@@ -58,7 +58,8 @@ struct PlayerData final
     bool mJustFell;
     bool mOnConveyor;
     bool mSinking;
-    bool mSlow; // slowMul = 0.5
+    bool mSlow; // slowMul != 1
+    float mSlowMul; // slowMul while mSlow
     bool mReversed; // a GasGuy's gas: the d-pad is backwards for a while
     float mRevTimer;
     int mSlowTicks;
@@ -329,8 +330,8 @@ void GroundMovement()
     t.mVelY += d.mAddVelY;
     if (d.mSlow)
     {
-        t.mVelX /= 2;
-        t.mVelY /= 2;
+        t.mVelX = fx(t.mVelX.mV * d.mSlowMul);
+        t.mVelY = fx(t.mVelY.mV * d.mSlowMul);
     }
 }
 
@@ -733,6 +734,7 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
         break;
     case MAPEV_SLOW:
         d.mSlow = true;
+        d.mSlowMul = 0.5f;
         break;
     case MAPEV_PUDDLE:
     case MAPEV_REFLECTION:
@@ -753,6 +755,7 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
             if (!d.mRaft)
             {
                 d.mSlow = true;
+                d.mSlowMul = 0.5f;
                 d.mSinking = true;
             }
         }
@@ -1387,9 +1390,10 @@ void Player_Reverse()
     P().mReversed = true;
 }
 
-void Player_SetSlowFor(int ticks)
+void Player_SetSlowFor(int ticks, float mul)
 {
     P().mSlow = true;
+    P().mSlowMul = mul;
     P().mSlowTicks = ticks;
 }
 
@@ -1412,6 +1416,11 @@ void Player_SetActionsDisabled(bool on)
 void Player_SetInvincible(bool on)
 {
     P().mInvincible = on;
+}
+
+bool Player_Invincible()
+{
+    return P().mInvincible;
 }
 
 void Player_SetSkipBroom()
