@@ -471,7 +471,7 @@ void ButtonUpdate(Entity& self)
 
 const EntityClass kButton = {
     "Button", ButtonUpdate, nullptr, ButtonCollided, nullptr, nullptr, nullptr, nullptr,
-    0,        GROUP_PLAYER | GROUP_SHIELDY | GROUP_MOVER | GROUP_RAT | GROUP_SILVERFISH, 0,
+    0,        GROUP_PLAYER | GROUP_SHIELDY | GROUP_MOVER | GROUP_RAT | GROUP_SILVERFISH | GROUP_BLUE_MITRA, 0,
 };
 
 // ---- SolidTile / Blocker / VerticalBlocker (Blockers.cs) --------------------------------------------------------

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "credits.h"
 #include "dialog.h"
 #include "player.h"
 
@@ -2618,31 +2619,6 @@ Entity* Spawn_MitraFields(const MapEntity& preset, Entity&)
     return e;
 }
 
-const char* Npcs_ProbeName(const Entity& e)
-{
-    if (e.mClass == &kMitra)
-    {
-        return const_cast<Entity&>(e).Data<MitraData>().mFields ? "MitraFields" : "MitraOverworld";
-    }
-    if (e.mClass != &kSage)
-    {
-        return nullptr;
-    }
-    switch (const_cast<Entity&>(e).Data<SageData>().mKind)
-    {
-    case SAGE_NEXUS:
-        return "SageNexus";
-    case SAGE_OVERWORLD:
-        return "SageOverworld";
-    case SAGE_REDCAVE:
-        return "SageRedCave";
-    case SAGE_CROWD:
-        return "SageCrowd";
-    default:
-        return "SageBedroom";
-    }
-}
-
 Entity* Spawn_Fisherman(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kFisherman, preset, "beach_npcs");
@@ -3706,6 +3682,85 @@ const EntityClass kCellBody = {
 };
 } // namespace
 
+namespace
+{
+// ---- Snowman (Npc/Blue/Snowman.cs): says its line (when spoken to, or by itself after 3 s), then melts --------------
+struct SnowmanData final
+{
+    float mIdleTimer;
+    int mDialogue;
+    bool mTalked;
+};
+
+void SnowmanUpdate(Entity& self)
+{
+    SnowmanData& d = self.Data<SnowmanData>();
+    Ecs_BaseUpdate(self);
+    if (d.mTalked)
+    {
+        if (Game_DialogueFinished() && Ecs_Frame(self) != 6)
+        {
+            Ecs_Play(self, "melt");
+        }
+    }
+    else if (Preset_Alive(*self.mPreset))
+    {
+        d.mIdleTimer -= kDeltaTime;
+        if (d.mIdleTimer <= 0)
+        {
+            Game_ShowDialogue("generic_npc", "one", d.mDialogue + 1);
+            d.mTalked = true;
+            Preset_SetAlive(*self.mPreset, false);
+        }
+    }
+}
+
+void SnowmanCollided(Entity& self, Entity& other)
+{
+    if (Ecs_Frame(self) != 6)
+    {
+        Ecs_Separate(self, other);
+    }
+}
+
+bool SnowmanInteract(Entity& self, Facing)
+{
+    SnowmanData& d = self.Data<SnowmanData>();
+    if (!Preset_Alive(*self.mPreset))
+    {
+        Game_ShowText("...");
+    }
+    else
+    {
+        Game_ShowDialogue("generic_npc", "one", d.mDialogue);
+        d.mTalked = true;
+        Preset_SetAlive(*self.mPreset, false);
+    }
+    return true;
+}
+
+const EntityClass kSnowman = {
+    "Snowman", SnowmanUpdate, nullptr, SnowmanCollided, SnowmanInteract, nullptr, nullptr, nullptr,
+    0,         GROUP_PLAYER,  ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_Snowman(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSnowman, preset, "blue_npcs", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SnowmanData& d = e->Data<SnowmanData>();
+    d = SnowmanData();
+    d.mDialogue = 2 * preset.mFrame;
+    d.mIdleTimer = 3;
+    Ecs_Play(*e, Preset_Alive(preset) ? "normal" : "melted");
+    e->mB->mImmovable = true;
+    return e;
+}
+
 Entity* Spawn_CellBody(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kCellBody, preset, "cell_bodies", 16, 16);
@@ -3715,4 +3770,1443 @@ Entity* Spawn_CellBody(const MapEntity& preset, Entity&)
     }
     Ecs_SetFrame(*e, preset.mFrame);
     return e;
+}
+
+namespace
+{
+// A VolumeEvent a cutscene owns (CutsceneState's EntityEvent): it ticks after each step of the cutscene.
+struct CutsceneVolume final
+{
+    float mTarget;
+    float mSpeed;
+    bool mActive;
+    bool mReached;
+
+    void Start(float target, float speed)
+    {
+        mActive = true;
+        mSpeed = speed;
+        SetTarget(target);
+    }
+    void SetTarget(float target)
+    {
+        mTarget = target;
+        mReached = false;
+    }
+    void Tick()
+    {
+        if (mActive && !mReached)
+        {
+            fx volume = FxF(Game_SongVolume());
+            mReached = MoveTo(volume, FxF(mTarget), FxF(mSpeed));
+            Game_SetSongVolume(volume.mV);
+        }
+    }
+};
+
+// ---- WaterAnim (Gadget/WaterAnim.cs): the BG tiles take the BG2 water pattern, tile by tile along its channel ------
+bool WaterInGrid(const WaterFlow& w, int x, int y)
+{
+    return x / 10 == w.mGridX && y / 10 == w.mGridY;
+}
+
+} // namespace
+
+// DoWaterAnim's MoveNext: false once the channel ends.
+bool WaterStep(WaterFlow& w, fx startX, fx startY)
+{
+    if (!w.mStarted)
+    {
+        w.mStarted = true;
+        w.mX = FxFloor(startX) / 16;
+        w.mY = FxFloor(startY) / 16;
+        w.mGridX = w.mX / 10;
+        w.mGridY = w.mY / 10;
+        w.mCurrent = World_GetTile(1, w.mX, w.mY);
+        const bool horiz = (w.mCurrent % 2) == 0;
+        w.mDirX = horiz ? ((w.mX + 1) / 10 == w.mGridX ? 1 : -1) : 0;
+        w.mDirY = horiz ? 0 : ((w.mY + 1) / 10 == w.mGridY ? 1 : -1);
+    }
+    World_ChangeTile(0, w.mX, w.mY, w.mCurrent);
+    w.mX += w.mDirX;
+    w.mY += w.mDirY;
+    if (!WaterInGrid(w, w.mX, w.mY) || World_GetTile(1, w.mX, w.mY) == 0)
+    {
+        return false;
+    }
+    if (WaterInGrid(w, w.mX + w.mDirX, w.mY + w.mDirY) && World_GetTile(1, w.mX + w.mDirX, w.mY + w.mDirY) == 0)
+    {
+        int nextX = w.mDirY;
+        int nextY = w.mDirX;
+        if (World_GetTile(1, w.mX + nextX, w.mY + nextY) == 0)
+        {
+            nextX = -nextX;
+            nextY = -nextY;
+        }
+        if (World_GetTile(1, w.mX + nextX, w.mY + nextY) != 0)
+        {
+            w.mDirX = nextX;
+            w.mDirY = nextY;
+            w.mCurrent -= w.mCurrent % 2;
+            if (w.mDirY != 0)
+            {
+                w.mCurrent++;
+            }
+        }
+    }
+    return true;
+}
+
+namespace
+{
+
+// ---- Dam (Npc/Blue/Dam.cs, "Happy_NPC" 18): falls once enough puzzles are solved ------------------------------------
+void DamUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (!Preset_Alive(*self.mPreset))
+    {
+        return;
+    }
+    const int needed = strcmp(gGame.mMapName, "BLUE") == 0 ? 3 : 1;
+    if (gGame.mPuzzlesSolved >= needed)
+    {
+        Ecs_Play(self, "fall");
+        Preset_SetAlive(*self.mPreset, false);
+    }
+}
+
+void DamCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kDam = {
+    "Dam", DamUpdate, nullptr, DamCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- HappyNPC (Npc/Happy/HappyNPC.cs, "Happy_NPC" 0-4): paces or runs along, and talks -----------------------------
+struct HappyNpcData final
+{
+    fx mWalkTimer;
+    const char* mDialogue;
+    int mCtr;
+    bool mRun; // NpcType.Run (else Pace)
+    bool mTalking;
+};
+
+void HappyNpcUpdate(Entity& self)
+{
+    HappyNpcData& d = self.Data<HappyNpcData>();
+    Transform& t = *self.mT;
+    Ecs_BaseUpdate(self);
+    d.mWalkTimer += kFxTick;
+    if (d.mTalking)
+    {
+        t.mVelX = 0;
+        if (!Game_DialogueFinished())
+        {
+            return;
+        }
+        d.mTalking = false;
+    }
+    if (d.mWalkTimer <= Fx(1))
+    {
+        return;
+    }
+    d.mWalkTimer = 0;
+    if (!d.mRun)
+    {
+        if (Rng_Range(0, 2) == 0)
+        {
+            d.mCtr = d.mCtr == 0 ? 1 : 0;
+            t.mVelX = d.mCtr == 1 ? Fx(20) : -Fx(20);
+            Ecs_Play(self, d.mCtr == 1 ? "walk_r" : "walk_l");
+        }
+        else
+        {
+            t.mVelX = 0;
+            // RandomIdle: (Facing)RNG.Next(0, 5), one past the last direction included; nothing is played
+            self.mFacing = static_cast<uint8_t>(Rng_Range(0, 5));
+        }
+        return;
+    }
+    d.mCtr = d.mCtr == 0 ? 1 : 0;
+    Ecs_Play(self, d.mCtr == 1 ? "walk_r" : "walk_l");
+    t.mVelX = d.mCtr == 1 ? Fx(40) : -Fx(40);
+}
+
+bool HappyNpcInteract(Entity& self, Facing playerFacing)
+{
+    HappyNpcData& d = self.Data<HappyNpcData>();
+    const Transform& t = *self.mT;
+    Ecs_FaceTowards(self, t.mX - Fx(FacingX(playerFacing)), t.mY - Fx(FacingY(playerFacing)));
+    Ecs_PlayFacing(self, "idle");
+    Game_ShowDialogue("happy_npc", d.mDialogue);
+    d.mTalking = true;
+    return true;
+}
+
+void HappyNpcCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kHappyNpc = {
+    "HappyNPC", HappyNpcUpdate, nullptr, HappyNpcCollided, HappyNpcInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER,   ECF_MAP_COLLISION | ECF_INTERACTABLE,
+};
+
+// ---- HappyEventTrigger (Npc/Happy/HappyEventTrigger.cs, "NPC" generic 1): the Briar's voice as HAPPY turns ---------
+struct HappyTriggerData final
+{
+    float mSoundTime; // red_cave_rise's play time, in game time (the C#'s deterministic runs)
+    uint8_t mStep;
+};
+
+constexpr float kRedCaveRiseSeconds = 3.475f;
+
+void HappyTriggerUpdate(Entity& self)
+{
+    HappyTriggerData& d = self.Data<HappyTriggerData>();
+    Ecs_BaseUpdate(self);
+    Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case 0:
+        if (InGrid(p.mT->mX) > 80)
+        {
+            // its VolumeEvent(0, 0.9f)
+            fx volume = FxF(Game_SongVolume());
+            MoveTo(volume, 0, FxF(0.9f));
+            Game_SetSongVolume(volume.mV);
+            return;
+        }
+        Game_PlaySong("");
+        Game_PlaySfx("red_cave_rise");
+        Game_ShowDialogue("happy_npc", "briar");
+        d.mSoundTime = 0;
+        d.mStep = 1;
+        break;
+    case 1:
+        d.mSoundTime += 1.0f / kFps;
+        break;
+    default:
+        return;
+    }
+    if (!Game_DialogueFinished() || d.mSoundTime < kRedCaveRiseSeconds)
+    {
+        Screen_Shake(FxF(0.02f), FxSec(0.1f));
+        Player_SetDontMove(true);
+        return;
+    }
+    Player_SetDontMove(false);
+    Event_Inc("HappyStarted");
+    // (the flash's callback, at once: Map.ReloadSettings picks up the HappyStarted settings. Of those only the music
+    // is carried over here: the hardlight darkness and the tile replacements are still to do)
+    Screen_Flash(FxSec(1), FLASH_RED);
+    Game_PlaySong("happy");
+    d.mStep = 2;
+}
+
+const EntityClass kHappyTrigger = {
+    "HappyEventTrigger", HappyTriggerUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- GoHappyBlocker (Gadget/GoHappyBlocker.cs, "NPC" generic 11): thorns in GO until BLUE is done -----------------
+const EntityClass kGoHappyBlocker = {
+    "GoHappyBlocker", nullptr, nullptr, DamCollided, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_PART_OF_MAP,
+};
+
+// ---- BlueBriar + BlueMitra (Npc/Blue/BlueBriar.cs): Mitra rides in and talks, then the Briar walks out of the wall --
+struct BlueBriarData final
+{
+    fx mTopLeftX;
+    fx mTopLeftY;
+    Entity* mMitra;
+    fx mOpacityTimer; // BlueMitra's timer
+    WaterFlow mWater;
+    fx mWaterX;
+    fx mWaterY;
+    fx mWaterT;
+    CutsceneVolume mVolume;
+    uint8_t mState;     // State()
+    uint8_t mCutStep;   // Entrance()
+    uint8_t mMitraStep; // BlueMitra.Event()
+    bool mHappy;        // HappyBriar (Npc/Happy/HappyBriar.cs): no Mitra; walks off to the right
+    bool mWaterActive;
+    bool mWaterWaiting;
+};
+
+BlueBriarData* gBlueBriar = nullptr; // (the Mitra's cutscene reads its owner's data)
+
+bool BlueMitraEvent(Entity& mitra)
+{
+    BlueBriarData& d = *gBlueBriar;
+    Transform& t = *mitra.mT;
+    bool done = false;
+    switch (d.mMitraStep)
+    {
+    case 0:
+        mitra.mV->mVisible = true;
+        d.mVolume.Start(0, 2.4f);
+        d.mMitraStep = 1;
+        break;
+    case 1:
+        if (!d.mVolume.mReached)
+        {
+            break;
+        }
+        d.mOpacityTimer = 0;
+        d.mMitraStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!MoveTo(d.mOpacityTimer, FxF(0.5f), FxF(0.6f)))
+        {
+            break;
+        }
+        Game_PlaySong("mitra", 0.5f);
+        Game_ShowCutsceneDialogue("mitra", "one");
+        d.mMitraStep = 3;
+        break;
+    case 3:
+        d.mVolume.mSpeed = 0.6f;
+        d.mVolume.SetTarget(1);
+        t.mVelX = -Fx(70);
+        d.mMitraStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (t.mX >= d.mTopLeftX + Fx(75))
+        {
+            break;
+        }
+        gGame.mPuzzlesSolved += 3;
+        t.mVelX = 0;
+        Ecs_Play(mitra, "idle");
+        FlipForLeft(mitra);
+        Game_ShowCutsceneDialogue("mitra", "one");
+        d.mMitraStep = 5;
+        break;
+    case 5:
+        Game_ShowCutsceneDialogue("mitra", "one");
+        d.mMitraStep = 6;
+        break;
+    case 6:
+        Ecs_Play(mitra, "bike_r");
+        FlipForLeft(mitra);
+        t.mVelX = Fx(40);
+        d.mMitraStep = 7;
+        [[fallthrough]];
+    default:
+        if (t.mX < d.mTopLeftX + Fx(160))
+        {
+            break;
+        }
+        mitra.mExists = false;
+        done = true;
+        break;
+    }
+    d.mVolume.Tick();
+    return done;
+}
+
+// BlueBriar.Entrance
+bool BlueBriarEntrance(Entity& self)
+{
+    BlueBriarData& d = self.Data<BlueBriarData>();
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    bool done = false;
+    constexpr float kAppearanceVel = 0.24f;
+    switch (d.mCutStep)
+    {
+    case 0:
+        d.mVolume.Start(0, 0.6f);
+        d.mCutStep = 1;
+        break;
+    case 1:
+        if (!d.mVolume.mReached)
+        {
+            break;
+        }
+        Ecs_Play(self, "walk_d@2");
+        v.mOpacity = 0;
+        v.mVisible = true;
+        Game_PlaySong("");
+        d.mCutStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!MoveTo(v.mOpacity, FxF(0.4f), FxF(kAppearanceVel)))
+        {
+            break;
+        }
+        t.mVelY = Fx(20);
+        Game_PlaySong("go", 0.4f);
+        d.mVolume.SetTarget(1);
+        d.mVolume.mSpeed = kAppearanceVel;
+        // water_anim = OnceEvery(DoWaterAnim(Position), 0.3f): it runs in the Briar's update
+        d.mWater = WaterFlow();
+        d.mWaterX = t.mX;
+        d.mWaterY = t.mY;
+        d.mWaterActive = true;
+        d.mWaterWaiting = false;
+        d.mCutStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (InGrid(t.mY) < 44)
+        {
+            MoveTo(v.mOpacity, kFxOne, FxF(kAppearanceVel));
+            break;
+        }
+        v.mOpacity = kFxOne;
+        t.mVelX = d.mHappy ? Fx(20) : -Fx(20);
+        t.mVelY = 0;
+        Ecs_Play(self, d.mHappy ? "walk_r@2" : "walk_l@2");
+        d.mCutStep = 4;
+        [[fallthrough]];
+    default:
+        // (wraps around when off screen)
+        if (d.mHappy ? InGrid(t.mX) > 20 : InGrid(t.mX) >= (d.mTopLeftX - Fx(16)).mV)
+        {
+            break;
+        }
+        self.mExists = false;
+        Preset_SetAlive(*self.mPreset, false);
+        Event_Inc(d.mHappy ? "HappyDone" : "BlueDone");
+        done = true;
+        break;
+    }
+    d.mVolume.Tick();
+    return done;
+}
+
+void BlueBriarUpdate(Entity& self)
+{
+    BlueBriarData& d = self.Data<BlueBriarData>();
+    gBlueBriar = &d;
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    switch (d.mState)
+    {
+    case 0:
+        if (d.mHappy)
+        {
+            if (gGame.mPuzzlesSolved != 1)
+            {
+                break;
+            }
+            d.mCutStep = 0;
+            Game_StartCutscene(self, BlueBriarEntrance);
+            d.mState = 2;
+            break;
+        }
+        if (p.mT->mX >= d.mTopLeftX + Fx(76) || p.mT->mY >= d.mTopLeftY + Fx(47) || Player_State() != PS_GROUND)
+        {
+            break;
+        }
+        d.mMitraStep = 0;
+        Game_StartCutscene(*d.mMitra, BlueMitraEvent);
+        d.mState = 1;
+        [[fallthrough]];
+    case 1:
+        if (d.mMitra->mExists)
+        {
+            break;
+        }
+        d.mCutStep = 0;
+        Game_StartCutscene(self, BlueBriarEntrance);
+        d.mState = 2;
+        break;
+    default:
+        break;
+    }
+    // water_anim?.MoveNext()
+    if (d.mWaterActive)
+    {
+        if (d.mWaterWaiting)
+        {
+            if (!MoveTo(d.mWaterT, FxF(0.3f), kFxOne))
+            {
+                return;
+            }
+            d.mWaterWaiting = false;
+        }
+        if (WaterStep(d.mWater, d.mWaterX, d.mWaterY))
+        {
+            d.mWaterWaiting = true;
+            d.mWaterT = 0;
+        }
+        else
+        {
+            d.mWaterActive = false;
+        }
+    }
+}
+
+void BlueBriarDestroy(Entity& self)
+{
+    if (gBlueBriar == &self.Data<BlueBriarData>())
+    {
+        gBlueBriar = nullptr;
+    }
+}
+
+const EntityClass kBlueBriar = {
+    "BlueBriar", BlueBriarUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, BlueBriarDestroy, 0, 0, 0,
+};
+
+const EntityClass kBlueMitra = {
+    "BlueMitra", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, GROUP_BLUE_MITRA, 0, 0,
+};
+
+// ---- PostBlue + PostBlueSage (Npc/Go/PostBlue.cs, "Mitra" in GO): after BLUE, Mitra rides in and the Sage fires ----
+// The cutscene's own entities (PlayerStandin, SageBullet, its Explosion) are plain entities here, under names the C#
+// never lists in the play state.
+const EntityClass kPlayerStandin = {
+    "PlayerStandin", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kSageBullet = {
+    "SageBullet", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kCutsceneExplosion = {
+    "CutsceneExplosion", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+struct PostBlueData final
+{
+    MitraData mMitra; // (first: the Mitra helpers read it)
+    Entity* mSage;
+    Entity* mStandin;
+    Entity* mBullet;
+    Entity* mExplosion;
+    fx mTopLeftX;
+    fx mTopLeftY;
+    uint8_t mStep;
+    uint8_t mTalks;
+    bool mStarted;
+};
+
+Entity* MakeBike(Entity& owner, const MapEntity* preset, fx x, fx y)
+{
+    Entity* b = Ecs_Create(kBike, x, y, PART_VISUAL, preset, &owner);
+    if (b)
+    {
+        Ecs_SetSheet(*b, "bike", 20, 20);
+        b->mB->mW = 16;
+        b->mB->mH = 10;
+        b->mV->mOffX = Fx(2);
+        b->mV->mOffY = Fx(11);
+        b->mB->mImmovable = true;
+        Ecs_Play(*b, "r");
+    }
+    return b;
+}
+
+// The cutscene keeps the player in the room while they may move.
+void PostBlueClampPlayer(const PostBlueData& d)
+{
+    Transform& p = *World_Player()->mT;
+    const fx lo = d.mTopLeftX + Fx(16);
+    const fx hi = d.mTopLeftX + Fx(9 * 16);
+    p.mX = p.mX < lo ? lo : (p.mX > hi ? hi : p.mX);
+    // (the C# clamps Y with the room's X as well)
+    p.mY = p.mY < lo ? lo : (p.mY > hi ? hi : p.mY);
+}
+
+Entity* PostBlueExplosion(const Entity& bullet)
+{
+    Game_PlaySfx("hit_wall");
+    Entity* e = Ecs_Create(kCutsceneExplosion, bullet.mT->mX - Fx(4), bullet.mT->mY - Fx(4), PART_VISUAL);
+    if (e)
+    {
+        Ecs_SetSolid(*e, false);
+        Ecs_SetSheet(*e, "enemy_explode_2");
+        e->mV->mLayer = LAYER_BG_ENTITIES;
+        Ecs_Play(*e, "explode");
+    }
+    return e;
+}
+
+// PostBlue.Cutscene
+bool PostBlueCutscene(Entity& self)
+{
+    PostBlueData& d = self.Data<PostBlueData>();
+    Transform& t = *self.mT;
+    Entity& p = *World_Player();
+    Entity& bike = *d.mMitra.mBike;
+    Entity& sage = *d.mSage;
+    switch (d.mStep)
+    {
+    case 0:
+        d.mStandin = Ecs_Create(kPlayerStandin, p.mT->mX, p.mT->mY, PART_VISUAL);
+        if (d.mStandin)
+        {
+            Entity& s = *d.mStandin;
+            Ecs_SetSheet(s, "young_player", 16, 16);
+            Ecs_Play(s, Ecs_AnimName(p));
+            s.mB->mW = p.mB->mW;
+            s.mB->mH = p.mB->mH;
+            s.mV->mOffX = p.mV->mOffX;
+            s.mV->mOffY = p.mV->mOffY;
+            Ecs_SetSolid(s, false);
+        }
+        p.mV->mVisible = false;
+        d.mStep = 1;
+        return false;
+    case 1:
+    {
+        Transform& st = *d.mStandin->mT;
+        if (st.mX < d.mTopLeftX + Fx(7 * 16))
+        {
+            st.mVelX = Fx(60);
+            Ecs_Play(*d.mStandin, "walk_r");
+            return false;
+        }
+        st.mVelX = st.mVelY = 0;
+        st.mX = d.mTopLeftX + Fx(7 * 16);
+        d.mStep = 2;
+        [[fallthrough]];
+    }
+    case 2:
+    {
+        Transform& st = *d.mStandin->mT;
+        if (st.mY < d.mTopLeftY + Fx(7 * 16))
+        {
+            st.mVelY = Fx(60);
+            Ecs_Play(*d.mStandin, "walk_d");
+            return false;
+        }
+        st.mVelX = st.mVelY = 0;
+        st.mY = d.mTopLeftY + Fx(7 * 16);
+        p.mT->mX = st.mX;
+        p.mT->mY = st.mY;
+        p.mV->mVisible = true;
+        Player_SetFacing(FACE_RIGHT);
+        d.mStandin->mExists = false;
+        d.mStandin = nullptr;
+        t.mX = d.mTopLeftX + Fx(160);
+        t.mY = d.mTopLeftY + Fx(5 * 16);
+        t.mVelX = -Fx(45);
+        t.mVelY = 0;
+        self.mV->mVisible = true;
+        d.mStep = 3;
+        [[fallthrough]];
+    }
+    case 3:
+        if (t.mX > p.mT->mX - Fx(24))
+        {
+            return false;
+        }
+        t.mVelX = 0;
+        t.mVelY = Fx(45);
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (t.mY < p.mT->mY - Fx(4))
+        {
+            return false;
+        }
+        MitraOnBike(self, false);
+        bike.mExists = true;
+        bike.mT->mX = p.mT->mX - Fx(18);
+        bike.mT->mY = p.mT->mY + Fx(10);
+        t.mVelX = 0;
+        t.mVelY = Fx(20);
+        d.mStep = 5;
+        [[fallthrough]];
+    case 5:
+    {
+        const Rect ph = Ecs_Hitbox(p);
+        if (t.mY <= Fx(ph.mY + ph.mH))
+        {
+            return false;
+        }
+        t.mVelX = Fx(20);
+        t.mVelY = 0;
+        d.mStep = 6;
+        [[fallthrough]];
+    }
+    case 6:
+        if (t.mX <= p.mT->mX)
+        {
+            return false;
+        }
+        Player_SetFacing(FACE_DOWN);
+        self.mFacing = FACE_UP;
+        t.mVelX = t.mVelY = 0;
+        sage.mV->mVisible = true;
+        sage.mT->mX = d.mTopLeftX + Fx(4 * 16 + 3);
+        sage.mT->mY = d.mTopLeftY + Fx(160 + 3);
+        sage.mT->mVelX = 0;
+        sage.mT->mVelY = -Fx(20);
+        d.mStep = 7;
+        [[fallthrough]];
+    case 7:
+        if (sage.mT->mY >= d.mTopLeftY + Fx(8 * 16 - 5))
+        {
+            return false;
+        }
+        sage.mT->mVelX = -Fx(20);
+        sage.mT->mVelY = 0;
+        d.mStep = 8;
+        [[fallthrough]];
+    case 8:
+        if (sage.mT->mX >= d.mTopLeftX + Fx(2 * 16 + 11))
+        {
+            return false;
+        }
+        sage.mT->mVelX = sage.mT->mVelY = 0;
+        sage.mFacing = FACE_RIGHT;
+        Player_SetFacing(FACE_LEFT);
+        self.mFacing = FACE_LEFT;
+        Dialog_SetSceneProgress("sage", "one", 0);
+        d.mTalks = 0;
+        d.mStep = 9;
+        [[fallthrough]];
+    case 9:
+        if (d.mTalks < 7)
+        {
+            d.mTalks++;
+            Game_ShowCutsceneDialogue("sage", "one");
+            return false;
+        }
+        Game_PlaySfx("sun_guy_charge");
+        d.mBullet = Ecs_Create(kSageBullet, sage.mT->mX + Fx(sage.mB->mW), sage.mT->mY, PART_VISUAL);
+        if (d.mBullet)
+        {
+            Entity& b = *d.mBullet;
+            Ecs_SetSheet(b, "sage_attacks", 16, 16);
+            b.mB->mW = b.mB->mH = 16;
+            Ecs_SetSolid(b, false);
+            Ecs_Play(b, "a");
+            Ecs_Flicker(b, FxSec(2.5f));
+            b.mKeep = true;
+        }
+        d.mStep = 10;
+        return false;
+    case 10:
+        if (d.mBullet->mV->mFlickering)
+        {
+            PostBlueClampPlayer(d);
+            Player_SetDontMove(false);
+            Player_SetActionsDisabled(false);
+            return false;
+        }
+        Game_PlaySfx("laser-pew");
+        d.mBullet->mT->mVelX = Fx(10);
+        d.mStep = 11;
+        [[fallthrough]];
+    case 11:
+    {
+        PostBlueClampPlayer(d);
+        Entity& b = *d.mBullet;
+        const Rect bh = Ecs_Hitbox(b);
+        const bool hitPlayer = Ecs_Intersects(bh, Ecs_Hitbox(p));
+        if (hitPlayer || Ecs_Intersects(bh, Player_BroomHitbox()))
+        {
+            // (the flash eases in at once: its callback runs straight away)
+            Screen_Flash(FxSec(1), hitPlayer ? FLASH_RED : FLASH_WHITE);
+            b.mV->mVisible = false;
+            if (hitPlayer)
+            {
+                Player_Slump();
+            }
+            d.mExplosion = PostBlueExplosion(b);
+            d.mStep = 12;
+            return false;
+        }
+        if (b.mT->mX > bike.mT->mX)
+        {
+            Screen_Flash(FxSec(1), FLASH_RED);
+            b.mV->mVisible = false;
+            d.mExplosion = PostBlueExplosion(b);
+            d.mStep = 20;
+            return false;
+        }
+        Player_SetDontMove(false);
+        Player_SetActionsDisabled(false);
+        return false;
+    }
+    case 12:
+        Game_ShowCutsceneDialogue("sage", "hit", 0);
+        d.mStep = 13;
+        return false;
+    case 13:
+        Game_ShowCutsceneDialogue("sage", "hit", 1);
+        d.mStep = 30;
+        return false;
+    case 20:
+        Game_ShowDialogue("sage", "hit", 2);
+        t.mVelX = -Fx(20);
+        t.mVelY = 0;
+        d.mStep = 21;
+        [[fallthrough]];
+    case 21:
+        if (t.mX > bike.mT->mX)
+        {
+            return false;
+        }
+        t.mVelX = t.mVelY = 0;
+        self.mFacing = FACE_UP;
+        d.mStep = 22;
+        [[fallthrough]];
+    case 22:
+        if (!Game_DialogueFinished())
+        {
+            return false;
+        }
+        Game_ShowCutsceneDialogue("sage", "hit", 3);
+        d.mStep = 23;
+        return false;
+    case 23:
+        self.mFacing = FACE_LEFT;
+        Game_ShowCutsceneDialogue("sage", "hit", 4);
+        d.mStep = 30;
+        return false;
+    case 30:
+        Game_ShowCutsceneDialogue("sage", "hit", 5);
+        d.mStep = 31;
+        return false;
+    default:
+        Preset_SetActivated(*self.mPreset, true);
+        d.mMitra.mFacePlayer = true;
+        Ecs_SetSolid(self, true);
+        Ecs_SetSolid(bike, true);
+        // (the cutscene's entities go with it)
+        if (d.mBullet)
+        {
+            d.mBullet->mKeep = false;
+            d.mBullet->mExists = false;
+            d.mBullet = nullptr;
+        }
+        if (d.mExplosion)
+        {
+            d.mExplosion->mExists = false;
+            d.mExplosion = nullptr;
+        }
+        return true;
+    }
+}
+
+void PostBlueUpdate(Entity& self)
+{
+    PostBlueData& d = self.Data<PostBlueData>();
+    Ecs_BaseUpdate(self);
+    MitraFacePlayerPose(self);
+    const Entity& p = *World_Player();
+    if (!Preset_Activated(*self.mPreset) && !d.mStarted && !World_InTransition() &&
+        p.mT->mX < d.mTopLeftX + Fx(7 * 16) && p.mT->mY < d.mTopLeftY + Fx(7 * 16))
+    {
+        d.mStep = 0;
+        Game_StartCutscene(self, PostBlueCutscene);
+        d.mStarted = true;
+    }
+}
+
+bool PostBlueInteract(Entity& self, Facing)
+{
+    if (!self.Data<PostBlueData>().mMitra.mFacePlayer)
+    {
+        return false;
+    }
+    if (Event_Get("HappyDone") > 0)
+    {
+        Game_ShowDialogue("sage", "posthappy_mitra");
+    }
+    else
+    {
+        Game_ShowDialogue("sage", "hit", 7);
+    }
+    return true;
+}
+
+void PostBlueDestroy(Entity& self)
+{
+    PostBlueData& d = self.Data<PostBlueData>();
+    Entity** const subs[] = { &d.mMitra.mBike, &d.mSage, &d.mStandin, &d.mBullet, &d.mExplosion };
+    for (Entity** sub : subs)
+    {
+        if (*sub)
+        {
+            Ecs_Free(**sub);
+            *sub = nullptr;
+        }
+    }
+}
+
+const EntityClass kPostBlue = {
+    "PostBlue",   PostBlueUpdate, nullptr, MitraCollided, PostBlueInteract, nullptr, nullptr, PostBlueDestroy,
+    0,            GROUP_PLAYER,   ECF_MAP_COLLISION | ECF_INTERACTABLE,
+};
+
+// PostBlueSage: a SpriteSage that faces the player and is solid once the cutscene has run.
+void PostBlueSageUpdate(Entity& self)
+{
+    SageData& d = self.Data<SageData>();
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    if (d.mFacePlayer)
+    {
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    }
+    else if (t.mVelX != 0 || t.mVelY != 0)
+    {
+        Ecs_FaceTowards(self, t.mX + t.mVelX, t.mY + t.mVelY);
+    }
+    Ecs_PlayFacing(self, (t.mVelX == 0 && t.mVelY == 0) ? "idle" : "walk");
+    FlipForLeft(self);
+    d.mFacePlayer = Preset_Activated(*self.mPreset);
+    Ecs_SetSolid(self, d.mFacePlayer);
+}
+
+bool PostBlueSageInteract(Entity& self, Facing)
+{
+    if (!self.Data<SageData>().mFacePlayer)
+    {
+        return false;
+    }
+    if (Event_Get("HappyDone") > 0)
+    {
+        Game_ShowDialogue("sage", "posthappy_sage");
+    }
+    else
+    {
+        Game_ShowDialogue("sage", "hit", 6);
+    }
+    return true;
+}
+
+const EntityClass kPostBlueSage = {
+    "PostBlueSage", PostBlueSageUpdate, nullptr, SageCollided, PostBlueSageInteract, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,       ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_Dam(const MapEntity& preset, Entity&)
+{
+    const bool blue = strcmp(gGame.mMapName, "BLUE") == 0;
+    Entity* e = Spawn_Basic(kDam, preset, blue ? "blue_npcs" : "happy_npcs", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, blue ? 0 : 8);
+    Ecs_Play(*e, "idle");
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_WaterAnim(const MapEntity& preset, Entity&)
+{
+    if (Event_Get(Preset_TypeValue(preset)) != 0)
+    {
+        WaterFlow w = WaterFlow();
+        while (WaterStep(w, Fx(preset.mX), Fx(preset.mY)))
+        {
+        }
+    }
+    return nullptr;
+}
+
+Entity* Spawn_BlueBriar(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBlueBriar, preset, "briar", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    BlueBriarData& d = e->Data<BlueBriarData>();
+    d = BlueBriarData();
+    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
+    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    Ecs_SetSolid(*e, false);
+    Ecs_Play(*e, "idle_d");
+    e->mV->mVisible = false;
+    gBlueBriar = &d;
+    if (strcmp(gGame.mMapName, "HAPPY") == 0)
+    {
+        d.mHappy = true;
+        return e;
+    }
+    Entity* m = Ecs_Create(kBlueMitra, d.mTopLeftX + Fx(160), d.mTopLeftY + Fx(33), PART_VISUAL, nullptr, e);
+    if (!m)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*m, "mitra_bike", 20, 20);
+    m->mB->mW = m->mB->mH = 20;
+    Ecs_SetSolid(*m, false);
+    m->mV->mVisible = false;
+    Ecs_Play(*m, "bike_l");
+    FlipForLeft(*m);
+    m->mKeep = true; // (the Briar checks it after it rides off)
+    d.mMitra = m;
+    gBlueBriar = &d;
+    return e;
+}
+
+Entity* Spawn_PostBlue(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kPostBlue, preset, "mitra");
+    if (!e)
+    {
+        return nullptr;
+    }
+    const bool activated = Preset_Activated(preset);
+    PostBlueData& d = e->Data<PostBlueData>();
+    d = PostBlueData();
+    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
+    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    e->mB->mImmovable = true;
+    d.mMitra.mFacePlayer = true;
+    d.mMitra.mVolReached = true;
+    MitraOnBike(*e, !activated);
+    e->mT->mX = d.mTopLeftX + Fx(6 * 16 + 2);
+    e->mT->mY = d.mTopLeftY + Fx(8 * 16);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    d.mMitra.mBike = MakeBike(*e, &preset, d.mTopLeftX + Fx(6 * 16 + 2), d.mTopLeftY + Fx(7 * 16));
+    if (d.mMitra.mBike)
+    {
+        d.mMitra.mBike->mExists = false;
+    }
+    // PostBlueSage (a sub-entity: there even when the Mitra isn't)
+    d.mSage = Ecs_Create(kPostBlueSage, d.mTopLeftX + Fx(43), d.mTopLeftY + Fx(7 * 16 + 5), PART_VISUAL | PART_BRAIN,
+                         &preset, e);
+    if (!d.mMitra.mBike || !d.mSage)
+    {
+        return nullptr;
+    }
+    Entity& sage = *d.mSage;
+    Ecs_SetSheet(sage, "sage", 16, 16);
+    sage.mB->mW = sage.mB->mH = 10;
+    sage.mV->mOffX = sage.mV->mOffY = Fx(3);
+    sage.mB->mImmovable = true;
+    SageData& sd = sage.Data<SageData>();
+    sd = SageData();
+    sd.mFacePlayer = activated;
+    Ecs_Play(sage, "idle_d");
+    if (!activated)
+    {
+        sage.mV->mVisible = false;
+        Ecs_SetSolid(sage, false);
+    }
+    if (Event_Get("BlueDone") == 0)
+    {
+        e->mExists = false;
+        return e;
+    }
+    if (activated)
+    {
+        d.mMitra.mBike->mExists = true;
+    }
+    else
+    {
+        e->mV->mVisible = false;
+        d.mMitra.mFacePlayer = false;
+        Ecs_SetSolid(*e, false);
+        Ecs_SetSolid(*d.mMitra.mBike, false);
+    }
+    Ecs_PlayFacing(*e, "idle");
+    return e;
+}
+
+Entity* Spawn_GoHappyBlocker(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kGoHappyBlocker, preset, "briar_ground_thorn", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "a");
+    if (Event_Get("BlueDone") == 1)
+    {
+        e->mExists = false;
+        return e;
+    }
+    e->mB->mImmovable = true;
+    e->mB->mW = e->mB->mH = 20;
+    e->mT->mY += Fx(2);
+    e->mT->mLastY = e->mT->mY;
+    return e;
+}
+
+Entity* Spawn_HappyNpc(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kHappyNpc, preset, "happy_npcs", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    static const int kBase[] = { 9, 9, 0, 9, 0 };
+    static const char* const kDialogue[] = { "hot", "dump", "gold", "drink", "beautiful" };
+    const int frame = preset.mFrame >= 0 && preset.mFrame < 5 ? preset.mFrame : 0;
+    Ecs_SetFrameBase(*e, kBase[frame]);
+    Ecs_Play(*e, "idle_d");
+    e->mB->mImmovable = true;
+    HappyNpcData& d = e->Data<HappyNpcData>();
+    d = HappyNpcData();
+    d.mDialogue = kDialogue[frame];
+    d.mRun = frame >= 1 && frame <= 3;
+    return e;
+}
+
+Entity* Spawn_HappyEventTrigger(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kHappyTrigger, preset, nullptr);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->Data<HappyTriggerData>() = HappyTriggerData();
+    if (Event_Get("HappyStarted") != 0)
+    {
+        e->mExists = false;
+    }
+    return e;
+}
+
+// ---- SageSentinel + EndingSage (Npc/Go/EndingSage.cs, "Sage" in GO): Briar's farewell, then the credits ----------
+// The sentinel sits invisible at (0, 0); its EndingSage is a UIEntity (here a plain entity drawn as UI, under a name the
+// C# never lists in the play state) and its sub-entity the walking Briar (a plain "Entity").
+namespace
+{
+const EntityClass kEndingSage = {
+    "EndingSage", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kEndingBriar = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+struct SageSentinelData final
+{
+    Entity* mSage;
+    Entity* mBriar;
+    Entity* mStandin;
+    fx mTopLeftX;
+    fx mTopLeftY;
+    fx mTimer;
+    float mWhite; // gameScreenFade.alpha
+    float mBlack; // black_overlay.alpha
+    uint8_t mStep;
+    bool mStarted;
+    bool mVolumeReached; // the VolumeEvent's ReachedTarget
+};
+
+// VolumeEvent(0, 0.18f).Update
+void EndingVolumeStep(SageSentinelData& d)
+{
+    if (!d.mVolumeReached)
+    {
+        fx volume = FxF(Game_SongVolume());
+        d.mVolumeReached = MoveTo(volume, 0, FxF(0.18f));
+        Game_SetSongVolume(volume.mV);
+    }
+}
+
+// EndingSage.EndingCutscene
+bool EndingCutscene(Entity& self)
+{
+    SageSentinelData& d = self.Data<SageSentinelData>();
+    Entity& p = *World_Player();
+    Transform& pt = *p.mT;
+    Entity& briar = *d.mBriar;
+    Entity& sage = *d.mSage;
+    const fx tlx = d.mTopLeftX;
+    const fx tly = d.mTopLeftY;
+    switch (d.mStep)
+    {
+    case 0:
+        if (pt.mY > tly + Fx(140) || p.mV->mYPush < Fx(14))
+        {
+            Player_SetDontMove(false);
+            pt.mX = pt.mX < tlx + Fx(64) ? tlx + Fx(64) : (pt.mX > tlx + Fx(88) ? tlx + Fx(88) : pt.mX);
+            pt.mY = pt.mY < tly + Fx(16 * 6) ? tly + Fx(16 * 6) : pt.mY;
+            return false;
+        }
+        p.mV->mYPush = Fx(14);
+        p.mExists = false;
+        d.mStandin = Ecs_Create(kPlayerStandin, pt.mX, pt.mY, PART_VISUAL);
+        if (d.mStandin)
+        {
+            Entity& s = *d.mStandin;
+            Ecs_SetSheet(s, "young_player", 16, 16);
+            Ecs_Play(s, Ecs_AnimName(p));
+            s.mB->mW = p.mB->mW;
+            s.mB->mH = p.mB->mH;
+            s.mV->mOffX = p.mV->mOffX;
+            s.mV->mOffY = p.mV->mOffY;
+            s.mV->mYPush = p.mV->mYPush;
+            Ecs_SetSolid(s, false);
+        }
+        d.mStep = 1;
+        return false;
+    case 1:
+        Game_ShowCutsceneDialogue("briar", "final");
+        d.mStep = 2;
+        return false;
+    case 2:
+        briar.mT->mY = tly - Fx(16);
+        briar.mT->mVelY = Fx(25);
+        briar.mV->mYPush = Fx(14);
+        Ecs_Play(briar, "walk_d");
+        Ecs_Play(*d.mStandin, "idle_u");
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+    {
+        const Transform& st = *d.mStandin->mT;
+        const float dx = (briar.mT->mX - st.mX).mV;
+        const float dy = (briar.mT->mY - st.mY).mV;
+        if (sqrtf(dx * dx + dy * dy) > 7)
+        {
+            MoveTo(briar.mT->mX, st.mX, Fx(10));
+            return false;
+        }
+        briar.mT->mVelX = briar.mT->mVelY = 0;
+        d.mStep = 4;
+        [[fallthrough]];
+    }
+    case 4:
+        if (!MoveTo(briar.mV->mYPush, Fx(6), FxF(1 / 0.3f)))
+        {
+            d.mStandin->mV->mYPush = p.mV->mYPush = briar.mV->mYPush;
+            return false;
+        }
+        Game_ShowCutsceneDialogue("briar", "final");
+        d.mStep = 5;
+        return false;
+    case 5:
+        Ecs_Play(*d.mStandin, "walk_r");
+        d.mStep = 6;
+        [[fallthrough]];
+    case 6:
+        if (!MoveTo(d.mStandin->mT->mX, tlx + Fx(85), Fx(15)))
+        {
+            pt.mX = d.mStandin->mT->mX;
+            pt.mY = d.mStandin->mT->mY;
+            return false;
+        }
+        Ecs_Play(*d.mStandin, "walk_l");
+        d.mStep = 7;
+        [[fallthrough]];
+    case 7:
+        if (!MoveTo(d.mStandin->mT->mX, tlx + Fx(65), Fx(15)))
+        {
+            pt.mX = d.mStandin->mT->mX;
+            pt.mY = d.mStandin->mT->mY;
+            return false;
+        }
+        Ecs_Play(*d.mStandin, "idle_u");
+        Game_ShowCutsceneDialogue("briar", "final");
+        d.mStep = 8;
+        return false;
+    case 8:
+        Ecs_Play(briar, "walk_u");
+        briar.mT->mVelY = -Fx(25);
+        d.mStep = 9;
+        [[fallthrough]];
+    case 9:
+        if (briar.mT->mY > tly - Fx(16))
+        {
+            return false;
+        }
+        // (UI space: x 160, InGrid(y) + 20 under the header)
+        sage.mT->mX = tlx + Fx(160);
+        sage.mT->mY = tly + fx(InGrid(d.mStandin->mT->mY));
+        sage.mV->mVisible = true;
+        Ecs_Play(sage, "walk_l");
+        FlipForLeft(sage);
+        sage.mT->mVelX = -Fx(24);
+        d.mStep = 10;
+        [[fallthrough]];
+    case 10:
+        if (sage.mT->mX > tlx + Fx(128))
+        {
+            return false;
+        }
+        Ecs_Play(*d.mStandin, "idle_r");
+        Ecs_Play(sage, "idle_l");
+        FlipForLeft(sage);
+        sage.mT->mVelX = sage.mT->mVelY = 0;
+        Game_ShowCutsceneDialogue("briar", "final");
+        d.mStep = 11;
+        return false;
+    case 11:
+        pt.mX = d.mStandin->mT->mX;
+        pt.mY = d.mStandin->mT->mY;
+        Player_SetFacing(FACE_RIGHT);
+        p.mExists = true;
+        d.mStandin->mExists = false;
+        d.mStep = 12;
+        [[fallthrough]];
+    case 12:
+        if (pt.mY > tly + Fx(8))
+        {
+            Player_SetDontMove(false);
+            p.mV->mYPush = Fx(6);
+            pt.mX = pt.mX < tlx + Fx(64) ? tlx + Fx(64) : (pt.mX > tlx + Fx(88) ? tlx + Fx(88) : pt.mX);
+            if (pt.mY < tly + Fx(80))
+            {
+                MoveTo(p.mV->mOpacity, 0, FxF(0.3f));
+            }
+            return false;
+        }
+        d.mStep = 13;
+        [[fallthrough]];
+    case 13:
+        if (!MoveTo(p.mV->mOpacity, 0, FxF(0.3f)))
+        {
+            return false;
+        }
+        p.mExists = false;
+        d.mTimer = 0;
+        d.mStep = 14;
+        [[fallthrough]];
+    case 14:
+        if (!MoveTo(d.mTimer, Fx(1), Fx(1)))
+        {
+            return false;
+        }
+        Screen_SetWave(true);
+        Screen_SetFadeWhite(true);
+        Screen_SetFadeSparesUi(true); // (the sage is UI: over the game screen's fade)
+        d.mStep = 15;
+        [[fallthrough]];
+    case 15:
+        if (d.mWhite < 1)
+        {
+            // FadeEffect.ChangeAlpha(0.12f)
+            d.mWhite = d.mWhite + 0.12f * kDeltaTime;
+            d.mWhite = d.mWhite < 0 ? 0 : (d.mWhite > 1 ? 1 : d.mWhite);
+            Screen_SetFade(fx(d.mWhite));
+            return false;
+        }
+        Ecs_Play(sage, "walk_r");
+        FlipForLeft(sage);
+        sage.mT->mVelX = Fx(12);
+        d.mStep = 16;
+        [[fallthrough]];
+    case 16:
+        if (d.mBlack < 1)
+        {
+            d.mBlack = d.mBlack + 0.3f * kDeltaTime;
+            d.mBlack = d.mBlack < 0 ? 0 : (d.mBlack > 1 ? 1 : d.mBlack);
+            Screen_SetEndingBlack(fx(d.mBlack));
+            return false;
+        }
+        // (the VolumeEvent updates after the step that adds it)
+        EndingVolumeStep(d);
+        d.mStep = 17;
+        return false;
+    case 17:
+        if (!d.mVolumeReached)
+        {
+            EndingVolumeStep(d);
+            return false;
+        }
+        Credits_Request();
+        d.mStep = 18;
+        return false;
+    default:
+        return false;
+    }
+}
+
+void SageSentinelUpdate(Entity& self)
+{
+    SageSentinelData& d = self.Data<SageSentinelData>();
+    Ecs_BaseUpdate(self);
+    Transform& pt = *World_Player()->mT;
+    pt.mY = pt.mY < d.mTopLeftY + Fx(144) ? pt.mY : d.mTopLeftY + Fx(144);
+    if (!World_InTransition() && !d.mStarted)
+    {
+        d.mStarted = true;
+        d.mStep = 0;
+        Game_StartCutscene(self, EndingCutscene);
+    }
+}
+
+void SageSentinelDestroy(Entity& self)
+{
+    SageSentinelData& d = self.Data<SageSentinelData>();
+    Entity** const subs[] = { &d.mSage, &d.mBriar, &d.mStandin };
+    for (Entity** sub : subs)
+    {
+        if (*sub)
+        {
+            Ecs_Free(**sub);
+            *sub = nullptr;
+        }
+    }
+}
+
+const EntityClass kSageSentinel = {
+    "SageSentinel", SageSentinelUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, SageSentinelDestroy, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_SageSentinel(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kSageSentinel, 0, 0, PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SageSentinelData& d = e->Data<SageSentinelData>();
+    d = SageSentinelData();
+    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
+    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    d.mSage = Ecs_Create(kEndingSage, 0, 0, PART_VISUAL, &preset, e);
+    d.mBriar = Ecs_Create(kEndingBriar, d.mTopLeftX + Fx(4 * 16), d.mTopLeftY + Fx(60), PART_VISUAL, &preset, e);
+    if (!d.mSage || !d.mBriar)
+    {
+        return nullptr;
+    }
+    Entity& sage = *d.mSage;
+    Ecs_SetSheet(sage, "sage", 16, 16);
+    Ecs_SetSolid(sage, false);
+    sage.mV->mLayer = LAYER_UI;
+    sage.mV->mVisible = false;
+    Entity& briar = *d.mBriar;
+    Ecs_SetSheet(briar, "briar", 16, 16);
+    Ecs_SetSolid(briar, false);
+    briar.mV->mYPush = Fx(8);
+    Ecs_Play(briar, "walk_u");
+    briar.mT->mVelY = -Fx(20);
+    Player_SetGridEntranceAt(d.mTopLeftX + Fx(75), d.mTopLeftY + Fx(140));
+    return e;
+}
+
+const char* Npcs_ProbeName(const Entity& e)
+{
+    if (e.mClass == &kBlueBriar && const_cast<Entity&>(e).Data<BlueBriarData>().mHappy)
+    {
+        return "HappyBriar";
+    }
+    if (e.mClass == &kMitra)
+    {
+        return const_cast<Entity&>(e).Data<MitraData>().mFields ? "MitraFields" : "MitraOverworld";
+    }
+    if (e.mClass != &kSage)
+    {
+        return nullptr;
+    }
+    switch (const_cast<Entity&>(e).Data<SageData>().mKind)
+    {
+    case SAGE_NEXUS:
+        return "SageNexus";
+    case SAGE_OVERWORLD:
+        return "SageOverworld";
+    case SAGE_REDCAVE:
+        return "SageRedCave";
+    case SAGE_CROWD:
+        return "SageCrowd";
+    default:
+        return "SageBedroom";
+    }
 }

@@ -149,6 +149,26 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_DashPad;
     case EPT_GoDetector:
         return Spawn_GoDetector;
+    case EPT_Snowman:
+        return Spawn_Snowman;
+    case EPT_Dam:
+        return Spawn_Dam;
+    case EPT_WaterAnim:
+        return Spawn_WaterAnim;
+    case EPT_BlueBriar:
+        return Spawn_BlueBriar;
+    case EPT_PostBlue:
+        return Spawn_PostBlue;
+    case EPT_GoHappyBlocker:
+        return Spawn_GoHappyBlocker;
+    case EPT_HappyNpc:
+        return Spawn_HappyNpc;
+    case EPT_HappyEventTrigger:
+        return Spawn_HappyEventTrigger;
+    case EPT_BriarBoss:
+        return Spawn_BriarBoss;
+    case EPT_SageSentinel:
+        return Spawn_SageSentinel;
     case EPT_SplitBoss:
         return Spawn_SplitBoss;
     case EPT_Rat:

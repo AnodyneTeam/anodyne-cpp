@@ -64,6 +64,10 @@ void Player_GetProbe(PlayerProbe& out);
 void Player_AutoJump(fx period, fx targetX, fx targetY, int height = 24, fx rotationSpeed = 0);
 bool Player_JustLanded();
 void Player_SetFacing(Facing f);
+// Stops the player and plays "slumped" (ANIM_STATE as_slumped).
+void Player_Slump();
+// The broom's hitbox (where it last was when it's not out).
+Rect Player_BroomHitbox();
 
 // The broom's dust (Broom.dust): the dust entity carried or just put down (nullptr if none or freed).
 Entity* Player_BroomDust();

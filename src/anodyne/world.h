@@ -78,6 +78,8 @@ void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event);
 // Map.ChangeTile: tile (cx, cy) of a layer (0 BG, 1 BG2, 2 FG) becomes `tile` until the map loads again (collision
 // and drawing follow).
 void World_ChangeTile(int layer, int cx, int cy, int tile);
+// Map.offset.X (a multiple of 16): the map is drawn, and collides, shifted left by it.
+void World_SetMapOffsetX(int px);
 // TileMap.GetTile: tile (cx, cy) of a layer, 0 outside it.
 int World_GetTile(int layer, int cx, int cy);
 // The map's SwapperControl (set with the map), and Map.CheckSwapper for tile (cx, cy): a SwapperState.
@@ -102,6 +104,10 @@ void World_ScreenDarken(int level);
 void Screen_SetFade(fx alpha);
 // GlobalState.gameScreenFade.fadeColor: white (true) or black.
 void Screen_SetFadeWhite(bool white);
+// The ending (EndingSage): the game screen's white fade leaves the sprites alone (the sage there is UI), and
+// GlobalState.black_overlay darkens the whitened screen (alpha 0-1; 0 is off).
+void Screen_SetFadeSparesUi(bool on);
+void Screen_SetEndingBlack(fx alpha);
 // GlobalState.wave.active: the screen's rows ripple sideways (a GasGuy's gas, the Red Boss).
 void Screen_SetWave(bool on);
 bool Screen_Wave();

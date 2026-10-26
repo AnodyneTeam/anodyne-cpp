@@ -112,6 +112,16 @@
     X(SageBoss)                \
     X(DashPad)                 \
     X(GoDetector)              \
+    X(Snowman)                 \
+    X(Dam)                     \
+    X(WaterAnim)               \
+    X(BlueBriar)               \
+    X(PostBlue)                \
+    X(GoHappyBlocker)          \
+    X(HappyNpc)                \
+    X(HappyEventTrigger)       \
+    X(BriarBoss)               \
+    X(SageSentinel)            \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

@@ -117,7 +117,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "active", { 4, 5 }, 5.0f, true },
     } },
     { "briar_arm_right", 64, 80, {
-        { "off", { 0, 1, 2, 3 }, 4.0f, true },  // variant-relative
+        { "off", { 1, 2, 3, 0 }, 4.0f, true },
         { "hit", { 4, 6, 4, 6, 4, 6, 4, 6, 4, 6, 4, 6 }, 15.0f, false },
         { "hitloop", { 4, 6 }, 15.0f, true },
         { "hurt", { 7, 8 }, 4.0f, true },

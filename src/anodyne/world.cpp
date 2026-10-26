@@ -84,6 +84,8 @@ int gGridX = 0; // current 10x10-tile screen
 int gGridY = 0;
 bool gTransition = false;
 
+int gMapOffCells = 0; // Map.offset.X in 16x16 cells: world cell x shows (and collides as) map cell x + this
+
 int gBgTX = 0; // tile coordinate of the BG ring's top-left (each layer holds a 32x32 window of the map)
 int gBgTY = 0;
 
@@ -102,7 +104,7 @@ int gScrollTY = 0;
 // layer (or index 0) is empty, like TileMap.GetTile.
 uint16_t LayerEntry(int layer, int mx, int my)
 {
-    const int cx = mx >> 1;
+    const int cx = (mx >> 1) + gMapOffCells;
     const int cy = my >> 1;
     if (cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
     {
@@ -719,6 +721,7 @@ void UpdateAmbience()
 // ---- Collision ----------------------------------------------------------------------------------------------
 const uint8_t* ClassAtCell(int cx, int cy)
 {
+    cx += gMapOffCells; // (Map.ToMapLoc)
     // TileMap.GetTile: outside the map is tile 0 (nothing).
     if (cx < 0 || cy < 0 || cx >= gCellsW || cy >= gCellsH)
     {
@@ -1394,6 +1397,24 @@ void Darkness_MakeLight(Entity& e, const char* sheet)
 // GlobalState.gameScreenFade (black): over everything but the UI.
 static fx gGameFade = 0;
 static bool gGameFadeWhite = false;
+static bool gGameFadeSparesUi = false;
+static fx gEndingBlack = 0;
+
+void Screen_SetFadeSparesUi(bool on)
+{
+    gGameFadeSparesUi = on;
+}
+
+// The screen is all white under it by then: the BGs go and the backdrop stands in for them, darkened with the sprites.
+void Screen_SetEndingBlack(fx alpha)
+{
+    gEndingBlack = alpha;
+    pal_bg_mem[0] = CLR_WHITE;
+    REG_DISPCNT = REG_DISPCNT & ~(DCNT_BG0 | DCNT_BG1 | DCNT_BG2 | DCNT_BG3);
+    REG_BLDCNT = BLD_OBJ | BLD_BACKDROP | BLD_BLACK;
+    const int y = FxFloor(alpha * 16 + kFxOne / 2);
+    REG_BLDY = static_cast<uint16_t>(y > 16 ? 16 : y);
+}
 
 void Screen_SetFadeWhite(bool white)
 {
@@ -1519,7 +1540,12 @@ void World_ScreenDarken(int level)
             gLightWindows = false;
             ApplyWindows();
         }
-        REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP | BLD_WHITE;
+        if (gEndingBlack > 0)
+        {
+            Screen_SetEndingBlack(gEndingBlack);
+            return;
+        }
+        REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | (gGameFadeSparesUi ? 0 : BLD_OBJ) | BLD_BACKDROP | BLD_WHITE;
         REG_BLDY = static_cast<uint16_t>(fade > 16 ? 16 : fade);
         return;
     }
@@ -1626,6 +1652,7 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
 {
     gDarkData = &dark;
     Darkness_SetPlayerLight(*gPlayerLight);
+    gMapOffCells = 0;
     gMap = &map;
     gMapName = mapName;
     gDoors = &doors;
@@ -2165,13 +2192,20 @@ void World_ChangeTile(int layer, int cx, int cy, int tile)
     }
 
     // Redraw it if it's on the current screen (the streamed BG window holds it)
-    if (cx / kScreenCells == gGridX && cy / kScreenCells == gGridY)
+    cx -= gMapOffCells;
+    if (cx >= 0 && cx / kScreenCells == gGridX && cy / kScreenCells == gGridY)
     {
         for (int i = 0; i < 4; i++)
         {
             WriteBgTile(cx * 2 + (i & 1), cy * 2 + (i >> 1));
         }
     }
+}
+
+void World_SetMapOffsetX(int px)
+{
+    gMapOffCells = px / 16;
+    BgFull(gBgTX, gBgTY);
 }
 
 void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event)

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "credits.h"
 #include "dialog.h"
 #include "tonc.h"
 
@@ -69,7 +70,8 @@ enum class AppMode
     MapViewer,
     Title,
     Intro, // IntroState: black screen, the sage's opening text, then the new game starts in BLANK
-    PixelateTest
+    PixelateTest,
+    Credits // CreditsState: after the ending, back to the title
 };
 
 static void EnterAudioTestMode()
@@ -406,7 +408,7 @@ int main()
 #endif
         Game_CountFrame();
         {
-            static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test" };
+            static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test", "credits" };
             gGame.mModeName = kModeNames[static_cast<int>(mode)];
         }
 
@@ -511,6 +513,16 @@ int main()
                 mode = AppMode::Intro;
                 introPhase = 0;
                 introTimer = 90;
+            }
+        }
+        else if (mode == AppMode::Credits)
+        {
+            if (Credits_Update())
+            {
+                Credits_Exit();
+                oam_init(oam_mem, 128);
+                mode = AppMode::Title;
+                Title_Enter(objVram);
             }
         }
         else if (mode == AppMode::Intro)
@@ -628,6 +640,11 @@ int main()
             else
             {
                 World_Update();
+                if (Credits_TakeRequest())
+                {
+                    mode = AppMode::Credits;
+                    Credits_Enter();
+                }
                 int warpDark = 0;
                 int warpPix = 256;
                 bool swapped = false; // (the loader gave back the old screen's mosaic blocks)

@@ -126,6 +126,31 @@ Entity* Spawn_CircusFolks(const MapEntity& preset, Entity& player);
 Entity* Spawn_SageBoss(const MapEntity& preset, Entity& player);
 Entity* Spawn_DashPad(const MapEntity& preset, Entity& player);
 Entity* Spawn_GoDetector(const MapEntity& preset, Entity& player);
+Entity* Spawn_Snowman(const MapEntity& preset, Entity& player);
+Entity* Spawn_Dam(const MapEntity& preset, Entity& player);
+Entity* Spawn_WaterAnim(const MapEntity& preset, Entity& player);
+Entity* Spawn_BlueBriar(const MapEntity& preset, Entity& player);
+Entity* Spawn_PostBlue(const MapEntity& preset, Entity& player);
+
+// WaterAnim.DoWaterAnim: the BG tiles take the BG2 water pattern along a channel, a tile per step.
+struct WaterFlow final
+{
+    int mX;
+    int mY;
+    int mGridX;
+    int mGridY;
+    int mDirX;
+    int mDirY;
+    int mCurrent;
+    bool mStarted;
+};
+// One MoveNext of DoWaterAnim(start): false once the channel ends.
+bool WaterStep(WaterFlow& w, fx startX, fx startY);
+Entity* Spawn_GoHappyBlocker(const MapEntity& preset, Entity& player);
+Entity* Spawn_HappyNpc(const MapEntity& preset, Entity& player);
+Entity* Spawn_HappyEventTrigger(const MapEntity& preset, Entity& player);
+Entity* Spawn_BriarBoss(const MapEntity& preset, Entity& player);
+Entity* Spawn_SageSentinel(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbBlocker(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity& player);

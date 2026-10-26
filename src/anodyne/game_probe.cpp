@@ -213,7 +213,8 @@ extern "C" int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap)
     // BotRunner.Trace: no map or player outside the play state; positions truncated like (int)Position.X.
     WorldPlayerInfo p;
     World_GetPlayerInfo(p);
-    const bool play = gGame.mModeName && !strcmp(gGame.mModeName, "play");
+    // (the C#'s credits still show the play state's last map and player)
+    const bool play = gGame.mModeName && (!strcmp(gGame.mModeName, "play") || !strcmp(gGame.mModeName, "credits"));
     return snprintf(buf, static_cast<size_t>(cap), "%llu\t%s\t%d\t%d\t%d\t%d\tb%dk%dc%d", frame,
                     play ? Str(gGame.mMapName) : "", play ? p.mX : 0, play ? p.mY : 0, gGame.mCurHealth,
                     Dialog_IsOpen() && !Game_DialogueIsCutscene() ? 1 : 0, gGame.mEquippedBroom != 0 ? 1 : 0, Inventory_MapKeys(),

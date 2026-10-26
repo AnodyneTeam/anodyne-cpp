@@ -87,7 +87,7 @@ bool IsEnemyType(uint8_t type)
 // The classes with [AlwaysSpawn]: made even when their preset is dead.
 static bool IsAlwaysSpawnType(uint8_t type)
 {
-    return type == EPT_SuburbWalker || type == EPT_EyeBossWater;
+    return type == EPT_SuburbWalker || type == EPT_EyeBossWater || type == EPT_Snowman;
 }
 
 void FreeScreen()

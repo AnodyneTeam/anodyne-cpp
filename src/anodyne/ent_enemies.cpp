@@ -8524,6 +8524,1548 @@ const EntityClass kSageShortAttack = {
     0,             GROUP_PLAYER | GROUP_BROOM, ECF_KEEP_ON_SCREEN,
 };
 
+// ---- The Briar fight (Enemy/Go/BriarBossMain.cs, BriarBossFight.cs, BriarBossBody.cs, BigThorn.cs, BlueThorn.cs,
+// HappyThorn.cs). BriarBossMain waits at the top of the room behind its ThornGate; past the gate the water comes in,
+// the map shifts two screens over and BriarBossFight (with its body, core and the two arms) is spawned. Pools are
+// their owner's children, found in list order (EntityPool.Spawn takes the first one not out).
+Entity* BriarPoolSpawn(const Entity& owner, const EntityClass& cls)
+{
+    for (Entity* e = Ecs_First(); e; e = e->mNext)
+    {
+        if (e->mParent == &owner && e->mClass == &cls && !e->mExists && !e->mFreed)
+        {
+            e->mExists = true;
+            return e;
+        }
+    }
+    return nullptr;
+}
+
+// A rectangle's own random point: Position + (RNG.NextSingle() * width, RNG.NextSingle() * height).
+void BriarRandomPos(const Entity& target, fx& x, fx& y)
+{
+    const float rx = Rng_Unit().mV;
+    const float ry = Rng_Unit().mV;
+    x = target.mT->mX + fx(rx * static_cast<float>(target.mB->mW));
+    y = target.mT->mY + fx(ry * static_cast<float>(target.mB->mH));
+}
+
+// The C#'s `float t = 0; while (!MoveTo(ref t, tm, 1)) yield return null;`, one call per MoveNext.
+bool BriarWait(fx& t, float seconds)
+{
+    return MoveTo(t, FxF(seconds), kFxOne);
+}
+
+// ---- BriarBossBody: drops bullets and raises thorns under the player ----------------------------------------------
+struct BriarBodyData final
+{
+    fx mBulletT;
+    fx mThornT;
+    int mPhase;
+    int mAttack;  // ThornAttack's i
+    int mThorn;   // Thorns' i
+    uint8_t mStep; // ThornAttack
+    bool mActive; // State != null
+    bool mBulletWaiting;
+    bool mThornWaiting;
+    bool mThornsStarted;
+};
+
+extern const EntityClass kBriarBullet;
+extern const EntityClass kBriarThorn;
+
+// Bullets(phase): one volley a MoveNext.
+void BriarBodyVolley(Entity& body, int phase)
+{
+    struct Shot
+    {
+        int mX;
+        int mY;
+        int mVx;
+        int mVy;
+        int mAx;
+        int mAy;
+    };
+    static const int kBaseX[] = { 36, 52, 69, 84 };
+    auto spawn = [&](const Shot& s) {
+        Entity* b = BriarPoolSpawn(body, kBriarBullet);
+        if (b)
+        {
+            b->mT->mX = body.mT->mX + Fx(s.mX);
+            b->mT->mY = body.mT->mY + Fx(s.mY);
+            b->mT->mVelX = Fx(s.mVx);
+            b->mT->mVelY = Fx(s.mVy);
+            b->mT->mAccX = Fx(s.mAx);
+            b->mT->mAccY = Fx(s.mAy);
+        }
+    };
+    for (int x : kBaseX)
+    {
+        spawn({ x, 60, 0, 40, 0, 25 });
+    }
+    if (phase >= 2)
+    {
+        spawn({ 20, 44, -10, 45, 5, 20 });
+        spawn({ 101, 44, 10, 45, -5, 20 });
+    }
+    if (phase >= 4)
+    {
+        spawn({ 4, 44, -10, 45, 5, 20 });
+        spawn({ 116, 44, 10, 45, -5, 20 });
+    }
+}
+
+// Thorns(phase)'s MoveNext: a thorn a step under the player's row, eight across.
+bool BriarBodyThorns(Entity& body, BriarBodyData& d)
+{
+    if (!d.mThornsStarted)
+    {
+        d.mThornsStarted = true;
+        d.mThorn = 0;
+        Game_PlaySfx("briar_shine");
+    }
+    if (d.mThorn >= 8)
+    {
+        return false;
+    }
+    const int i = d.mThorn;
+    int row = static_cast<int>((World_Player()->mT->mY - body.mT->mY).mV) / 16;
+    const int lo = (i > 1 && i < 6) ? 4 : 5;
+    row = row < lo ? lo : (row > 8 ? 8 : row);
+    if (Entity* t = BriarPoolSpawn(body, kBriarThorn))
+    {
+        t->mT->mX = body.mT->mX + Fx(i * 16) + t->mV->mOffX;
+        t->mT->mY = body.mT->mY + Fx(row * 16);
+        Ecs_Play(*t, "attack", false, 12 + d.mPhase);
+    }
+    d.mThorn++;
+    return true;
+}
+
+// Attack(phase)'s MoveNext.
+bool BriarBodyAttack(Entity& body, BriarBodyData& d)
+{
+    static const float kTimes[] = { 0.18f, 0.16f, 0.14f, 0.13f, 0.11f, 0.09f };
+    static const int kAttacks[] = { 2, 2, 2, 3, 3, 4 };
+    // thorn_attack.MoveNext()
+    bool more = false;
+    for (;;)
+    {
+        if (d.mStep == 0)
+        {
+            if (d.mAttack >= kAttacks[d.mPhase])
+            {
+                break;
+            }
+            d.mThornsStarted = false;
+            d.mThornWaiting = false;
+            d.mStep = 1;
+        }
+        if (d.mStep == 1)
+        {
+            // OnceEvery(Thorns(phase), times[phase])
+            if (d.mThornWaiting)
+            {
+                if (!BriarWait(d.mThornT, kTimes[d.mPhase]))
+                {
+                    more = true;
+                    break;
+                }
+                d.mThornWaiting = false;
+            }
+            if (BriarBodyThorns(body, d))
+            {
+                d.mThornWaiting = true;
+                d.mThornT = 0;
+                more = true;
+                break;
+            }
+            d.mStep = 2;
+        }
+        if (Ecs_CountChildren(body, kBriarThorn) != 0)
+        {
+            more = true;
+            break;
+        }
+        d.mAttack++;
+        d.mStep = 0;
+    }
+    if (!more)
+    {
+        return false;
+    }
+    // bullet_attack.MoveNext(): OnceEvery(Bullets(phase), 1.4f - 0.2f * phase / 2)
+    if (d.mBulletWaiting)
+    {
+        const float tm = 1.4f - 0.2f * static_cast<float>(d.mPhase) / 2.0f;
+        if (!BriarWait(d.mBulletT, tm))
+        {
+            return true;
+        }
+    }
+    BriarBodyVolley(body, d.mPhase);
+    d.mBulletWaiting = true;
+    d.mBulletT = 0;
+    return true;
+}
+
+void BriarBodyStart(Entity& body, int phase)
+{
+    BriarBodyData& d = body.Data<BriarBodyData>();
+    d = BriarBodyData();
+    d.mPhase = phase;
+    d.mActive = true;
+}
+
+void BriarBodyUpdate(Entity& self)
+{
+    BriarBodyData& d = self.Data<BriarBodyData>();
+    Ecs_BaseUpdate(self);
+    if (d.mActive && !BriarBodyAttack(self, d))
+    {
+        d.mActive = false;
+    }
+}
+
+void BriarBodyCollided(Entity& self, Entity& other)
+{
+    const Rect h = Ecs_Hitbox(self);
+    other.mT->mY = Fx(h.mY + h.mH);
+    Player_ReceiveDamage(1);
+}
+
+void BriarThornUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+}
+
+void BriarThornCollided(Entity& self, Entity&)
+{
+    if (Player_State() == PS_GROUND && Ecs_Frame(self) >= 9)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+void BriarBulletUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (InGrid(self.mT->mY) > Fx(150))
+    {
+        self.mExists = false;
+    }
+}
+
+void BriarBulletCollided(Entity&, Entity&)
+{
+    if (Player_State() == PS_GROUND)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kBriarBody = {
+    "BriarBossBody", BriarBodyUpdate, nullptr, BriarBodyCollided, nullptr, nullptr, nullptr, nullptr,
+    0,               GROUP_PLAYER,    0,
+};
+
+const EntityClass kBriarThorn = {
+    "Thorn", BriarThornUpdate, nullptr, BriarThornCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+const EntityClass kBriarBullet = {
+    "Bullet", BriarBulletUpdate, nullptr, BriarBulletCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- BigThorn (BlueThorn / HappyThorn): an arm; hurt, the broom knocks a health off it -------------------------------
+enum BriarFireEyeState : uint8_t
+{
+    FES_NONE,
+    FES_ATTACK,
+    FES_END,
+};
+
+struct BigThornData final
+{
+    Entity* mHelper; // BlueThorn's FireEye / HappyThorn's IceCrystal
+    Entity* mAttacker;
+    fx mTimer;
+    int mHealth;
+    uint8_t mStep;
+    bool mBlue;
+    bool mActive; // state != null
+};
+
+struct FireEyeData final
+{
+    fx mShotT;
+    fx mEndT;
+    int mExplosions; // num_explosions
+    uint8_t mState;
+    bool mEndStarted;
+};
+
+struct IceCrystalData final
+{
+    Entity* mThorn; // its HappyThorn
+    fx mTargetX;
+    fx mTargetY;
+    float mBaseVel;
+    float mVelMul;
+    int mCount; // n
+    int mI;
+    uint8_t mStep;
+    bool mActive;  // state != null
+    bool mWaiting; // state is Wait()
+    bool mHitPlayer;
+    bool mHitBroom;
+};
+
+extern const EntityClass kBriarFireball;
+extern const EntityClass kBriarDustExplosion;
+extern const EntityClass kBriarMist;
+extern const EntityClass kBriarIceExplosion;
+const EntityClass* gBriarDustClass = nullptr; // Dust's (the FireEye's pooled ones)
+
+Entity* BriarDustSpawn(const Entity& eye)
+{
+    return gBriarDustClass ? BriarPoolSpawn(eye, *gBriarDustClass) : nullptr;
+}
+
+// FireEye.Start
+void FireEyeStart(Entity& eye, int phase)
+{
+    FireEyeData& d = eye.Data<FireEyeData>();
+    const fx left = Fx(gGame.mGridX * 160);
+    const fx top = Fx(gGame.mGridY * 160);
+    Ecs_Play(eye, "grow");
+    eye.mT->mX = left + Fx(phase == 0 ? 70 : 50);
+    eye.mT->mY = top + Fx(phase == 0 ? 80 : 100);
+    d.mExplosions = 0;
+    static const int kDust[4][2] = { { 1, 7 }, { 8, 7 }, { 3, 5 }, { 1, 5 } };
+    for (const auto& c : kDust)
+    {
+        if (Entity* dust = BriarDustSpawn(eye))
+        {
+            dust->mExists = true;
+            dust->mT->mX = left + Fx(c[0] * 16);
+            dust->mT->mY = top + Fx(c[1] * 16);
+            Ecs_Play(*dust, "unpoof");
+        }
+    }
+    auto mist = [&](int x, int y) {
+        if (Entity* m = BriarPoolSpawn(eye, kBriarMist))
+        {
+            m->mT->mX = left + Fx(x);
+            m->mT->mY = top + Fx(y);
+            Ecs_Flicker(*m, FxSec(1));
+        }
+    };
+    if (phase == 1)
+    {
+        // (the original spawns one at 5 * 16 - 12 first, which the second overwrites)
+        mist(6 * 16 - 7, 7 * 16 - 12);
+    }
+    else if (phase == 2)
+    {
+        mist(5 * 16 + 8, 4 * 16 + 5);
+        mist(6 * 16, 6 * 16 + 3);
+    }
+    d.mShotT = 0;
+    d.mState = FES_ATTACK;
+}
+
+void FireEyeEndAttack(Entity& eye)
+{
+    FireEyeData& d = eye.Data<FireEyeData>();
+    d.mState = FES_END;
+    d.mEndStarted = false;
+}
+
+// FireEye.ExplodeAt
+void FireEyeExplodeAt(Entity& eye, Entity& dust)
+{
+    eye.Data<FireEyeData>().mExplosions++;
+    dust.mExists = false;
+    if (Entity* ex = BriarPoolSpawn(eye, kBriarDustExplosion))
+    {
+        Game_PlaySfx("dust_explode");
+        ex->mT->mX = dust.mT->mX - Fx(16);
+        ex->mT->mY = dust.mT->mY - Fx(16);
+        Ecs_Play(*ex, "explode");
+    }
+    for (int f = FACE_LEFT; f <= FACE_DOWN; f++)
+    {
+        if (Entity* b = BriarPoolSpawn(eye, kBriarFireball))
+        {
+            b->mT->mX = dust.mT->mX;
+            b->mT->mY = dust.mT->mY;
+            b->mT->mVelX = Fx(FacingX(static_cast<Facing>(f)) * 70);
+            b->mT->mVelY = Fx(FacingY(static_cast<Facing>(f)) * 70);
+        }
+    }
+}
+
+void FireEyeUpdate(Entity& self)
+{
+    FireEyeData& d = self.Data<FireEyeData>();
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimIs(self, "grow") && Ecs_AnimFinished(self))
+    {
+        Ecs_Play(self, "shoot");
+    }
+    if (d.mState == FES_ATTACK)
+    {
+        if (d.mExplosions < 4 || Ecs_CountChildren(self, kBriarDustExplosion) != 0)
+        {
+            // OnceEvery(fire at the player, 0.4f)
+            if (BriarWait(d.mShotT, 0.4f))
+            {
+                if (Entity* b = BriarPoolSpawn(self, kBriarFireball))
+                {
+                    const Entity& p = *World_Player();
+                    b->mT->mX = self.mT->mX + Fx(4);
+                    b->mT->mY = self.mT->mY + Fx(4);
+                    Ecs_MoveTowards(*b, p.mT->mX, p.mT->mY, Fx(45));
+                }
+                d.mShotT = 0;
+                BriarWait(d.mShotT, 0.4f);
+            }
+            return;
+        }
+        FireEyeEndAttack(self); // (End() runs from the next update)
+        return;
+    }
+    if (d.mState == FES_END)
+    {
+        if (!d.mEndStarted)
+        {
+            d.mEndStarted = true;
+            for (Entity* e = Ecs_First(); e; e = e->mNext)
+            {
+                if (e->mParent != &self || !e->mExists)
+                {
+                    continue;
+                }
+                if (gBriarDustClass && e->mClass == gBriarDustClass)
+                {
+                    Ecs_Play(*e, "poof");
+                }
+                else if (e->mClass == &kBriarMist)
+                {
+                    Ecs_Flicker(*e, FxSec(1));
+                }
+            }
+            Ecs_Play(self, "ungrow");
+            d.mEndT = 0;
+        }
+        if (!BriarWait(d.mEndT, 1.3f))
+        {
+            return;
+        }
+        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        {
+            if (e->mParent == &self && e->mClass == &kBriarMist)
+            {
+                e->mExists = false;
+            }
+        }
+        self.mExists = false;
+        d.mState = FES_NONE;
+    }
+}
+
+void BriarFireballUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        self.mExists = false; // (the edge of the screen)
+    }
+}
+
+void BriarFireballCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        if (Player_State() == PS_GROUND)
+        {
+            Player_ReceiveDamage(1);
+        }
+    }
+    else if (other.mClass->mGroups & GROUP_DUST)
+    {
+        if (self.mParent)
+        {
+            FireEyeExplodeAt(*self.mParent, other);
+        }
+        self.mExists = false;
+    }
+    else if (other.mClass->mGroups & GROUP_MIST)
+    {
+        self.mExists = false;
+    }
+}
+
+void BriarAnimOnceUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+}
+
+// BlueThorn.GetHit
+void BlueThornGetHit(Entity& blue)
+{
+    if (!Ecs_AnimIs(blue, "off"))
+    {
+        return;
+    }
+    Ecs_Play(blue, "hurt");
+    Screen_Shake(FxF(0.01f), FxSec(0.2f));
+    Game_PlaySfx("wb_hit_ground");
+    BigThornData& d = blue.Data<BigThornData>();
+    if (d.mHelper)
+    {
+        d.mHelper->Data<FireEyeData>().mState = FES_NONE; // shooter.Stop()
+    }
+}
+
+void BriarDustExplosionCollided(Entity&, Entity& other)
+{
+    BlueThornGetHit(other);
+}
+
+// IceCrystal.DoAttack / Wait, one MoveNext.
+bool IceCrystalStep(Entity& self)
+{
+    IceCrystalData& d = self.Data<IceCrystalData>();
+    Transform& t = *self.mT;
+    auto explode = [&]() {
+        if (Entity* ex = BriarPoolSpawn(self, kBriarIceExplosion))
+        {
+            ex->mT->mX = t.mX - Fx(4);
+            ex->mT->mY = t.mY - Fx(4);
+            Ecs_Play(*ex, "explode");
+        }
+    };
+    auto wait = [&]() {
+        if (Ecs_CountChildren(self, kBriarIceExplosion) > 0)
+        {
+            return true;
+        }
+        self.mExists = false;
+        t.mVelX = t.mVelY = 0;
+        return false;
+    };
+    if (d.mWaiting)
+    {
+        return wait();
+    }
+    const Entity& p = *World_Player();
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            d.mTargetX = d.mThorn->mT->mX + Fx(6);
+            d.mTargetY = d.mThorn->mT->mY + Fx(52);
+            Ecs_Flicker(self, FxSec(1.5f));
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (self.mV->mFlickering)
+            {
+                return true;
+            }
+            explode();
+            Game_PlaySfx("teleguy_down");
+            d.mVelMul = 1;
+            d.mI = 0;
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (d.mI >= d.mCount)
+            {
+                d.mStep = 6;
+                continue;
+            }
+            Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, fx(d.mBaseVel * d.mVelMul));
+            d.mStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (!(d.mHitBroom || d.mHitPlayer))
+            {
+                const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+                if (!Ecs_Intersects(Ecs_Hitbox(self), screen))
+                {
+                    d.mWaiting = true; // state = Wait()
+                }
+                return true;
+            }
+            explode();
+            Screen_Shake(FxF(0.01f), FxSec(0.2f));
+            if (d.mHitPlayer)
+            {
+                Player_ReceiveDamage(1);
+                d.mWaiting = true;
+                return true;
+            }
+            if (d.mHitBroom)
+            {
+                Game_PlaySfx("broom_hit");
+                d.mVelMul += 0.15f;
+                Ecs_MoveTowards(self, d.mTargetX, d.mTargetY, fx(d.mBaseVel * d.mVelMul));
+            }
+            d.mStep = 4;
+            [[fallthrough]];
+        case 4:
+        {
+            const float dx = (t.mX - d.mTargetX).mV;
+            const float dy = (t.mY - d.mTargetY).mV;
+            if (dx * dx + dy * dy > 25)
+            {
+                return true;
+            }
+            Screen_Shake(FxF(0.01f), FxSec(0.2f));
+            explode();
+            Game_PlaySfx("sb_ball_appear");
+            d.mVelMul += 0.15f;
+            d.mI++;
+            d.mStep = 2;
+            continue;
+        }
+        case 6:
+            Ecs_Play(*d.mThorn, "hurt");
+            self.mV->mVisible = false;
+            d.mStep = 7;
+            [[fallthrough]];
+        case 7:
+            if (Ecs_AnimIs(*d.mThorn, "hurt"))
+            {
+                return true;
+            }
+            d.mWaiting = true;
+            return wait();
+        default:
+            return false;
+        }
+    }
+}
+
+void IceCrystalUpdate(Entity& self)
+{
+    IceCrystalData& d = self.Data<IceCrystalData>();
+    Ecs_BaseUpdate(self);
+    if (d.mActive && !IceCrystalStep(self))
+    {
+        d.mActive = false;
+    }
+    d.mHitPlayer = d.mHitBroom = false;
+}
+
+void IceCrystalCollided(Entity& self, Entity& other)
+{
+    IceCrystalData& d = self.Data<IceCrystalData>();
+    if (IsPlayer(other))
+    {
+        d.mHitPlayer = true;
+    }
+    else if (IsBroom(other))
+    {
+        d.mHitBroom = true;
+    }
+}
+
+// BigThorn.GetAttacked's MoveNext.
+bool BigThornAttacked(Entity& self, BigThornData& d)
+{
+    if (d.mBlue)
+    {
+        Entity& eye = *d.mHelper;
+        switch (d.mStep)
+        {
+        case 0:
+            d.mTimer = 0;
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (!BriarWait(d.mTimer, 1.5f))
+            {
+                return true;
+            }
+            eye.mExists = true;
+            FireEyeStart(eye, 3 - d.mHealth);
+            d.mStep = 2;
+            [[fallthrough]];
+        default:
+            if (!eye.mExists)
+            {
+                return false;
+            }
+            if (Ecs_AnimFinished(self))
+            {
+                FireEyeEndAttack(eye); // got hit by the broom: end the attack
+            }
+            return true;
+        }
+    }
+    Entity& crystal = *d.mHelper;
+    if (d.mStep == 0)
+    {
+        const int phase = 3 - d.mHealth;
+        crystal.mExists = true;
+        crystal.mT->mX = d.mAttacker->mT->mX + Fx(5);
+        crystal.mT->mY = d.mAttacker->mT->mY + Fx(52);
+        IceCrystalData& c = crystal.Data<IceCrystalData>();
+        c.mCount = 2 + phase;
+        c.mBaseVel = static_cast<float>(50 + phase * 20);
+        c.mStep = 0;
+        c.mWaiting = false;
+        c.mActive = true;
+        d.mStep = 1;
+    }
+    return crystal.Data<IceCrystalData>().mActive;
+}
+
+void BigThornUpdate(Entity& self)
+{
+    BigThornData& d = self.Data<BigThornData>();
+    Ecs_BaseUpdate(self);
+    if (d.mActive && !BigThornAttacked(self, d))
+    {
+        d.mActive = false;
+    }
+    if (Ecs_AnimFinished(self))
+    {
+        Ecs_Play(self, "off");
+    }
+}
+
+void BigThornCollided(Entity& self, Entity& other)
+{
+    if (!IsBroom(other) || !Ecs_AnimIs(self, "hurt"))
+    {
+        return;
+    }
+    Ecs_Play(self, "hit");
+    self.Data<BigThornData>().mHealth--;
+    Screen_Shake(FxF(0.03f), FxSec(0.4f));
+    Screen_Flash(FxSec(0.6f), FLASH_RED);
+    Game_PlaySfx("wb_hit_ground");
+}
+
+const EntityClass kBlueThorn = {
+    "BlueThorn", BigThornUpdate, nullptr, BigThornCollided, nullptr, nullptr, nullptr, nullptr,
+    GROUP_BLUE_THORN, GROUP_BROOM, 0,
+};
+
+const EntityClass kHappyThorn = {
+    "HappyThorn", BigThornUpdate, nullptr, BigThornCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_BROOM, 0,
+};
+
+const EntityClass kFireEye = {
+    "FireEye", FireEyeUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kBriarFireball = {
+    "Fireball", BriarFireballUpdate, nullptr, BriarFireballCollided, nullptr, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_DUST | GROUP_MIST, ECF_KEEP_ON_SCREEN,
+};
+
+const EntityClass kBriarDustExplosion = {
+    "DustExplosion", BriarAnimOnceUpdate, nullptr, BriarDustExplosionCollided, nullptr, nullptr, nullptr, nullptr,
+    0,               GROUP_BLUE_THORN,    0,
+};
+
+const EntityClass kBriarMist = {
+    "Mist", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, GROUP_MIST, 0, 0,
+};
+
+const EntityClass kIceCrystal = {
+    "IceCrystal", IceCrystalUpdate, nullptr, IceCrystalCollided, nullptr, nullptr, nullptr, nullptr,
+    0,            GROUP_PLAYER | GROUP_BROOM, 0,
+};
+
+const EntityClass kBriarIceExplosion = {
+    "IceExplosion", BriarAnimOnceUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// The Die cutscene's own explosions (CutsceneState entities: the C# lists them nowhere).
+const EntityClass kBriarDieIce = {
+    "CutsceneIceExplosion", BriarAnimOnceUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kBriarDieDust = {
+    "CutsceneDustExplosion", BriarAnimOnceUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kBriarDieBoom = {
+    "CutsceneExplosion", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kBriarCore = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- BriarBossFight: the arms take turns, and when both are spent the Briar comes apart ---------------------------
+struct BriarFightData final
+{
+    Entity* mBody;
+    Entity* mCore;
+    Entity* mBlue;
+    Entity* mHappy;
+    Entity* mAttacker;
+    Entity* mAttacked;
+    fx mTimer;
+    int mHealth; // MainAttack's health
+    int mDieCount;
+    uint8_t mStep;
+    uint8_t mDieStep;
+    bool mBossRush;
+};
+
+int BigThornHealth(const Entity& e)
+{
+    return const_cast<Entity&>(e).Data<BigThornData>().mHealth;
+}
+
+// MainAttack: attacked.state = attacked.GetAttacked(attacker, player)
+void BriarStartAttack(BriarFightData& d, Entity& attacker, Entity& attacked)
+{
+    d.mAttacker = &attacker;
+    d.mAttacked = &attacked;
+    Ecs_Play(attacker, "active");
+    BigThornData& t = attacked.Data<BigThornData>();
+    t.mAttacker = &attacker;
+    t.mStep = 0;
+    t.mActive = true;
+    d.mHealth = t.mHealth;
+}
+
+bool BriarDie(Entity& self);
+
+// BriarBossFight.StateLogic, one MoveNext.
+void BriarFightStep(Entity& self)
+{
+    BriarFightData& d = self.Data<BriarFightData>();
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            if (!d.mBossRush)
+            {
+                Game_ShowDialogue("briar", "before_fight");
+                d.mStep = 1;
+                return;
+            }
+            d.mTimer = 0;
+            d.mStep = 10;
+            continue;
+        case 10:
+            if (!BriarWait(d.mTimer, 1))
+            {
+                return;
+            }
+            d.mStep = 2;
+            continue;
+        case 1:
+            if (!Game_DialogueFinished())
+            {
+                return;
+            }
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+        {
+            const int hh = BigThornHealth(*d.mHappy);
+            const int bh = BigThornHealth(*d.mBlue);
+            if (hh + bh <= 0)
+            {
+                d.mDieStep = 0;
+                Game_StartCutscene(self, BriarDie);
+                d.mStep = 99;
+                return;
+            }
+            BriarBodyStart(*d.mBody, 6 - hh - bh);
+            d.mStep = 3;
+            return;
+        }
+        case 3:
+        {
+            if (d.mBody->Data<BriarBodyData>().mActive)
+            {
+                return;
+            }
+            const bool happy = BigThornHealth(*d.mHappy) > 0;
+            const bool blue = BigThornHealth(*d.mBlue) > 0;
+            if (!happy || (blue && Rng_Range(0, 2) == 0))
+            {
+                BriarStartAttack(d, *d.mHappy, *d.mBlue);
+            }
+            else
+            {
+                BriarStartAttack(d, *d.mBlue, *d.mHappy);
+            }
+            d.mStep = 4;
+            [[fallthrough]];
+        }
+        case 4:
+        {
+            Entity& attacked = *d.mAttacked;
+            if (attacked.Data<BigThornData>().mActive)
+            {
+                if (BigThornHealth(attacked) == d.mHealth)
+                {
+                    return;
+                }
+                Ecs_Play(*d.mCore, "flash");
+                d.mStep = 5;
+            }
+            else
+            {
+                d.mStep = 6;
+                continue;
+            }
+            [[fallthrough]];
+        }
+        case 5:
+            if (Ecs_AnimIs(*d.mAttacked, "hit"))
+            {
+                return;
+            }
+            Ecs_Play(*d.mCore, "glow");
+            d.mStep = 6;
+            [[fallthrough]];
+        case 6:
+            if (d.mAttacked->Data<BigThornData>().mActive)
+            {
+                return;
+            }
+            Ecs_Play(*d.mAttacker, "off");
+            d.mStep = 2;
+            continue;
+        default:
+            return;
+        }
+    }
+}
+
+void BriarFightUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    BriarFightStep(self);
+}
+
+const EntityClass kBriarFight = {
+    "BriarBossFight", BriarFightUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// BriarBossFight.Die (a cutscene)
+bool BriarDie(Entity& self)
+{
+    BriarFightData& d = self.Data<BriarFightData>();
+    auto pooled = [&](const EntityClass& cls, int count, int layer) {
+        for (int i = 0; i < count; i++)
+        {
+            Entity* e = Ecs_Create(cls, 0, 0, PART_VISUAL, nullptr, &self);
+            if (!e)
+            {
+                return;
+            }
+            if (&cls == &kBriarDieIce)
+            {
+                Ecs_SetSheet(*e, "briar_ice_explosion", 24, 24);
+            }
+            else
+            {
+                Ecs_SetSheet(*e, "briar_dust_explosion", 48, 48);
+            }
+            Ecs_Play(*e, "explode");
+            Ecs_SetSolid(*e, false);
+            e->mV->mLayer = static_cast<uint8_t>(layer);
+            Ecs_KeepPooled(*e);
+        }
+    };
+    auto burst = [&](Entity& thorn, const EntityClass& cls) {
+        Ecs_Play(thorn, "hitloop");
+        if (Entity* e = BriarPoolSpawn(self, cls))
+        {
+            BriarRandomPos(thorn, e->mT->mX, e->mT->mY);
+            Ecs_Play(*e, "explode");
+        }
+        Game_PlaySfx("hit_wall");
+    };
+    switch (d.mDieStep)
+    {
+    case 0:
+        Game_PlaySong("");
+        pooled(kBriarDieIce, 4, LAYER_FG_SPRITES);
+        pooled(kBriarDieDust, 5, LAYER_FG_SPRITES);
+        d.mDieCount = 0;
+        d.mDieStep = 1;
+        return false;
+    case 1:
+        d.mTimer = 0;
+        d.mDieStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!BriarWait(d.mTimer, 0.2f))
+        {
+            return false;
+        }
+        burst(*d.mHappy, kBriarDieDust);
+        if (++d.mDieCount < 10)
+        {
+            d.mDieStep = 1;
+            return BriarDie(self);
+        }
+        // (its colour is 0xffff1111: blue, which the GBA's flash doesn't do)
+        Screen_Flash(FxSec(1.5f), FLASH_WHITE);
+        Game_PlaySfx("sun_guy_death_short");
+        d.mHappy->mExists = false;
+        d.mDieCount = 0;
+        d.mDieStep = 3;
+        [[fallthrough]];
+    case 3:
+        d.mTimer = 0;
+        d.mDieStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (!BriarWait(d.mTimer, 0.2f))
+        {
+            return false;
+        }
+        burst(*d.mBlue, kBriarDieIce);
+        if (++d.mDieCount < 10)
+        {
+            d.mDieStep = 3;
+            return BriarDie(self);
+        }
+        Screen_Flash(FxSec(1.5f), FLASH_RED);
+        Game_PlaySfx("sun_guy_death_short");
+        d.mBlue->mExists = false;
+        d.mTimer = 0;
+        d.mDieStep = 5;
+        [[fallthrough]];
+    case 5:
+        if (!BriarWait(d.mTimer, 1.5f))
+        {
+            return false;
+        }
+        d.mDieCount = 0;
+        d.mDieStep = 6;
+        [[fallthrough]];
+    case 6:
+        d.mTimer = 0;
+        d.mDieStep = 7;
+        [[fallthrough]];
+    case 7:
+        if (!BriarWait(d.mTimer, 0.15f))
+        {
+            return false;
+        }
+        Ecs_Play(*d.mCore, "flash");
+        {
+            // new Explosion(body) { Position = randomizePos(body) }
+            Game_PlaySfx("hit_wall");
+            fx x;
+            fx y;
+            BriarRandomPos(*d.mBody, x, y);
+            if (Entity* e = Ecs_Create(kBriarDieBoom, x, y, PART_VISUAL, nullptr, &self))
+            {
+                Ecs_SetSolid(*e, false);
+                Ecs_SetSheet(*e, "enemy_explode_2");
+                e->mV->mLayerRef = d.mBody;
+                e->mV->mLayerOffset = 1;
+                Ecs_Play(*e, "explode");
+                e->mKeep = true;
+            }
+        }
+        d.mDieStep = ++d.mDieCount < 15 ? 6 : 8;
+        return false;
+    case 8:
+        Screen_Flash(FxSec(5), FLASH_WHITE);
+        Game_PlaySfx("sun_guy_death_long");
+        d.mBody->mExists = false;
+        d.mCore->mExists = false;
+        self.mExists = false;
+        World_SetMapOffsetX(0);
+        // (the cutscene's own entities go with it)
+        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        {
+            if (e->mParent == &self && (e->mClass == &kBriarDieIce || e->mClass == &kBriarDieDust ||
+                                         e->mClass == &kBriarDieBoom))
+            {
+                e->mExists = false;
+            }
+        }
+        d.mDieStep = 9;
+        return false;
+    default:
+        return true;
+    }
+}
+
+// ---- BriarBossMain: talks, lets the water in, and sends in the fight ---------------------------------------------
+enum BriarMainState : uint8_t
+{
+    BMS_INTRO,
+    BMS_FIGHT,
+    BMS_POST,
+};
+
+struct BriarMainData final
+{
+    fx mTopLeftX;
+    fx mTopLeftY;
+    Entity* mGate;
+    Entity* mFight;
+    WaterFlow mWater;
+    fx mWaterT;
+    fx mTimer;
+    uint8_t mState;
+    uint8_t mStep;
+    uint8_t mWaterStep; // DoWaterAnim(tile)
+    bool mWaterWaiting;
+    bool mVolume; // its VolumeEvent(0, 0.6f) still fading
+    bool mBossRush;
+};
+
+Entity* SpawnBriarFight(Entity& main);
+
+// DoWaterAnim(tile)'s MoveNext: the HAPPY side's water, the BLUE side's, then the four tiles that open the way.
+bool BriarWaterStep(BriarMainData& d)
+{
+    const int tile = d.mBossRush ? 267 : 194;
+    const int cx = FxTrunc(d.mTopLeftX) / 16;
+    const int cy = FxTrunc(d.mTopLeftY) / 16;
+    switch (d.mWaterStep)
+    {
+    case 0:
+        if (WaterStep(d.mWater, d.mTopLeftX, d.mTopLeftY + Fx(16 * 4)))
+        {
+            return true;
+        }
+        d.mWater = WaterFlow();
+        d.mWaterStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (WaterStep(d.mWater, d.mTopLeftX + Fx(16 * 9), d.mTopLeftY + Fx(16 * 4)))
+        {
+            return true;
+        }
+        World_ChangeTile(0, cx + 5, cy + 1, tile);
+        d.mWaterStep = 2;
+        return true;
+    case 2:
+        World_ChangeTile(0, cx + 5, cy, tile);
+        d.mWaterStep = 3;
+        return true;
+    case 3:
+        World_ChangeTile(0, cx + 4, cy + 1, tile);
+        d.mWaterStep = 4;
+        return true;
+    case 4:
+        World_ChangeTile(0, cx + 4, cy, tile);
+        d.mWaterStep = 5;
+        return false;
+    default:
+        return false;
+    }
+}
+
+// BriarBossMain.Intro
+bool BriarIntro(Entity& self)
+{
+    BriarMainData& d = self.Data<BriarMainData>();
+    switch (d.mStep)
+    {
+    case 0:
+        d.mStep = 1;
+        if (!d.mBossRush)
+        {
+            Game_ShowCutsceneDialogue("briar", "before_fight");
+            return false;
+        }
+        [[fallthrough]];
+    case 1:
+        Game_PlaySfx("stream");
+        Game_PlaySong("");
+        d.mWater = WaterFlow();
+        d.mWaterStep = 0;
+        d.mWaterWaiting = false;
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        // OnceEvery(DoWaterAnim(tile), 0.2f), shaking the screen while it runs
+        if (d.mWaterWaiting)
+        {
+            if (!BriarWait(d.mWaterT, 0.2f))
+            {
+                Screen_Shake(FxF(0.01f), FxSec(0.1f));
+                return false;
+            }
+            d.mWaterWaiting = false;
+        }
+        if (BriarWaterStep(d))
+        {
+            d.mWaterWaiting = true;
+            d.mWaterT = 0;
+            Screen_Shake(FxF(0.01f), FxSec(0.1f));
+            return false;
+        }
+        Ecs_Play(self, "oh_no");
+        if (!d.mBossRush)
+        {
+            Game_ShowCutsceneDialogue("briar", "before_fight");
+            d.mStep = 4;
+            return false;
+        }
+        d.mTimer = 0;
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (!BriarWait(d.mTimer, 0.5f))
+        {
+            return false;
+        }
+        [[fallthrough]];
+    case 4:
+        // (the flash eases in at once: its callback runs straight away)
+        Screen_Flash(FxSec(1), FLASH_WHITE);
+        Game_PlaySong("briar-fight");
+        self.mV->mVisible = false;
+        World_SetMapOffsetX(160 * 2);
+        d.mGate->mT->mY += Fx(9 * 16);
+        d.mFight = SpawnBriarFight(self);
+        d.mStep = 5;
+        return true;
+    default:
+        return true;
+    }
+}
+
+// BriarBossMain.End
+bool BriarEnd(Entity& self)
+{
+    BriarMainData& d = self.Data<BriarMainData>();
+    switch (d.mStep)
+    {
+    case 0:
+        d.mTimer = 0;
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!BriarWait(d.mTimer, 1.5f))
+        {
+            return false;
+        }
+        d.mStep = 2;
+        if (!d.mBossRush)
+        {
+            Game_ShowCutsceneDialogue("briar", "after_fight");
+            return false;
+        }
+        [[fallthrough]];
+    case 2:
+        d.mTimer = 0;
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (!BriarWait(d.mTimer, 1))
+        {
+            return false;
+        }
+        self.mT->mVelX = 0;
+        self.mT->mVelY = -Fx(20);
+        Ecs_Play(self, "walk_u");
+        if (!d.mBossRush)
+        {
+            Game_SetBossDefeated(gGame.mMapName);
+            Game_PlaySong("go");
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        d.mStep = 4;
+        return true;
+    default:
+        return true;
+    }
+}
+
+void BriarMainUpdate(Entity& self)
+{
+    BriarMainData& d = self.Data<BriarMainData>();
+    Ecs_BaseUpdate(self);
+    Entity& p = *World_Player();
+    if (!World_InTransition())
+    {
+        switch (d.mState)
+        {
+        case BMS_INTRO:
+            if (p.mT->mY < d.mTopLeftY + Fx(6 * 16))
+            {
+                d.mState = BMS_FIGHT;
+                d.mStep = 0;
+                Game_StartCutscene(self, BriarIntro);
+            }
+            break;
+        case BMS_FIGHT:
+            if (d.mFight && !d.mFight->mExists)
+            {
+                d.mState = BMS_POST;
+                d.mGate->mExists = false;
+                self.mV->mVisible = true;
+                d.mStep = 0;
+                Game_StartCutscene(self, BriarEnd);
+            }
+            break;
+        default:
+            if (p.mT->mY > d.mTopLeftY + Fx(120))
+            {
+                p.mT->mY = d.mTopLeftY + Fx(120);
+            }
+            if (self.mT->mY < d.mTopLeftY - Fx(16))
+            {
+                self.mV->mVisible = false;
+                self.mT->mVelX = self.mT->mVelY = 0;
+            }
+            break;
+        }
+    }
+    // its VolumeEvent(0, 0.6f), after the gate
+    if (d.mVolume)
+    {
+        fx volume = FxF(Game_SongVolume());
+        if (MoveTo(volume, 0, FxF(0.6f)))
+        {
+            d.mVolume = false;
+        }
+        Game_SetSongVolume(volume.mV);
+    }
+}
+
+void ThornGateCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+    Player_ReceiveDamage(1);
+}
+
+const EntityClass kBriarMain = {
+    "BriarBossMain", BriarMainUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kThornGate = {
+    "ThornGate", nullptr, nullptr, ThornGateCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// new BriarBossFight(player, bossRush), GlobalState.SpawnEntity'd with its sub-entities in their list order.
+Entity* SpawnBriarFight(Entity& main)
+{
+    const fx left = main.Data<BriarMainData>().mTopLeftX;
+    const fx top = main.Data<BriarMainData>().mTopLeftY;
+    Entity* made[64];
+    int count = 0;
+    bool ok = true;
+    auto make = [&](const EntityClass& cls, fx x, fx y, Entity* parent, const char* sheet, int w, int h,
+                    uint8_t parts) -> Entity* {
+        Entity* e = ok ? Ecs_Create(cls, x, y, parts, nullptr, parent) : nullptr;
+        if (!e)
+        {
+            ok = false;
+            return nullptr;
+        }
+        if (sheet)
+        {
+            Ecs_SetSheet(*e, sheet, w, h);
+        }
+        e->mB->mW = static_cast<int16_t>(w);
+        e->mB->mH = static_cast<int16_t>(h);
+        e->mKeep = true; // (the fight's entities all stay till the screen goes)
+        if (count < 64)
+        {
+            made[count++] = e;
+        }
+        return e;
+    };
+    Entity* fight = make(kBriarFight, left, top, &main, "briar_overhang", 160, 48, PART_VISUAL | PART_BRAIN);
+    if (!fight)
+    {
+        return nullptr;
+    }
+    fight->mV->mLayer = LAYER_BG_ENTITIES;
+    BriarFightData& fd = fight->Data<BriarFightData>();
+    fd = BriarFightData();
+    fd.mBossRush = main.Data<BriarMainData>().mBossRush;
+
+    Entity* body = make(kBriarBody, left + Fx(16), top, fight, "briar_body", 128, 80, PART_VISUAL | PART_BRAIN);
+    if (!body)
+    {
+        return nullptr;
+    }
+    body->mB->mH = 60;
+    body->Data<BriarBodyData>() = BriarBodyData();
+    for (int i = 0; i < 16; i++)
+    {
+        Entity* b = make(kBriarBullet, 0, 0, body, "briar_thorn_bullet", 16, 16, PART_VISUAL);
+        if (b)
+        {
+            b->mB->mW = b->mB->mH = 6;
+            b->mV->mOffX = b->mV->mOffY = Fx(5);
+            Ecs_Play(*b, "move");
+            Ecs_KeepPooled(*b);
+        }
+    }
+    for (int i = 0; i < 8; i++)
+    {
+        Entity* t = make(kBriarThorn, 0, 0, body, "briar_ground_thorn", 16, 16, PART_VISUAL);
+        if (t)
+        {
+            t->mB->mW = t->mB->mH = 6;
+            t->mV->mOffX = Fx(5);
+            t->mV->mOffY = Fx(4);
+            Ecs_Play(*t, "attack"); // (its first spawn finds it unfinished, so keeps the default frame rate)
+            Ecs_KeepPooled(*t);
+        }
+    }
+    Entity* core = make(kBriarCore, left + Fx(64), top + Fx(32), fight, "briar_core", 32, 18, PART_VISUAL);
+    if (core)
+    {
+        core->mV->mLayerRef = body;
+        core->mV->mLayerOffset = 1;
+        Ecs_Play(*core, "glow");
+    }
+    // BlueThorn and its FireEye (which exists from the start, out of sight at 0,0)
+    Entity* blue = make(kBlueThorn, left + Fx(5 * 16 + 35), top + Fx(16 + 4), fight, "briar_arm_right", 64, 80,
+                        PART_VISUAL | PART_BRAIN);
+    Entity* eye = make(kFireEye, 0, 0, blue, "briar_fire_eye", 16, 16, PART_VISUAL | PART_BRAIN);
+    if (!blue || !eye)
+    {
+        return nullptr;
+    }
+    blue->mB->mW = 24;
+    blue->mB->mH = 63;
+    blue->mV->mOffX = Fx(35);
+    blue->mV->mOffY = Fx(4);
+    blue->mV->mLayerRef = body;
+    blue->mV->mLayerOffset = 1;
+    blue->mB->mImmovable = true;
+    Ecs_Play(*blue, "off");
+    eye->mV->mLayer = LAYER_BG_ENTITIES;
+    eye->Data<FireEyeData>() = FireEyeData();
+    Ecs_Play(*eye, "shoot");
+    for (int i = 0; i < 12; i++)
+    {
+        Entity* f = make(kBriarFireball, 0, 0, eye, "briar_fire_eye", 16, 16, PART_VISUAL);
+        if (f)
+        {
+            f->mB->mW = f->mB->mH = 6;
+            f->mV->mOffX = f->mV->mOffY = Fx(5);
+            Ecs_Play(*f, "move");
+            Ecs_KeepPooled(*f);
+        }
+    }
+    for (int i = 0; ok && i < 4; i++)
+    {
+        Entity* dust = Spawn_DustAt(0, 0);
+        if (!dust)
+        {
+            ok = false;
+            break;
+        }
+        dust->mParent = eye;
+        Ecs_KeepPooled(*dust);
+        gBriarDustClass = dust->mClass;
+        if (count < 64)
+        {
+            made[count++] = dust;
+        }
+    }
+    for (int i = 0; i < 4; i++)
+    {
+        Entity* x = make(kBriarDustExplosion, 0, 0, eye, "briar_dust_explosion", 48, 48, PART_VISUAL);
+        if (x)
+        {
+            Ecs_Play(*x, "explode");
+            Ecs_KeepPooled(*x);
+        }
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        Entity* m = make(kBriarMist, 0, 0, eye, "briar_mist", 24, 24, PART_VISUAL);
+        if (m)
+        {
+            m->mV->mLayer = LAYER_FG_SPRITES;
+            m->mV->mOpacity = FxF(0.7f);
+            Ecs_Play(*m, "a");
+            Ecs_KeepPooled(*m);
+        }
+    }
+    // HappyThorn and its IceCrystal
+    Entity* happy = make(kHappyThorn, left + Fx(16 + 4), top + Fx(16 + 4), fight, "briar_arm_left", 64, 80,
+                         PART_VISUAL | PART_BRAIN);
+    Entity* crystal = make(kIceCrystal, 0, 0, happy, "briar_ice_crystal", 16, 16, PART_VISUAL | PART_BRAIN);
+    if (!happy || !crystal)
+    {
+        return nullptr;
+    }
+    happy->mB->mW = 24;
+    happy->mB->mH = 63;
+    happy->mV->mOffX = happy->mV->mOffY = Fx(4);
+    happy->mV->mLayerRef = body;
+    happy->mV->mLayerOffset = 1;
+    happy->mB->mImmovable = true;
+    Ecs_Play(*happy, "off");
+    Ecs_Play(*crystal, "move");
+    IceCrystalData& cd = crystal->Data<IceCrystalData>();
+    cd = IceCrystalData();
+    cd.mThorn = happy;
+    Ecs_KeepPooled(*crystal);
+    for (int i = 0; i < 5; i++)
+    {
+        Entity* x = make(kBriarIceExplosion, 0, 0, crystal, "briar_ice_explosion", 24, 24, PART_VISUAL);
+        if (x)
+        {
+            x->mV->mLayer = LAYER_FG_SPRITES;
+            Ecs_Play(*x, "explode");
+            Ecs_KeepPooled(*x);
+        }
+    }
+    if (!ok)
+    {
+        return nullptr;
+    }
+    BigThornData& bd = blue->Data<BigThornData>();
+    bd = BigThornData();
+    bd.mHealth = 3;
+    bd.mBlue = true;
+    bd.mHelper = eye;
+    BigThornData& hd = happy->Data<BigThornData>();
+    hd = BigThornData();
+    hd.mHealth = 3;
+    hd.mHelper = crystal;
+    fd.mBody = body;
+    fd.mCore = core;
+    fd.mBlue = blue;
+    fd.mHappy = happy;
+    for (int i = 0; i < count; i++)
+    {
+        Ecs_MarkSpawned(*made[i]);
+    }
+    return fight;
+}
+
 // ---- EyebossPreview (Npc/Hotel/EyebossPreview.cs): the eye boss peeks in, blinks and fades away
 // (its CompositeSpriteRenderer: the sclera is the entity, the pupil and the eyelids are "Entity" children)
 struct EyePreviewData final
@@ -11444,5 +12986,42 @@ Entity* Spawn_SageBoss(const MapEntity& preset, Entity&)
     e->mB->mImmovable = true;
     d.mStep = SGB_INTRO;
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    return e;
+}
+
+Entity* Spawn_BriarBoss(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBriarMain, preset, "briar", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    BriarMainData& d = e->Data<BriarMainData>();
+    d = BriarMainData();
+    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX));
+    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    e->mT->mX = d.mTopLeftX + Fx(80 - 16 / 2);
+    e->mT->mY = d.mTopLeftY + Fx(32);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    Ecs_Play(*e, "idle");
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    d.mVolume = true;
+    Entity* gate = Ecs_Create(kThornGate, d.mTopLeftX + Fx(64), d.mTopLeftY, PART_VISUAL, &preset, e);
+    if (!gate)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*gate, "briar_ground_thorn", 32, 16);
+    gate->mB->mW = 32;
+    gate->mB->mH = 16;
+    gate->mB->mImmovable = true;
+    Ecs_Play(*gate, "move");
+    d.mGate = gate;
+    if (!d.mBossRush && (Event_Get("HappyDone") == 0 || Event_Get("BlueDone") == 0))
+    {
+        e->mExists = false;
+        d.mVolume = false;
+    }
     return e;
 }

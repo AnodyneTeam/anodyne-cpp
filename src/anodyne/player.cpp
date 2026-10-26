@@ -1674,6 +1674,18 @@ void Player_SetFacing(Facing f)
     gPlayer->mFacing = f;
 }
 
+void Player_Slump()
+{
+    gPlayer->mT->mVelX = gPlayer->mT->mVelY = 0;
+    PlayerPlay("slumped");
+    P().mAnimState = AS_SLUMPED;
+}
+
+Rect Player_BroomHitbox()
+{
+    return Ecs_Hitbox(*gBroom);
+}
+
 Entity* Player_Raft()
 {
     return P().mRaft;
