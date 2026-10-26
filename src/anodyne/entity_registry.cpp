@@ -97,6 +97,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_SageRedCave;
     case EPT_SageCrowd:
         return Spawn_SageCrowd;
+    case EPT_SageTerminal:
+        return Spawn_SageTerminal;
     case EPT_BioFilm:
         return Spawn_BioFilm;
     case EPT_WindmillConsole:
@@ -141,6 +143,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_JavieraDead;
     case EPT_CircusFolks:
         return Spawn_CircusFolks;
+    case EPT_SageBoss:
+        return Spawn_SageBoss;
     case EPT_DashPad:
         return Spawn_DashPad;
     case EPT_SplitBoss:

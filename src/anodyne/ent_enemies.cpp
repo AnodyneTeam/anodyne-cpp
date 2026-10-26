@@ -7886,6 +7886,644 @@ const EntityClass kShockWave = {
     0,           GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION,
 };
 
+// ---- SageBoss (Etc/SageBoss.cs): the sage, fought in the terminal. Teleports in, then four stages: lasers down the
+// middle, orbiting dust while it bounces round, a wider orbit, and shots from the top. The coroutines as steps; a stage
+// that hands over to the next (_stateLogic = X(); yield break) starts it the frame after.
+enum SageBossStep : uint8_t
+{
+    SGB_INTRO,
+    SGB_INTRO_WAIT_VOLUME,
+    SGB_INTRO_WAIT_PLAYER,
+    SGB_INTRO_TALK,
+    SGB_INTRO_FADE_HALF,
+    SGB_INTRO_FADE_FULL,
+    SGB_INTRO_FLASH1,
+    SGB_INTRO_FLASH2,
+    SGB_INTRO_FLASH3,
+    SGB_INTRO_FADE_LAST,
+    SGB_STAGE1_START,
+    SGB_STAGE1,
+    SGB_STAGE2_START,
+    SGB_STAGE2_WAIT_FLICKER,
+    SGB_STAGE2_WAIT_EDGES,
+    SGB_STAGE2,
+    SGB_STAGE2_TURNED,
+    SGB_STAGE3_START,
+    SGB_STAGE3_WAIT,
+    SGB_STAGE3_BULLETS,
+    SGB_STAGE3,
+    SGB_STAGE4_START,
+    SGB_STAGE4,
+    SGB_DYING,
+};
+
+constexpr int kSageBullets = 6;
+
+struct SageBossData final
+{
+    fx mTopLeftX;
+    fx mTopLeftY;
+    float mTimer; // bClock / timer
+    float mFlickerLength;
+    Entity* mLong[kSageBullets];  // _lBullets
+    Entity* mShort[kSageBullets]; // _sBullets
+    int mHealth;
+    int mSpeedIndex;  // Stage2's i, kept over its yield after turning
+    int mBulletsMade; // Stage3
+    uint8_t mStep;
+    uint8_t mDyingStep;
+    uint8_t mVolume; // CircusVolume
+    bool mCanHurt;
+    bool mMovedRight;
+    bool mBossRush;
+};
+
+// SageBoss.HurtingEntity (LongAttack / ShortAttack).
+struct SageAttackData final
+{
+    bool mHurting;
+    bool mMapCollision; // ShortAttack.MapColission
+};
+
+extern const EntityClass kSageLongAttack;
+
+// _pool.Spawn: the first one not out.
+Entity* SpawnFromPool(Entity* const (&pool)[kSageBullets])
+{
+    for (Entity* e : pool)
+    {
+        if (!e->mExists)
+        {
+            e->mExists = true;
+            return e;
+        }
+    }
+    return nullptr;
+}
+
+// HurtingEntity.Poof
+void SageAttackPoof(Entity& e)
+{
+    if (!Ecs_AnimIs(e, "poof"))
+    {
+        Ecs_Play(e, "poof");
+    }
+    e.mT->mVelX = e.mT->mVelY = 0;
+    e.Data<SageAttackData>().mHurting = false;
+}
+
+// LongAttack.SpawnTopBottom
+void SageSpawnEdge(SageBossData& d, fx x, fx y)
+{
+    Entity* l = SpawnFromPool(d.mLong);
+    if (!l)
+    {
+        return;
+    }
+    Ecs_Play(*l, "spin");
+    l->mT->mX = x + Fx((64 - l->mB->mW) / 2);
+    l->mT->mY = y + Fx((16 - l->mB->mH) / 2);
+    l->mV->mVisible = true;
+    l->Data<SageAttackData>().mHurting = true;
+    Ecs_Flicker(*l, FxSec(1.0f));
+}
+
+// ShortAttack.Spawn(): an orbiting one.
+void SageSpawnOrbit(SageBossData& d)
+{
+    Entity* s = SpawnFromPool(d.mShort);
+    if (!s)
+    {
+        return;
+    }
+    Ecs_Play(*s, "spin");
+    s->mV->mVisible = true;
+    SageAttackData& sd = s->Data<SageAttackData>();
+    sd.mHurting = true;
+    sd.mMapCollision = false;
+}
+
+// SetBulletsPosition: the first four short ones round the sage.
+void SageSetBulletsPosition(Entity& self, SageBossData& d, float offset)
+{
+    const Transform& t = *self.mT;
+    for (int i = 0; i < 4; i++)
+    {
+        Entity& s = *d.mShort[i];
+        if (!s.mExists)
+        {
+            continue;
+        }
+        const fx middleX = t.mX + Fx((self.mB->mW - s.mB->mW) / 2);
+        switch (i)
+        {
+        case 0:
+            s.mT->mX = middleX;
+            s.mT->mY = t.mY - Fx(10) - fx(offset);
+            break;
+        case 1:
+            s.mT->mX = middleX;
+            s.mT->mY = t.mY + Fx(12) + fx(offset);
+            break;
+        case 2:
+            s.mT->mX = t.mX - Fx(12) - fx(offset);
+            s.mT->mY = t.mY;
+            break;
+        default:
+            s.mT->mX = t.mX + Fx(14) + fx(offset);
+            s.mT->mY = t.mY;
+            break;
+        }
+    }
+}
+
+// SageBoss.Movement: bounce off the walls.
+void SageMovement(Entity& self, float xSpeed, float ySpeed)
+{
+    Transform& t = *self.mT;
+    const uint8_t touching = self.mB->mTouching;
+    if (touching & TOUCH_RIGHT)
+    {
+        t.mVelX = fx(-xSpeed);
+    }
+    else if (touching & TOUCH_LEFT)
+    {
+        t.mVelX = fx(xSpeed);
+    }
+    if (touching & TOUCH_DOWN)
+    {
+        t.mVelY = fx(-ySpeed);
+        Ecs_Play(self, "dash_u");
+    }
+    else if (touching & TOUCH_UP)
+    {
+        t.mVelY = fx(ySpeed);
+        Ecs_Play(self, "dash_d");
+    }
+}
+
+int SageSpeedIndex(int maxHealth, int health)
+{
+    const int i = maxHealth - health;
+    return i < 0 ? 0 : i;
+}
+
+// DyingState: talks, then walks off the top of the room.
+bool SageDyingCutscene(Entity& self)
+{
+    SageBossData& d = self.Data<SageBossData>();
+    Transform& t = *self.mT;
+    switch (d.mDyingStep)
+    {
+    case 0:
+        for (int i = 0; i < kSageBullets; i++)
+        {
+            d.mLong[i]->mExists = false;
+            d.mShort[i]->mExists = false;
+        }
+        self.mB->mImmovable = true;
+        Game_PlaySong("");
+        Ecs_Play(self, "idle_d");
+        d.mDyingStep = 1;
+        if (!d.mBossRush)
+        {
+            Game_ShowCutsceneDialogue("sage", "after_fight");
+            return false;
+        }
+        [[fallthrough]];
+    case 1:
+        Ecs_Play(self, "walk_u");
+        t.mVelY = -Fx(20);
+        d.mDyingStep = 2;
+        [[fallthrough]];
+    default:
+        if (t.mY + Fx(16) >= d.mTopLeftY)
+        {
+            return false;
+        }
+        if (!d.mBossRush)
+        {
+            Game_PlaySong("terminal_alt");
+            Game_SetBossDefeated("TERMINAL");
+            Event_Set("SageDied", 1);
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+        }
+        if (self.mPreset)
+        {
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        self.mExists = false;
+        return true;
+    }
+}
+
+void SageBossStep(Entity& self)
+{
+    SageBossData& d = self.Data<SageBossData>();
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    const Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case SGB_INTRO:
+        d.mCanHurt = false;
+        self.mFacing = FACE_DOWN;
+        Ecs_Play(self, "idle");
+        d.mVolume = CFV_SPAWNED; // GlobalState.SpawnEntity(new VolumeEvent(0, 0.6f))
+        d.mStep = SGB_INTRO_WAIT_VOLUME;
+        [[fallthrough]];
+    case SGB_INTRO_WAIT_VOLUME:
+        if (d.mVolume != CFV_REACHED)
+        {
+            break;
+        }
+        d.mStep = SGB_INTRO_WAIT_PLAYER;
+        [[fallthrough]];
+    case SGB_INTRO_WAIT_PLAYER:
+    {
+        const float dx = (t.mX - p.mT->mX).mV;
+        const float dy = (t.mY - p.mT->mY).mV;
+        if (sqrtf(dx * dx + dy * dy) >= 32 || Player_State() != PS_GROUND)
+        {
+            break;
+        }
+        Ecs_Play(self, "idle_d");
+        Game_PlaySfx("teleguy_up");
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("sage", "before_fight");
+        }
+        d.mStep = SGB_INTRO_TALK;
+        [[fallthrough]];
+    }
+    case SGB_INTRO_TALK:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            break;
+        }
+        v.mVisible = false;
+        v.mOpacity = 0;
+        t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
+        t.mY = d.mTopLeftY + Fx(24);
+        d.mStep = SGB_INTRO_FADE_HALF;
+        [[fallthrough]];
+    case SGB_INTRO_FADE_HALF:
+        if (!MoveTo(v.mOpacity, FxF(0.4f), FxF(0.48f)))
+        {
+            break;
+        }
+        v.mVisible = true;
+        Game_PlaySfx("teleguy_down");
+        d.mStep = SGB_INTRO_FADE_FULL;
+        [[fallthrough]];
+    case SGB_INTRO_FADE_FULL:
+        if (!MoveTo(v.mOpacity, kFxOne, FxF(0.48f)))
+        {
+            break;
+        }
+        Game_PlaySong("sagefight");
+        Screen_Flash(FxF(2.18f), FLASH_BLACK);
+        Screen_Shake(FxF(0.02f), FxF(1.5f));
+        d.mStep = SGB_INTRO_FLASH1;
+        [[fallthrough]];
+    case SGB_INTRO_FLASH1:
+        if (Screen_FlashActive())
+        {
+            break;
+        }
+        Screen_Flash(FxF(2.15f), FLASH_BLACK);
+        Screen_Shake(FxF(0.025f), FxF(1.5f));
+        d.mStep = SGB_INTRO_FLASH2;
+        [[fallthrough]];
+    case SGB_INTRO_FLASH2:
+        if (Screen_FlashActive())
+        {
+            t.mX = d.mTopLeftX + Fx(Rng_Range(40, 100));
+            t.mY = d.mTopLeftY + Fx(Rng_Range(30, 70));
+            break;
+        }
+        t.mX = p.mT->mX - Fx(2);
+        t.mY = p.mT->mY - Fx(16);
+        Screen_Flash(FxF(2.15f), FLASH_BLACK);
+        Screen_Shake(FxF(0.03f), FxF(1.5f));
+        d.mStep = SGB_INTRO_FLASH3;
+        [[fallthrough]];
+    case SGB_INTRO_FLASH3:
+        if (Screen_FlashActive())
+        {
+            break;
+        }
+        Screen_Flash(Fx(6), FLASH_BLACK);
+        Screen_Shake(FxF(0.035f), FxF(1.7f));
+        t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
+        t.mY = d.mTopLeftY + Fx(25);
+        v.mOpacity = 0;
+        d.mStep = SGB_INTRO_FADE_LAST;
+        [[fallthrough]];
+    case SGB_INTRO_FADE_LAST:
+        if (!MoveTo(v.mOpacity, kFxOne, FxF(0.3f)))
+        {
+            break;
+        }
+        d.mStep = SGB_STAGE1_START;
+        break;
+    case SGB_STAGE1_START:
+        d.mHealth = 3;
+        d.mCanHurt = true;
+        d.mFlickerLength = 1;
+        d.mTimer = 0;
+        d.mStep = SGB_STAGE1;
+        [[fallthrough]];
+    case SGB_STAGE1:
+    {
+        if (d.mHealth > 0)
+        {
+            static const float kDelay[3] = { 1.6f, 1.4f, 1.2f };
+            d.mTimer += kDeltaTime;
+            if (d.mTimer > kDelay[SageSpeedIndex(3, d.mHealth)])
+            {
+                d.mTimer = 0;
+                Entity* l = SpawnFromPool(d.mLong);
+                if (l)
+                {
+                    // LongAttack.Spawn(pos, velocity)
+                    Ecs_Play(*l, "spin");
+                    l->mT->mX = d.mTopLeftX + Fx(48 + (64 - l->mB->mW) / 2);
+                    l->mT->mY = d.mTopLeftY + Fx(20);
+                    l->mT->mVelX = 0;
+                    l->mT->mVelY = Fx(50);
+                    l->mV->mVisible = true;
+                    l->Data<SageAttackData>().mHurting = true;
+                }
+            }
+            break;
+        }
+        for (Entity* l : d.mLong)
+        {
+            SageAttackPoof(*l);
+        }
+        d.mCanHurt = false;
+        d.mStep = SGB_STAGE2_START;
+        break;
+    }
+    case SGB_STAGE2_START:
+        d.mHealth = 3;
+        d.mCanHurt = false;
+        d.mFlickerLength = 1;
+        self.mB->mImmovable = false;
+        d.mMovedRight = false;
+        d.mStep = SGB_STAGE2_WAIT_FLICKER;
+        [[fallthrough]];
+    case SGB_STAGE2_WAIT_FLICKER:
+        if (v.mFlickering)
+        {
+            break;
+        }
+        SageSpawnEdge(d, d.mTopLeftX + Fx(48), d.mTopLeftY + Fx(16));
+        SageSpawnEdge(d, d.mTopLeftX + Fx(48), d.mTopLeftY + Fx(8 * 16));
+        d.mStep = SGB_STAGE2_WAIT_EDGES;
+        [[fallthrough]];
+    case SGB_STAGE2_WAIT_EDGES:
+        if (d.mLong[0]->mV->mFlickering)
+        {
+            break;
+        }
+        t.mVelX = Fx(40);
+        d.mCanHurt = true;
+        SageSpawnOrbit(d);
+        SageSpawnOrbit(d);
+        d.mStep = SGB_STAGE2;
+        [[fallthrough]];
+    case SGB_STAGE2:
+    {
+        if (d.mHealth > 0)
+        {
+            static const float kSpeed[3] = { 50, 70, 90 };
+            d.mSpeedIndex = SageSpeedIndex(3, d.mHealth);
+            SageSetBulletsPosition(self, d, 0);
+            if (!d.mMovedRight && (self.mB->mTouching & TOUCH_RIGHT))
+            {
+                d.mMovedRight = true;
+                t.mVelY = fx(kSpeed[d.mSpeedIndex]);
+                d.mStep = SGB_STAGE2_TURNED;
+                break;
+            }
+            SageMovement(self, kSpeed[d.mSpeedIndex], kSpeed[d.mSpeedIndex]);
+            break;
+        }
+        d.mCanHurt = false;
+        t.mVelX = t.mVelY = 0;
+        d.mStep = SGB_STAGE3_START;
+        break;
+    }
+    case SGB_STAGE2_TURNED:
+    {
+        static const float kSpeed[3] = { 50, 70, 90 };
+        SageMovement(self, kSpeed[d.mSpeedIndex], kSpeed[d.mSpeedIndex]);
+        d.mStep = SGB_STAGE2;
+        break;
+    }
+    case SGB_STAGE3_START:
+        d.mHealth = 4;
+        d.mCanHurt = false;
+        d.mFlickerLength = 1;
+        self.mB->mImmovable = false;
+        d.mTimer = 0;
+        t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
+        t.mY = d.mTopLeftY + Fx(25);
+        d.mStep = SGB_STAGE3_WAIT;
+        [[fallthrough]];
+    case SGB_STAGE3_WAIT:
+        if (d.mTimer <= 1)
+        {
+            d.mTimer += kDeltaTime;
+            break;
+        }
+        d.mTimer = 0;
+        for (Entity* s : d.mShort)
+        {
+            s->mExists = false;
+        }
+        d.mBulletsMade = 0;
+        d.mStep = SGB_STAGE3_BULLETS;
+        [[fallthrough]];
+    case SGB_STAGE3_BULLETS:
+        if (d.mBulletsMade < 4)
+        {
+            d.mTimer += kDeltaTime;
+            if (static_cast<double>(d.mTimer) > 0.8)
+            {
+                SageSpawnOrbit(d);
+                SageSetBulletsPosition(self, d, 0);
+                d.mTimer = 0;
+                d.mBulletsMade++;
+            }
+            break;
+        }
+        t.mVelX = Fx(20);
+        t.mVelY = Fx(80);
+        d.mCanHurt = true;
+        d.mStep = SGB_STAGE3;
+        [[fallthrough]];
+    case SGB_STAGE3:
+    {
+        if (d.mHealth > 0)
+        {
+            static const float kSpeed[4] = { 80, 90, 100, 115 };
+            const int i = SageSpeedIndex(4, d.mHealth);
+            d.mTimer += kDeltaTime;
+            if (d.mTimer > 2)
+            {
+                d.mTimer = 0;
+            }
+            const float r = d.mTimer < 1 ? d.mTimer : 2 - d.mTimer;
+            SageSetBulletsPosition(self, d, r * 34);
+            SageMovement(self, 20, kSpeed[i]);
+            break;
+        }
+        d.mCanHurt = false;
+        t.mVelX = t.mVelY = 0;
+        d.mStep = SGB_STAGE4_START;
+        break;
+    }
+    case SGB_STAGE4_START:
+        d.mHealth = 3;
+        d.mCanHurt = false;
+        d.mFlickerLength = 2.5f;
+        self.mB->mImmovable = false;
+        d.mTimer = 0;
+        t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
+        t.mY = d.mTopLeftY + Fx(38);
+        Game_PlaySfx("teleguy_up");
+        for (int i = 0; i < kSageBullets; i++)
+        {
+            d.mLong[i]->mExists = false;
+            d.mShort[i]->mExists = false;
+        }
+        d.mCanHurt = true;
+        d.mStep = SGB_STAGE4;
+        [[fallthrough]];
+    case SGB_STAGE4:
+        if (d.mHealth > 0)
+        {
+            static const float kSpeed[3] = { 50, 60, 70 };
+            const int i = SageSpeedIndex(3, d.mHealth);
+            d.mTimer += kDeltaTime;
+            if (d.mTimer > 0.55f)
+            {
+                d.mTimer = 0;
+                const fx x = d.mTopLeftX + Fx(4 + 48 + 16 * Rng_Range(0, 4));
+                Entity* s = SpawnFromPool(d.mShort);
+                if (s)
+                {
+                    // ShortAttack.Spawn(pos, yVel)
+                    Ecs_Play(*s, "shoot");
+                    s->mV->mVisible = true;
+                    s->mT->mX = x;
+                    s->mT->mY = d.mTopLeftY + Fx(16);
+                    s->mT->mVelY = fx(kSpeed[i]);
+                    SageAttackData& sd = s->Data<SageAttackData>();
+                    sd.mHurting = true;
+                    sd.mMapCollision = true;
+                }
+            }
+            break;
+        }
+        d.mCanHurt = false;
+        d.mDyingStep = 0;
+        Game_StartCutscene(self, SageDyingCutscene);
+        d.mStep = SGB_DYING;
+        break;
+    default:
+        break;
+    }
+}
+
+void SageBossUpdate(Entity& self)
+{
+    SageBossData& d = self.Data<SageBossData>();
+    Ecs_BaseUpdate(self);
+    SageBossStep(self);
+    // its VolumeEvent's Update, after the boss's
+    if (d.mVolume == CFV_RUNNING)
+    {
+        fx volume = FxF(Game_SongVolume());
+        if (MoveTo(volume, 0, FxF(0.6f)))
+        {
+            d.mVolume = CFV_REACHED;
+        }
+        Game_SetSongVolume(volume.mV);
+    }
+    else if (d.mVolume == CFV_SPAWNED)
+    {
+        d.mVolume = CFV_RUNNING;
+    }
+}
+
+void SageBossCollided(Entity& self, Entity& other)
+{
+    SageBossData& d = self.Data<SageBossData>();
+    if (!d.mCanHurt)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (!self.mV->mFlickering && IsBroom(other))
+    {
+        Ecs_Flicker(self, FxSec(d.mFlickerLength));
+        d.mHealth--;
+        Game_PlaySfx("broom_hit");
+        // (flash.Flash(0.4f, Color.Black): the sprite's own flash isn't drawn)
+    }
+}
+
+void SageAttackUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimIs(self, "poof") && Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+    const bool mapStops = self.mClass == &kSageLongAttack || self.Data<SageAttackData>().mMapCollision;
+    if (mapStops && self.mB->mTouching != TOUCH_NONE)
+    {
+        SageAttackPoof(self);
+    }
+}
+
+void SageAttackCollided(Entity& self, Entity& other)
+{
+    if (!self.Data<SageAttackData>().mHurting)
+    {
+        return;
+    }
+    if (IsPlayer(other) && Player_State() == PS_GROUND)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kSageBoss = {
+    "SageBoss", SageBossUpdate, nullptr, SageBossCollided, nullptr, ContortMapEvent, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_ENEMY,
+};
+
+const EntityClass kSageLongAttack = {
+    "LongAttack", SageAttackUpdate, nullptr, SageAttackCollided, nullptr, nullptr, nullptr, nullptr,
+    0,            GROUP_PLAYER | GROUP_BROOM, ECF_KEEP_ON_SCREEN,
+};
+
+const EntityClass kSageShortAttack = {
+    "ShortAttack", SageAttackUpdate, nullptr, SageAttackCollided, nullptr, nullptr, nullptr, nullptr,
+    0,             GROUP_PLAYER | GROUP_BROOM, ECF_KEEP_ON_SCREEN,
+};
+
 // ---- EyebossPreview (Npc/Hotel/EyebossPreview.cs): the eye boss peeks in, blinks and fades away
 // (its CompositeSpriteRenderer: the sclera is the entity, the pupil and the eyelids are "Entity" children)
 struct EyePreviewData final
@@ -10756,6 +11394,55 @@ Entity* Spawn_CircusFolks(const MapEntity& preset, Entity&)
     }
     d.mHealth = 7;
     d.mStep = CF_INTRO_WAIT_PLAYER;
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    return e;
+}
+
+Entity* Spawn_SageBoss(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSageBoss, preset, "sage_boss", 16, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SageBossData& d = e->Data<SageBossData>();
+    d = SageBossData();
+    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX));
+    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    e->mB->mW = e->mB->mH = 10;
+    e->mV->mOffX = Fx(3);
+    e->mV->mOffY = Fx(8);
+    e->mT->mX = d.mTopLeftX + Fx(72 + 3);
+    e->mT->mY = Fx(preset.mY) + Fx(3);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    auto pool = [&](Entity* (&out)[kSageBullets], const EntityClass& cls, const char* sheet, int w, int h, int bw,
+                    int bh, int ox, int oy) {
+        for (Entity*& b : out)
+        {
+            b = Ecs_Create(cls, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+            if (!b)
+            {
+                return false;
+            }
+            Ecs_SetSheet(*b, sheet, w, h);
+            b->mB->mW = bw;
+            b->mB->mH = bh;
+            b->mV->mOffX = Fx(ox);
+            b->mV->mOffY = Fx(oy);
+            b->mV->mVisible = false;
+            b->Data<SageAttackData>() = SageAttackData();
+            Ecs_KeepPooled(*b);
+        }
+        return true;
+    };
+    if (!pool(d.mLong, kSageLongAttack, "sage_fight_long_dust", 64, 16, 56, 10, 4, 3) ||
+        !pool(d.mShort, kSageShortAttack, "sage_attacks", 16, 16, 8, 8, 4, 4))
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    d.mStep = SGB_INTRO;
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     return e;
 }

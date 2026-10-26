@@ -1067,15 +1067,19 @@ void BroomAttack()
         const int cy = FxFloor(Ecs_CenterY(*gPlayer)) / 16 + FacingY(static_cast<Facing>(gPlayer->mFacing));
         const fx x = Fx(cx * 16);
         const fx y = Fx(cy * 16);
+        // (the held dust moves there even when the tile is blocked and it stays in the broom)
+        if (bd.mDust)
+        {
+            // (the C# leaves lastPosition where the dust was picked up, so its first map collision sweeps from there)
+            bd.mDust->mT->mX = x;
+            bd.mDust->mT->mY = y;
+        }
         if (Map_CollisionAllowAt(x, y) == TOUCH_NONE)
         {
             // (dust carried off its screen: the C#'s Dust object is in no entity list any more, so putting it down
             // shows and does nothing)
             if (bd.mDust)
             {
-                // (the C# leaves lastPosition where the dust was picked up, so its first map collision sweeps from there)
-                bd.mDust->mT->mX = x;
-                bd.mDust->mT->mY = y;
                 bd.mDust->mExists = true;
                 Ecs_Play(*bd.mDust, "unpoof", true);
             }

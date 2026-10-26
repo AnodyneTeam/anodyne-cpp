@@ -193,6 +193,106 @@ Entity* SpawnSage(const MapEntity& preset, uint8_t kind, int init, int stop, con
     return e;
 }
 
+// ---- SageTerminal (Sage.cs): waits by the big card gate, and opens it once all 36 cards are in --------------------
+struct SageTerminalData final
+{
+    uint8_t mStep; // SageTerminal.States
+};
+
+// SageTerminal.States
+void SageTerminalStep(Entity& self)
+{
+    SageTerminalData& d = self.Data<SageTerminalData>();
+    switch (d.mStep)
+    {
+    case 0:
+        if (DistanceToPlayer(self) > Fx(46))
+        {
+            return;
+        }
+        if (!Dialog_IsSceneDirty("sage", "entrance"))
+        {
+            Game_ShowDialogue("sage", "entrance");
+            d.mStep = 1;
+            return;
+        }
+        d.mStep = 2;
+        // fall through
+    case 1:
+        if (d.mStep == 1)
+        {
+            if (!Game_DialogueFinished())
+            {
+                return;
+            }
+            d.mStep = 2;
+        }
+        // fall through
+    case 2:
+        if (Inventory_CardCount() < 36)
+        {
+            d.mStep = 5;
+            return;
+        }
+        Game_ShowDialogue("sage", "etc", 0);
+        d.mStep = 3;
+        return;
+    case 3:
+        if (!Game_DialogueFinished())
+        {
+            return;
+        }
+        Ecs_FireEvent(GEV_CHANGE_CARD_COUNT); // ChangeCardCount(92)
+        d.mStep = 4;
+        // fall through
+    case 4:
+        if (World_Player()->mT->mY > Fx(gGame.mGridY * 160 + 55))
+        {
+            return;
+        }
+        Game_ShowDialogue("sage", "etc", 1);
+        Preset_SetAlive(*self.mPreset, false);
+        d.mStep = 5;
+        return;
+    default:
+        return;
+    }
+}
+
+void SageTerminalUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    const Transform& t = *self.mT;
+    Ecs_PlayFacing(self, (t.mVelX == 0 && t.mVelY == 0) ? "idle" : "walk");
+    FlipForLeft(self);
+    SageTerminalStep(self);
+}
+
+bool SageTerminalInteract(Entity&, Facing)
+{
+    const int cards = Inventory_CardCount();
+    if (cards < 18)
+    {
+        Game_ShowDialogue("sage", "entrance", 1);
+    }
+    else if (cards < 36)
+    {
+        Game_ShowDialogue("sage", "entrance", 2);
+    }
+    else
+    {
+        Game_ShowText("...");
+    }
+    return true;
+}
+
+const EntityClass kSageTerminal = {
+    "SageTerminal", SageTerminalUpdate, nullptr, SageCollided, SageTerminalInteract, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,       ECF_INTERACTABLE,
+};
+
 // ---- Fisherman ------------------------------------------------------------------------------------------------------
 struct FishermanData final
 {
@@ -2203,6 +2303,29 @@ Entity* Spawn_SageNexus(const MapEntity& preset, Entity&)
         return nullptr;
     }
     return SpawnSage(preset, SAGE_NEXUS, 64, 20, "enter_nexus");
+}
+
+Entity* Spawn_SageTerminal(const MapEntity& preset, Entity&)
+{
+    if (Event_Get("SageDied") > 0)
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    Entity* e = Spawn_Basic(kSageTerminal, preset, "sage");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 10;
+    e->mV->mOffX = e->mV->mOffY = Fx(3);
+    e->mT->mX += Fx(3);
+    e->mT->mY += Fx(3);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, "idle_d");
+    return e;
 }
 
 Entity* Spawn_SageOverworld(const MapEntity& preset, Entity&)

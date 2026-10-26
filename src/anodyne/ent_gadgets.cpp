@@ -271,7 +271,6 @@ void GiveCard(Entity* item, int card)
     else
     {
         gGame.mCardStatus[card] = 1;
-        Ecs_FireEvent(GEV_CHANGE_CARD_COUNT);
     }
 }
 
@@ -775,8 +774,32 @@ void KeyGateDestroy(Entity& self)
     }
 }
 
+// BigCardGate.OnEvent: the sage's ChangeCardCount(92) blows the lock and shows the new count.
+void KeyGateOnEvent(Entity& self, int gameEvent)
+{
+    KeyGateData& d = self.Data<KeyGateData>();
+    if (gameEvent != GEV_CHANGE_CARD_COUNT || d.mKind != GK_CARD)
+    {
+        return;
+    }
+    Entity* boom = Spawn_Explosion(*d.mParts[0]);
+    if (boom)
+    {
+        boom->mT->mX = d.mParts[0]->mT->mX + Fx(5);
+        boom->mT->mY = d.mParts[0]->mT->mY - Fx(4);
+        boom->mT->mLastX = boom->mT->mX;
+        boom->mT->mLastY = boom->mT->mY;
+        boom->mV->mLayerRef = &self;
+        boom->mV->mLayerOffset = 2;
+    }
+    constexpr int kCount = 92;
+    Ecs_SetFrame(*d.mParts[1], kCount / 10);
+    Ecs_SetFrame(*d.mParts[2], kCount % 10);
+}
+
 const EntityClass kKeyGate = {
-    "KeyGate", nullptr, nullptr, KeyGateCollided, nullptr, nullptr, nullptr, KeyGateDestroy, 0, 0, ECF_PART_OF_MAP,
+    "KeyGate", nullptr, nullptr, KeyGateCollided, nullptr, nullptr, KeyGateOnEvent, KeyGateDestroy, 0, 0,
+    ECF_PART_OF_MAP,
 };
 
 void BreakLock(Entity& gate)

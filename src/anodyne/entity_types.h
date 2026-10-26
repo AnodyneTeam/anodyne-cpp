@@ -74,6 +74,7 @@
     X(WallBoss)                 \
     X(SageRedCave)              \
     X(SageCrowd)                \
+    X(SageTerminal)             \
     X(BioFilm)                  \
     X(WindmillConsole)          \
     X(SuburbWalker)            \
@@ -108,6 +109,7 @@
     X(ArthurDead)              \
     X(JavieraDead)             \
     X(CircusFolks)             \
+    X(SageBoss)                \
     X(DashPad)                 \
     X(Bunny)                    \
     X(BunnyRun)                 \
