@@ -67,6 +67,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_FourShooter;
     case EPT_Slasher:
         return Spawn_Slasher;
+    case EPT_Fisherman:
+        return Spawn_Fisherman;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:

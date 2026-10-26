@@ -1284,6 +1284,10 @@ bool DoorInteract(Entity& self, Facing playerFacing)
 const EntityClass kDoor = {
     "Door", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
 };
+// WhirlPool: a Door the Fisherman collides with.
+const EntityClass kWhirlPool = {
+    "WhirlPool", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, GROUP_WHIRLPOOL, GROUP_PLAYER, 0,
+};
 const EntityClass kNexusDoor = {
     "NexusDoor", DoorUpdate, nullptr, DoorCollided, DoorInteract, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,
     ECF_INTERACTABLE,
@@ -1869,6 +1873,12 @@ Entity* Spawn_BossKeyReset(const MapEntity&, Entity&)
     return nullptr;
 }
 
+void WhirlPool_DoTransition(Entity& pool)
+{
+    Event_Inc("fisherman.dead");
+    Ecs_Play(pool, "transition");
+}
+
 Entity* Spawn_Door(const MapEntity& preset, Entity& player)
 {
     const MapDoor* door = World_FindDoor(preset.mX, preset.mY);
@@ -1879,7 +1889,8 @@ Entity* Spawn_Door(const MapEntity& preset, Entity& player)
     const uint8_t type = door->mType;
     const bool interactable = type == DOOR_NEXUS_PAD || type == DOOR_NEXUS;
     const bool visible = type == DOOR_BLANK_PORTAL || type == DOOR_WHIRLPOOL || type == DOOR_NEXUS_PAD;
-    Entity* e = Ecs_Create(interactable ? kNexusDoor : kDoor, Fx(door->mX), Fx(door->mY),
+    const EntityClass& cls = interactable ? kNexusDoor : (type == DOOR_WHIRLPOOL ? kWhirlPool : kDoor);
+    Entity* e = Ecs_Create(cls, Fx(door->mX), Fx(door->mY),
                            visible ? PART_VISUAL | PART_BRAIN : PART_BRAIN, &preset);
     if (!e)
     {
@@ -1943,7 +1954,7 @@ const char* Gadgets_ProbeName(const Entity& e)
             return "BigKeyGate";
         }
     }
-    if (e.mClass != &kDoor && e.mClass != &kNexusDoor)
+    if (e.mClass != &kDoor && e.mClass != &kNexusDoor && e.mClass != &kWhirlPool)
     {
         return nullptr;
     }

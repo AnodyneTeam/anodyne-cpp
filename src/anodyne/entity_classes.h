@@ -54,6 +54,8 @@ void Dust_SetRaft(Entity& dust, bool raft);
 void Miao_MoveFollowerLast();
 // A CardTreasure for `card` spawned at (x, y) and given (GetTreasure).
 void Treasure_GiveCard(fx x, fx y, int card);
+// WhirlPool.DoTransition: the Fisherman fell in.
+void WhirlPool_DoTransition(Entity& pool);
 // HealthDropper.Die: a health pickup (big: 3 hearts).
 Entity* Spawn_HealthDrop(fx x, fx y, bool big);
 // new Explosion(parent).
@@ -70,6 +72,7 @@ Entity* Spawn_Frog(const MapEntity& preset, Entity& player);
 Entity* Spawn_DashTrap(const MapEntity& preset, Entity& player);
 Entity* Spawn_FourShooter(const MapEntity& preset, Entity& player);
 Entity* Spawn_Slasher(const MapEntity& preset, Entity& player);
+Entity* Spawn_Fisherman(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
 Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).

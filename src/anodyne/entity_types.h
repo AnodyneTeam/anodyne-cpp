@@ -61,6 +61,7 @@
     X(DashTrap)                 \
     X(FourShooter)              \
     X(Slasher)                  \
+    X(Fisherman)                \
     X(Rotator)                  \
     X(Door)
 

@@ -191,6 +191,76 @@ Entity* SpawnSage(const MapEntity& preset, uint8_t kind, int init, int stop, con
     return e;
 }
 
+// ---- Fisherman ------------------------------------------------------------------------------------------------------
+struct FishermanData final
+{
+    int mHealth;
+    bool mDead;
+};
+
+void FishermanUpdate(Entity& self)
+{
+    FishermanData& d = self.Data<FishermanData>();
+    Ecs_BaseUpdate(self);
+    if (d.mDead)
+    {
+        // (sinks into the whirlpool, shrinking)
+        Visual& v = *self.mV;
+        MoveTo(v.mYPush, Fx(16), FxF(16 / 0.27f));
+        MoveTo(v.mOffY, Fx(14), FxF(16 / 0.27f));
+        MoveTo(v.mOffX, Fx(-4), FxF(16 / 0.27f));
+        MoveTo(v.mScale, FxF(0.70f), FxF(0.40f / 0.27f));
+        if (v.mYPush == Fx(16))
+        {
+            self.mExists = false;
+        }
+    }
+}
+
+bool FishermanCutscene(Entity& self)
+{
+    // CoroutineUtils.WaitFor(() => dead)
+    return self.Data<FishermanData>().mDead;
+}
+
+void FishermanCollided(Entity& self, Entity& other)
+{
+    FishermanData& d = self.Data<FishermanData>();
+    if (other.mClass->mGroups & GROUP_BROOM)
+    {
+        if (d.mHealth > 0 && !self.mV->mFlickering)
+        {
+            Ecs_Flicker(self, FxSec(0.5f));
+            d.mHealth--;
+            if (d.mHealth <= 0)
+            {
+                self.mT->mVelY = Fx(17);
+                Ecs_Play(self, "dead");
+                Preset_SetAlive(*self.mPreset, false);
+                Game_StartCutscene(self, FishermanCutscene);
+            }
+            return;
+        }
+    }
+    else if (other.mClass->mGroups & GROUP_WHIRLPOOL)
+    {
+        if (!d.mDead && self.mT->mY >= Fx(self.mPreset->mY + 28))
+        {
+            d.mDead = true;
+            self.mT->mVelX = 0;
+            self.mT->mVelY = 0;
+            WhirlPool_DoTransition(other);
+            return;
+        }
+    }
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kFisherman = {
+    "Fisherman", FishermanUpdate, nullptr, FishermanCollided, nullptr, nullptr, nullptr, nullptr, 0,
+    GROUP_PLAYER | GROUP_BROOM | GROUP_WHIRLPOOL, 0,
+};
+
 // ---- Rock / Statue / Sadbro / DungeonStatue -----------------------------------------------------------------------
 bool RockInteract(Entity& self, Facing)
 {
@@ -2319,4 +2389,19 @@ const char* Npcs_ProbeName(const Entity& e)
     default:
         return "SageBedroom";
     }
+}
+
+Entity* Spawn_Fisherman(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFisherman, preset, "beach_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    FishermanData& d = e->Data<FishermanData>();
+    d = FishermanData();
+    d.mHealth = 2;
+    Ecs_Play(*e, "idle");
+    return e;
 }
