@@ -1533,6 +1533,7 @@ void World_Update()
         else if (gWarp.mPending)
         {
             gWarp.mState = WARP_EXIT; // StateNormal: GlobalState.WARP -> S_MAP_EXIT, and nothing else this frame
+            Ecs_FireEvent(GEV_START_WARP);
         }
         else
         {

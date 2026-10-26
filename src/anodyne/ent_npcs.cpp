@@ -1237,7 +1237,304 @@ void BikeCollided(Entity& self, Entity& other)
 const EntityClass kBike = {
     "Bike", nullptr, nullptr, BikeCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
 };
+// ---- MiaoXiao + MiaoXiaoFollower (RunningTradeNPCs/MiaoXiao.cs) ----------------------------------------------------
+// The cat asks to shadow the player, then follows them (as Player.follower) round the 4x3 screens about its own one,
+// chipping in on some of them.
+struct MiaoScreen
+{
+    int mX;
+    int mY;
+    const char* mName;
+    const char* mEventCheck;
+    int mDiagId;
+};
+
+const MiaoScreen kMiaoScreens[] = {
+    { 3, 2, "shopkeep", "shopkeep.init", 0 },
+    { 1, 2, "mitra", "mitra.fieldinit", 1 },
+    { 2, 1, "nexus", nullptr, 2 },
+};
+
+constexpr float kMiaoScreenTimeout = 1.8f;
+constexpr float kMiaoHintTimeout = 70.0f;
+
+struct MiaoData final
+{
+    Entity* mFollower; // MiaoXiao: its follower; the follower: its dust
+    float mTimer;
+    int mDiag;              // kMiaoScreens index of currentDiag, -1 for none
+    const char* mWaitEvent; // wait_on_event
+    bool mOnConveyor;
+    int mBoundX;            // boundaries: 4x3 screens from (mBoundX, mBoundY)
+    int mBoundY;
+};
+
+Entity* gMiaoFollower = nullptr; // Player.follower
+
+int MiaoScreenAt(const MiaoData& d)
+{
+    const int x = gGame.mGridX - d.mBoundX;
+    const int y = gGame.mGridY - d.mBoundY;
+    for (int i = 0; i < static_cast<int>(sizeof(kMiaoScreens) / sizeof(kMiaoScreens[0])); i++)
+    {
+        if (kMiaoScreens[i].mX == x && kMiaoScreens[i].mY == y)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool MiaoInteract(Entity& self, Facing)
+{
+    if (gGame.mSpookedMonster && !Dialog_IsSceneFinished("miao", "philosophy"))
+    {
+        Game_ShowDialogue("miao", "philosophy");
+    }
+    else
+    {
+        // Ask to shadow, then swap places
+        Game_ShowDialogue("miao", "init");
+        self.mExists = false;
+        Entity* f = self.Data<MiaoData>().mFollower;
+        if (f)
+        {
+            f->mExists = true;
+            f->mPlayerOwned = true;
+            gMiaoFollower = f;
+            Entity* dust = f->Data<MiaoData>().mFollower;
+            if (dust)
+            {
+                dust->mExists = true;
+                dust->mPlayerOwned = true;
+            }
+        }
+    }
+    return true;
+}
+
+void MiaoCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+void MiaoFollowerUpdate(Entity& self)
+{
+    MiaoData& d = self.Data<MiaoData>();
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    float ox = (Ecs_CenterX(p) - Ecs_CenterX(self)).mV;
+    float oy = (Ecs_CenterY(p) - Ecs_CenterY(self)).mV;
+    if (ox * ox + oy * oy > 16 * 16)
+    {
+        // Vector2.Normalize
+        const float inv = 1.0f / sqrtf(ox * ox + oy * oy);
+        ox *= inv;
+        oy *= inv;
+        t.mVelX = fx(ox * 70);
+        t.mVelY = fx(oy * 70);
+    }
+    else
+    {
+        t.mVelX = t.mVelY = 0;
+    }
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    Ecs_PlayFacing(self, "walk");
+
+    if (Entity* dust = d.mFollower)
+    {
+        if (!d.mOnConveyor && Ecs_AnimIs(*dust, "unpoof"))
+        {
+            Ecs_Play(*dust, "poof");
+        }
+        dust->mT->mX = t.mX - Fx(2);
+        dust->mT->mY = t.mY;
+    }
+    d.mOnConveyor = false;
+
+    if (d.mWaitEvent && Event_Get(d.mWaitEvent) != 0)
+    {
+        d.mDiag = MiaoScreenAt(d);
+        d.mTimer = kMiaoScreenTimeout;
+        d.mWaitEvent = nullptr;
+    }
+
+    d.mTimer -= kDeltaTime;
+    if (d.mTimer < 0 && !World_InTransition() && Game_DialogueFinished())
+    {
+        int id = d.mDiag >= 0 ? kMiaoScreens[d.mDiag].mDiagId : -1;
+        if (d.mDiag >= 0)
+        {
+            char name[32];
+            snprintf(name, sizeof(name), "miao.%s", kMiaoScreens[d.mDiag].mName);
+            Event_Inc(name);
+        }
+        else if (!gGame.mSpookedMonster)
+        {
+            id = 3; // Ask where Icky is
+        }
+        else
+        {
+            bool all = true;
+            for (const MiaoScreen& s : kMiaoScreens)
+            {
+                char name[32];
+                snprintf(name, sizeof(name), "miao.%s", s.mName);
+                all = all && Event_Get(name) != 0;
+            }
+            if (all)
+            {
+                id = Rng_Range(5, 8); // Random talk when all other dialogues have happened
+            }
+        }
+        if (id != -1)
+        {
+            Game_ShowDialogue("miao", "randoms", id);
+        }
+        d.mTimer = kMiaoHintTimeout;
+        d.mDiag = -1;
+    }
+}
+
+void MiaoFollowerEvent(Entity& self, int gameEvent)
+{
+    if (!self.mExists)
+    {
+        return;
+    }
+    MiaoData& d = self.Data<MiaoData>();
+    const bool inBounds = gGame.mGridX >= d.mBoundX && gGame.mGridX < d.mBoundX + 4 && gGame.mGridY >= d.mBoundY &&
+                          gGame.mGridY < d.mBoundY + 3;
+    if (gameEvent == GEV_START_WARP || (gameEvent == GEV_END_SCREEN_TRANSITION && !inBounds))
+    {
+        Game_ShowDialogue("miao", "randoms", 4);
+        self.mExists = false;
+        self.mPlayerOwned = false;
+        if (d.mFollower)
+        {
+            d.mFollower->mExists = false;
+            d.mFollower->mPlayerOwned = false;
+        }
+        gMiaoFollower = nullptr;
+    }
+    else if (gameEvent == GEV_END_SCREEN_TRANSITION)
+    {
+        const int i = MiaoScreenAt(d);
+        if (i >= 0)
+        {
+            const MiaoScreen& s = kMiaoScreens[i];
+            if (Event_Get(s.mEventCheck) == 0)
+            {
+                d.mWaitEvent = s.mEventCheck;
+            }
+            char name[32];
+            snprintf(name, sizeof(name), "miao.%s", s.mName);
+            if ((!s.mEventCheck || Event_Get(s.mEventCheck) != 0) && Event_Get(name) == 0)
+            {
+                d.mTimer = kMiaoScreenTimeout;
+                d.mDiag = i;
+            }
+        }
+    }
+    else if (gameEvent == GEV_START_SCREEN_TRANSITION && d.mDiag >= 0)
+    {
+        d.mTimer = kMiaoHintTimeout;
+        d.mDiag = -1;
+    }
+}
+
+void MiaoFollowerMapEvent(Entity& self, MapEvent ev, uint8_t, fx, fx)
+{
+    if (ev != MAPEV_CONVEYOR)
+    {
+        return;
+    }
+    MiaoData& d = self.Data<MiaoData>();
+    if (Entity* dust = d.mFollower)
+    {
+        if (!Ecs_AnimIs(*dust, "unpoof"))
+        {
+            Ecs_Play(*dust, "unpoof");
+            dust->mV->mVisible = true;
+        }
+    }
+    d.mOnConveyor = true;
+}
+
+void MiaoFollowerDestroy(Entity& self)
+{
+    if (gMiaoFollower == &self)
+    {
+        gMiaoFollower = nullptr;
+    }
+}
+
+const EntityClass kMiaoXiao = {
+    "MiaoXiao", nullptr, nullptr, MiaoCollided, MiaoInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+const EntityClass kMiaoFollower = {
+    "MiaoXiaoFollower", MiaoFollowerUpdate, nullptr, nullptr, nullptr, MiaoFollowerMapEvent, MiaoFollowerEvent,
+    MiaoFollowerDestroy, 0, 0, ECF_MAP_COLLISION,
+};
+
+const EntityClass kMiaoDust = {
+    "MiaoXiaoDust", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+Entity* MakeMiao(const EntityClass& cls, fx x, fx y, const MapEntity* preset)
+{
+    Entity* e = Ecs_Create(cls, x, y, PART_VISUAL | PART_BRAIN, preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*e, "fields_npcs", 16, 16);
+    e->mB->mW = e->mB->mH = 12;
+    e->mV->mOffX = e->mV->mOffY = Fx(2);
+    return e;
+}
 } // namespace
+
+Entity* Spawn_MiaoXiao(const MapEntity& preset, Entity&)
+{
+    Entity* e = MakeMiao(kMiaoXiao, Fx(preset.mX), Fx(preset.mY), &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_SetSolid(*e, true);
+    Entity* f = MakeMiao(kMiaoFollower, e->mT->mX, e->mT->mY, nullptr);
+    if (f)
+    {
+        MiaoData& fd = f->Data<MiaoData>();
+        fd.mTimer = kMiaoHintTimeout;
+        fd.mDiag = -1;
+        fd.mBoundX = preset.mX / 160; // (CURRENT_GRID_X/Y: the screen it is made on)
+        fd.mBoundY = preset.mY / 160 - 1;
+        Ecs_KeepPooled(*f);
+        Entity* dust = Ecs_Create(kMiaoDust, 0, 0, PART_VISUAL);
+        if (dust)
+        {
+            Ecs_SetSolid(*dust, false);
+            Ecs_SetSheet(*dust, "dust");
+            dust->mV->mLayer = LAYER_BG_ENTITIES;
+            dust->mV->mVisible = false;
+            Ecs_Play(*dust, "poofed");
+            Ecs_KeepPooled(*dust);
+            fd.mFollower = dust;
+        }
+        e->Data<MiaoData>().mFollower = f;
+    }
+    if (gMiaoFollower)
+    {
+        e->mExists = false;
+    }
+    return e;
+}
 
 Entity* Spawn_SageNexus(const MapEntity& preset, Entity&)
 {

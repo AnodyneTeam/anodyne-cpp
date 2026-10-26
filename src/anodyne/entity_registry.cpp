@@ -91,6 +91,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_MitraOverworld;
     case EPT_MitraFields:
         return Spawn_MitraFields;
+    case EPT_MiaoXiao:
+        return Spawn_MiaoXiao;
     case EPT_Door:
         return Spawn_Door;
     default:

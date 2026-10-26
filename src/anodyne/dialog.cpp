@@ -619,6 +619,12 @@ const char* Dialog_Get(const char* npc, const char* scene, int id, bool* top)
     return Dialog_GetFor(npc, gArea, scene, id, top);
 }
 
+bool Dialog_IsSceneFinished(const char* npc, const char* scene)
+{
+    unsigned index = 0;
+    return FindScene(npc, gArea, scene, &index) && gSceneFinished[index] != 0;
+}
+
 bool Dialog_IsSceneDirty(const char* npc, const char* scene)
 {
     unsigned index = 0;

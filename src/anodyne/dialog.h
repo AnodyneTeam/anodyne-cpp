@@ -21,6 +21,7 @@ const char* Dialog_Get(const char* npc, const char* scene, int id = -1, bool* to
 const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, int id = -1, bool* top = nullptr);
 // DialogueManager.IsSceneDirty (a line of it has been fetched) and SetSceneProgress, in the current area.
 bool Dialog_IsSceneDirty(const char* npc, const char* scene);
+bool Dialog_IsSceneFinished(const char* npc, const char* scene);
 void Dialog_SetSceneProgress(const char* npc, const char* scene, int id);
 
 // Opens the box and starts typing `text` (must stay valid while open: ROM strings are). `intro` = IntroState's

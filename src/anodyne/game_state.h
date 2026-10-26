@@ -54,6 +54,7 @@ struct GameState final
     bool mBroomActive;
     bool mCanJump; // InventoryManager.CanJump (the jump shoes)
     uint8_t mTradeState; // InventoryManager.TradeState: NONE, SHOES, BOX
+    bool mSpookedMonster; // EventRegister.SpookedMonster
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
     bool mSecretStatus[14];

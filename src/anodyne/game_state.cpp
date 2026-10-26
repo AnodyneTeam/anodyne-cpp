@@ -222,6 +222,10 @@ void Preset_ReviveGrid(const MapEntityList& list, int gx, int gy)
 
 int Event_Get(const char* name)
 {
+    if (!name)
+    {
+        return 0; // (GetEvent(null) is 0)
+    }
     const EventSlot* e = FindEvent(name, false);
     return e ? e->mValue : 0;
 }
