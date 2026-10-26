@@ -188,6 +188,9 @@ const NamedEntity kNamed[] = {
     { "Solid_Sprite", "red_cave_r_ss", nullptr, {}, EPT_RedCaveEntrance },
     { "Solid_Sprite", "red_cave_c_ss", nullptr, {}, EPT_RedCaveEntrance },
     { "Solid_Sprite", "red_cave_n_ss", nullptr, {}, EPT_RedCaveEntrance },
+    { "Red_Pillar", nullptr, nullptr, {}, EPT_RedPillar },
+    { "Mover", nullptr, nullptr, {}, EPT_Mover },
+    { "On_Off_Laser", nullptr, nullptr, {}, EPT_OnOffLaser },
     { "Rotator", nullptr, nullptr, {}, EPT_Rotator },
     { "Door", nullptr, nullptr, {}, EPT_Door },
 };

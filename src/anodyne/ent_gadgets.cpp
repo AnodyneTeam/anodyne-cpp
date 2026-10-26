@@ -453,7 +453,7 @@ void ButtonUpdate(Entity& self)
 
 const EntityClass kButton = {
     "Button", ButtonUpdate, nullptr, ButtonCollided, nullptr, nullptr, nullptr, nullptr,
-    0,        GROUP_PLAYER | GROUP_SHIELDY, 0,
+    0,        GROUP_PLAYER | GROUP_SHIELDY | GROUP_MOVER, 0,
 };
 
 // ---- SolidTile / Blocker / VerticalBlocker (Blockers.cs) --------------------------------------------------------
@@ -1322,6 +1322,198 @@ const EntityClass kRedCaveEntrance = {
     ECF_PART_OF_MAP,
 };
 
+// Red_Pillar: its chain (a sub-entity) takes a broom hit and starts the cutscene where the pillar sinks; the cave
+// mouth it counts towards rises on the Red Sea (shown there) once its last pillar is down.
+enum PillarStep : uint8_t
+{
+    PILLAR_START,
+    PILLAR_SINK,
+    PILLAR_SHOW_DOOR,
+    PILLAR_WARP,
+    PILLAR_RISE_START,
+    PILLAR_RISE,
+    PILLAR_WAIT,
+};
+
+struct RedPillarData final
+{
+    uint8_t mStep;
+    float mTime;
+    Entity* mChain;
+    Entity* mRipple;
+    Entity* mDoor; // the cutscene's own
+    char mWarp;    // 'n', 'l' or 'r'
+};
+
+void RedPillarCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kRedPillar = {
+    "Red_Pillar", nullptr, nullptr, RedPillarCollided, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_PART_OF_MAP,
+};
+
+// A plain Entity (the C# makes these with no class of their own): just its sprite.
+const EntityClass kPlainEntity = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void RedPillarEnd(Entity& self)
+{
+    RedPillarData& d = self.Data<RedPillarData>();
+    Preset_SetAlive(*self.mPreset, false);
+    self.mExists = false;
+    if (d.mRipple)
+    {
+        d.mRipple->mExists = false;
+        d.mRipple = nullptr;
+    }
+    if (d.mDoor)
+    {
+        Ecs_Free(*d.mDoor);
+        d.mDoor = nullptr;
+    }
+    World_CutsceneReturn();
+}
+
+// One frame of the coroutine: false at each yield, true once it is done.
+bool RedPillarCutscene(Entity& self)
+{
+    RedPillarData& d = self.Data<RedPillarData>();
+    const fx height = Fx(self.mB->mH);
+    switch (d.mStep)
+    {
+    case PILLAR_START:
+        Ecs_Play(self, "move");
+        d.mRipple = Ecs_Create(kPlainEntity, self.mT->mX, self.mT->mY + height - Fx(15), PART_VISUAL);
+        if (d.mRipple)
+        {
+            Ecs_MarkSpawned(*d.mRipple);
+            Ecs_SetSheet(*d.mRipple, "red_pillar_ripple");
+            Ecs_Play(*d.mRipple, "move");
+        }
+        Ecs_Flicker(self, FxSec(1.5f));
+        Game_PlaySfx("broom_hit");
+        d.mStep = PILLAR_SINK;
+        [[fallthrough]];
+    case PILLAR_SINK:
+    {
+        if (!MoveTo(self.mV->mYPush, height, FxDiv(height, FxF(1.5f))) || self.mV->mFlickering)
+        {
+            return false;
+        }
+        int required = 1;
+        char c = 'n';
+        switch (self.mPreset->mFrame)
+        {
+        case 1:
+        case 2:
+            required = 2;
+            break;
+        case 3:
+            c = 'l';
+            break;
+        case 4:
+            c = 'r';
+            break;
+        default:
+            break;
+        }
+        char event[16];
+        snprintf(event, sizeof(event), "red_cave_%c_ss", c);
+        Event_Inc(event);
+        if (Event_Get(event) != required)
+        {
+            RedPillarEnd(self);
+            return true;
+        }
+        d.mWarp = c;
+        const int gx = c == 'n' ? 3 : (c == 'l' ? 2 : 4);
+        const int gy = c == 'n' ? 3 : 4;
+        d.mDoor = Ecs_Create(kPlainEntity, Fx(gx * 160 + 48), Fx(gy * 160 + 48), PART_VISUAL);
+        if (d.mDoor)
+        {
+            d.mDoor->mCutsceneOwned = true;
+            Ecs_MarkSpawned(*d.mDoor);
+            Ecs_SetSheet(*d.mDoor, "red_cave_left", 64, 64);
+            Ecs_SetFrame(*d.mDoor, 0);
+            d.mDoor->mB->mW = d.mDoor->mB->mH = 64;
+            d.mDoor->mV->mYPush = Fx(64);
+        }
+        d.mStep = PILLAR_SHOW_DOOR; // yield EntityEvent
+        return false;
+    }
+    case PILLAR_SHOW_DOOR:
+    {
+        // yield WarpEvent("REDSEA", warp)
+        const char c = d.mWarp;
+        World_CutsceneWarp(Game_MapIndex("REDSEA"), c == 'n' ? 3 : (c == 'l' ? 2 : 4), c == 'n' ? 3 : 4);
+        d.mStep = PILLAR_RISE_START;
+        return false;
+    }
+    case PILLAR_RISE_START:
+        Game_PlaySfx("red_cave_rise");
+        d.mStep = PILLAR_RISE;
+        if (d.mDoor && d.mDoor->mV->mYPush > 0)
+        {
+            d.mTime = 0.02f;
+            Screen_Shake(FxF(0.05f), FxF(0.5f));
+        }
+        else
+        {
+            d.mTime = 0;
+        }
+        [[fallthrough]];
+    case PILLAR_RISE:
+        for (;;)
+        {
+            if (d.mTime > 0)
+            {
+                d.mTime -= kDeltaTime;
+                return false;
+            }
+            if (!d.mDoor || d.mDoor->mV->mYPush <= 0)
+            {
+                break;
+            }
+            d.mDoor->mV->mYPush -= kFxOne;
+            if (d.mDoor->mV->mYPush <= 0)
+            {
+                break;
+            }
+            d.mTime = 0.02f;
+            Screen_Shake(FxF(0.05f), FxF(0.5f));
+        }
+        d.mStep = PILLAR_WAIT;
+        d.mTime = 1.5f;
+        [[fallthrough]];
+    default:
+        if (d.mTime > 0)
+        {
+            d.mTime -= kDeltaTime;
+            return false;
+        }
+        RedPillarEnd(self);
+        return true;
+    }
+}
+
+void ChainCollided(Entity& self, Entity&)
+{
+    Entity* pillar = self.mParent;
+    if (pillar)
+    {
+        pillar->Data<RedPillarData>().mStep = PILLAR_START;
+        Game_StartCutscene(*pillar, RedPillarCutscene);
+    }
+    self.mExists = false;
+}
+
+const EntityClass kChain = {
+    "Chain", nullptr, nullptr, ChainCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_BROOM, 0,
+};
+
 // WhirlPool: a Door the Fisherman collides with.
 const EntityClass kWhirlPool = {
     "WhirlPool", DoorUpdate, nullptr, DoorCollided, nullptr, nullptr, nullptr, nullptr, GROUP_WHIRLPOOL | GROUP_DOOR, GROUP_PLAYER, 0,
@@ -1955,6 +2147,28 @@ Entity* Spawn_RedCaveEntrance(const MapEntity& preset, Entity&)
             t->mB->mH = 28;
             t->Data<DoorToggleData>() = DoorToggleData();
         }
+    }
+    return e;
+}
+
+Entity* Spawn_RedPillar(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRedPillar, preset, "red_pillar", 16, 80);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 16;
+    e->mB->mH = 80;
+    e->mB->mImmovable = true;
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_Play(*e, "idle");
+    RedPillarData& d = e->Data<RedPillarData>();
+    d = RedPillarData();
+    d.mChain = Ecs_Create(kChain, e->mT->mX, e->mT->mY + Fx(16), 0, nullptr, e);
+    if (d.mChain)
+    {
+        d.mChain->mB->mW = d.mChain->mB->mH = 16;
     }
     return e;
 }

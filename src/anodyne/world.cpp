@@ -1375,17 +1375,9 @@ bool World_Init(ObjVramAllocator& vram)
     return true;
 }
 
-void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
-                const MapDoorList& doors, const MapDarkData& dark)
+// The map's palette, tileset and layers (into VRAM / EWRAM): what the BG layers draw.
+static void LoadMapGraphics(const MapEntry& map)
 {
-    gDarkData = &dark;
-    Darkness_SetPlayerLight(*gPlayerLight);
-    gMap = &map;
-    gMapName = mapName;
-    gDoors = &doors;
-    gWarp.mPending = false;
-    gAudio = &audio;
-
     // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 28-31
     // (0x0600E000 and up), which the layers use for their maps.
     memcpy16(pal_bg_mem, map.mPalData.mPalData, map.mPalData.mPalSize);
@@ -1396,7 +1388,7 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     }
     memcpy16(tile_mem, map.mTileSetData.mTileSetData, tilesetBytes / 2);
 
-    // Layers and collision cells, unpacked into EWRAM.
+    // Layers, unpacked into EWRAM.
     gTile16Entries = map.mScreenBlockData.mTile16Entries;
     gTile16Count = map.mScreenBlockData.mTile16Count;
     for (int layer = 0; layer < kLayerCount; layer++)
@@ -1415,6 +1407,20 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
             LZ77UnCompWram(data.mPacked, gLayerBuffer[layer]);
         }
     }
+}
+
+void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
+                const MapDoorList& doors, const MapDarkData& dark)
+{
+    gDarkData = &dark;
+    Darkness_SetPlayerLight(*gPlayerLight);
+    gMap = &map;
+    gMapName = mapName;
+    gDoors = &doors;
+    gWarp.mPending = false;
+    gAudio = &audio;
+
+    LoadMapGraphics(map);
 
     gCellsW = map.mCollision.mCellsW;
     gCellsH = map.mCollision.mCellsH;
@@ -1470,6 +1476,61 @@ void World_SetPlayerVisible(bool visible)
     }
 }
 
+// CutsceneState.Warp / Return: a cutscene showing a screen of another map (graphics only; the play state neither
+// updates nor draws meanwhile).
+struct CutsceneView final
+{
+    bool mActive;
+    const MapScrollData* mScroll;
+    fx mDark;
+} gView = {};
+const MapEntry* gMapTable = nullptr;
+uint32_t gMapTableCount = 0;
+
+void World_SetMapTable(const MapEntry* maps, uint32_t count)
+{
+    gMapTable = maps;
+    gMapTableCount = count;
+}
+
+void World_CutsceneWarp(int map, int gx, int gy)
+{
+    if (!gMapTable || map < 0 || static_cast<uint32_t>(map) >= gMapTableCount)
+    {
+        return;
+    }
+    if (!gView.mActive)
+    {
+        gView.mActive = true;
+        gView.mScroll = gScroll;
+        gView.mDark = Darkness_Alpha();
+    }
+    LoadMapGraphics(gMapTable[map]);
+    gScroll = nullptr;
+    ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+    gCamX = Fx(gx * kScreenPx);
+    gCamY = Fx(gy * kScreenPx);
+    UpdateBackground(true);
+    Ecs_SetCutsceneView(true);
+}
+
+void World_CutsceneReturn()
+{
+    if (!gView.mActive)
+    {
+        return;
+    }
+    gView.mActive = false;
+    LoadMapGraphics(*gMap);
+    gScroll = gView.mScroll;
+    ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+    MoveCameraToGrid();
+    UpdateBackground(true);
+    UpdateScroll(false, true);
+    Darkness_ForceAlpha(gView.mDark);
+    Ecs_SetCutsceneView(false);
+}
+
 // PlayState.SetBroom: menu_move when the broom changed.
 void SetBroom(uint8_t broom)
 {
@@ -1507,7 +1568,7 @@ void World_Update()
 {
     Ecs_ReleaseSpawned();
     const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive || Pause_IsOpen();
-    bool updateEntities = !gDeath.mActive && !Pause_IsOpen();
+    bool updateEntities = !gDeath.mActive && !Pause_IsOpen() && !gView.mActive;
     if (child)
     {
         // A child state (dialogue, cutscene, death): the player stands still; entities keep updating (except death).

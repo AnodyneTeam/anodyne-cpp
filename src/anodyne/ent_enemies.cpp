@@ -1678,6 +1678,196 @@ const EntityClass kFourShooter = {
     0,              GROUP_PLAYER,      0,
 };
 
+// ---- Mover (Redcave/Mover.cs) ------------------------------------------------------------------------------------
+enum MoverState : uint8_t
+{
+    MOVER_FOOM,
+    MOVER_DIE,
+};
+
+struct MoverData final
+{
+    uint8_t mState;
+    TimerState<1> mMove; // MoveState: "MoveTimer" every second (armed once, by the state's constructor)
+};
+
+void MoverDie(Entity& self)
+{
+    MoverData& d = self.Data<MoverData>();
+    if (!Preset_Alive(*self.mPreset))
+    {
+        return;
+    }
+    // ChangeState("Die")
+    d.mState = MOVER_DIE;
+    Preset_SetAlive(*self.mPreset, false);
+    self.mT->mVelX = self.mT->mVelY = 0;
+    Ecs_Play(self, "Die");
+}
+
+void MoverUpdate(Entity& self)
+{
+    MoverData& d = self.Data<MoverData>();
+    Ecs_BaseUpdate(self);
+    if (d.mState == MOVER_FOOM)
+    {
+        d.mMove.Tick(kDeltaTime);
+        while (d.mMove.Pop() >= 0)
+        {
+            Game_PlaySfx("mover_move");
+            Ecs_Play(self, "Foom");
+            const Entity& p = *World_Player();
+            const fx dx = p.mT->mX - self.mT->mX;
+            const fx dy = p.mT->mY - self.mT->mY;
+            const float len = FxLength(dx, dy).mV;
+            const float normal = fminf(3.0f, 100.0f / len);
+            const float rx = static_cast<float>(Rng_Range(-5, 0));
+            const float ry = static_cast<float>(Rng_Range(-5, 0));
+            self.mT->mVelX = fx(dx.mV * normal + rx);
+            self.mT->mVelY = fx(dy.mV * normal + ry);
+        }
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+        Game_PlaySfx("mover_die");
+        Spawn_Explosion(self);
+    }
+}
+
+void MoverCollided(Entity& self, Entity& other)
+{
+    // TriggerEvent("Player"): only Foom has it
+    if (self.Data<MoverData>().mState == MOVER_FOOM && IsPlayer(other))
+    {
+        Player_SetAdditionalVel(self.mT->mVelX, self.mT->mVelY);
+    }
+}
+
+const EntityClass kMover = {
+    "Mover", MoverUpdate, nullptr, MoverCollided, nullptr, nullptr, nullptr, nullptr,
+    GROUP_MOVER, GROUP_PLAYER, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_ENEMY,
+};
+
+// ---- OnOffLaser (Redcave/OnOffLaser.cs) ---------------------------------------------------------------------------
+enum OnOffLaserState : uint8_t
+{
+    ONOFF_IDLE,
+    ONOFF_EMERGING,
+    ONOFF_HURTING,
+    ONOFF_RECEDING,
+};
+
+struct OnOffLaserData final
+{
+    uint8_t mState;
+    bool mB; // frames 3 and 4: the other shooter sprite
+    Entity* mLaser;
+    TimerState<1> mIdle;
+    TimerState<1> mHurting;
+};
+
+void OnOffPlay(Entity& self, const char* anim)
+{
+    char name[24];
+    snprintf(name, sizeof(name), self.Data<OnOffLaserData>().mB ? "%s_b" : "%s", anim);
+    Ecs_Play(self, name);
+}
+
+void OnOffEnter(Entity& self, uint8_t state)
+{
+    OnOffLaserData& d = self.Data<OnOffLaserData>();
+    Entity& laser = *d.mLaser;
+    if (d.mState == ONOFF_RECEDING && state != ONOFF_RECEDING)
+    {
+        laser.mV->mVisible = false; // Receding's Exit
+    }
+    d.mState = state;
+    switch (state)
+    {
+    case ONOFF_IDLE:
+        d.mIdle.Reset();
+        OnOffPlay(self, "shooter_closed");
+        d.mIdle.Add(2.0f, 0);
+        break;
+    case ONOFF_EMERGING:
+        OnOffPlay(self, "shooter_open");
+        Game_PlaySfx("on_off_laser_shoot");
+        laser.mV->mVisible = true;
+        Ecs_Play(laser, "emerge");
+        Ecs_Flicker(laser, FxSec(0.55f));
+        break;
+    case ONOFF_HURTING:
+        d.mHurting.Reset();
+        Ecs_Play(laser, "steam_is_harmful");
+        d.mHurting.Add(2.0f, 0);
+        break;
+    default:
+        Ecs_Play(laser, "recede");
+        Ecs_Flicker(laser, FxSec(0.55f));
+        break;
+    }
+}
+
+void OnOffLaserUpdate(Entity& self)
+{
+    OnOffLaserData& d = self.Data<OnOffLaserData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mState)
+    {
+    case ONOFF_IDLE:
+        d.mIdle.Tick(kDeltaTime);
+        while (d.mIdle.Pop() >= 0)
+        {
+            OnOffEnter(self, ONOFF_EMERGING);
+        }
+        break;
+    case ONOFF_EMERGING:
+        if (Ecs_AnimFinished(*d.mLaser))
+        {
+            OnOffEnter(self, ONOFF_HURTING);
+        }
+        break;
+    case ONOFF_HURTING:
+        d.mHurting.Tick(kDeltaTime);
+        while (d.mHurting.Pop() >= 0)
+        {
+            OnOffEnter(self, ONOFF_RECEDING);
+        }
+        break;
+    default:
+        if (Ecs_AnimFinished(*d.mLaser))
+        {
+            OnOffEnter(self, ONOFF_IDLE);
+        }
+        break;
+    }
+}
+
+const EntityClass kOnOffLaser = {
+    "OnOffLaser", OnOffLaserUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void OnOffBeamCollided(Entity& self, Entity& other)
+{
+    if (!Ecs_AnimIs(self, "steam_is_harmful"))
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (other.mClass == &kMover)
+    {
+        MoverDie(other);
+    }
+}
+
+const EntityClass kOnOffBeam = {
+    "Laser", nullptr, nullptr, OnOffBeamCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER | GROUP_MOVER, 0,
+};
+
 // ---- Slasher (Redcave/Slasher.cs) --------------------------------------------------------------------------------
 enum SlasherState : uint8_t
 {
@@ -2945,5 +3135,90 @@ Entity* Spawn_Seer(const MapEntity& preset, Entity&)
     Ecs_Play(*wave, "play");
     Ecs_KeepPooled(*wave);
     d.mWave = wave;
+    return e;
+}
+
+Entity* Spawn_Mover(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kMover, preset, "f_mover");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mT->mDragX = e->mT->mDragY = Fx(100);
+    MoverData& d = e->Data<MoverData>();
+    d = MoverData();
+    d.mMove.Add(1.0f, 0);
+    return e;
+}
+
+Entity* Spawn_OnOffLaser(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kOnOffLaser, preset, "on_off_shooter");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    OnOffLaserData& d = e->Data<OnOffLaserData>();
+    d = OnOffLaserData();
+    d.mB = preset.mFrame == 3 || preset.mFrame == 4;
+    static const uint8_t kFacing[5] = { FACE_UP, FACE_RIGHT, FACE_DOWN, FACE_LEFT, FACE_UP };
+    e->mFacing = (preset.mFrame >= 0 && preset.mFrame < 5) ? kFacing[preset.mFrame] : FACE_UP;
+    const bool horizontal = e->mFacing == FACE_LEFT || e->mFacing == FACE_RIGHT;
+    e->mT->mRot = horizontal ? -kFxPi / 2 : (e->mFacing == FACE_UP ? -kFxPi : 0);
+
+    Entity* laser = Ecs_Create(kOnOffBeam, e->mT->mX, e->mT->mY, PART_VISUAL | PART_BRAIN, nullptr, e);
+    if (!laser)
+    {
+        return nullptr;
+    }
+    d.mLaser = laser;
+    Ecs_SetSheet(*laser, horizontal ? "f_on_off_h" : "f_on_off_v", horizontal ? 144 : 16, horizontal ? 16 : 144);
+    Transform& t = *laser->mT;
+    Body& b = *laser->mB;
+    Visual& v = *laser->mV;
+    switch (e->mFacing)
+    {
+    case FACE_LEFT:
+        b.mW = 112;
+        b.mH = 8;
+        t.mX -= Fx(112);
+        t.mY += Fx(4);
+        v.mOffX = Fx(16);
+        v.mOffY = Fx(4);
+        break;
+    case FACE_UP:
+        v.mVFlip = true;
+        b.mW = 8;
+        b.mH = 112;
+        t.mX += Fx(4);
+        t.mY -= Fx(112);
+        v.mOffX = Fx(4);
+        v.mOffY = Fx(16);
+        break;
+    case FACE_RIGHT:
+        v.mHFlip = true;
+        b.mW = 128;
+        b.mH = 8;
+        t.mX += Fx(4);
+        t.mY += Fx(4);
+        v.mOffX = Fx(4);
+        v.mOffY = Fx(4);
+        break;
+    default:
+        b.mW = 8;
+        b.mH = 112;
+        t.mX += Fx(4);
+        t.mY += Fx(16);
+        v.mOffX = Fx(4);
+        v.mOffY = Fx(16);
+        break;
+    }
+    t.mLastX = t.mX;
+    t.mLastY = t.mY;
+    v.mVisible = false;
+    Ecs_Play(*laser, "idle");
+    OnOffEnter(*e, ONOFF_IDLE);
     return e;
 }

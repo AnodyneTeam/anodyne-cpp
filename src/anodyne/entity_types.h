@@ -66,6 +66,9 @@
     X(RedseaNpc)                \
     X(Sign)                     \
     X(RedCaveEntrance)          \
+    X(RedPillar)                \
+    X(Mover)                    \
+    X(OnOffLaser)               \
     X(Rotator)                  \
     X(Door)
 

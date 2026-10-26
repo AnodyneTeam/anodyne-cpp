@@ -316,6 +316,7 @@ enum CollisionGroup : uint32_t
     GROUP_DASH_TRAP = 1u << 4,
     GROUP_WHIRLPOOL = 1u << 5,
     GROUP_DOOR = 1u << 6,
+    GROUP_MOVER = 1u << 7,
 };
 
 // Map tile events (Map.CollideTile -> the Entity virtuals).
@@ -443,6 +444,7 @@ struct Entity final
     bool mFreed;
     bool mSpawned;      // GlobalState.SpawnEntity: in the play state's lists (updates, collisions) from the next update
     bool mKeep;         // a pooled sub-entity (EntityPool): kept while it doesn't exist, for its owner to reuse
+    bool mCutsceneOwned; // a CutsceneState's own entity: the only kind drawn while the cutscene shows another map
     uint8_t mDepthRank; // set by the renderer
     uint16_t mIndex;    // pool index
 
@@ -630,6 +632,8 @@ void Ecs_SetBaseKilledEnemies(int count);
 
 // Draws every visible entity: camX/camY = camera top-left in map pixels, viewX = playfield left edge on screen.
 // OAM entries firstOam .. endOam-1 are the renderer's (sorted by layer and depth, front first).
+// CutsceneState.Warp: only the cutscene's own entities are drawn (the play state isn't).
+void Ecs_SetCutsceneView(bool on);
 void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY);
 // The OBJ VRAM the renderer caches frames in and the OBJ palette banks it may use.
 class ObjVramAllocator;

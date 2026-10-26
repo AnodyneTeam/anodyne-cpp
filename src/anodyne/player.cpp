@@ -1329,6 +1329,13 @@ void Player_LoseBroomDust()
     b.mCarrying = false;
 }
 
+void Player_SetAdditionalVel(fx x, fx y)
+{
+    PlayerData& d = P();
+    d.mAddVelX = x;
+    d.mAddVelY = y;
+}
+
 void Player_UpdateBroomType()
 {
     // Broom.UpdateBroomType (the sheet follows the broom type when it is drawn)

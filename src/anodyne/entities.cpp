@@ -64,6 +64,7 @@ bool IsEnemyType(uint8_t type)
     case EPT_BurstPlant:
     case EPT_Frog:
     case EPT_Slasher:
+    case EPT_Mover:
         return true;
     default:
         return false;

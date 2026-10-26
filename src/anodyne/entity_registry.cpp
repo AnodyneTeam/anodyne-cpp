@@ -77,6 +77,12 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_Sign;
     case EPT_RedCaveEntrance:
         return Spawn_RedCaveEntrance;
+    case EPT_RedPillar:
+        return Spawn_RedPillar;
+    case EPT_Mover:
+        return Spawn_Mover;
+    case EPT_OnOffLaser:
+        return Spawn_OnOffLaser;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:

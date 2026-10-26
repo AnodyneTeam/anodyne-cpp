@@ -365,6 +365,7 @@ int main()
     GameState_Reset();
     World_Init(objVram);
     World_SetMapLoader(LoadWarpMap);
+    World_SetMapTable(kMaps, kMapCount);
     Dialog_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;

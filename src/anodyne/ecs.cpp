@@ -522,6 +522,7 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
     e->mExists = true;
     e->mSpawned = false;
     e->mKeep = false;
+    e->mCutsceneOwned = false;
     e->mFacing = FACE_DOWN;
     e->mT->mX = e->mT->mLastX = x;
     e->mT->mY = e->mT->mLastY = y;
@@ -1406,6 +1407,13 @@ void Ecs_FlushRenderCaches()
     }
 }
 
+static bool gCutsceneView = false;
+
+void Ecs_SetCutsceneView(bool on)
+{
+    gCutsceneView = on;
+}
+
 void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
 {
     if (!gVram)
@@ -1416,7 +1424,8 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
     int count = 0;
     for (Entity* e = gHead; e && count < kMaxVisuals; e = e->mNext)
     {
-        if (e->mFreed || !e->mExists || !e->mV || !e->mV->mVisible || !e->mV->mSheet)
+        if (e->mFreed || !e->mExists || !e->mV || !e->mV->mVisible || !e->mV->mSheet ||
+            (gCutsceneView && !e->mCutsceneOwned))
         {
             continue;
         }
