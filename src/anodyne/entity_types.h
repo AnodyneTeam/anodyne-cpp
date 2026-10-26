@@ -103,10 +103,12 @@
     X(FirePillar)              \
     X(Contort)                 \
     X(Lion)                    \
-    X(ArthurDanger)           \
-    X(JavieraDanger)          \
-    X(ArthurDead)             \
-    X(JavieraDead)            \
+    X(ArthurDanger)            \
+    X(JavieraDanger)           \
+    X(ArthurDead)              \
+    X(JavieraDead)             \
+    X(CircusFolks)             \
+    X(DashPad)                 \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

@@ -76,6 +76,8 @@ void Player_SetSlowFor(int ticks, float mul = 0.5f);
 // Player.invincible (just hurt).
 bool Player_Invincible();
 // Player.reversed = true (a GasGuy's gas): the d-pad is backwards until 0.9 s have passed.
+// Player.Dash (a DashPad).
+void Player_Dash(Facing facing);
 void Player_Reverse();
 // Player.offset.Y (the height drawn above the shadow).
 fx Player_OffsetY();

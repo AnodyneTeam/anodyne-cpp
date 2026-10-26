@@ -2790,3 +2790,54 @@ Entity* Spawn_Elevator(const MapEntity& preset, Entity&)
     ElevatorEnter(*e, ELEV_CLOSE);
     return e;
 }
+
+// ---- DashPad (Gadget/DashPad.cs): an arrow on the floor that dashes the player along it; dims for a while after
+namespace
+{
+struct DashPadData final
+{
+    float mDisabled;
+};
+
+void DashPadUpdate(Entity& self)
+{
+    DashPadData& d = self.Data<DashPadData>();
+    Ecs_BaseUpdate(self);
+    d.mDisabled += kDeltaTime;
+    if (d.mDisabled > 1)
+    {
+        self.mV->mOpacity = kFxOne;
+        d.mDisabled = 0;
+    }
+}
+
+void DashPadCollided(Entity& self, Entity& other)
+{
+    if (self.mV->mOpacity == kFxOne && Player_State() == PS_GROUND &&
+        Ecs_Contains(Ecs_Hitbox(self), Ecs_CenterX(other), Ecs_CenterY(other)))
+    {
+        self.mV->mOpacity = FxF(0.5f);
+        Player_Dash(static_cast<Facing>(self.mFacing));
+    }
+}
+
+const EntityClass kDashPad = {
+    "DashPad", DashPadUpdate, nullptr, DashPadCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+} // namespace
+
+Entity* Spawn_DashPad(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kDashPad, preset, "dash_pads", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    const bool cell = gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0;
+    Ecs_SetFrame(*e, preset.mFrame + 4 + (cell ? 4 : 0));
+    static const Facing kFacings[4] = { FACE_UP, FACE_RIGHT, FACE_DOWN, FACE_LEFT };
+    e->mFacing = kFacings[preset.mFrame < 3 ? preset.mFrame : 3];
+    e->Data<DashPadData>() = DashPadData();
+    return e;
+}

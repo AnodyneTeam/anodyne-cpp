@@ -6819,8 +6819,11 @@ void LionTimerEvent(Entity& self, uint8_t state)
     case LION_CHARGE_WALK:
         LionEnter(self, LION_CHARGE_WARN);
         break;
+    case LION_CHARGE_WARN:
+        LionEnter(self, LION_CHARGE);
+        break;
     default:
-        break; // ChargeWarn's WarnTimer; Charge has the same timer and no handler for it
+        break; // Charge has ChargeWarn's timer too, and no handler for it
     }
 }
 
@@ -7183,6 +7186,704 @@ const EntityClass kArthurDead = {
 
 const EntityClass kJavieraDead = {
     "JavieraDead", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- CircusFolks (Circus/CircusFolks.cs): the circus boss, Javiera riding on Arthur's shoulders. Walks the edge of
+// the room, jumps to a corner (shockwaves) or throws Arthur at the player and sends Javiera running round to him.
+// The C#'s coroutines as steps; a coroutine that hands over to another (_stateLogic = X(); yield break) only starts
+// the next one the frame after.
+enum CircusStep : uint8_t
+{
+    CF_INTRO_WAIT_PLAYER,
+    CF_INTRO_WAIT_VOLUME,
+    CF_INTRO_WALK_IN,
+    CF_WALK_START,
+    CF_WALK,
+    CF_JUMP_START,
+    CF_JUMP,
+    CF_THROW_START,
+    CF_THROW_SWITCH,
+    CF_THROW_THROW,
+    CF_THROW_WAIT_ARTHUR,
+    CF_THROW_WAIT_JAVIERA,
+    CF_DYING_START,
+    CF_DYING_TALK,
+    CF_DYING_WOBBLE,
+    CF_DYING_FALL,
+    CF_DONE,
+};
+
+enum CircusVolume : uint8_t
+{
+    CFV_NONE,
+    CFV_SPAWNED, // its VolumeEvent only updates from the next frame, after the boss
+    CFV_RUNNING,
+    CFV_REACHED,
+};
+
+struct CircusFolksData final
+{
+    fx mTopLeftX;
+    fx mTopLeftY;
+    fx mEntranceY;
+    float mTimer; // walkTimer / fallTimer
+    Parabola mArc;
+    fx mTargetX;
+    fx mTargetY;
+    Entity* mArthur;
+    Entity* mJaviera;
+    Entity* mShadow;
+    int mHealth;
+    uint8_t mStep;
+    uint8_t mVolume;
+    uint8_t mJavieraFacing;
+    bool mBossRush;
+};
+
+// CircusFolks.Arthur / CircusFolks.Javiera: the stateLogic coroutines (BeThrown / Run), as steps (0 = null).
+struct CircusPartData final
+{
+    Parabola mArc;
+    fx mTargetX;
+    fx mTargetY;
+    int mDamage;
+    uint8_t mStep;
+    uint8_t mRunFacing;
+    bool mHurts;
+    bool mTouchedArthur;
+};
+
+enum CircusPartStep : uint8_t
+{
+    CP_NONE,
+    CP_START,
+    CP_THROWN_FLY,
+    CP_THROWN_LAND,
+    CP_RUN,
+};
+
+extern const EntityClass kCircusArthur;
+extern const EntityClass kShockWave;
+
+// WalkAroundEntity.WalkAboutParameter: round the room's edge, turning at the walls.
+void WalkAboutParameter(Entity& self, float speed, bool playAnim = true)
+{
+    const fx cx = GridLeft() + Fx(80);
+    const fx cy = GridTop() + Fx(80);
+    const Transform& t = *self.mT;
+    switch (self.mB->mTouching)
+    {
+    case TOUCH_LEFT:
+    case TOUCH_RIGHT:
+        self.mFacing = t.mY > cy ? FACE_UP : FACE_DOWN;
+        break;
+    case TOUCH_UP:
+    case TOUCH_DOWN:
+        self.mFacing = t.mX > cx ? FACE_LEFT : FACE_RIGHT;
+        break;
+    default:
+        break;
+    }
+    if (playAnim)
+    {
+        static const char* const kWalks[4] = { "walk_l", "walk_r", "walk_u", "walk_d" };
+        FolksPlay(self, kWalks[self.mFacing & 3]);
+    }
+    const Facing f = static_cast<Facing>(self.mFacing);
+    self.mT->mVelX = fx(static_cast<float>(FacingX(f)) * speed);
+    self.mT->mVelY = fx(static_cast<float>(FacingY(f)) * speed);
+}
+
+template <typename F>
+void ForShockWaves(Entity& boss, F&& f)
+{
+    for (Entity* e = boss.mNext; e; e = e->mNext)
+    {
+        if (e->mParent == &boss && e->mClass == &kShockWave)
+        {
+            f(*e);
+        }
+    }
+}
+
+// _shockWaves.Spawn(b => b.Spawn(pos, direction)): the first one not out.
+void SpawnShockWave(Entity& boss, fx x, fx y, Facing direction)
+{
+    bool done = false;
+    ForShockWaves(boss, [&](Entity& s) {
+        if (done || s.mExists)
+        {
+            return;
+        }
+        done = true;
+        s.mExists = true;
+        s.mT->mX = x;
+        s.mT->mY = y;
+        s.mT->mVelX = Fx(70 * FacingX(direction));
+        s.mT->mVelY = Fx(70 * FacingY(direction));
+        s.mFacing = direction;
+        Ecs_Play(s, "move");
+        s.mV->mVisible = true;
+    });
+}
+
+Facing CircusMovementDirection(const CircusFolksData& d, fx x, fx y)
+{
+    if (x < d.mTopLeftX + Fx(16))
+    {
+        return FACE_DOWN;
+    }
+    if (x > d.mTopLeftX + Fx(105))
+    {
+        return FACE_UP;
+    }
+    if (y > d.mTopLeftY + Fx(106))
+    {
+        return FACE_RIGHT;
+    }
+    return FACE_LEFT;
+}
+
+// Vector2.Normalize(target - from) * speed
+void VelocityTowards(Entity& e, fx tx, fx ty, float speed)
+{
+    const float dx = (tx - e.mT->mX).mV;
+    const float dy = (ty - e.mT->mY).mV;
+    const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
+    e.mT->mVelX = fx(dx * inv * speed);
+    e.mT->mVelY = fx(dy * inv * speed);
+}
+
+void CircusFolksStep(Entity& self)
+{
+    CircusFolksData& d = self.Data<CircusFolksData>();
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    Entity& arthur = *d.mArthur;
+    Entity& javiera = *d.mJaviera;
+    CircusPartData& ad = arthur.Data<CircusPartData>();
+    CircusPartData& jd = javiera.Data<CircusPartData>();
+    const Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case CF_INTRO_WAIT_PLAYER:
+        if (p.mT->mY > d.mEntranceY)
+        {
+            break;
+        }
+        d.mVolume = CFV_SPAWNED; // GlobalState.SpawnEntity(new VolumeEvent(0, 0.6f))
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("circus_folks", "before_fight");
+        }
+        d.mStep = CF_INTRO_WAIT_VOLUME;
+        [[fallthrough]];
+    case CF_INTRO_WAIT_VOLUME:
+        if (d.mVolume != CFV_REACHED || (!d.mBossRush && !Game_DialogueFinished()))
+        {
+            break;
+        }
+        Game_PlaySong("circus-boss");
+        FolksPlay(arthur, "walk_r");
+        arthur.mT->mVelX = Fx(20);
+        FolksPlay(javiera, "walk_l");
+        javiera.mT->mVelX = -Fx(20);
+        d.mStep = CF_INTRO_WALK_IN;
+        [[fallthrough]];
+    case CF_INTRO_WALK_IN:
+        if (arthur.mT->mX < d.mTopLeftX + Fx(64))
+        {
+            break;
+        }
+        arthur.mT->mVelX = arthur.mT->mVelY = javiera.mT->mVelX = javiera.mT->mVelY = 0;
+        arthur.mExists = javiera.mExists = false;
+        v.mVisible = true;
+        FolksPlay(self, "walk_l");
+        t.mX = d.mTopLeftX + Fx(56);
+        t.mY = d.mTopLeftY;
+        d.mStep = CF_WALK_START;
+        break;
+    case CF_WALK_START:
+        d.mTimer = 0;
+        d.mStep = CF_WALK;
+        [[fallthrough]];
+    case CF_WALK:
+        if (d.mTimer <= 3.0f)
+        {
+            d.mTimer += kDeltaTime;
+            WalkAboutParameter(self, 90);
+            break;
+        }
+        d.mStep = Rng_NextDouble() > 0.6 ? CF_JUMP_START : CF_THROW_START;
+        break;
+    case CF_JUMP_START:
+    {
+        d.mTargetX = d.mTopLeftX + Fx(p.mT->mX > d.mTopLeftX + Fx(60) ? 0 : 112);
+        d.mTargetY = d.mTopLeftY + Fx(p.mT->mY > d.mTopLeftY + Fx(60) ? 0 : 112);
+        const float dx = (d.mTargetX - t.mX).mV;
+        const float dy = (d.mTargetY - t.mY).mV;
+        const float distance = sqrtf(dx * dx + dy * dy);
+        // (target - Position) / distance * jumpVel: Vector2 / float multiplies by 1 / distance
+        const float inv = 1 / distance;
+        t.mVelX = fx(dx * inv * 100);
+        t.mVelY = fx(dy * inv * 100);
+        ParabolaInit(d.mArc, self, 48, distance / 100);
+        d.mShadow->mV->mVisible = true;
+        Game_PlaySfx("player_jump_up");
+        d.mStep = CF_JUMP;
+        [[fallthrough]];
+    }
+    case CF_JUMP:
+        if (!ParabolaTick(d.mArc, self, d.mShadow, 3))
+        {
+            break;
+        }
+        d.mShadow->mV->mVisible = false;
+        Game_PlaySfx("player_jump_down");
+        Game_PlaySfx("wb_tap_ground");
+        t.mVelX = t.mVelY = 0;
+        t.mX = d.mTargetX;
+        t.mY = d.mTargetY;
+        if (d.mTargetX == d.mTopLeftX && d.mTargetY == d.mTopLeftY)
+        {
+            self.mFacing = FACE_DOWN;
+        }
+        else if (d.mTargetX > d.mTopLeftX && d.mTargetY == d.mTopLeftY)
+        {
+            self.mFacing = FACE_LEFT;
+        }
+        else if (d.mTargetX > d.mTopLeftX && d.mTargetY > d.mTopLeftY)
+        {
+            self.mFacing = FACE_UP;
+        }
+        else
+        {
+            self.mFacing = FACE_RIGHT;
+        }
+        if (Ecs_CountChildren(self, kShockWave) <= 5)
+        {
+            SpawnShockWave(self, t.mX, t.mY, FACE_LEFT);
+            SpawnShockWave(self, t.mX, t.mY, FACE_RIGHT);
+        }
+        d.mStep = CF_WALK_START;
+        break;
+    case CF_THROW_START:
+        t.mVelX = t.mVelY = 0;
+        FolksPlay(self, "switch");
+        d.mStep = CF_THROW_SWITCH;
+        [[fallthrough]];
+    case CF_THROW_SWITCH:
+    {
+        if (!Ecs_AnimFinished(self))
+        {
+            break;
+        }
+        Screen_Flash(FxF(0.2f), FLASH_WHITE); // (its onFull runs straight away)
+        d.mJavieraFacing = self.mFacing;
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        static const char* const kThrows[4] = { "throw_l", "throw_r", "throw_u", "throw_d" };
+        FolksPlay(self, kThrows[self.mFacing & 3]);
+        d.mStep = CF_THROW_THROW;
+        [[fallthrough]];
+    }
+    case CF_THROW_THROW:
+        if (!Ecs_AnimFinished(self))
+        {
+            break;
+        }
+        Game_PlaySfx("slasher_atk");
+        Ecs_Flicker(self, 0);
+        v.mVisible = false;
+        arthur.mExists = true;
+        Ecs_Flicker(arthur, 0);
+        // _arthur.stateLogic = _arthur.BeThrown(Position - (0, 16), _player): it runs in Arthur's update, this frame
+        ad.mStep = CP_START;
+        ad.mTargetX = t.mX;
+        ad.mTargetY = t.mY - Fx(16);
+        javiera.mExists = true;
+        Ecs_Flicker(javiera, 0);
+        javiera.mT->mX = t.mX;
+        javiera.mT->mY = t.mY;
+        d.mStep = CF_THROW_WAIT_ARTHUR;
+        [[fallthrough]];
+    case CF_THROW_WAIT_ARTHUR:
+    {
+        if (ad.mStep != CP_NONE)
+        {
+            break;
+        }
+        const Facing f = CircusMovementDirection(d, arthur.mT->mX, arthur.mT->mY);
+        if (Ecs_CountChildren(self, kShockWave) < 8 - 1)
+        {
+            SpawnShockWave(self, arthur.mT->mX, arthur.mT->mY, f);
+            SpawnShockWave(self, arthur.mT->mX, arthur.mT->mY, FlipFacing(f));
+        }
+        jd.mStep = CP_START;
+        jd.mRunFacing = d.mJavieraFacing;
+        d.mStep = CF_THROW_WAIT_JAVIERA;
+        break; // (javiera's Run starts in her update, later this frame: she isn't done yet)
+    }
+    case CF_THROW_WAIT_JAVIERA:
+    {
+        if (jd.mStep != CP_NONE)
+        {
+            break;
+        }
+        FolksPlay(arthur, "walk_d");
+        Screen_Flash(FxF(0.2f), FLASH_WHITE);
+        t.mX = javiera.mT->mX;
+        t.mY = javiera.mT->mY;
+        d.mHealth -= ad.mDamage + jd.mDamage;
+        if (d.mHealth < 0)
+        {
+            d.mHealth = 0;
+        }
+        v.mVisible = true;
+        arthur.mExists = javiera.mExists = false;
+        Ecs_Flicker(arthur, 0);
+        Ecs_Flicker(javiera, 0);
+        self.mFacing = javiera.mFacing;
+        static const char* const kWalks[4] = { "walk_l", "walk_r", "walk_u", "walk_d" };
+        FolksPlay(self, kWalks[self.mFacing & 3]);
+        d.mStep = CF_WALK_START;
+        break;
+    }
+    case CF_DYING_START:
+        Game_PlaySong("");
+        t.mVelX = t.mVelY = 0;
+        FolksPlay(self, "dying");
+        Game_PlaySfx("sun_guy_death_short");
+        Screen_Shake(FxF(0.04f), kFxOne);
+        ForShockWaves(self, [](Entity& s) {
+            s.mT->mVelX = s.mT->mVelY = 0;
+            Ecs_Play(s, "evaporate");
+        });
+        Ecs_Flicker(arthur, 0);
+        Ecs_Flicker(javiera, 0);
+        ad.mHurts = false;
+        jd.mHurts = false;
+        javiera.mV->mLayer = LAYER_FG_SPRITES;
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("circus_folks", "after_fight");
+        }
+        d.mStep = CF_DYING_TALK;
+        [[fallthrough]];
+    case CF_DYING_TALK:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            break;
+        }
+        Ecs_Flicker(self, 0);
+        v.mVisible = false;
+        arthur.mExists = javiera.mExists = true;
+        arthur.mT->mX = t.mX;
+        arthur.mT->mY = t.mY;
+        javiera.mT->mX = t.mX;
+        javiera.mT->mY = t.mY - Fx(16);
+        ParabolaInit(ad.mArc, arthur, 24, 1.0f);
+        ParabolaInit(jd.mArc, javiera, 18, 0.8f);
+        FolksPlay(arthur, "pre-fall");
+        FolksPlay(javiera, "pre-fall");
+        d.mTimer = 0;
+        d.mStep = CF_DYING_WOBBLE;
+        [[fallthrough]];
+    case CF_DYING_WOBBLE:
+        if (d.mTimer <= 2)
+        {
+            d.mTimer += kDeltaTime;
+            const float n = static_cast<float>(sin(static_cast<double>(d.mTimer) * 6.28));
+            arthur.mV->mOffX = fx(-3 * n);
+            javiera.mV->mOffX = fx(3 * n);
+            break;
+        }
+        Game_PlaySfx("floor_crack");
+        VelocityTowards(arthur, d.mTopLeftX + Fx(64), d.mTopLeftY + Fx(40), 40);
+        VelocityTowards(javiera, d.mTopLeftX + Fx(36), d.mTopLeftY + Fx(50), 70);
+        d.mStep = CF_DYING_FALL;
+        [[fallthrough]];
+    case CF_DYING_FALL:
+        if (arthur.mV->mOpacity != 0 || javiera.mV->mOpacity != 0)
+        {
+            Entity* const parts[2] = { &arthur, &javiera };
+            for (Entity* part : parts)
+            {
+                if (ParabolaTick(part->Data<CircusPartData>().mArc, *part, nullptr, 0))
+                {
+                    part->mT->mVelX = part->mT->mVelY = 0;
+                    MoveTo(part->mV->mOpacity, 0, FxF(0.3f));
+                    if (!Ecs_AnimIs(*part, "fall"))
+                    {
+                        FolksPlay(*part, "fall");
+                    }
+                }
+            }
+            break;
+        }
+        Game_PlaySfx("wb_hit_ground");
+        Screen_Flash(kFxOne, FLASH_RED);
+        if (self.mPreset)
+        {
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        self.mExists = arthur.mExists = javiera.mExists = false;
+        d.mShadow->mExists = false;
+        if (!d.mBossRush)
+        {
+            Game_SetBossDefeated(gGame.mMapName);
+            Game_PlaySong("circus");
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+        }
+        d.mStep = CF_DONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void CircusFolksUpdate(Entity& self)
+{
+    CircusFolksData& d = self.Data<CircusFolksData>();
+    Ecs_BaseUpdate(self);
+    // (Shadow.Update: PositionOffset = (0, 0) - (16, 32) / 4)
+    d.mShadow->mT->mX = self.mT->mX + Fx(4);
+    d.mShadow->mT->mY = self.mT->mY + Fx(8);
+    if (d.mHealth == 0)
+    {
+        d.mHealth = -1;
+        d.mStep = CF_DYING_START;
+    }
+    else
+    {
+        CircusFolksStep(self);
+    }
+    // its VolumeEvent's Update, after the boss's
+    if (d.mVolume == CFV_RUNNING)
+    {
+        fx volume = FxF(Game_SongVolume());
+        if (MoveTo(volume, 0, FxF(0.6f)))
+        {
+            d.mVolume = CFV_REACHED;
+        }
+        Game_SetSongVolume(volume.mV);
+    }
+    else if (d.mVolume == CFV_SPAWNED)
+    {
+        d.mVolume = CFV_RUNNING;
+    }
+}
+
+void CircusFolksCollided(Entity& self, Entity& other)
+{
+    CircusFolksData& d = self.Data<CircusFolksData>();
+    if (!self.mV->mVisible)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (!self.mV->mFlickering && IsBroom(other))
+    {
+        d.mHealth--;
+        Ecs_Flicker(self, FxSec(1.0f));
+        Game_PlaySfx("broom_hit");
+    }
+}
+
+void CircusArthurUpdate(Entity& self)
+{
+    CircusPartData& d = self.Data<CircusPartData>();
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case CP_START:
+    {
+        // BeThrown(position, player)
+        t.mX = d.mTargetX;
+        t.mY = d.mTargetY;
+        self.mV->mVisible = true;
+        FolksPlay(self, "roll");
+        d.mDamage = 0;
+        const Entity& p = *World_Player();
+        const fx fromX = t.mX;
+        const fx fromY = t.mY;
+        d.mTargetX = p.mT->mX;
+        d.mTargetY = p.mT->mY;
+        const float dx = (d.mTargetX - fromX).mV;
+        const float dy = (d.mTargetY - fromY).mV;
+        const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
+        t.mVelX = fx(dx * inv * 120);
+        t.mVelY = fx(dy * inv * 120);
+        self.mB->mImmovable = true;
+        d.mStep = CP_THROWN_FLY;
+        [[fallthrough]];
+    }
+    case CP_THROWN_FLY:
+    {
+        const float dx = (t.mX - d.mTargetX).mV;
+        const float dy = (t.mY - d.mTargetY).mV;
+        if (dx * dx + dy * dy > 16 * 16)
+        {
+            break;
+        }
+        self.mB->mImmovable = false;
+        d.mStep = CP_THROWN_LAND;
+        [[fallthrough]];
+    }
+    case CP_THROWN_LAND:
+        if (self.mB->mTouching == TOUCH_NONE)
+        {
+            break;
+        }
+        t.mVelX = t.mVelY = 0;
+        FolksPlay(self, "stunned");
+        Game_PlaySfx("hit_ground_1");
+        Screen_Shake(FxF(0.03f), FxF(0.1f));
+        d.mStep = CP_NONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void CircusArthurCollided(Entity& self, Entity& other)
+{
+    CircusPartData& d = self.Data<CircusPartData>();
+    if (!self.mV->mVisible || !d.mHurts || d.mStep != CP_NONE || self.mV->mFlickering)
+    {
+        return;
+    }
+    if (IsBroom(other))
+    {
+        d.mDamage++;
+        Ecs_Flicker(self, FxSec(3.0f));
+    }
+    else if (IsPlayer(other) && Player_State() == PS_GROUND)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+void CircusJavieraUpdate(Entity& self)
+{
+    CircusPartData& d = self.Data<CircusPartData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mStep)
+    {
+    case CP_START:
+    {
+        // Run(direction)
+        self.mFacing = d.mRunFacing;
+        static const char* const kWalks[4] = { "walk_l", "walk_r", "walk_u", "walk_d" };
+        FolksPlay(self, kWalks[self.mFacing & 3]);
+        d.mDamage = 0;
+        d.mTouchedArthur = false;
+        d.mStep = CP_RUN;
+        [[fallthrough]];
+    }
+    case CP_RUN:
+        if (!d.mTouchedArthur)
+        {
+            WalkAboutParameter(self, 90 * 1.3f);
+            break;
+        }
+        self.mT->mVelX = self.mT->mVelY = 0;
+        d.mStep = CP_NONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void CircusJavieraCollided(Entity& self, Entity& other)
+{
+    CircusPartData& d = self.Data<CircusPartData>();
+    if (!self.mV->mVisible || !d.mHurts)
+    {
+        return;
+    }
+    if (d.mStep != CP_NONE && other.mClass == &kCircusArthur)
+    {
+        d.mTouchedArthur = true;
+    }
+    else if (!self.mV->mFlickering)
+    {
+        if (IsBroom(other))
+        {
+            d.mDamage++;
+            Ecs_Flicker(self, FxSec(3.0f));
+        }
+        else if (IsPlayer(other) && Player_State() == PS_GROUND)
+        {
+            Player_ReceiveDamage(1);
+        }
+    }
+}
+
+void ShockWaveUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimIs(self, "evaporate"))
+    {
+        if (Ecs_AnimFinished(self))
+        {
+            self.mExists = false;
+        }
+    }
+    else
+    {
+        WalkAboutParameter(self, 70, false);
+    }
+}
+
+void ShockWaveCollided(Entity& self, Entity& other)
+{
+    if (Ecs_AnimIs(self, "evaporate"))
+    {
+        return;
+    }
+    bool disappear = false;
+    if (IsPlayer(other) && Player_State() == PS_GROUND)
+    {
+        Player_ReceiveDamage(1);
+        disappear = true;
+    }
+    else if (IsBroom(other))
+    {
+        Game_PlaySfx("broom_hit");
+        disappear = true;
+    }
+    if (disappear)
+    {
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Ecs_Play(self, "evaporate");
+    }
+}
+
+const EntityClass kCircusFolks = {
+    "CircusFolks", CircusFolksUpdate, nullptr, CircusFolksCollided, nullptr, ContortMapEvent, nullptr, nullptr,
+    0,             GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_ENEMY,
+};
+
+const EntityClass kCircusArthur = {
+    "Arthur",          CircusArthurUpdate,         nullptr, CircusArthurCollided, nullptr, ContortMapEvent, nullptr,
+    nullptr,           GROUP_CIRCUS_ARTHUR,        GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION,
+};
+
+const EntityClass kCircusJaviera = {
+    "Javiera", CircusJavieraUpdate, nullptr, CircusJavieraCollided, nullptr, ContortMapEvent, nullptr, nullptr,
+    0,         GROUP_PLAYER | GROUP_BROOM | GROUP_CIRCUS_ARTHUR, ECF_MAP_COLLISION,
+};
+
+const EntityClass kShockWave = {
+    "ShockWave", ShockWaveUpdate, nullptr, ShockWaveCollided, nullptr, ContortMapEvent, nullptr, nullptr,
+    0,           GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION,
 };
 
 // ---- EyebossPreview (Npc/Hotel/EyebossPreview.cs): the eye boss peeks in, blinks and fades away
@@ -9947,7 +10648,10 @@ Entity* Spawn_ArthurDanger(const MapEntity& preset, Entity&)
     d.mInitY = e->mT->mY;
     d.mShadow->mT->mX = e->mT->mX + Fx(4);
     d.mShadow->mT->mY = e->mT->mY + Fx(6);
-    d.mPillow = Spawn_DustAt(GridLeft() + Fx(46), GridTop() + Fx(16));
+    // (the room it's in: GlobalState.CurrentMapGrid isn't the new screen yet while it scrolls in)
+    const fx roomX = Fx(preset.mX) - InGrid(Fx(preset.mX));
+    const fx roomY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    d.mPillow = Spawn_DustAt(roomX + Fx(46), roomY + Fx(16));
     if (!d.mPillow)
     {
         return nullptr;
@@ -9988,5 +10692,69 @@ Entity* Spawn_JavieraDead(const MapEntity& preset, Entity&)
     {
         Ecs_SetFrame(*e, 12);
     }
+    return e;
+}
+
+Entity* Spawn_CircusFolks(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kCircusFolks, preset, "arthur_javiera", 16, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    CircusFolksData& d = e->Data<CircusFolksData>();
+    d = CircusFolksData();
+    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX)) + Fx(16);
+    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY)) + Fx(16);
+    d.mEntranceY = d.mTopLeftY + Fx(16 * 7 + 4);
+    Player_SetGridEntranceAt(d.mTopLeftX + Fx(75), d.mEntranceY);
+    e->mB->mH = 16;
+    e->mV->mOffY = Fx(16);
+    auto part = [&](const EntityClass& cls, const char* sheet, fx x, const char* anim) -> Entity* {
+        Entity* p = Ecs_Create(cls, x, d.mTopLeftY, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!p)
+        {
+            return nullptr;
+        }
+        p->mB->mW = p->mB->mH = 16;
+        Ecs_SetSheet(*p, sheet, 16, 16);
+        Ecs_Play(*p, anim);
+        CircusPartData& pd = p->Data<CircusPartData>();
+        pd = CircusPartData();
+        pd.mHurts = true;
+        return p;
+    };
+    d.mArthur = part(kCircusArthur, "arthur", d.mTopLeftX + Fx(64 - 8 - 16), "wobble");
+    d.mJaviera = part(kCircusJaviera, "javiera", d.mTopLeftX + Fx(64 + 8), "juggle");
+    if (!d.mArthur || !d.mJaviera)
+    {
+        return nullptr;
+    }
+    e->mV->mVisible = false;
+    ParabolaInit(d.mArc, *e, 48, 1);
+    d.mShadow = Ecs_Create(kEntityShadow, e->mT->mX + Fx(4), e->mT->mY + Fx(8), PART_VISUAL, nullptr, e);
+    if (!d.mShadow)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mShadow, "8x8_shadow", 8, 8);
+    d.mShadow->mV->mLayer = LAYER_SHADOWS;
+    d.mShadow->mV->mVisible = false;
+    Ecs_SetSolid(*d.mShadow, false);
+    for (int i = 0; i < 8; i++)
+    {
+        Entity* s = Ecs_Create(kShockWave, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!s)
+        {
+            return nullptr;
+        }
+        s->mB->mW = s->mB->mH = 16;
+        Ecs_SetSheet(*s, "shockwave", 16, 16);
+        s->mV->mVisible = false;
+        Ecs_KeepPooled(*s);
+    }
+    d.mHealth = 7;
+    d.mStep = CF_INTRO_WAIT_PLAYER;
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     return e;
 }

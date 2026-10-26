@@ -68,6 +68,8 @@ struct PlayerData final
     fx mInvincibilityTime;
     fx mBumpTimer;
     fx mFallTimer;
+    float mDashX; // dash_state: a dash pad's push, in walk speeds (0: none)
+    float mDashY;
     fx mFallPointX;
     fx mFallPointY;
     fx mGridEntranceX;
@@ -311,6 +313,37 @@ void SetInitVel(fx mul)
     }
 }
 
+// Player.DashLogic: a dash lasts while its direction is held (the keys as they are, even reversed).
+void DashLogic()
+{
+    PlayerData& d = P();
+    Transform& t = *gPlayer->mT;
+    if (d.mDashX > 0 && !key_is_down(KEY_RIGHT))
+    {
+        d.mDashX = 0;
+    }
+    else if (d.mDashX < 0 && !key_is_down(KEY_LEFT))
+    {
+        d.mDashX = 0;
+    }
+    else if (d.mDashX != 0)
+    {
+        t.mVelX = fx(kWalkSpeed.mV * d.mDashX);
+    }
+    if (d.mDashY > 0 && !key_is_down(KEY_DOWN))
+    {
+        d.mDashY = 0;
+    }
+    else if (d.mDashY < 0 && !key_is_down(KEY_UP))
+    {
+        d.mDashY = 0;
+    }
+    else if (d.mDashY != 0)
+    {
+        t.mVelY = fx(kWalkSpeed.mV * d.mDashY);
+    }
+}
+
 void GroundMovement()
 {
     PlayerData& d = P();
@@ -333,6 +366,7 @@ void GroundMovement()
         t.mVelX = fx(t.mVelX.mV * d.mSlowMul);
         t.mVelY = fx(t.mVelY.mV * d.mSlowMul);
     }
+    DashLogic();
 }
 
 void SlippingLogic()
@@ -344,10 +378,12 @@ void SlippingLogic()
         return;
     }
     d.mFallTimer -= kFxTick;
-    if (d.mFallTimer < 0)
+    const bool dashing = d.mDashX != 0 || d.mDashY != 0;
+    if ((dashing && d.mFallTimer < kFallTimerDefault / 2) || d.mFallTimer < 0)
     {
         Game_PlaySfx("fall_in_hole");
         d.mAnimState = ANIM_FALL;
+        d.mDashX = d.mDashY = 0;
         d.mHasFallen = true;
         d.mIsSlipping = false;
         d.mDontMove = true;
@@ -691,6 +727,7 @@ void Movement()
             t.mVelY += d.mAddVelY;
             JumpStep();
         }
+        DashLogic();
         break;
     case PS_AUTO_JUMP:
         JumpStep();
@@ -1312,6 +1349,7 @@ void Player_Reset(const char* mapName)
     d.mHasFallen = false;
     d.mJustFell = false;
     d.mSinking = false;
+    d.mDashX = d.mDashY = 0;
     d.mJustLanded = false;
     d.mDontMove = false;
     d.mSlow = false;
@@ -1383,6 +1421,36 @@ void Player_AddAdditionalVel(fx x, fx y)
 {
     P().mAddVelX += x;
     P().mAddVelY += y;
+}
+
+// Player.Dash: a pad pushes along its facing; a second one the same way speeds it up, the other way stops it.
+void Player_Dash(Facing facing)
+{
+    PlayerData& d = P();
+    auto check = [](float& dash, float addition) {
+        if (dash == 0)
+        {
+            dash = addition * 1.3f;
+            Game_PlaySfx("dash_pad_1");
+        }
+        else if (dash * addition < 0)
+        {
+            dash = 0;
+        }
+        else if (fabsf(dash) < 1.5f)
+        {
+            dash = addition * 1.77f;
+            Game_PlaySfx("dash_pad_2");
+        }
+    };
+    if (facing == FACE_UP || facing == FACE_DOWN)
+    {
+        check(d.mDashY, static_cast<float>(FacingY(facing)));
+    }
+    else
+    {
+        check(d.mDashX, static_cast<float>(FacingX(facing)));
+    }
 }
 
 void Player_Reverse()

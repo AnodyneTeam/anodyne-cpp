@@ -321,6 +321,7 @@ enum CollisionGroup : uint32_t
     GROUP_SILVERFISH = 1u << 9,
     GROUP_RAT = 1u << 10,
     GROUP_SPIKE_ROLLER = 1u << 11, // BaseSpikeRoller
+    GROUP_CIRCUS_ARTHUR = 1u << 12, // CircusFolks.Arthur
 };
 
 // Map tile events (Map.CollideTile -> the Entity virtuals).
