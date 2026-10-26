@@ -81,6 +81,13 @@
     X(SuburbBlocker)           \
     X(SuburbIndoors)           \
     X(SuburbQuest)             \
+    X(Rat)                      \
+    X(Silverfish)               \
+    X(GasGuy)                   \
+    X(TeleGuy)                  \
+    X(Rail)                     \
+    X(EasterEgg)                \
+    X(SplitBoss)                \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

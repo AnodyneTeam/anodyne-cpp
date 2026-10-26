@@ -19,8 +19,8 @@ bool IsBroom(const Entity& e)
     return (e.mClass->mGroups & GROUP_BROOM) != 0;
 }
 
-// HealthDropper.Die: the preset stays dead, and maybe a heart drops where it was.
-void Die(Entity& self, float dropChance, bool big = false)
+// HealthDropper.Die: the preset stays dead, and maybe a heart drops where it was (returned).
+Entity* Die(Entity& self, float dropChance, bool big = false)
 {
     if (self.mPreset)
     {
@@ -33,8 +33,10 @@ void Die(Entity& self, float dropChance, bool big = false)
         if (Entity* drop = Spawn_HealthDrop(self.mT->mX, self.mT->mY, big))
         {
             Ecs_MoveAfter(*drop, self);
+            return drop;
         }
     }
+    return nullptr;
 }
 
 // Parabola_Thing.Tick (from offset 0): the offset that lifts a sprite `height` px at the middle of `period` seconds;
@@ -4675,6 +4677,1353 @@ void WallBossUpdate(Entity& self)
 const EntityClass kWallBoss = {
     "WallBoss", WallBossUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_ENEMY,
 };
+
+// ---- Apartment enemies (Apartment/*.cs) --------------------------------------------------------------------------
+// GlobalState.IsCell ? o : 0: the CELL's sprites sit `o` frames on.
+int CellFrames(int o)
+{
+    return gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0 ? o : 0;
+}
+
+// AnimationChanged: the _l anims are the _r ones mirrored.
+void FlipIfLeft(Entity& e)
+{
+    const char* name = Ecs_AnimName(e);
+    const size_t n = name ? strlen(name) : 0;
+    e.mV->mHFlip = n >= 2 && name[n - 2] == '_' && name[n - 1] == 'l';
+}
+
+void PlayFacingFlip(Entity& e, const char* prefix)
+{
+    Ecs_PlayFacing(e, prefix);
+    FlipIfLeft(e);
+}
+
+// ---- Rat (Apartment/Rat.cs): walks until its lookahead, 7 px in front, bumps into something, then turns left
+struct RatData final
+{
+    Entity* mLookahead;
+};
+
+void RatPlaceLookahead(Entity& self)
+{
+    Entity& la = *self.Data<RatData>().mLookahead;
+    const Facing f = static_cast<Facing>(self.mFacing);
+    la.mT->mX = Ecs_CenterX(self) + Fx(FacingX(f) * 7);
+    la.mT->mY = Ecs_CenterY(self) + Fx(FacingY(f) * 7);
+}
+
+void RatUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    Entity& la = *self.Data<RatData>().mLookahead;
+    if (la.mB->mTouching != TOUCH_NONE)
+    {
+        la.mB->mTouching = TOUCH_NONE;
+        Transform& t = *self.mT;
+        const fx vx = t.mVelX;
+        t.mVelX = -t.mVelY;
+        t.mVelY = vx;
+        Ecs_FaceTowards(self, t.mX + t.mVelX, t.mY + t.mVelY);
+        PlayFacingFlip(self, "walk");
+        Game_PlaySfx("rat_move");
+    }
+    RatPlaceLookahead(self);
+}
+
+void RatCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        const Rect h = Ecs_Hitbox(self);
+        const Rect inner = { h.mX + 4, h.mY + 4, 8, 8 };
+        if (Ecs_Intersects(inner, Ecs_Hitbox(other)))
+        {
+            Player_ReceiveDamage(1);
+        }
+    }
+    else
+    {
+        Spawn_Explosion(self);
+        Die(self, 0.5f);
+    }
+}
+
+const EntityClass kRat = {
+    "Rat",     RatUpdate, nullptr, RatCollided, nullptr, nullptr, nullptr, nullptr,
+    GROUP_RAT, GROUP_PLAYER | GROUP_BROOM | GROUP_DASH_TRAP, ECF_ENEMY,
+};
+
+void LookaheadCollided(Entity& self, Entity&)
+{
+    self.mB->mTouching = TOUCH_ANY;
+}
+
+// Puddle, Fall, SlowTile, Reflection, Ladder, Conveyor, Grass: all just "touching".
+void LookaheadMapEvent(Entity& self, MapEvent ev, uint8_t, fx, fx)
+{
+    if (ev != MAPEV_SPIKE)
+    {
+        self.mB->mTouching = TOUCH_ANY;
+    }
+}
+
+const EntityClass kRatLookahead = {
+    "Lookahead", nullptr, nullptr, LookaheadCollided, nullptr, LookaheadMapEvent, nullptr, nullptr,
+    0,           GROUP_DUST,     ECF_MAP_COLLISION,
+};
+
+// ---- Silverfish (Apartment/Silverfish.cs): runs away from the player along the way it looks
+enum SilverfishStep : uint8_t
+{
+    SF_WAIT, // until it first sees the player
+    SF_RUN_START,
+    SF_RUN, // until it hits something
+    SF_LOOK, // turning on the spot until it sees the player
+};
+
+struct SilverfishData final
+{
+    uint8_t mStep;
+    float mTurnTimer;
+};
+
+bool SilverfishSeesPlayer(const Entity& self)
+{
+    const Entity& p = *World_Player();
+    const Rect ph = Ecs_Hitbox(p);
+    const Rect h = Ecs_Hitbox(self);
+    const bool seeX = ph.mY <= h.mY + h.mH && ph.mY + ph.mH >= h.mY;
+    const bool seeY = ph.mX <= h.mX + h.mW && ph.mX + ph.mW >= h.mX;
+    if (FxLength(p.mT->mX - self.mT->mX, p.mT->mY - self.mT->mY) < Fx(30))
+    {
+        return true;
+    }
+    switch (self.mFacing)
+    {
+    case FACE_LEFT:
+        return seeX && p.mT->mX < self.mT->mX;
+    case FACE_RIGHT:
+        return seeX && p.mT->mX > self.mT->mX;
+    case FACE_UP:
+        return seeY && p.mT->mY < self.mT->mY;
+    default:
+        return seeY && p.mT->mY > self.mT->mY;
+    }
+}
+
+void SilverfishStepLogic(Entity& self)
+{
+    SilverfishData& d = self.Data<SilverfishData>();
+    Transform& t = *self.mT;
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case SF_WAIT:
+            if (!SilverfishSeesPlayer(self))
+            {
+                return;
+            }
+            d.mStep = SF_RUN_START;
+            break;
+        case SF_RUN_START:
+        {
+            Game_PlaySfx("sf_move");
+            const Facing f = FlipFacing(static_cast<Facing>(self.mFacing));
+            self.mFacing = f;
+            PlayFacingFlip(self, "move");
+            t.mVelX = Fx(FacingX(f) * 50);
+            t.mVelY = Fx(FacingY(f) * 50);
+            d.mStep = SF_RUN;
+            break;
+        }
+        case SF_RUN:
+            if (self.mB->mTouching == TOUCH_NONE)
+            {
+                return;
+            }
+            self.mB->mTouching = TOUCH_NONE;
+            t.mVelX = t.mVelY = 0;
+            PlayFacingFlip(self, "idle");
+            d.mTurnTimer = 0;
+            d.mStep = SF_LOOK;
+            break;
+        default:
+            if (SilverfishSeesPlayer(self))
+            {
+                const Entity& p = *World_Player();
+                Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+                d.mStep = SF_RUN_START;
+                break;
+            }
+            d.mTurnTimer += kDeltaTime;
+            if (d.mTurnTimer > 0.8f)
+            {
+                d.mTurnTimer = 0;
+                switch (self.mFacing)
+                {
+                case FACE_LEFT:
+                    self.mFacing = FACE_UP;
+                    break;
+                case FACE_RIGHT:
+                    self.mFacing = FACE_DOWN;
+                    break;
+                case FACE_UP:
+                    self.mFacing = FACE_RIGHT;
+                    break;
+                default:
+                    self.mFacing = FACE_LEFT;
+                    break;
+                }
+                PlayFacingFlip(self, "idle");
+            }
+            return;
+        }
+    }
+}
+
+void SilverfishUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    SilverfishStepLogic(self);
+}
+
+void SilverfishGetHit(Entity& self)
+{
+    Die(self, 0.5f);
+    Spawn_Explosion(self);
+}
+
+void SilverfishCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other))
+    {
+        SilverfishGetHit(self);
+    }
+}
+
+const EntityClass kSilverfish = {
+    "Silverfish",     SilverfishUpdate, nullptr, SilverfishCollided, nullptr, nullptr, nullptr, nullptr,
+    GROUP_SILVERFISH, GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY | ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+// ---- GasGuy (Apartment/GasGuy.cs): drifts after the player, puffing gas that turns the controls round
+enum GasGuyState : uint8_t
+{
+    GG_LATENCY,
+    GG_NORMAL,
+    GG_SHOOT,
+};
+
+constexpr int kGasClouds = 3;
+
+struct GasGuyData final
+{
+    uint8_t mState;
+    int mHealth;
+    bool mInDelay;
+    bool mDidFirstShot;
+    float mSoundDelay;
+    float mSoundDelayMax;
+    TimerState<1> mLatency; // each FSM state's own clock
+    TimerState<1> mNormal;
+    TimerState<1> mShoot;
+    Entity* mGas[kGasClouds];
+};
+
+void GasGuyEnter(Entity& self, uint8_t state)
+{
+    GasGuyData& d = self.Data<GasGuyData>();
+    if (d.mState == GG_LATENCY && state != GG_LATENCY)
+    {
+        d.mInDelay = false; // InitialLatency's Exit
+    }
+    d.mState = state;
+    switch (state)
+    {
+    case GG_LATENCY:
+        d.mLatency.Reset();
+        d.mLatency.Add(1.5f, 0);
+        d.mInDelay = true;
+        break;
+    case GG_NORMAL:
+        d.mNormal.Reset();
+        d.mNormal.Add(d.mDidFirstShot ? 5.0f : 1.0f, 0);
+        Ecs_Play(self, "float");
+        break;
+    default:
+        d.mShoot.Reset();
+        d.mShoot.Add(1.2f, 0);
+        break;
+    }
+}
+
+void GasGuyUpdate(Entity& self)
+{
+    GasGuyData& d = self.Data<GasGuyData>();
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    switch (d.mState)
+    {
+    case GG_LATENCY:
+        d.mLatency.Tick(kDeltaTime);
+        while (d.mLatency.Pop() >= 0)
+        {
+            GasGuyEnter(self, GG_NORMAL);
+        }
+        break;
+    case GG_NORMAL:
+        d.mNormal.Tick(kDeltaTime);
+        while (d.mNormal.Pop() >= 0)
+        {
+            Ecs_Play(self, "release_gas");
+            GasGuyEnter(self, GG_SHOOT);
+            d.mDidFirstShot = true;
+        }
+        break;
+    default:
+        d.mShoot.Tick(kDeltaTime);
+        while (d.mShoot.Pop() >= 0)
+        {
+            Ecs_Play(self, "float");
+            GasGuyEnter(self, GG_NORMAL);
+            Game_PlaySfx("gasguy_shoot");
+            // gasClouds.Spawn(s => s.Spawn(this, _player), 3, true): all three, whether out or not
+            for (Entity* g : d.mGas)
+            {
+                g->mExists = true;
+                g->mT->mX = self.mT->mX;
+                g->mT->mY = self.mT->mY;
+                Ecs_MoveTowards(*g, p.mT->mX, p.mT->mY, Fx(30));
+                g->mT->mVelX += Fx(Rng_Range(-10, 11));
+                g->mT->mVelY += Fx(Rng_Range(-10, 11));
+                Ecs_Flicker(*g, FxSec(9001));
+                g->mV->mOpacity = FxF(0.8f);
+            }
+        }
+        break;
+    }
+    d.mSoundDelay += kDeltaTime;
+    if (d.mSoundDelay > d.mSoundDelayMax)
+    {
+        d.mSoundDelay = 0;
+        Game_PlaySfx("gasguy_move");
+    }
+    if (!d.mInDelay)
+    {
+        MoveTo(self.mT->mX, p.mT->mX, Fx(12));
+        MoveTo(self.mT->mY, p.mT->mY, Fx(12));
+    }
+}
+
+void GasGuyCollided(Entity& self, Entity& other)
+{
+    GasGuyData& d = self.Data<GasGuyData>();
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other) && !self.mV->mFlickering)
+    {
+        d.mHealth--;
+        Ecs_Flicker(self, FxSec(0.5f));
+        const Entity& p = *World_Player();
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(100));
+        self.mT->mVelX = -self.mT->mVelX;
+        self.mT->mVelY = -self.mT->mVelY;
+        Game_PlaySfx("broom_hit");
+        if (d.mHealth == 0)
+        {
+            // (its pickup is after the gas clouds in the lists)
+            if (Entity* drop = Die(self, 0.6f, true))
+            {
+                Ecs_MoveAfter(*drop, *d.mGas[kGasClouds - 1]);
+            }
+            Spawn_Explosion(self);
+        }
+    }
+}
+
+const EntityClass kGasGuy = {
+    "GasGuy", GasGuyUpdate, nullptr, GasGuyCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY | ECF_KEEP_ON_SCREEN,
+};
+
+void GasUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    self.mV->mOpacity = fx(self.mV->mOpacity.mV - 0.06f * kDeltaTime);
+    if (self.mV->mOpacity <= 0)
+    {
+        self.mExists = false;
+    }
+}
+
+void GasCollided(Entity& self, Entity& other)
+{
+    if (self.mV->mOpacity > FxF(0.3f) && IsPlayer(other))
+    {
+        Player_Reverse();
+        Screen_SetWave(true);
+    }
+    else if (IsBroom(other))
+    {
+        self.mV->mOpacity = fx(self.mV->mOpacity.mV - 0.025f);
+    }
+    else if (other.mClass == &kSilverfish)
+    {
+        SilverfishGetHit(other);
+    }
+}
+
+const EntityClass kGas = {
+    "Gas", GasUpdate,    nullptr, GasCollided, nullptr, nullptr, nullptr, nullptr,
+    0,     GROUP_PLAYER | GROUP_BROOM | GROUP_SILVERFISH, 0,
+};
+
+// ---- TeleGuy (Apartment/TeleGuy.cs): hit it and it pops up behind the player and lunges back
+enum TeleGuyState : uint8_t
+{
+    TG_IDLE,
+    TG_TELEPORTING,
+    TG_PRE_ATTACK,
+    TG_ATTACKING,
+};
+
+struct TeleGuyData final
+{
+    uint8_t mState;
+    TimerState<1> mTeleporting;
+    TimerState<1> mPreAttack;
+    TimerState<1> mAttacking;
+    fx mAtkX;
+    fx mAtkY;
+};
+
+void TeleGuyEnter(Entity& self, uint8_t state)
+{
+    TeleGuyData& d = self.Data<TeleGuyData>();
+    if (d.mState == TG_ATTACKING)
+    {
+        self.mT->mVelX = self.mT->mVelY = 0; // Attacking's Exit
+    }
+    d.mState = state;
+    const Entity& p = *World_Player();
+    switch (state)
+    {
+    case TG_TELEPORTING:
+        d.mTeleporting.Reset();
+        Game_PlaySfx("teleguy_up");
+        Ecs_Play(self, "poof");
+        FlipIfLeft(self);
+        d.mTeleporting.Add(0.5f, 0);
+        break;
+    case TG_PRE_ATTACK:
+        d.mPreAttack.Reset();
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        d.mPreAttack.Add(0.5f, 0);
+        break;
+    case TG_ATTACKING:
+        d.mAttacking.Reset();
+        d.mAttacking.Add(1.5f, 0);
+        Ecs_MoveTowards(self, d.mAtkX, d.mAtkY, Fx(60));
+        break;
+    default:
+        break;
+    }
+}
+
+void TeleGuyTeleport(Entity& self)
+{
+    const Entity& p = *World_Player();
+    const fx px = p.mT->mX;
+    const fx py = p.mT->mY;
+    switch (Player_Facing())
+    {
+    case FACE_LEFT:
+        self.mT->mX = px + Fx(16);
+        self.mT->mY = py;
+        self.mFacing = FACE_LEFT;
+        break;
+    case FACE_RIGHT:
+        self.mT->mX = px - Fx(16);
+        self.mT->mY = py;
+        self.mFacing = FACE_RIGHT;
+        break;
+    case FACE_UP:
+        self.mT->mX = px;
+        self.mT->mY = py + Fx(17);
+        self.mFacing = FACE_UP;
+        break;
+    default:
+        self.mT->mX = px;
+        self.mT->mY = py - Fx(16);
+        self.mFacing = FACE_DOWN;
+        break;
+    }
+}
+
+void TeleGuyUpdate(Entity& self)
+{
+    TeleGuyData& d = self.Data<TeleGuyData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mState)
+    {
+    case TG_IDLE:
+    {
+        const Entity& p = *World_Player();
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        PlayFacingFlip(self, "idle");
+        break;
+    }
+    case TG_TELEPORTING:
+        d.mTeleporting.Tick(kDeltaTime);
+        while (d.mTeleporting.Pop() >= 0)
+        {
+            Game_PlaySfx("teleguy_down");
+            d.mAtkX = self.mT->mX;
+            d.mAtkY = self.mT->mY;
+            TeleGuyTeleport(self);
+            Ecs_Play(self, "unpoof");
+            FlipIfLeft(self);
+            TeleGuyEnter(self, TG_PRE_ATTACK);
+        }
+        break;
+    case TG_PRE_ATTACK:
+        d.mPreAttack.Tick(kDeltaTime);
+        while (d.mPreAttack.Pop() >= 0)
+        {
+            PlayFacingFlip(self, "idle");
+            TeleGuyEnter(self, TG_ATTACKING);
+        }
+        break;
+    default:
+        d.mAttacking.Tick(kDeltaTime);
+        while (d.mAttacking.Pop() >= 0)
+        {
+            TeleGuyEnter(self, TG_IDLE);
+        }
+        // (Attacking's Update runs after its timers, even when one just left the state)
+        if (FxLength(d.mAtkX - self.mT->mX, d.mAtkY - self.mT->mY) <= kFxOne)
+        {
+            self.mT->mX = d.mAtkX;
+            self.mT->mY = d.mAtkY;
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+        break;
+    }
+}
+
+void TeleGuyCollided(Entity& self, Entity& other)
+{
+    TeleGuyData& d = self.Data<TeleGuyData>();
+    if (d.mState != TG_IDLE && d.mState != TG_ATTACKING)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other))
+    {
+        if (d.mState == TG_IDLE || Rng_NextDouble() < 0.5f)
+        {
+            TeleGuyEnter(self, TG_TELEPORTING);
+        }
+        else
+        {
+            Die(self, 0.7f);
+            Spawn_Explosion(self);
+        }
+    }
+}
+
+const EntityClass kTeleGuy = {
+    "TeleGuy", TeleGuyUpdate, nullptr, TeleGuyCollided, nullptr, nullptr, nullptr, nullptr,
+    0,         GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
+};
+
+// ---- SplitBoss, the Watcher (Apartment/SplitBoss.cs) -------------------------------------------------------------
+constexpr int kSplitBullets = 12;
+
+// BaseSplitBoss: damage_player, and AnimationChanged putting the offset back.
+struct SplitCopyData final
+{
+    bool mDamagePlayer;
+};
+
+void SplitPlay(Entity& e, const char* anim, bool force = false)
+{
+    if (Ecs_Play(e, anim, force))
+    {
+        // (_r: offset.Y = 6; else CenterOffset(false): (4, 6) on a 24x32 sprite with a 16x20 hitbox)
+        e.mV->mOffY = Fx(6);
+        if (!Ecs_AnimIs(e, "idle_r") && !Ecs_AnimIs(e, "dash_r"))
+        {
+            e.mV->mOffX = Fx(4);
+        }
+    }
+}
+
+void SplitCopyCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && self.Data<SplitCopyData>().mDamagePlayer)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kSplitCopy = {
+    "Copy", nullptr, nullptr, SplitCopyCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- Bullet
+struct SplitBulletData final
+{
+    bool mActive;
+};
+
+void SplitBulletUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    Visual& v = *self.mV;
+    if (Ecs_AnimFinished(self) || v.mOpacity == 0)
+    {
+        self.mExists = false;
+    }
+    if (v.mFlickering)
+    {
+        Ecs_Flicker(self, FxSec(0.05f));
+    }
+    if (v.mOpacity != kFxOne)
+    {
+        MoveTo(v.mOpacity, 0, FxF(0.3f));
+    }
+    if (v.mOpacity == kFxOne && InGrid(self.mT->mY) > Fx(8 * 16))
+    {
+        Ecs_Play(self, "fizzle");
+    }
+}
+
+void SplitBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && Player_State() != PS_AIR && self.Data<SplitBulletData>().mActive)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kSplitBullet = {
+    "Bullet", SplitBulletUpdate, nullptr, SplitBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER,      0,
+};
+
+void SplitBulletSpawn(Entity& b, fx x, fx y, bool hurts)
+{
+    b.mExists = true;
+    b.mT->mX = x;
+    b.mT->mY = y;
+    Ecs_Play(b, "pulsate");
+    b.mT->mVelX = b.mT->mVelY = 0;
+    b.Data<SplitBulletData>().mActive = hurts;
+    b.mV->mOpacity = kFxOne;
+}
+
+// ---- FadeOutGameScreenFade: takes the white fade away after the fight
+float gSplitFade = 0; // GlobalState.gameScreenFade.alpha, while white
+
+void SplitFadeOutUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    gSplitFade = gSplitFade - 3 * kDeltaTime;
+    gSplitFade = gSplitFade < 0 ? 0 : (gSplitFade > 1 ? 1 : gSplitFade);
+    Screen_SetFade(fx(gSplitFade));
+}
+
+void SplitFadeOutEvent(Entity&, int gameEvent)
+{
+    if (gameEvent == GEV_START_WARP || gameEvent == GEV_START_SCREEN_TRANSITION)
+    {
+        gSplitFade = 0;
+        Screen_SetFade(0);
+    }
+}
+
+const EntityClass kSplitFadeOut = {
+    "FadeOutGameScreenFade", SplitFadeOutUpdate, nullptr, nullptr, nullptr, nullptr, SplitFadeOutEvent, nullptr,
+    0,                       0,                  0,
+};
+
+// ---- SplitBoss
+enum SplitCoroutine : uint8_t
+{
+    SB_INTRO,
+    SB_DIE,
+    SB_DASH,
+    SB_SHOOT,
+    SB_SPLIT,
+    SB_NONE, // yield break
+};
+
+struct SplitBossData final
+{
+    uint8_t mCo;   // the running coroutine
+    uint8_t mStep; // its step
+    uint8_t mGen;  // bumped by each new coroutine
+    bool mBossRush;
+    bool mHitThisFrame;
+    bool mVulnerable;
+    bool mDamagePlayer;
+    bool mVolume; // its VolumeEvent(0, 0.3)
+    int mHealth;
+    fx mInvulnTime;
+    fx mTlX; // the fight area's top left
+    fx mTlY;
+    // the coroutines' locals
+    int mDash;
+    int mNumDashes;
+    int mNumDrops;
+    int mMax;
+    int mRound;
+    int mNumRounds;
+    int mPerRound;
+    float mWait;
+    float mT;
+    fx mNextDrop;
+    fx mSplitVel;
+    int mSpawnedCount;
+    uint8_t mSpawned[kSplitBullets]; // indices into mBullets
+    // (the pool: there's only ever one Watcher, so it lives outside the brain data)
+    static Entity* mBullets[kSplitBullets];
+    static Entity* mCopies[2];
+};
+
+Entity* SplitBossData::mBullets[kSplitBullets];
+Entity* SplitBossData::mCopies[2];
+
+int SplitPhase(const SplitBossData& d)
+{
+    return d.mHealth > 8 ? 0 : (d.mHealth > 4 ? 1 : 2);
+}
+
+int SplitAlive(const SplitBossData& d)
+{
+    int n = 0;
+    for (const Entity* b : d.mBullets)
+    {
+        n += b->mExists ? 1 : 0;
+    }
+    return n;
+}
+
+void SplitStart(SplitBossData& d, uint8_t co)
+{
+    d.mCo = co;
+    d.mStep = 0;
+    d.mGen++;
+}
+
+void SplitChooseNextAttack(SplitBossData& d, double dashChance, double splitChance)
+{
+    const double r = Rng_NextDouble();
+    if (r < dashChance)
+    {
+        SplitStart(d, SB_DASH);
+    }
+    else if (r < dashChance + splitChance)
+    {
+        SplitStart(d, SB_SPLIT);
+    }
+    else
+    {
+        SplitStart(d, SB_SHOOT);
+    }
+}
+
+void SplitPlaceOverPlayer(Entity& self)
+{
+    const Entity& p = *World_Player();
+    self.mT->mX = p.mT->mX;
+    self.mT->mY = p.mT->mY - Fx(24);
+}
+
+// Intro: waits for a hit, then splits in two and comes back together.
+bool SplitIntroStep(Entity& self, SplitBossData& d)
+{
+    Entity& c0 = *d.mCopies[0];
+    Entity& c1 = *d.mCopies[1];
+    Visual& v = *self.mV;
+    switch (d.mStep)
+    {
+    case 0:
+        d.mVolume = true;
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!d.mHitThisFrame)
+        {
+            return true;
+        }
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("splitboss", "before_fight");
+        }
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            return true;
+        }
+        d.mVolume = false;
+        Game_PlaySfx("sb_split");
+        Game_PlaySong("apartment-boss");
+        v.mVisible = false;
+        for (Entity* c : d.mCopies)
+        {
+            c->mExists = true;
+            c->mT->mX = self.mT->mX;
+            c->mT->mY = self.mT->mY;
+            c->mT->mVelX = Fx(50);
+        }
+        c0.mT->mVelX = -c0.mT->mVelX;
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (!MoveTo(c0.mV->mOpacity, 0, FxF(0.6f)))
+        {
+            c1.mV->mOpacity = c0.mV->mOpacity;
+            return true;
+        }
+        v.mOpacity = 0;
+        v.mVisible = true;
+        self.mT->mY = d.mTlY - Fx(32);
+        c0.mT->mX = self.mT->mX - Fx(40);
+        c1.mT->mX = self.mT->mX + Fx(40);
+        for (Entity* c : d.mCopies)
+        {
+            c->mT->mVelX = c->mT->mVelY = 0;
+            c->mT->mY = self.mT->mY;
+            SplitPlay(*c, "float", true);
+        }
+        SplitPlay(self, "float", true);
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (!MoveTo(v.mOpacity, kFxOne, FxF(0.6f)))
+        {
+            c0.mV->mOpacity = c1.mV->mOpacity = v.mOpacity;
+            return true;
+        }
+        d.mStep = 5;
+        [[fallthrough]];
+    default:
+    {
+        const bool c0There = MoveTo(c0.mT->mX, self.mT->mX, Fx(30));
+        const bool c1There = MoveTo(c1.mT->mX, self.mT->mX, Fx(30));
+        if (!c0There || !c1There)
+        {
+            Ecs_Flicker(self, FxSec(0.2f));
+            Ecs_Flicker(c0, FxSec(0.2f));
+            Ecs_Flicker(c1, FxSec(0.2f));
+            return true;
+        }
+        c0.mExists = c1.mExists = false;
+        SplitStart(d, SB_SHOOT);
+        d.mVulnerable = true;
+        d.mDamagePlayer = true;
+        return false;
+    }
+    }
+}
+
+bool SplitDieStep(Entity& self, SplitBossData& d)
+{
+    switch (d.mStep)
+    {
+    case 0:
+        self.mT->mVelX = self.mT->mVelY = 0;
+        self.mV->mOpacity = kFxOne;
+        d.mDamagePlayer = false;
+        d.mVulnerable = false;
+        for (Entity* b : d.mBullets)
+        {
+            b->Data<SplitBulletData>().mActive = false;
+        }
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("splitboss", "after_fight");
+        }
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            return true;
+        }
+        Game_PlaySfx("big_door_locked");
+        d.mT = 0;
+        Screen_SetFadeWhite(true);
+        SplitPlay(self, "die");
+        Ecs_Flicker(self, FxSec(5.0f));
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (d.mT < 5.0f)
+        {
+            d.mT += kDeltaTime;
+            Game_SetSongVolume(Game_SongVolume() - kDeltaTime * 0.3f);
+            gSplitFade = d.mT / 5.0f;
+            Screen_SetFade(fx(gSplitFade));
+            const int r = static_cast<int>(65 * d.mT / 5.0f);
+            const int rx = Rng_Range(-r, r);
+            const int ry = Rng_Range(-r, r);
+            self.mT->mX = d.mTlX + Fx(40) + Fx(rx);
+            self.mT->mY = d.mTlY + Fx(40) + Fx(ry);
+            for (Entity* b : d.mBullets)
+            {
+                MoveTo(b->mV->mOpacity, 0, Fx(6));
+            }
+            for (Entity* c : d.mCopies)
+            {
+                MoveTo(c->mV->mOpacity, 0, Fx(6));
+            }
+            return true;
+        }
+        if (self.mPreset)
+        {
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        self.mExists = false;
+        if (!d.mBossRush)
+        {
+            Game_SetBossDefeated("APARTMENT");
+            Game_PlaySong("apartment");
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+        }
+        if (Entity* f = Ecs_Create(kSplitFadeOut, 0, 0, PART_BRAIN))
+        {
+            Ecs_MarkSpawned(*f);
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+bool SplitDashStep(Entity& self, SplitBossData& d)
+{
+    Transform& t = *self.mT;
+    Visual& v = *self.mV;
+    const Entity& p = *World_Player();
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            d.mNumDashes = SplitPhase(d) + 2;
+            d.mNumDrops = SplitPhase(d) + 2;
+            d.mSpawnedCount = 0;
+            if (static_cast<int>(t.mX.mV / 160) != gGame.mGridX || static_cast<int>(t.mY.mV / 160) != gGame.mGridY)
+            {
+                v.mOpacity = 0; // straight after another dash: start appearing on the left at once
+            }
+            d.mDash = 0;
+            d.mStep = 1;
+            break;
+        case 1:
+            if (d.mDash >= d.mNumDashes)
+            {
+                d.mStep = 6;
+                break;
+            }
+            SplitPlay(self, "idle_r");
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (!MoveTo(v.mOpacity, 0, Fx(6)))
+            {
+                return true;
+            }
+            t.mX = d.mTlX - Fx(32);
+            d.mStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (!MoveTo(v.mOpacity, kFxOne, Fx(9)))
+            {
+                t.mY = p.mT->mY;
+                return true;
+            }
+            d.mT = 0.5f;
+            d.mStep = 4;
+            [[fallthrough]];
+        case 4:
+            if (d.mT > 0)
+            {
+                t.mY = p.mT->mY;
+                d.mT -= kDeltaTime;
+                return true;
+            }
+            SplitPlay(self, "dash_r");
+            Game_PlaySfx("sb_dash");
+            t.mVelX = Fx(80 + 20 * SplitPhase(d));
+            t.mVelY = 0;
+            d.mNextDrop = d.mTlX + Fx(Rng_Range(0, 16));
+            d.mMax = d.mNumDrops;
+            d.mStep = 5;
+            [[fallthrough]];
+        case 5:
+            // CheckDashEnd
+            if (t.mX < d.mTlX + Fx(16 * 8) || !MoveTo(v.mOpacity, 0, Fx(6)))
+            {
+                v.mOffY = Player_OffsetY() + Fx(2);
+                if (d.mMax > 0 && t.mX > d.mNextDrop && t.mX < d.mTlX + Fx(6 * 16) && kSplitBullets > d.mSpawnedCount)
+                {
+                    d.mMax--;
+                    for (int i = 0; i < kSplitBullets; i++)
+                    {
+                        Entity& b = *d.mBullets[i];
+                        if (!b.mExists)
+                        {
+                            SplitBulletSpawn(b, t.mX, t.mY, false);
+                            Ecs_Flicker(b, FxSec(0.05f));
+                            d.mSpawned[d.mSpawnedCount++] = static_cast<uint8_t>(i);
+                            break;
+                        }
+                    }
+                    Game_PlaySfx("sb_ball_appear");
+                    d.mNextDrop = t.mX + Fx(Rng_Range(16, 32));
+                }
+                return true;
+            }
+            t.mVelX = t.mVelY = 0;
+            d.mDash++;
+            d.mStep = 1;
+            break;
+        case 6:
+            for (int i = 0; i < d.mSpawnedCount; i++)
+            {
+                Ecs_Flicker(*d.mBullets[d.mSpawned[i]], 0);
+            }
+            d.mT = 0.5f;
+            d.mStep = 7;
+            [[fallthrough]];
+        case 7:
+            if (d.mT > 0)
+            {
+                d.mT -= kDeltaTime;
+                return true;
+            }
+            Game_PlaySfx("sb_split");
+            for (int i = 0; i < d.mSpawnedCount; i++)
+            {
+                Entity& b = *d.mBullets[d.mSpawned[i]];
+                const int ox = Rng_Range(-10, 10);
+                const int oy = Rng_Range(-10, 10);
+                const float dx = (p.mT->mX + Fx(ox) - b.mT->mX).mV;
+                const float dy = (p.mT->mY + Fx(oy) - b.mT->mY).mV;
+                const float len = sqrtf(dx * dx + dy * dy);
+                const float speed = static_cast<float>(80 + SplitPhase(d) * 20);
+                b.Data<SplitBulletData>().mActive = true;
+                b.mT->mVelX = fx(speed * (dx / len));
+                b.mT->mVelY = fx(speed * (dy / len));
+                b.mV->mOpacity = FxF(0.99f);
+            }
+            d.mStep = 8;
+            [[fallthrough]];
+        default:
+            if (SplitAlive(d) > 0)
+            {
+                return true;
+            }
+            v.mOpacity = kFxOne;
+            SplitChooseNextAttack(d, 0.3, 0.3);
+            return false;
+        }
+    }
+}
+
+bool SplitShootStep(Entity& self, SplitBossData& d)
+{
+    static const int kRounds[3] = { 4, 10, 7 };
+    static const int kPerRound[3] = { 2, 1, 4 };
+    static const float kWait[3] = { 0.7f, 0.2f, 0.8f };
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+        {
+            self.mT->mVelX = self.mT->mVelY = 0;
+            self.mT->mX = d.mTlX + Fx(40);
+            self.mT->mY = d.mTlY - Fx(32);
+            SplitPlay(self, "float");
+            const int phase = SplitPhase(d);
+            d.mNumRounds = kRounds[phase];
+            d.mPerRound = kPerRound[phase];
+            d.mWait = kWait[phase];
+            d.mRound = 0;
+            d.mStep = 1;
+            break;
+        }
+        case 1:
+        {
+            if (d.mRound >= d.mNumRounds)
+            {
+                d.mStep = 3;
+                break;
+            }
+            Game_PlaySfx("sb_ball_appear");
+            int start = Rng_Range(0, 6);
+            d.mSpawnedCount = 0;
+            for (int i = 0; i < kSplitBullets && d.mSpawnedCount < d.mPerRound; i++)
+            {
+                Entity& b = *d.mBullets[i];
+                if (b.mExists)
+                {
+                    continue;
+                }
+                SplitBulletSpawn(b, d.mTlX + Fx((16 - 6) / 2 + (start % 6) * 16), d.mTlY - Fx(6), true);
+                start++;
+                d.mSpawned[d.mSpawnedCount++] = static_cast<uint8_t>(i);
+            }
+            d.mT = 0;
+            d.mStep = 2;
+            [[fallthrough]];
+        }
+        case 2:
+            if (d.mT < d.mWait)
+            {
+                d.mT += kDeltaTime;
+                return true;
+            }
+            for (int i = 0; i < d.mSpawnedCount; i++)
+            {
+                Entity& b = *d.mBullets[d.mSpawned[i]];
+                b.Data<SplitBulletData>().mActive = true;
+                b.mT->mVelX = 0;
+                b.mT->mVelY = Fx(40);
+            }
+            d.mRound++;
+            d.mStep = 1;
+            break;
+        default:
+            if (SplitAlive(d) != 0)
+            {
+                return true;
+            }
+            SplitChooseNextAttack(d, 0.37, 0.38);
+            return false;
+        }
+    }
+}
+
+bool SplitSplitStep(Entity& self, SplitBossData& d)
+{
+    Entity& c0 = *d.mCopies[0];
+    Entity& c1 = *d.mCopies[1];
+    Visual& v = *self.mV;
+    const Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case 0:
+        v.mVisible = true;
+        d.mVulnerable = false;
+        d.mDamagePlayer = false;
+        SplitPlay(self, "float");
+        self.mT->mX = d.mTlX + Fx(40);
+        self.mT->mY = d.mTlY - Fx(16);
+        Ecs_Flicker(self, FxSec(1.5f));
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!d.mHitThisFrame)
+        {
+            return true;
+        }
+        d.mDamagePlayer = true;
+        v.mOpacity = c0.mV->mOpacity = c1.mV->mOpacity = kFxOne;
+        c0.mExists = c1.mExists = true;
+        SplitPlay(c0, "idle_r");
+        SplitPlay(c1, "idle_r");
+        c0.mT->mX = c1.mT->mX = self.mT->mX;
+        c0.mT->mY = c1.mT->mY = self.mT->mY;
+        self.mT->mVelY = Fx(-40);
+        c0.mT->mVelX = Fx(-40);
+        c1.mT->mVelX = Fx(40);
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!MoveTo(v.mOpacity, 0, FxF(1.2f)))
+        {
+            c0.mV->mOpacity = c1.mV->mOpacity = v.mOpacity;
+            return true;
+        }
+        self.mT->mVelX = self.mT->mVelY = 0;
+        c0.mT->mVelX = c0.mT->mVelY = c1.mT->mVelX = c1.mT->mVelY = 0;
+        v.mOpacity = c0.mV->mOpacity = c1.mV->mOpacity = FxF(0.7f);
+        d.mT = 0;
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (d.mT < 1.0f)
+        {
+            d.mT += kDeltaTime;
+            SplitPlaceOverPlayer(self);
+            c0.mT->mX = p.mT->mX + Fx(25);
+            c0.mT->mY = p.mT->mY;
+            c1.mT->mX = p.mT->mX - Fx(25);
+            c1.mT->mY = p.mT->mY;
+            return true;
+        }
+        Ecs_Flicker(c0, FxSec(0.7f));
+        Ecs_Flicker(c1, FxSec(0.7f));
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (c0.mV->mFlickering)
+        {
+            SplitPlaceOverPlayer(self);
+            return true;
+        }
+        c0.Data<SplitCopyData>().mDamagePlayer = c1.Data<SplitCopyData>().mDamagePlayer = true;
+        d.mSplitVel = Fx(40 + 10 * SplitPhase(d));
+        c0.mT->mVelX = -d.mSplitVel;
+        c1.mT->mVelX = d.mSplitVel;
+        Game_PlaySfx("sb_dash");
+        d.mStep = 5;
+        [[fallthrough]];
+    case 5:
+    {
+        const bool c0Gone = MoveTo(c0.mV->mOpacity, 0, FxF(1.2f));
+        const bool c1Gone = MoveTo(c1.mV->mOpacity, 0, FxF(1.2f));
+        if (!c0Gone || !c1Gone)
+        {
+            SplitPlaceOverPlayer(self);
+            return true;
+        }
+        c0.mExists = c1.mExists = false;
+        c0.Data<SplitCopyData>().mDamagePlayer = c1.Data<SplitCopyData>().mDamagePlayer = false;
+        Ecs_Flicker(self, kFxOne);
+        d.mStep = 6;
+        [[fallthrough]];
+    }
+    case 6:
+        if (v.mFlickering)
+        {
+            return true;
+        }
+        d.mVulnerable = true;
+        self.mT->mVelY = d.mSplitVel;
+        d.mStep = 7;
+        [[fallthrough]];
+    default:
+        if (!MoveTo(v.mOpacity, 0, FxF(1.2f)))
+        {
+            return true;
+        }
+        v.mOpacity = kFxOne;
+        self.mT->mVelX = self.mT->mVelY = 0;
+        if (SplitPhase(d) <= 1)
+        {
+            SplitChooseNextAttack(d, 0.3, 0.3);
+        }
+        else
+        {
+            SplitChooseNextAttack(d, 0.5, 0.25);
+        }
+        return false;
+    }
+}
+
+void SplitBossUpdate(Entity& self)
+{
+    SplitBossData& d = self.Data<SplitBossData>();
+    Ecs_BaseUpdate(self);
+    // (its VolumeEvent: spawned on the first update, so it starts on the next)
+    if (d.mVolume && !(d.mCo == SB_INTRO && d.mStep == 0))
+    {
+        fx volume = FxF(Game_SongVolume());
+        MoveTo(volume, 0, FxF(0.3f));
+        Game_SetSongVolume(volume.mV);
+    }
+    const uint8_t gen = d.mGen;
+    bool running = true;
+    switch (d.mCo)
+    {
+    case SB_INTRO:
+        running = SplitIntroStep(self, d);
+        break;
+    case SB_DIE:
+        running = SplitDieStep(self, d);
+        break;
+    case SB_DASH:
+        running = SplitDashStep(self, d);
+        break;
+    case SB_SHOOT:
+        running = SplitShootStep(self, d);
+        break;
+    case SB_SPLIT:
+        running = SplitSplitStep(self, d);
+        break;
+    default:
+        break;
+    }
+    if (!running && d.mGen == gen)
+    {
+        d.mCo = SB_NONE;
+    }
+    MoveTo(d.mInvulnTime, 0, kFxOne);
+}
+
+void SplitBossPostUpdate(Entity& self)
+{
+    self.Data<SplitBossData>().mHitThisFrame = false;
+}
+
+void SplitBossCollided(Entity& self, Entity& other)
+{
+    SplitBossData& d = self.Data<SplitBossData>();
+    if (IsPlayer(other))
+    {
+        if (d.mDamagePlayer)
+        {
+            Player_ReceiveDamage(1);
+        }
+    }
+    else if (IsBroom(other))
+    {
+        d.mHitThisFrame = true;
+        if (d.mVulnerable && d.mInvulnTime == 0)
+        {
+            d.mInvulnTime = FxF(0.8f);
+            Ecs_Flicker(self, d.mInvulnTime);
+            Game_PlaySfx("sb_hurt");
+            Game_PlaySfx("broom_hit");
+            d.mHealth--;
+            if (d.mHealth == 0)
+            {
+                d.mVulnerable = false;
+                d.mDamagePlayer = false;
+                SplitStart(d, SB_DIE);
+            }
+        }
+    }
+}
+
+const EntityClass kSplitBoss = {
+    "SplitBoss", SplitBossUpdate, SplitBossPostUpdate, SplitBossCollided, nullptr, nullptr, nullptr, nullptr,
+    0,           GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
+};
 } // namespace
 
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
@@ -5808,5 +7157,154 @@ Entity* Spawn_SpikeRoller(const MapEntity& preset, Entity&)
     d.mInitX = e->mT->mX;
     d.mInitY = e->mT->mY;
     d.mState = ROLLER_HIDDEN;
+    return e;
+}
+
+Entity* Spawn_Rat(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRat, preset, "rat");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, CellFrames(6));
+    e->mB->mW = e->mB->mH = 12;
+    Ecs_CenterOffset(*e);
+    // (and Position += offset once more)
+    e->mT->mX += e->mV->mOffX;
+    e->mT->mY += e->mV->mOffY;
+    e->mFacing = FACE_DOWN;
+    e->mT->mVelY = Fx(40);
+    Entity* la = Ecs_Create(kRatLookahead, 0, 0, PART_BRAIN, nullptr, e);
+    if (!la)
+    {
+        return nullptr;
+    }
+    la->mB->mW = la->mB->mH = 1;
+    e->Data<RatData>().mLookahead = la;
+    RatPlaceLookahead(*e); // (its lastPosition stays (0, 0), where it was made)
+    return e;
+}
+
+Entity* Spawn_Silverfish(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSilverfish, preset, "silverfish");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, CellFrames(6));
+    static const Facing kFacing[4] = { FACE_LEFT, FACE_DOWN, FACE_RIGHT, FACE_UP };
+    e->mFacing = kFacing[preset.mFrame < 3 ? preset.mFrame : 3];
+    PlayFacingFlip(*e, "idle");
+    e->Data<SilverfishData>() = SilverfishData();
+    return e;
+}
+
+Entity* Spawn_GasGuy(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kGasGuy, preset, "gas_guy", 16, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 16;
+    e->mB->mH = 24;
+    e->mT->mDragX = e->mT->mDragY = Fx(30);
+    GasGuyData& d = e->Data<GasGuyData>();
+    d = GasGuyData();
+    d.mHealth = 3;
+    d.mSoundDelayMax = static_cast<float>(1.5 + Rng_NextDouble());
+    for (Entity*& g : d.mGas)
+    {
+        g = Ecs_Create(kGas, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!g)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*g, "gas_guy_cloud", 24, 24);
+        Ecs_Play(*g, "move");
+        g->mV->mLayer = LAYER_FG_SPRITES;
+        g->mV->mOffX = g->mV->mOffY = Fx(4);
+        g->mB->mW = g->mB->mH = 16;
+        Ecs_KeepPooled(*g);
+    }
+    d.mState = GG_LATENCY;
+    GasGuyEnter(*e, GG_LATENCY);
+    return e;
+}
+
+Entity* Spawn_TeleGuy(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kTeleGuy, preset, "teleport_guy", 16, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mOffY = Fx(6);
+    e->mB->mW = 16;
+    e->mB->mH = 16;
+    e->mB->mImmovable = true;
+    TeleGuyData& d = e->Data<TeleGuyData>();
+    d = TeleGuyData();
+    d.mState = TG_IDLE;
+    return e;
+}
+
+Entity* Spawn_SplitBoss(const MapEntity& preset, Entity&)
+{
+    // (the SubEntities, bullets then copies, are made first: field initialisers)
+    Entity* e = Spawn_Basic(kSplitBoss, preset, "splitboss", 24, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SplitBossData& d = e->Data<SplitBossData>();
+    d = SplitBossData();
+    for (Entity*& b : d.mBullets)
+    {
+        b = Ecs_Create(kSplitBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*b, "splitboss_fireball", 16, 16);
+        b->mV->mLayer = LAYER_BG_ENTITIES;
+        b->mB->mW = b->mB->mH = 6;
+        Ecs_CenterOffset(*b);
+        Ecs_KeepPooled(*b);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        Entity* c = Ecs_Create(kSplitCopy, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        d.mCopies[i] = c;
+        if (!c)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*c, "splitboss", 24, 32);
+        c->mB->mW = 16;
+        c->mB->mH = 20;
+        Ecs_CenterOffset(*c);
+        Ecs_SetSolid(*c, false);
+        c->mB->mImmovable = true;
+        c->mV->mHFlip = i == 0;
+        c->Data<SplitCopyData>().mDamagePlayer = false;
+        Ecs_KeepPooled(*c);
+    }
+    e->mB->mW = 16;
+    e->mB->mH = 20;
+    Ecs_CenterOffset(*e);
+    Ecs_SetSolid(*e, false);
+    e->mB->mImmovable = true;
+    // (the screen being loaded: the boss's own)
+    d.mTlX = Fx(preset.mX / 160 * 160 + 32);
+    d.mTlY = Fx(preset.mY / 160 * 160 + 48);
+    e->mT->mX = d.mTlX + Fx(48 - 16 / 2);
+    e->mT->mY = d.mTlY + Fx(32);
+    Player_SetGridEntranceAt(d.mTlX + Fx(42), d.mTlY + Fx(40));
+    d.mHealth = 13;
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    SplitStart(d, SB_INTRO);
     return e;
 }

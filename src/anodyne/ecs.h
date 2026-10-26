@@ -318,6 +318,8 @@ enum CollisionGroup : uint32_t
     GROUP_DOOR = 1u << 6,
     GROUP_MOVER = 1u << 7,
     GROUP_STOP_MARKER = 1u << 8,
+    GROUP_SILVERFISH = 1u << 9,
+    GROUP_RAT = 1u << 10,
 };
 
 // Map tile events (Map.CollideTile -> the Entity virtuals).

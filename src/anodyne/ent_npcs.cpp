@@ -2909,6 +2909,7 @@ bool WindmillCutscene(Entity& self)
         d.mVolumeDone = MoveTo(volume, d.mVolumeTarget, d.mVolumeSpeed);
         Game_SetSongVolume(volume.mV);
     }
+    Screen_SetFadeWhite(false); // (fadeColor = Black before its fade, which was 0 until then)
     Screen_SetFade(d.mFade);
     return done;
 }
@@ -3352,5 +3353,55 @@ Entity* Spawn_SuburbQuest(const MapEntity& preset, Entity&)
     Ecs_Play(*e, "a");
     e->mB->mImmovable = true;
     e->Data<SuburbQuestData>() = SuburbQuestData();
+    return e;
+}
+
+// ---- Rail (Decorations/NonSolid.cs), ApartmentEaster and RedCaveEaster (Npc/EasterEggs) -------------------------
+namespace
+{
+const EntityClass kRail = {
+    "Rail", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+bool EasterInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("generic_npc", "easter_egg");
+    return true;
+}
+
+const EntityClass kApartmentEaster = {
+    "ApartmentEaster", nullptr, nullptr, SeparateFromAny, EasterInteract, nullptr, nullptr, nullptr,
+    0,                 GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+const EntityClass kRedCaveEaster = {
+    "RedCaveEaster", nullptr, nullptr, SeparateFromAny, EasterInteract, nullptr, nullptr, nullptr,
+    0,               GROUP_PLAYER, ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_Rail(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kRail, preset, "rail", 16, 16, PART_VISUAL);
+    if (e)
+    {
+        Ecs_SetFrame(*e, 0);
+    }
+    return e;
+}
+
+Entity* Spawn_EasterEgg(const MapEntity& preset, Entity&)
+{
+    const bool redcave = gGame.mMapName && strcmp(gGame.mMapName, "REDCAVE") == 0;
+    const int size = redcave ? 32 : 16;
+    Entity* e = Spawn_Basic(redcave ? kRedCaveEaster : kApartmentEaster, preset, redcave ? "smoke_red" : "randoms",
+                            size, size);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrame(*e, 0);
+    e->mB->mW = e->mB->mH = static_cast<int16_t>(size);
+    e->mB->mImmovable = true;
     return e;
 }

@@ -101,6 +101,20 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BioFilm;
     case EPT_WindmillConsole:
         return Spawn_WindmillConsole;
+    case EPT_SplitBoss:
+        return Spawn_SplitBoss;
+    case EPT_Rat:
+        return Spawn_Rat;
+    case EPT_Silverfish:
+        return Spawn_Silverfish;
+    case EPT_GasGuy:
+        return Spawn_GasGuy;
+    case EPT_TeleGuy:
+        return Spawn_TeleGuy;
+    case EPT_Rail:
+        return Spawn_Rail;
+    case EPT_EasterEgg:
+        return Spawn_EasterEgg;
     case EPT_SuburbWalker:
         return Spawn_SuburbWalker;
     case EPT_SuburbKiller:

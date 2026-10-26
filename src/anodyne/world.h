@@ -95,6 +95,11 @@ void Darkness_MakeLight(Entity& e, const char* sheet);
 void World_ScreenDarken(int level);
 // GlobalState.gameScreenFade's alpha (0-1, black).
 void Screen_SetFade(fx alpha);
+// GlobalState.gameScreenFade.fadeColor: white (true) or black.
+void Screen_SetFadeWhite(bool white);
+// GlobalState.wave.active: the screen's rows ripple sideways (a GasGuy's gas, the Red Boss).
+void Screen_SetWave(bool on);
+bool Screen_Wave();
 
 // GlobalState.screenShake / flash: shake the playfield by up to intensity (a fraction of the screen) for a time,
 // or flash it white (or black) and fade back over a time.

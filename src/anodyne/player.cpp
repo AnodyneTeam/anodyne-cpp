@@ -59,6 +59,8 @@ struct PlayerData final
     bool mOnConveyor;
     bool mSinking;
     bool mSlow; // slowMul = 0.5
+    bool mReversed; // a GasGuy's gas: the d-pad is backwards for a while
+    float mRevTimer;
     int mSlowTicks;
     Entity* mRaft; // the dust ridden over water
     uint8_t mJumpStage; // 0: not started, 1: in the air, 2: landed (one more frame)
@@ -86,6 +88,8 @@ struct PlayerData final
 
 Entity* gPlayer = nullptr;
 Entity* gBroom = nullptr;
+Entity* gLongAttack = nullptr; // Broom.long_attack / wide_attack: the long and wide brooms' swoosh
+Entity* gWideAttack = nullptr;
 Entity* gShadow = nullptr;
 Entity* gFoot = nullptr;
 Entity* gReflection = nullptr;
@@ -187,6 +191,16 @@ bool Blocks(fx x, fx y, uint8_t side)
     return (Map_CollisionAllowAt(x, y) & side) != 0;
 }
 
+// Player.Reverse: the d-pad key read for `key` (its opposite while reversed).
+bool DirDown(u16 key)
+{
+    if (P().mReversed)
+    {
+        key = key == KEY_UP ? KEY_DOWN : (key == KEY_DOWN ? KEY_UP : (key == KEY_LEFT ? KEY_RIGHT : KEY_LEFT));
+    }
+    return key_is_down(key) != 0;
+}
+
 // Player.Set_init_vel: the d-pad to a velocity (Up beats Down, Left beats Right) plus the nudge around tile corners.
 void SetInitVel(fx mul)
 {
@@ -206,7 +220,7 @@ void SetInitVel(fx mul)
     auto mod16 = [](float v) { return fmodf(v, 16.0f); };
     int vx = 0;
     int vy = 0;
-    if (key_is_down(KEY_UP))
+    if (DirDown(KEY_UP))
     {
         vy = -1;
         if (touching & TOUCH_UP)
@@ -226,7 +240,7 @@ void SetInitVel(fx mul)
             }
         }
     }
-    else if (key_is_down(KEY_DOWN))
+    else if (DirDown(KEY_DOWN))
     {
         vy = 1;
         if (touching & TOUCH_DOWN)
@@ -246,7 +260,7 @@ void SetInitVel(fx mul)
             }
         }
     }
-    if (key_is_down(KEY_LEFT))
+    if (DirDown(KEY_LEFT))
     {
         vx = -1;
         if (touching & TOUCH_LEFT)
@@ -266,7 +280,7 @@ void SetInitVel(fx mul)
             }
         }
     }
-    else if (key_is_down(KEY_RIGHT))
+    else if (DirDown(KEY_RIGHT))
     {
         vx = 1;
         if (touching & TOUCH_RIGHT)
@@ -782,6 +796,16 @@ void PlayerUpdate(Entity& self)
         d.mSlow = false;
     }
     d.mAddVelX = d.mAddVelY = 0;
+    if (d.mReversed)
+    {
+        d.mRevTimer += kDeltaTime;
+        if (d.mRevTimer > 0.9f)
+        {
+            d.mReversed = false;
+            d.mRevTimer = 0;
+            Screen_SetWave(false);
+        }
+    }
     Ecs_BaseUpdate(self);
 }
 
@@ -822,6 +846,7 @@ const EntityClass kPlayerClass = {
 struct BroomData final
 {
     bool mBehindPlayer;
+    bool mPlayedExtraAnim; // just_played_extra_anim
     bool mCarrying;     // Broom.dust != null (the entity itself may be gone: a screen change freed it)
     bool mJustReleased; // just_released_dust
     Entity* mDust;
@@ -858,6 +883,44 @@ void BroomCollided(Entity&, Entity& other)
     }
 }
 
+// Broom.SetWideValues / SetLongValues: the bigger hitbox, nudged by `ox, oy`, and its swoosh at `ax, ay` from it.
+void BroomSetExtra(Entity& extra, fx& x, fx& y, int ox, int oy, int ax, int ay, int w, int h)
+{
+    Entity& b = *gBroom;
+    x += Fx(ox);
+    y += Fx(oy);
+    b.mV->mOffX = Fx(ox);
+    b.mV->mOffY = Fx(oy);
+    extra.mT->mRot = b.mT->mRot;
+    extra.mV->mVisible = true;
+    extra.mT->mX = x + Fx(ax);
+    extra.mT->mY = y + Fx(ay);
+    const bool vertical = FacingX(static_cast<Facing>(b.mFacing)) == 0;
+    b.mB->mW = static_cast<int16_t>(vertical ? h : w);
+    b.mB->mH = static_cast<int16_t>(vertical ? w : h);
+    BroomData& bd = b.Data<BroomData>();
+    if (!bd.mPlayedExtraAnim)
+    {
+        // (updated by the broom and again as its sub-entity: twice the speed)
+        Ecs_Play(extra, "a", true, 28);
+        bd.mPlayedExtraAnim = true;
+    }
+}
+
+// The broom type's extra for a facing: the wide one's offsets, then the long one's.
+void BroomExtraValues(fx& x, fx& y, int wox, int woy, int wax, int way, int lox, int loy, int lax, int lay)
+{
+    const uint8_t type = Inventory_EquippedBroom();
+    if (type == BROOM_WIDE)
+    {
+        BroomSetExtra(*gWideAttack, x, y, wox, woy, wax, way, 12, 24);
+    }
+    else if (type == BROOM_LONG)
+    {
+        BroomSetExtra(*gLongAttack, x, y, lox, loy, lax, lay, 22, 12);
+    }
+}
+
 void BroomUpdatePos()
 {
     Entity& b = *gBroom;
@@ -874,12 +937,14 @@ void BroomUpdatePos()
         x = root.mX - Fx(14);
         y = root.mY;
         behind = true;
+        BroomExtraValues(x, y, 1, -5, -3, 0, -13, 0, -1, 1);
         x += frame == 0 ? Fx(10) : (frame == 1 ? Fx(6) : (frame == 2 ? -Fx(1) : 0));
         break;
     case FACE_RIGHT:
         b.mT->mRot = kFxPi;
         x = root.mX + Fx(gPlayer->mB->mW);
         y = root.mY - Fx(2);
+        BroomExtraValues(x, y, 3, -3, 5, 0, 6, 2, 0, 0);
         x -= frame == 0 ? Fx(12) : (frame == 1 ? Fx(8) : (frame == 2 ? Fx(1) : 0));
         break;
     case FACE_UP:
@@ -887,12 +952,14 @@ void BroomUpdatePos()
         x = root.mX - Fx(2);
         y = root.mY - Fx(16);
         behind = true;
+        BroomExtraValues(x, y, -3, -1, 6, -6, 3, -10, -5, 4);
         y += frame == 0 ? Fx(12) : (frame == 1 ? Fx(6) : (frame == 2 ? Fx(2) : 0));
         break;
     default:
         b.mT->mRot = kFxPi + kFxPi / 2;
         x = root.mX - Fx(6);
         y = root.mY + Fx(gPlayer->mB->mH);
+        BroomExtraValues(x, y, -5, 4, 6, -6, 1, 6, -5, 3);
         y -= frame == 0 ? Fx(8) : (frame == 1 ? Fx(5) : (frame == 2 ? Fx(2) : 0));
         break;
     }
@@ -920,6 +987,9 @@ void BroomUpdate(Entity& self)
     if (Ecs_AnimFinished(self))
     {
         self.mExists = false;
+        gWideAttack->mV->mVisible = false;
+        gLongAttack->mV->mVisible = false;
+        b.mPlayedExtraAnim = false;
         if (b.mJustReleased)
         {
             b.mCarrying = false;
@@ -1128,6 +1198,10 @@ const EntityClass kReflectionClass = {
     ECF_MAP_COLLISION,
 };
 
+const EntityClass kBroomExtraClass = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
 const EntityClass kBroomReflectionClass = {
     "BroomReflection", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
@@ -1162,6 +1236,17 @@ Entity* Player_Create()
     gBroom->mV->mLayerRef = gPlayer;
     gBroom->mV->mLayerOffset = 1;
     gBroom->mExists = false;
+    gLongAttack = CreateOwned(kBroomExtraClass, PART_VISUAL);
+    gWideAttack = CreateOwned(kBroomExtraClass, PART_VISUAL);
+    Ecs_SetSheet(*gLongAttack, "long_attack_h", 22, 12);
+    Ecs_SetSheet(*gWideAttack, "wide_attack_v", 12, 24);
+    Entity* const extras[2] = { gLongAttack, gWideAttack };
+    for (Entity* extra : extras)
+    {
+        extra->mV->mLayer = LAYER_PARTICLES;
+        extra->mV->mVisible = false;
+        Ecs_SetSolid(*extra, false);
+    }
 
     gShadow = CreateOwned(kShadowClass, PART_VISUAL);
     Ecs_SetSheet(*gShadow, "8x8_shadow", 8, 8);
@@ -1227,6 +1312,7 @@ void Player_Reset(const char* mapName)
     d.mJustLanded = false;
     d.mDontMove = false;
     d.mSlow = false;
+    d.mReversed = false;
     d.mJumpStage = 0;
     if (d.mEnterFall)
     {
@@ -1294,6 +1380,11 @@ void Player_AddAdditionalVel(fx x, fx y)
 {
     P().mAddVelX += x;
     P().mAddVelY += y;
+}
+
+void Player_Reverse()
+{
+    P().mReversed = true;
 }
 
 void Player_SetSlowFor(int ticks)

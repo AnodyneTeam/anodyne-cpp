@@ -73,6 +73,8 @@ void Player_LoseBroomDust();
 void Player_UpdateBroomType();
 // slowMul = 0.5 for the next `ticks` updates and the one after (a Person in the way).
 void Player_SetSlowFor(int ticks);
+// Player.reversed = true (a GasGuy's gas): the d-pad is backwards until 0.9 s have passed.
+void Player_Reverse();
 // Player.offset.Y (the height drawn above the shadow).
 fx Player_OffsetY();
 // FallDoor.Collided: the next map drops the player in from above (enter_fall); smack: it lands slumped (fall_smack).
