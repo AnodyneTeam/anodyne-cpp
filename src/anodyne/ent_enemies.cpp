@@ -3542,7 +3542,7 @@ void RedBossStep(Entity& self)
         }
         Ecs_Play(self, "die");
         Game_PlaySfx("redboss_death");
-        // TODO: GlobalState.wave (the screen's wobble while it sinks)
+        Screen_SetWave(true); // the screen wobbles while it sinks
         v.mYPush = 0;
         d.mState = RB_SINK;
         [[fallthrough]];
@@ -3572,6 +3572,7 @@ void RedBossStep(Entity& self)
             Preset_SetAlive(*self.mPreset, false);
         }
         self.mExists = false;
+        Screen_SetWave(false);
         if (!d.mBossRush)
         {
             Game_SetBossDefeated("REDCAVE");

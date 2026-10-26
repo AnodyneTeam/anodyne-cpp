@@ -259,8 +259,54 @@ struct Flash final
     fx mAlpha;
     fx mStep; // per frame
     bool mWhite;
+    bool mRed;
 };
 Flash gFlash = {};
+
+// The red flash tints the palettes towards red (all but the backdrop, which also fills the margins round the
+// playfield). An entry something else rewrites meanwhile becomes the new base, and at the end only the entries
+// still holding the tint go back.
+constexpr int kPalEntries = 512; // BG then OBJ
+uint16_t gTintBase[kPalEntries] __attribute__((section(".sbss")));
+uint16_t gTintLast[kPalEntries] __attribute__((section(".sbss")));
+bool gTinted = false;
+
+// FadeEffect: each colour moves `level`/32 of the way to red.
+void TintPalettes(int level)
+{
+    for (int i = 1; i < kPalEntries; i++)
+    {
+        const uint16_t now = pal_bg_mem[i];
+        if (!gTinted || now != gTintLast[i])
+        {
+            gTintBase[i] = now;
+        }
+        const int base = gTintBase[i];
+        const int r = base & 31;
+        const int g = (base >> 5) & 31;
+        const int b = (base >> 10) & 31;
+        const uint16_t out = RGB15(r + (31 - r) * level / 32, g - g * level / 32, b - b * level / 32);
+        pal_bg_mem[i] = out;
+        gTintLast[i] = out;
+    }
+    gTinted = true;
+}
+
+void UntintPalettes()
+{
+    if (!gTinted)
+    {
+        return;
+    }
+    for (int i = 1; i < kPalEntries; i++)
+    {
+        if (pal_bg_mem[i] == gTintLast[i])
+        {
+            pal_bg_mem[i] = gTintBase[i];
+        }
+    }
+    gTinted = false;
+}
 
 void UpdateScreenEffects()
 {
@@ -1085,6 +1131,7 @@ void DeathStart()
     gDeath = Death();
     gDeath.mActive = true;
     Screen_SetWave(false); // DeathState: wave.Deactivate()
+    UntintPalettes();
     gGame.mDisableMenu = true;
     AudioManager_StopBGM();
     Entity& p = *Player_Entity();
@@ -1284,6 +1331,7 @@ void Screen_Flash(fx seconds, FlashColour colour)
     gFlash.mAlpha = kFxOne;
     gFlash.mStep = FxDiv(kFxOne, FxMul(seconds, Fx(kFps)));
     gFlash.mWhite = colour != FLASH_BLACK;
+    gFlash.mRed = colour == FLASH_RED;
 }
 
 bool Screen_FlashActive()
@@ -1895,16 +1943,31 @@ void World_Update()
                 gLightWindows = false;
                 ApplyWindows();
             }
-            int y = FxFloor(gFlash.mAlpha * 16 + kFxOne / 2);
-            y = y > 16 ? 16 : y;
-            ScreenDarken(0);
-            REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP |
-                         (gFlash.mWhite ? BLD_WHITE : BLD_BLACK);
-            REG_BLDY = static_cast<uint16_t>(y);
-            gDarkWritten = true;
+            if (gFlash.mRed)
+            {
+                int level = FxFloor(gFlash.mAlpha * 32 + kFxOne / 2);
+                TintPalettes(level > 32 ? 32 : level);
+                if (gDark.mAlpha > 0 || gDarkWritten)
+                {
+                    World_ScreenDarken(0);
+                }
+                gDarkWritten = gDark.mAlpha > 0;
+            }
+            else
+            {
+                UntintPalettes();
+                int y = FxFloor(gFlash.mAlpha * 16 + kFxOne / 2);
+                y = y > 16 ? 16 : y;
+                ScreenDarken(0);
+                REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP |
+                             (gFlash.mWhite ? BLD_WHITE : BLD_BLACK);
+                REG_BLDY = static_cast<uint16_t>(y);
+                gDarkWritten = true;
+            }
         }
         else
         {
+            UntintPalettes();
             if (gDark.mAlpha > 0 || gDarkWritten)
             {
                 World_ScreenDarken(0);

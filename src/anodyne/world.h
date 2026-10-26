@@ -121,7 +121,7 @@ enum FlashColour : uint8_t
 {
     FLASH_WHITE,
     FLASH_BLACK,
-    FLASH_RED, // (drawn white for now: BLDY only fades to white or black)
+    FLASH_RED, // (BLDY only fades to white or black: this one tints the palettes)
 };
 void Screen_Flash(fx seconds, FlashColour colour = FLASH_WHITE);
 bool Screen_FlashActive();
