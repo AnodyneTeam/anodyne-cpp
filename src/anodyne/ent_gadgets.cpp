@@ -1174,6 +1174,7 @@ struct DoorData final
     bool mPadOn;        // NexusPad.playerCollission
     bool mActivated;    // NexusDoor.activated
     bool mInactive;     // !Door.Active (a DoorToggle shut it)
+    bool mNoSmack;      // !FallDoor.smack_on_next_screen
 };
 
 bool PlayerOn(const Entity& self)
@@ -1252,8 +1253,24 @@ void DoorCollided(Entity& self, Entity& other)
     case DOOR_NEXUS:
         Ecs_Separate(self, other);
         break;
+    case DOOR_FALL:
+        if (d.mInactive)
+        {
+            break;
+        }
+        if (Player_State() == PS_GROUND || (Player_State() == PS_ENTER_FALL && Player_OffsetY() == 0))
+        {
+            DoorTeleport(self);
+            Player_EnterFall(!d.mNoSmack);
+            d.mInactive = true;
+        }
+        else if (Player_State() == PS_AUTO_JUMP)
+        {
+            // The first jump lands on the top floor's door: only the second door's fall ends in a smack
+            d.mNoSmack = true;
+        }
+        break;
     default:
-        // (FallDoor's CROWD-only falling sequence isn't ported: it acts as a plain door)
         if (!d.mPlayerOnDoor && !d.mInactive)
         {
             DoorTeleport(self);
@@ -1309,6 +1326,24 @@ void DoorToggleCollided(Entity& self, Entity& other)
 const EntityClass kDoorToggle = {
     "DoorToggle", DoorToggleUpdate, nullptr, DoorToggleCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_DOOR, 0,
 };
+
+} // namespace
+
+// GlobalState.SpawnEntity(new DoorToggle(position, w, h)).
+void Spawn_DoorToggle(fx x, fx y, int w, int h)
+{
+    Entity* t = Ecs_Create(kDoorToggle, x, y, PART_BRAIN);
+    if (t)
+    {
+        Ecs_MarkSpawned(*t);
+        t->mB->mW = w;
+        t->mB->mH = h;
+        t->Data<DoorToggleData>() = DoorToggleData();
+    }
+}
+
+namespace
+{
 
 // RedCaveEntrance (Solid_Sprite red_cave_*_ss): the cave mouth, there once its map event reached the count; until then
 // it isn't, and its door is shut.
@@ -2139,14 +2174,7 @@ Entity* Spawn_RedCaveEntrance(const MapEntity& preset, Entity&)
     if (Event_Get(type) < required)
     {
         e->mExists = false;
-        Entity* t = Ecs_Create(kDoorToggle, e->mT->mX, e->mT->mY, PART_BRAIN);
-        if (t)
-        {
-            Ecs_MarkSpawned(*t);
-            t->mB->mW = 56;
-            t->mB->mH = 28;
-            t->Data<DoorToggleData>() = DoorToggleData();
-        }
+        Spawn_DoorToggle(e->mT->mX, e->mT->mY, 56, 28);
     }
     return e;
 }
@@ -2285,4 +2313,176 @@ const char* Gadgets_ProbeName(const Entity& e)
     default:
         return "Door";
     }
+}
+
+// ---- Propelled and Stop_Marker (Gadget/Propelled.cs) ------------------------------------------------------------
+// A platform the player rides: a dust swept onto it powers it up, and landing on it (a jump) sends it off the way it
+// faces until a Stop_Marker, then back to where it started.
+namespace
+{
+struct PropelledData final
+{
+    bool mPressed;
+    bool mPressedThisFrame;
+    bool mActive;
+    bool mStartDir;
+    fx mInitX;
+    fx mInitY;
+    Entity* mPoof;
+};
+
+void PropelledUpdateFrame(Entity& self)
+{
+    const PropelledData& d = self.Data<PropelledData>();
+    char anim[24];
+    snprintf(anim, sizeof(anim), "%s-%s", d.mPressed ? "pressed" : "unpressed", d.mActive ? "active" : "inactive");
+    Ecs_Play(self, anim);
+}
+
+void PropelledPotentialStop(Entity& self, fx x, fx y)
+{
+    PropelledData& d = self.Data<PropelledData>();
+    Transform& t = *self.mT;
+    if (t.mVelX == 0 && t.mVelY == 0)
+    {
+        return;
+    }
+    const fx dx = t.mX - self.mV->mOffX - x;
+    const fx dy = t.mY - self.mV->mOffY - y;
+    if (dx.mV * dx.mV + dy.mV * dy.mV < 4) // (Vector2.LengthSquared)
+    {
+        t.mVelX = t.mVelY = 0;
+        t.mX = x + self.mV->mOffX;
+        t.mY = y + self.mV->mOffY;
+        const Facing f = static_cast<Facing>(self.mFacing);
+        Ecs_FaceTowards(self, t.mX - Fx(FacingX(f)), t.mY - Fx(FacingY(f)));
+        d.mStartDir = !d.mStartDir;
+    }
+}
+
+void PropelledUpdate(Entity& self)
+{
+    PropelledData& d = self.Data<PropelledData>();
+    Ecs_BaseUpdate(self);
+    if (d.mPressed && !d.mPressedThisFrame)
+    {
+        Game_PlaySfx("button_up");
+    }
+    else if (!d.mPressed && d.mPressedThisFrame)
+    {
+        Game_PlaySfx("button_down");
+    }
+    d.mPressed = d.mPressedThisFrame;
+    PropelledUpdateFrame(self);
+    if (!d.mStartDir)
+    {
+        PropelledPotentialStop(self, d.mInitX, d.mInitY);
+    }
+}
+
+void PropelledPostUpdate(Entity& self)
+{
+    self.Data<PropelledData>().mPressedThisFrame = false;
+}
+
+const EntityClass kStopMarker = {
+    "Stop_Marker", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, GROUP_STOP_MARKER, 0, 0,
+};
+
+void PropelledCollided(Entity& self, Entity& other)
+{
+    PropelledData& d = self.Data<PropelledData>();
+    Transform& t = *self.mT;
+    if (&other == World_Player())
+    {
+        Player_DontFall();
+        if (Player_State() != PS_GROUND)
+        {
+            return;
+        }
+        d.mPressedThisFrame = true;
+        if (Player_JustLanded() && d.mActive && t.mVelX == 0 && t.mVelY == 0)
+        {
+            const Facing f = static_cast<Facing>(self.mFacing);
+            t.mVelX = Fx(FacingX(f) * 33);
+            t.mVelY = Fx(FacingY(f) * 33);
+            d.mActive = false;
+            Entity& poof = *d.mPoof;
+            poof.mExists = true;
+            Ecs_Play(poof, "play", true);
+            // the poof's middle 16 px behind the platform's visual centre
+            poof.mT->mX = Ecs_VisualCenterX(self) - Fx(FacingX(f) * 16) - Fx(poof.mB->mW / 2);
+            poof.mT->mY = Ecs_VisualCenterY(self) - Fx(FacingY(f) * 16) - Fx(poof.mB->mH / 2);
+            Game_PlaySfx("dustpoof");
+        }
+        Player_AddAdditionalVel(t.mVelX, t.mVelY);
+    }
+    else if (other.mClass == &kDust)
+    {
+        if (!d.mActive)
+        {
+            d.mActive = true;
+            Ecs_Play(other, "poof");
+            Game_PlaySfx("dash_pad_2");
+        }
+    }
+    else if (other.mClass == &kStopMarker && d.mStartDir)
+    {
+        PropelledPotentialStop(self, other.mT->mX, other.mT->mY);
+    }
+}
+
+const EntityClass kPropelled = {
+    "Propelled", PropelledUpdate, PropelledPostUpdate, PropelledCollided, nullptr, nullptr, nullptr, nullptr,
+    0,           GROUP_PLAYER | GROUP_DUST | GROUP_STOP_MARKER, 0,
+};
+
+const EntityClass kPropelledPoof = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_Propelled(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kPropelled, preset, "moving_platform");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, preset.mFrame % 2 == 0 ? 4 : 0);
+    e->mV->mLayer = LAYER_VERY_BG_ENTITIES;
+    e->mB->mW = e->mB->mH = 10;
+    Ecs_CenterOffset(*e);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    PropelledData& d = e->Data<PropelledData>();
+    d = PropelledData();
+    d.mStartDir = true;
+    d.mInitX = Fx(preset.mX);
+    d.mInitY = Fx(preset.mY);
+    static const uint8_t kFacing[4] = { FACE_UP, FACE_RIGHT, FACE_DOWN, FACE_LEFT };
+    e->mFacing = kFacing[preset.mFrame % 4];
+    d.mActive = preset.mFrame >= 4;
+    Entity* poof = Ecs_Create(kPropelledPoof, 0, 0, PART_VISUAL, nullptr, e);
+    if (!poof)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*poof, "moving_platform_poof", 16, 16);
+    poof->mB->mW = poof->mB->mH = 16;
+    poof->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_KeepPooled(*poof);
+    d.mPoof = poof;
+    PropelledUpdateFrame(*e);
+    return e;
+}
+
+Entity* Spawn_StopMarker(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kStopMarker, Fx(preset.mX), Fx(preset.mY), 0, &preset);
+    if (e)
+    {
+        e->mB->mW = e->mB->mH = 16;
+    }
+    return e;
 }

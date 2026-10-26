@@ -10,6 +10,7 @@
 #include "sprite.h"
 
 #include "tonc.h"
+#include "world.h"
 
 namespace
 {
@@ -49,6 +50,8 @@ struct PlayerData final
     bool mActionsDisabled;
     bool mSkipBroom;
     bool mJustLanded;
+    bool mEnterFall; // enter_fall: the next map starts with the player dropping in from above
+    bool mFallSmack; // fall_smack: and landing slumped
     bool mOnHole;
     bool mIsSlipping;
     bool mHasFallen;
@@ -677,6 +680,20 @@ void Movement()
     case PS_AUTO_JUMP:
         JumpStep();
         break;
+    case PS_ENTER_FALL:
+        t.mVelX = t.mVelY = 0;
+        if (MoveTo(gPlayer->mV->mOffY, 0, Fx(102)) && d.mFallSmack)
+        {
+            d.mState = PS_GROUND;
+            PlayerPlay("slumped");
+            d.mAnimState = AS_SLUMPED;
+            t.mAngVel = 0;
+            t.mRot = 0;
+            Screen_Shake(FxF(0.05f), FxF(0.4f));
+            Game_PlaySfx("hit_ground_1");
+            d.mFallSmack = false;
+        }
+        break;
     case PS_LADDER:
         LadderLogic();
         break;
@@ -1211,6 +1228,15 @@ void Player_Reset(const char* mapName)
     d.mDontMove = false;
     d.mSlow = false;
     d.mJumpStage = 0;
+    if (d.mEnterFall)
+    {
+        d.mState = PS_ENTER_FALL;
+        gPlayer->mV->mOffY = Fx(150);
+        Game_PlaySfx("fall_1");
+        gPlayer->mT->mAngVel = Fx(400);
+        PlayerPlay("enter_fall");
+    }
+    d.mEnterFall = false;
     if (d.mRaft)
     {
         Dust_SetRaft(*d.mRaft, false);
@@ -1234,6 +1260,35 @@ void Player_SetGridEntrance()
 {
     P().mGridEntranceX = gPlayer->mT->mX;
     P().mGridEntranceY = gPlayer->mT->mY;
+}
+
+fx Player_OffsetY()
+{
+    return gPlayer->mV->mOffY;
+}
+
+void Player_EnterFall(bool smack)
+{
+    PlayerData& d = P();
+    d.mEnterFall = true;
+    if (smack)
+    {
+        d.mFallSmack = true;
+        // (the map transition must finish before fall_smack acts)
+        d.mState = PS_GROUND;
+        d.mDontMove = true;
+    }
+}
+
+void Player_DontFall()
+{
+    P().mIsSlipping = false;
+}
+
+void Player_AddAdditionalVel(fx x, fx y)
+{
+    P().mAddVelX += x;
+    P().mAddVelY += y;
 }
 
 void Player_SetSlowFor(int ticks)

@@ -1,5 +1,6 @@
 #include "collision_compiler.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "file_utils.hpp"
+#include "lodepng.h"
 #include "lz77.hpp"
 #include "map_compiler.hpp"
 
@@ -161,6 +163,23 @@ std::vector<TileCollision> LoadTileCollision(const std::string& colPath, uint32_
     return tiles;
 }
 
+// The tileset's 16x16 tiles (its PNG's size, read from the header).
+uint32_t TilesetTileCount(const std::string& pngPath)
+{
+    std::vector<unsigned char> png;
+    if (lodepng::load_file(png, pngPath) != 0 || png.empty())
+    {
+        return 0;
+    }
+    unsigned w = 0;
+    unsigned h = 0;
+    LodePNGState state;
+    lodepng_state_init(&state);
+    const unsigned error = lodepng_inspect(&w, &h, &state, png.data(), png.size());
+    lodepng_state_cleanup(&state);
+    return error ? 0 : (w / 16) * (h / 16);
+}
+
 uint32_t LayerTile(const Array2D<uint32_t>& layer, bool present, uint32_t x, uint32_t y)
 {
     // TileMap.GetTile: anything outside the layer is tile 0.
@@ -204,7 +223,9 @@ bool CompileMapCollision(const ContentPaths& contentPaths, const std::string& ma
         }
     }
 
-    const std::vector<TileCollision> tiles = LoadTileCollision(contentPaths.GetMapTileDataPath(mapName), maxTile + 1);
+    // (ChangeTile can put any tile of the tileset down: cover the tileset, not just the tiles the layers use)
+    const uint32_t tileCount = std::max(maxTile + 1, TilesetTileCount(contentPaths.GetMapTilesetPath(mapName)));
+    const std::vector<TileCollision> tiles = LoadTileCollision(contentPaths.GetMapTileDataPath(mapName), tileCount);
 
     // Merge BG + BG2 into one class per cell.
     std::map<TileCollision, uint8_t> classIndex;
@@ -278,6 +299,16 @@ bool CompileMapCollision(const ContentPaths& contentPaths, const std::string& ma
         out += buf;
     }
     out += "};\n";
+    snprintf(buf, sizeof(buf), "const unsigned short gColTileCount = %zu;\n", tiles.size());
+    out += buf;
+    out += "const unsigned char gColTiles[] = {"; // per tile: allow, event, direction (for ChangeTile)
+    for (size_t i = 0; i < tiles.size(); i++)
+    {
+        snprintf(buf, sizeof(buf), "%s%u,%u,%u,", (i % 8 == 0) ? "\n    " : " ", tiles[i].mAllow, tiles[i].mEvent,
+                 tiles[i].mDirection);
+        out += buf;
+    }
+    out += "\n};\n";
     snprintf(buf, sizeof(buf), "const unsigned int gColUnpackedSize = %zu;\n", grid.size());
     out += buf;
     snprintf(buf, sizeof(buf), "alignas(4) const unsigned char gColPacked[%zu] = {", packed.size());

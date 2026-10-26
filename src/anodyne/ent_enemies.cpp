@@ -3628,6 +3628,1053 @@ const EntityClass kRedBoss = {
     "Red_Boss", RedBossUpdate, nullptr, RedBossCollided, nullptr, nullptr, nullptr, nullptr,
     0,          GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
 };
+
+// ---- WallBoss (Crowd/WallBoss.cs) -------------------------------------------------------------------------------
+// The boss and its sub-entities, in the C#'s SubEntities order: Wall, Face (its eight Bullets, each with its Shadow),
+// LHand and RHand (each with its Shadow and DeathExplosion), Laser, then eight DeathExplosions. Each C# coroutine is a
+// state and a step function: a step's cases run on into the next one in the same frame, and return true is the
+// yield.
+constexpr int kWallBossPool = 8;
+
+// Parabola_Thing: arcs the entity's offset.Y; the shadow (if any) follows the height.
+struct Parabola final
+{
+    float mT;
+    float mHeight;
+    float mPeriod;
+    float mStart;
+};
+
+void ParabolaInit(Parabola& p, const Entity& e, float height, float period)
+{
+    p.mT = 0;
+    p.mHeight = height;
+    p.mPeriod = period;
+    p.mStart = e.mV->mOffY.mV;
+}
+
+float ParabolaProgress(const Parabola& p)
+{
+    return fminf(p.mT / p.mPeriod, 1.0f);
+}
+
+// Shadow.UpdateShadow, for a shadow sheet with frames 0..maxFrame.
+void UpdateShadowFrames(Entity& shadow, float jumpHeight, int maxFrame)
+{
+    const int frame = static_cast<int>(ceilf(jumpHeight * static_cast<float>(maxFrame + 1))) - 1;
+    if (frame == -1)
+    {
+        shadow.mV->mVisible = false;
+    }
+    else
+    {
+        shadow.mV->mVisible = true;
+        Ecs_SetFrame(shadow, frame);
+    }
+}
+
+bool ParabolaTick(Parabola& p, Entity& e, Entity* shadow, int maxFrame)
+{
+    p.mT += kDeltaTime;
+    if (p.mT > p.mPeriod)
+    {
+        e.mV->mOffY = fx(p.mStart);
+        if (shadow)
+        {
+            UpdateShadowFrames(*shadow, 0, maxFrame);
+        }
+        return true;
+    }
+    const float half = p.mPeriod / 2;
+    e.mV->mOffY = fx(p.mStart + p.mT * (p.mPeriod - p.mT) / (half * half) * p.mHeight);
+    if (shadow)
+    {
+        UpdateShadowFrames(*shadow, fabsf(0.5f - ParabolaProgress(p)) * 2, maxFrame);
+    }
+    return false;
+}
+
+// The current screen's top-left (GlobalState.CurrentMapGrid).
+fx GridLeft()
+{
+    return Fx(gGame.mGridX * 160);
+}
+
+fx GridTop()
+{
+    return Fx(gGame.mGridY * 160);
+}
+
+// ---- DeathExplosion
+void DeathExplosionUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+}
+
+const EntityClass kDeathExplosion = {
+    "DeathExplosion", DeathExplosionUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- Wall
+void WallCollided(Entity& self, Entity& other)
+{
+    if (self.mV->mOpacity != 0)
+    {
+        Ecs_Separate(self, other);
+    }
+}
+
+const EntityClass kWall = {
+    "Wall", Ecs_BaseUpdate, nullptr, WallCollided, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_PART_OF_MAP,
+};
+
+// ---- Face and its Bullets
+struct WallBulletData final
+{
+    Parabola mArc;
+    Entity* mShadow;
+};
+
+void WallBulletSetExists(Entity& b, bool exists)
+{
+    b.mExists = exists;
+    b.Data<WallBulletData>().mShadow->mExists = exists;
+}
+
+void WallBulletUpdate(Entity& self)
+{
+    WallBulletData& d = self.Data<WallBulletData>();
+    Ecs_BaseUpdate(self);
+    // shadow.Update: Position = parent.Position - (offset - sprite size / 4)
+    d.mShadow->mT->mX = self.mT->mX + Fx(2);
+    d.mShadow->mT->mY = self.mT->mY + Fx(2);
+    if (Ecs_AnimIs(self, "move") && ParabolaTick(d.mArc, self, d.mShadow, 3))
+    {
+        Ecs_Play(self, "explode");
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Game_PlaySfx("4sht_pop");
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        WallBulletSetExists(self, false);
+    }
+}
+
+void WallBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && Ecs_AnimIs(self, "move"))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kWallBullet = {
+    "Bullet", WallBulletUpdate, nullptr, WallBulletCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// Bullet.Spawn
+void WallBulletStart(Entity& b, const Entity& face)
+{
+    WallBulletData& d = b.Data<WallBulletData>();
+    WallBulletSetExists(b, true);
+    b.mT->mX = face.mT->mX + Fx(32);
+    b.mT->mY = face.mT->mY + Fx(16);
+    const int height = Rng_Range(16, 24);
+    ParabolaInit(d.mArc, b, static_cast<float>(height), 1.0f + static_cast<float>(Rng_NextDouble()) / 2);
+    Ecs_Play(b, "move");
+    b.mT->mVelX = Fx(Rng_Range(-30, 30));
+    b.mT->mVelY = Fx(30);
+}
+
+struct FaceData final
+{
+    int8_t mHealth;
+    uint8_t mStep;
+    bool mInvincible;
+    fx mHitTimeout;
+    float mCharge;
+};
+
+// The face's StateLogic
+void FaceStep(Entity& self)
+{
+    FaceData& d = self.Data<FaceData>();
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            d.mInvincible = false;
+            d.mCharge = 0;
+            Ecs_Play(self, "normal");
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (d.mCharge < 3.0f)
+            {
+                d.mCharge += kDeltaTime;
+                if (d.mHitTimeout == 0)
+                {
+                    Ecs_Play(self, "normal");
+                }
+                return;
+            }
+            d.mInvincible = true;
+            Ecs_Play(self, "charge");
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (d.mCharge < 4.0f)
+            {
+                d.mCharge += kDeltaTime;
+                return;
+            }
+            Ecs_Play(self, "shoot");
+            Game_PlaySfx("wb_shoot");
+            ForRedBossPool(self, kWallBullet, [&](Entity& b) {
+                if (!b.mExists)
+                {
+                    WallBulletStart(b, self);
+                }
+            });
+            d.mStep = 3;
+            [[fallthrough]];
+        default:
+            if (Ecs_CountChildren(self, kWallBullet) != 0)
+            {
+                return;
+            }
+            d.mStep = 0;
+            break;
+        }
+    }
+}
+
+void FaceUpdate(Entity& self)
+{
+    FaceData& d = self.Data<FaceData>();
+    Ecs_BaseUpdate(self);
+    MoveTo(d.mHitTimeout, 0, kFxOne);
+    if (self.mV->mOpacity == kFxOne)
+    {
+        FaceStep(self);
+    }
+}
+
+void FaceCollided(Entity& self, Entity&)
+{
+    FaceData& d = self.Data<FaceData>();
+    if (d.mInvincible || d.mHitTimeout > 0)
+    {
+        return;
+    }
+    if (--d.mHealth == 0)
+    {
+        Game_PlaySfx("wb_moan_2");
+        ForRedBossPool(self, kWallBullet, [](Entity& b) { WallBulletSetExists(b, false); });
+        self.mV->mOpacity = FxF(0.99f); // (stops its logic)
+    }
+    else
+    {
+        Game_PlaySfx("wb_moan");
+    }
+    d.mHitTimeout = kFxOne;
+    Ecs_Play(self, "hurt");
+}
+
+const EntityClass kFace = {
+    "Face", FaceUpdate, nullptr, FaceCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_BROOM, 0,
+};
+
+// ---- Laser
+struct WallLaserData final
+{
+    uint8_t mStep;
+    bool mAttacking; // state != null
+    fx mStartY;
+};
+
+// Laser.Attack
+bool WallLaserStep(Entity& self)
+{
+    WallLaserData& d = self.Data<WallLaserData>();
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case 0:
+        Ecs_Play(self, "charge");
+        Ecs_Flicker(self, FxSec(1.3f));
+        Game_PlaySfx("sun_guy_charge");
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (self.mV->mFlickering)
+        {
+            return true;
+        }
+        Ecs_Play(self, "attack");
+        t.mVelY = Fx(50);
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (InGrid(t.mY) < Fx(16 * 6 + 11))
+        {
+            return true;
+        }
+        t.mVelY = -Fx(65);
+        d.mStep = 3;
+        [[fallthrough]];
+    case 3:
+        if (InGrid(t.mY) > Fx(45))
+        {
+            return true;
+        }
+        t.mVelY = Fx(80);
+        d.mStep = 4;
+        [[fallthrough]];
+    case 4:
+        if (InGrid(t.mY) < Fx(16 * 6 + 11))
+        {
+            return true;
+        }
+        t.mVelX = t.mVelY = 0;
+        d.mStep = 5;
+        [[fallthrough]];
+    default:
+        return !MoveTo(t.mY, d.mStartY, Fx(110));
+    }
+}
+
+void WallLaserUpdate(Entity& self)
+{
+    WallLaserData& d = self.Data<WallLaserData>();
+    Ecs_BaseUpdate(self);
+    if (d.mAttacking && !WallLaserStep(self))
+    {
+        d.mAttacking = false;
+        self.mExists = false;
+        self.mV->mVisible = false;
+    }
+}
+
+void WallLaserCollided(Entity& self, Entity& other)
+{
+    if (!self.mV->mFlickering && IsPlayer(other) && Player_State() != PS_AIR)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kWallLaser = {
+    "Laser", WallLaserUpdate, nullptr, WallLaserCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- Hands
+enum HandCo : uint8_t
+{
+    HAND_NONE, // state == null
+    HAND_FLOAT,
+    HAND_PUSH,
+    HAND_FOLLOW,
+    HAND_GOTO,
+    HAND_RESET,
+    HAND_STOMP, // LHand.Stomp / RHand.Stomp
+};
+
+enum GroundPhase : uint8_t
+{
+    GROUND_NONE,
+    GROUND_CRACKED,
+    GROUND_FULL,
+};
+
+struct HandData final
+{
+    uint8_t mCo;
+    uint8_t mStep;
+    bool mRight;
+    uint8_t mGround;  // LHand's ground_state
+    uint8_t mPhase;   // Push / Stomp's phase
+    int8_t mStomps;   // LHand.Stomp's nr_stomps
+    uint8_t mCracked; // LHand's tiles
+    uint8_t mHole;
+    float mT; // Float's t, Stomp's wait_time
+    fx mSpeed;
+    fx mInitX;
+    fx mInitY;
+    fx mGoX;
+    fx mGoY;
+    Parabola mStomp;
+    Entity* mShadow;
+    Entity* mExplosion;
+    Entity* mLaser; // Follow's
+};
+
+void HandStart(Entity& h, uint8_t co)
+{
+    HandData& d = h.Data<HandData>();
+    d.mCo = co;
+    d.mStep = 0;
+}
+
+void HandGoTo(Entity& h, fx x, fx y, fx speed)
+{
+    HandData& d = h.Data<HandData>();
+    HandStart(h, HAND_GOTO);
+    d.mGoX = x;
+    d.mGoY = y;
+    d.mSpeed = speed;
+}
+
+void HandReset(Entity& h, fx speed)
+{
+    HandStart(h, HAND_RESET);
+    h.Data<HandData>().mSpeed = speed;
+}
+
+// GoTo's MoveNext: true while it hasn't got there (both axes move every frame).
+bool HandMoveStep(Entity& h, fx x, fx y, fx speed)
+{
+    const bool ax = MoveTo(h.mT->mX, x, speed);
+    const bool ay = MoveTo(h.mT->mY, y, speed);
+    return !(ax && ay);
+}
+
+void HandSpawnExplosion(Entity& h)
+{
+    Entity& e = *h.Data<HandData>().mExplosion;
+    e.mExists = true;
+    e.mT->mX = h.mT->mX;
+    e.mT->mY = h.mT->mY;
+    Ecs_Play(e, "explode@2", true);
+}
+
+// LHand.Stomp(phase, player)
+bool LHandStompStep(Entity& h)
+{
+    HandData& d = h.Data<HandData>();
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            d.mShadow->mV->mVisible = true;
+            d.mStomps = static_cast<int8_t>(d.mPhase + 2);
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (!(d.mStomps-- > 0))
+            {
+                return false;
+            }
+            d.mStomp.mT = 0;
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (ParabolaProgress(d.mStomp) < 0.5f)
+            {
+                const Entity& p = *World_Player();
+                MoveTo(h.mT->mX, p.mT->mX, Fx(60));
+                MoveTo(h.mT->mY, p.mT->mY - Fx(16), Fx(60));
+                ParabolaTick(d.mStomp, h, d.mShadow, 4);
+                return true;
+            }
+            Game_PlaySfx("fall_1");
+            d.mT = 0;
+            d.mStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (d.mT < 0.7f)
+            {
+                d.mT += kDeltaTime;
+                return true;
+            }
+            d.mStep = 4;
+            [[fallthrough]];
+        default:
+            if (!ParabolaTick(d.mStomp, h, d.mShadow, 4))
+            {
+                return true;
+            }
+            Screen_Shake(FxF(0.01f), FxF(0.2f));
+            HandSpawnExplosion(h);
+            Game_PlaySfx("wb_hit_ground");
+            if (d.mPhase != 0 && d.mGround != GROUND_FULL)
+            {
+                Screen_Shake(FxF(0.02f), FxF(0.5f));
+                Game_PlaySfx("floor_crack");
+                const int tile = d.mGround == GROUND_NONE ? d.mCracked : d.mHole;
+                const int tlX = gGame.mGridX * 10;
+                const int tlY = gGame.mGridY * 10;
+                for (int x = 2; x < 8; ++x)
+                {
+                    World_ChangeTile(0, tlX + x, tlY + 6, tile);
+                }
+                d.mGround = d.mGround == GROUND_NONE ? GROUND_CRACKED : GROUND_FULL;
+            }
+            d.mStep = 1;
+            return true;
+        }
+    }
+}
+
+// RHand.Stomp: taps along the floor, back and forth
+bool RHandStompStep(Entity& h)
+{
+    HandData& d = h.Data<HandData>();
+    Transform& t = *h.mT;
+    if (d.mStep == 0)
+    {
+        d.mStomp.mT = 0;
+        t.mVelX = -Fx(30);
+        d.mShadow->mV->mVisible = true;
+        d.mStep = 1;
+    }
+    const fx x = InGrid(t.mX);
+    if ((t.mVelX < 0 && x < Fx(16)) || (t.mVelX > 0 && x > Fx(16 * 9 - h.mB->mW)))
+    {
+        t.mVelX = -t.mVelX;
+        t.mVelY = -t.mVelY;
+    }
+    if (ParabolaTick(d.mStomp, h, d.mShadow, 4))
+    {
+        Game_PlaySfx("wb_tap_ground");
+        HandSpawnExplosion(h);
+        d.mStomp.mT = 0;
+    }
+    return true;
+}
+
+// state.MoveNext()
+bool HandStep(Entity& h)
+{
+    HandData& d = h.Data<HandData>();
+    Transform& t = *h.mT;
+    switch (d.mCo)
+    {
+    case HAND_FLOAT:
+        if (d.mStep == 0)
+        {
+            d.mT = 0;
+            d.mStep = 1;
+        }
+        d.mT += kDeltaTime;
+        t.mY = fx(d.mInitY.mV + 4 + static_cast<float>(d.mRight ? -1 : 1) * sinf(d.mT * kFxTau.mV) * 8);
+        return true;
+    case HAND_PUSH:
+        if (d.mStep == 0)
+        {
+            Ecs_Play(h, "push");
+            t.mVelX = Fx(Rng_Range(20, 60));
+            t.mVelY = Fx(60 + d.mPhase * 30);
+            if (d.mRight)
+            {
+                t.mVelX = -t.mVelX;
+            }
+            d.mStep = 1;
+        }
+        if (InGrid(t.mY) < Fx(6 * 16))
+        {
+            return true;
+        }
+        t.mVelX = t.mVelY = 0;
+        return false;
+    case HAND_FOLLOW:
+        t.mY = d.mLaser->mT->mY - Fx(11);
+        return true;
+    case HAND_GOTO:
+        return HandMoveStep(h, d.mGoX, d.mGoY, d.mSpeed);
+    case HAND_RESET:
+    {
+        if (d.mStep == 0)
+        {
+            t.mVelX = t.mVelY = 0;
+            d.mShadow->mV->mVisible = false;
+            d.mStep = 1;
+        }
+        // (|: both run every frame)
+        const bool moving = HandMoveStep(h, d.mInitX, d.mInitY, d.mSpeed);
+        const bool lowered = MoveTo(h.mV->mOffY, 0, Fx(120));
+        if (moving || !lowered)
+        {
+            return true;
+        }
+        Ecs_Play(h, "idle");
+        return false;
+    }
+    case HAND_STOMP:
+        return d.mRight ? RHandStompStep(h) : LHandStompStep(h);
+    default:
+        return false;
+    }
+}
+
+void HandUpdate(Entity& self)
+{
+    HandData& d = self.Data<HandData>();
+    Ecs_BaseUpdate(self);
+    // shadow.Update: Position = parent.Position - ((8, -12) - sprite size / 4)
+    d.mShadow->mT->mX = self.mT->mX;
+    d.mShadow->mT->mY = self.mT->mY + Fx(20);
+    if (d.mCo != HAND_NONE && !HandStep(self))
+    {
+        d.mCo = HAND_NONE;
+    }
+}
+
+void HandPostUpdate(Entity& self)
+{
+    const fx off = self.mV->mOffY;
+    const int frame = off >= Fx(29) ? 0 : off >= Fx(24) ? 1 : off >= Fx(16) ? 2 : off >= Fx(8) ? 3 : 4;
+    Ecs_SetFrame(*self.Data<HandData>().mShadow, frame);
+}
+
+void HandCollided(Entity& self, Entity& other)
+{
+    const HandData& d = self.Data<HandData>();
+    if (!d.mShadow->mV->mVisible)
+    {
+        Ecs_Separate(self, other);
+    }
+    else if (Ecs_Intersects(Ecs_Hitbox(*d.mShadow), Ecs_Hitbox(other)) && self.mV->mOffY < Fx(8) && IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kLHand = {
+    "LHand", HandUpdate, HandPostUpdate, HandCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+const EntityClass kRHand = {
+    "RHand", HandUpdate, HandPostUpdate, HandCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+// ---- WallBoss
+enum WallBossState : uint8_t
+{
+    WB_START,
+    WB_WAIT_PLAYER, // until the player is 80 px up the room
+    WB_DIALOGUE,    // "before_fight"
+    WB_FADE_IN,
+    WB_FIGHT,
+    WB_FLASH,
+    WB_AFTER, // "after_fight"
+    WB_FADE_OUT,
+    WB_POST,
+    WB_DONE,
+};
+
+enum WallAttack : uint8_t
+{
+    WA_STOMP,
+    WA_LASER,
+    WA_PUSH,
+};
+
+struct WallBossData final
+{
+    uint8_t mState;
+    uint8_t mFight;      // FightLogic's step
+    uint8_t mAttack;     // WallAttack
+    uint8_t mAttackStep; // its step
+    uint8_t mPushType;   // PushAttack: 0 right hand, 1 left hand, 2 both
+    int8_t mPushes;      // num_pushes
+    bool mBossRush;
+    bool mVolume; // its VolumeEvent(0, 0.3) is fading the song out
+    float mT;     // FightLogic's t, the explosion timer, post_death_timer
+    Entity* mWall;
+    Entity* mFace;
+    Entity* mLHand;
+    Entity* mRHand;
+    Entity* mLaser;
+};
+
+int WallBossPhase(const WallBossData& d)
+{
+    const int health = d.mFace->Data<FaceData>().mHealth;
+    return health > 10 ? 0 : (health > 5 ? 1 : 2);
+}
+
+bool HandBusy(const Entity& h)
+{
+    return const_cast<Entity&>(h).Data<HandData>().mCo != HAND_NONE;
+}
+
+void WallBossSyncOpacity(WallBossData& d)
+{
+    const fx o = d.mFace->mV->mOpacity;
+    d.mWall->mV->mOpacity = d.mRHand->mV->mOpacity = d.mLHand->mV->mOpacity = o;
+}
+
+bool StompAttackStep(WallBossData& d)
+{
+    Entity& l = *d.mLHand;
+    Entity& r = *d.mRHand;
+    switch (d.mAttackStep)
+    {
+    case 0:
+        Ecs_Play(l, "stomp");
+        Ecs_Play(r, "stomp");
+        HandStart(l, HAND_NONE);
+        HandGoTo(r, r.Data<HandData>().mInitX, r.Data<HandData>().mInitY, Fx(30));
+        d.mAttackStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (HandBusy(r))
+        {
+            return true;
+        }
+        HandStart(r, HAND_STOMP);
+        HandStart(l, HAND_STOMP);
+        l.Data<HandData>().mPhase = static_cast<uint8_t>(WallBossPhase(d));
+        d.mAttackStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (HandBusy(l))
+        {
+            return true;
+        }
+        HandReset(r, Fx(180));
+        HandReset(l, Fx(180));
+        d.mAttackStep = 3;
+        [[fallthrough]];
+    default:
+        return HandBusy(r) || HandBusy(l);
+    }
+}
+
+bool LaserAttackStep(WallBossData& d)
+{
+    Entity& l = *d.mLHand;
+    Entity& r = *d.mRHand;
+    switch (d.mAttackStep)
+    {
+    case 0:
+        HandGoTo(l, l.Data<HandData>().mInitX, l.Data<HandData>().mInitY, Fx(180));
+        HandGoTo(r, r.Data<HandData>().mInitX, r.Data<HandData>().mInitY, Fx(180));
+        Ecs_Play(l, "shoot");
+        Ecs_Play(r, "shoot");
+        d.mAttackStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (HandBusy(l) || HandBusy(r))
+        {
+            return true;
+        }
+        d.mLaser->mExists = true;
+        d.mLaser->Data<WallLaserData>().mAttacking = true;
+        d.mLaser->Data<WallLaserData>().mStep = 0;
+        HandStart(l, HAND_FOLLOW);
+        HandStart(r, HAND_FOLLOW);
+        d.mAttackStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (d.mLaser->Data<WallLaserData>().mAttacking)
+        {
+            return true;
+        }
+        HandReset(l, Fx(90));
+        HandReset(r, Fx(90));
+        d.mAttackStep = 3;
+        [[fallthrough]];
+    default:
+        return HandBusy(l) || HandBusy(r);
+    }
+}
+
+bool PushAttackStep(WallBossData& d)
+{
+    Entity& l = *d.mLHand;
+    Entity& r = *d.mRHand;
+    HandData& ld = l.Data<HandData>();
+    HandData& rd = r.Data<HandData>();
+    for (;;)
+    {
+        switch (d.mAttackStep)
+        {
+        case 0:
+            d.mPushes = static_cast<int8_t>(WallBossPhase(d) == 0 ? 2 : 3);
+            d.mAttackStep = 1;
+            [[fallthrough]];
+        case 1:
+        {
+            if (!(d.mPushes-- > 0))
+            {
+                return false;
+            }
+            HandStart(l, HAND_NONE);
+            HandStart(r, HAND_NONE);
+            const int phase = WallBossPhase(d);
+            const double doublePushChance = phase == 0 ? 0.5 : (phase == 1 ? 0.7 : 0.8);
+            if (Rng_NextDouble() < doublePushChance)
+            {
+                d.mPushType = 2;
+            }
+            else if (Rng_NextDouble() < 0.5)
+            {
+                d.mPushType = 1;
+            }
+            else
+            {
+                d.mPushType = 0;
+            }
+            if (d.mPushType != 0)
+            {
+                HandGoTo(l, ld.mInitX, ld.mInitY - Fx(16), Fx(30));
+            }
+            if (d.mPushType != 1)
+            {
+                HandGoTo(r, rd.mInitX, rd.mInitY - Fx(16), Fx(30));
+            }
+            d.mAttackStep = 2;
+        }
+            [[fallthrough]];
+        case 2:
+            if (HandBusy(r) || HandBusy(l))
+            {
+                return true;
+            }
+            Game_PlaySfx("slasher_atk");
+            if (d.mPushType != 0)
+            {
+                HandStart(l, HAND_PUSH);
+                ld.mPhase = static_cast<uint8_t>(WallBossPhase(d));
+            }
+            if (d.mPushType != 1)
+            {
+                HandStart(r, HAND_PUSH);
+                rd.mPhase = static_cast<uint8_t>(WallBossPhase(d));
+            }
+            d.mAttackStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (HandBusy(r) || HandBusy(l))
+            {
+                return true;
+            }
+            HandReset(l, Fx(180));
+            HandReset(r, Fx(180));
+            d.mAttackStep = 4;
+            [[fallthrough]];
+        default:
+            if (HandBusy(r) || HandBusy(l))
+            {
+                return true;
+            }
+            d.mAttackStep = 1;
+            break;
+        }
+    }
+}
+
+// FightLogic
+void WallBossFightStep(WallBossData& d)
+{
+    for (;;)
+    {
+        switch (d.mFight)
+        {
+        case 0:
+            HandStart(*d.mLHand, HAND_FLOAT);
+            HandStart(*d.mRHand, HAND_FLOAT);
+            d.mT = 2.0f;
+            d.mFight = 1;
+            [[fallthrough]];
+        case 1:
+        {
+            if (d.mT > 0)
+            {
+                d.mT -= kDeltaTime;
+                return;
+            }
+            const double r = Rng_NextDouble();
+            switch (WallBossPhase(d))
+            {
+            case 0:
+                d.mAttack = r <= 0.7 ? WA_STOMP : WA_PUSH;
+                break;
+            case 1:
+                d.mAttack = r <= 0.35 ? WA_LASER : (r <= 0.7 ? WA_STOMP : WA_PUSH);
+                break;
+            default:
+                d.mAttack = r <= 0.5 ? WA_LASER : (r <= 0.75 ? WA_STOMP : WA_PUSH);
+                break;
+            }
+            d.mAttackStep = 0;
+            d.mFight = 2;
+        }
+            [[fallthrough]];
+        default:
+        {
+            const bool running = d.mAttack == WA_STOMP ? StompAttackStep(d)
+                                 : d.mAttack == WA_LASER ? LaserAttackStep(d)
+                                                         : PushAttackStep(d);
+            if (running)
+            {
+                return;
+            }
+            d.mFight = 0;
+            break;
+        }
+        }
+    }
+}
+
+void WallBossStep(Entity& self)
+{
+    WallBossData& d = self.Data<WallBossData>();
+    Visual& face = *d.mFace->mV;
+    switch (d.mState)
+    {
+    case WB_START:
+        d.mVolume = true; // GlobalState.SpawnEntity(new VolumeEvent(0, 0.3))
+        d.mState = WB_WAIT_PLAYER;
+        [[fallthrough]];
+    case WB_WAIT_PLAYER:
+        if (InGrid(World_Player()->mT->mY) > Fx(80))
+        {
+            break;
+        }
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("wallboss", "before_fight");
+        }
+        d.mState = WB_DIALOGUE;
+        [[fallthrough]];
+    case WB_DIALOGUE:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            break;
+        }
+        d.mVolume = false;
+        Game_PlaySong("crowd_boss");
+        d.mState = WB_FADE_IN;
+        [[fallthrough]];
+    case WB_FADE_IN:
+        if (!MoveTo(face.mOpacity, kFxOne, FxF(0.18f)))
+        {
+            WallBossSyncOpacity(d);
+            break;
+        }
+        d.mFight = 0;
+        d.mState = WB_FIGHT;
+        [[fallthrough]];
+    case WB_FIGHT:
+        if (d.mFace->Data<FaceData>().mHealth > 0)
+        {
+            WallBossFightStep(d);
+            break;
+        }
+        HandStart(*d.mLHand, HAND_NONE);
+        HandStart(*d.mRHand, HAND_NONE);
+        d.mLaser->mExists = false;
+        Game_PlaySong("");
+        Game_PlaySfx("sun_guy_death_short");
+        Screen_Flash(Fx(3), FLASH_WHITE);
+        d.mState = WB_FLASH;
+        [[fallthrough]];
+    case WB_FLASH:
+        if (Screen_FlashActive())
+        {
+            break;
+        }
+        if (!d.mBossRush)
+        {
+            Game_ShowDialogue("wallboss", "after_fight");
+            Game_PlaySfx("talk_death");
+        }
+        d.mState = WB_AFTER;
+        [[fallthrough]];
+    case WB_AFTER:
+        if (!d.mBossRush && !Game_DialogueFinished())
+        {
+            break;
+        }
+        d.mT = 0;
+        d.mState = WB_FADE_OUT;
+        [[fallthrough]];
+    case WB_FADE_OUT:
+        if (!MoveTo(face.mOpacity, 0, FxF(0.18f)))
+        {
+            WallBossSyncOpacity(d);
+            Screen_Shake(FxF(0.02f), FxF(0.1f));
+            d.mT += kDeltaTime;
+            if (d.mT > 0.15f)
+            {
+                d.mT = 0;
+                bool spawned = false;
+                ForRedBossPool(self, kDeathExplosion, [&](Entity& e) {
+                    if (!spawned && !e.mExists)
+                    {
+                        spawned = true;
+                        e.mExists = true;
+                        e.mT->mX = GridLeft() + Fx(Rng_Range(0, 160 - 24));
+                        e.mT->mY = GridTop() + Fx(Rng_Range(0, 32));
+                        Ecs_Play(e, "explode@2");
+                    }
+                });
+                // (PlayPitchedSoundEffect("hit_wall") draws no number)
+            }
+            break;
+        }
+        d.mT = 1.0f;
+        d.mState = WB_POST;
+        [[fallthrough]];
+    case WB_POST:
+        if (d.mT > 0)
+        {
+            d.mT -= kDeltaTime;
+            break;
+        }
+        if (!d.mBossRush)
+        {
+            Game_SetBossDefeated("CROWD");
+            Game_PlaySong("crowd");
+        }
+        else
+        {
+            Game_PlaySong("bedroom");
+        }
+        if (self.mPreset)
+        {
+            Preset_SetAlive(*self.mPreset, false);
+        }
+        self.mExists = false;
+        for (Entity* e = Ecs_First(); e; e = e->mNext)
+        {
+            if (e->mParent == &self)
+            {
+                e->mExists = false;
+            }
+        }
+        d.mState = WB_DONE;
+        break;
+    default:
+        break;
+    }
+}
+
+void WallBossUpdate(Entity& self)
+{
+    WallBossData& d = self.Data<WallBossData>();
+    Ecs_BaseUpdate(self);
+    // (its VolumeEvent: spawned on the first update, so it starts on the next)
+    if (d.mVolume && d.mState != WB_START)
+    {
+        fx volume = FxF(Game_SongVolume());
+        MoveTo(volume, 0, FxF(0.3f));
+        Game_SetSongVolume(volume.mV);
+    }
+    WallBossStep(self);
+}
+
+const EntityClass kWallBoss = {
+    "WallBoss", WallBossUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, ECF_ENEMY,
+};
 } // namespace
 
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
@@ -4300,6 +5347,143 @@ Entity* Spawn_RedBoss(const MapEntity& preset, Entity&)
     return e;
 }
 
+Entity* Spawn_WallBoss(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kWallBoss, Fx(preset.mX), Fx(preset.mY), PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 16;
+    e->mB->mH = 16;
+    WallBossData& d = e->Data<WallBossData>();
+    d = WallBossData();
+    d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    // (the screen being loaded: the boss's own)
+    const fx left = Fx(preset.mX / 160 * 160);
+    const fx top = Fx(preset.mY / 160 * 160);
+    Player_SetGridEntranceAt(left + Fx(86), top + Fx(81));
+
+    // (a sub-entity: made now, kept while it doesn't exist)
+    auto make = [](Entity* parent, const EntityClass& cls, fx x, fx y, const char* sheet, int w, int h,
+                   uint8_t layer, uint8_t parts) -> Entity* {
+        Entity* s = Ecs_Create(cls, x, y, parts, nullptr, parent);
+        if (!s)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*s, sheet, w, h);
+        s->mV->mLayer = layer;
+        s->mB->mW = static_cast<int16_t>(w);
+        s->mB->mH = static_cast<int16_t>(h);
+        return s;
+    };
+    constexpr uint8_t kParts = PART_VISUAL | PART_BRAIN;
+
+    d.mWall = make(e, kWall, left, top, "wallboss_wall", 160, 32, LAYER_VERY_BG_ENTITIES, kParts);
+    if (!d.mWall)
+    {
+        return nullptr;
+    }
+    d.mWall->mB->mImmovable = true;
+    Ecs_SetSolid(*d.mWall, true);
+    Ecs_Play(*d.mWall, "move");
+
+    d.mFace = make(e, kFace, left + Fx((160 - 64) / 2), top, "f_wallboss_face", 64, 32, LAYER_ENTITIES, kParts);
+    if (!d.mFace)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*d.mFace, "normal");
+    FaceData& fd = d.mFace->Data<FaceData>();
+    fd = FaceData();
+    fd.mHealth = 12;
+    fd.mInvincible = true;
+    for (int i = 0; i < kWallBossPool; i++)
+    {
+        const fx cx = d.mFace->mT->mX + Fx(32);
+        const fx cy = d.mFace->mT->mY + Fx(16);
+        Entity* b = make(d.mFace, kWallBullet, cx, cy, "wallboss_bullet", 8, 8, LAYER_FG_SPRITES, kParts);
+        Entity* shadow = make(b, kEntityShadow, cx, cy, "8x8_shadow", 8, 8, LAYER_SHADOWS, PART_VISUAL);
+        if (!b || !shadow)
+        {
+            return nullptr;
+        }
+        WallBulletData& bd = b->Data<WallBulletData>();
+        bd = WallBulletData();
+        bd.mShadow = shadow;
+        Ecs_Play(*b, "move");
+        Ecs_KeepPooled(*b);
+        Ecs_KeepPooled(*shadow);
+    }
+
+    Entity* hands[2] = {};
+    for (int right = 0; right < 2; right++)
+    {
+        const fx hx = left + Fx(right ? 7 * 16 : 16);
+        const fx hy = top + Fx(32);
+        Entity* h = make(e, right ? kRHand : kLHand, hx, hy, "f_wallboss_l_hand", 32, 32, LAYER_ENTITIES, kParts);
+        if (!h)
+        {
+            return nullptr;
+        }
+        Entity* shadow = make(h, kEntityShadow, hx, hy + Fx(20), "28x10_shadow", 28, 10, LAYER_SHADOWS, PART_VISUAL);
+        Entity* explosion = make(h, kDeathExplosion, 0, 0, "enemy_explode_2", 24, 24, LAYER_FG_SPRITES, kParts);
+        if (!shadow || !explosion)
+        {
+            return nullptr;
+        }
+        h->mV->mHFlip = right != 0;
+        h->mB->mImmovable = true;
+        Ecs_Play(*h, "idle");
+        shadow->mV->mVisible = false;
+        Ecs_KeepPooled(*explosion);
+        HandData& hd = h->Data<HandData>();
+        hd = HandData();
+        hd.mRight = right != 0;
+        hd.mInitX = hx;
+        hd.mInitY = hy;
+        hd.mCracked = d.mBossRush ? 78 : 71;
+        hd.mHole = d.mBossRush ? 91 : 81;
+        ParabolaInit(hd.mStomp, *h, right ? 32.0f : 64.0f, right ? 1.0f : 2.0f);
+        hd.mShadow = shadow;
+        hd.mExplosion = explosion;
+        hands[right] = h;
+    }
+    d.mLHand = hands[0];
+    d.mRHand = hands[1];
+
+    d.mLaser = make(e, kWallLaser, left + Fx(48), top + Fx(32 + 11), "wallboss_laser", 64, 10, LAYER_BG_ENTITIES,
+                    kParts);
+    if (!d.mLaser)
+    {
+        return nullptr;
+    }
+    d.mLaser->mV->mVisible = false;
+    d.mLaser->Data<WallLaserData>() = WallLaserData();
+    d.mLaser->Data<WallLaserData>().mStartY = d.mLaser->mT->mY;
+    Ecs_KeepPooled(*d.mLaser);
+    d.mLHand->Data<HandData>().mLaser = d.mLaser;
+    d.mRHand->Data<HandData>().mLaser = d.mLaser;
+
+    for (int i = 0; i < kWallBossPool; i++)
+    {
+        Entity* x = make(e, kDeathExplosion, 0, 0, "enemy_explode_2", 24, 24, LAYER_FG_SPRITES, kParts);
+        if (!x)
+        {
+            return nullptr;
+        }
+        Ecs_KeepPooled(*x);
+    }
+
+    Entity* const faded[4] = { d.mWall, d.mFace, d.mLHand, d.mRHand };
+    for (Entity* f : faded)
+    {
+        f->mV->mOpacity = 0;
+    }
+    return e;
+}
+
 // ---- Person (Crowd/Person.cs): wanders and chatters, and the player wades through them at half speed -------------
 namespace
 {
@@ -4405,5 +5589,223 @@ Entity* Spawn_Person(const MapEntity& preset, Entity&)
         Ecs_Play(*e, "walk_d");
         break;
     }
+    return e;
+}
+
+// ---- Spike rollers (Crowd/SpikeRoller.cs) ------------------------------------------------------------------------
+// FallingSpikeRoller (frames 0-3): hidden until the player walks under it, then drops (its shadow flickering where it
+// lands) and rolls 112 px. BouncySpikeRoller (frames 4-7): rolls back and forth between walls.
+namespace
+{
+enum FallingRollerState : uint8_t
+{
+    ROLLER_HIDDEN,
+    ROLLER_FALL,
+    ROLLER_ROLL,
+    ROLLER_STOPPED,
+};
+
+struct SpikeRollerData final
+{
+    uint8_t mState;
+    bool mCollisionOn;
+    fx mVelX; // BaseSpikeRoller.vel
+    fx mVelY;
+    fx mInitX;
+    fx mInitY;
+    Entity* mShadow;
+};
+
+// BaseSpikeRoller.ChangedVelocity: the sprite faces the way it rolls.
+void RollerChangedVelocity(Entity& self)
+{
+    const Transform& t = *self.mT;
+    self.mV->mHFlip = t.mVelX < 0;
+    self.mV->mVFlip = t.mVelX == 0 && t.mVelY < 0;
+}
+
+void RollerCollided(Entity& self, Entity& other)
+{
+    if (self.Data<SpikeRollerData>().mCollisionOn && IsPlayer(other) && Player_State() != PS_AIR)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+void FallingRollerEnter(Entity& self, uint8_t state)
+{
+    SpikeRollerData& d = self.Data<SpikeRollerData>();
+    if (d.mState == ROLLER_FALL)
+    {
+        d.mShadow->mExists = false; // Fall's Exit
+    }
+    d.mState = state;
+    switch (state)
+    {
+    case ROLLER_FALL:
+        self.mV->mVisible = true;
+        d.mShadow->mV->mVisible = true;
+        Ecs_Flicker(*d.mShadow, -kFxOne); // (for good)
+        Game_PlaySfx("fall_1");
+        break;
+    case ROLLER_ROLL:
+        d.mCollisionOn = true;
+        self.mT->mVelX = d.mVelX;
+        self.mT->mVelY = d.mVelY;
+        self.mV->mLayer = LAYER_BG_ENTITIES;
+        RollerChangedVelocity(self);
+        Ecs_Play(self, "roll");
+        Game_PlaySfx("hit_ground_1");
+        break;
+    case ROLLER_STOPPED:
+        Ecs_Play(self, "idle");
+        self.mT->mVelX = self.mT->mVelY = 0;
+        Game_PlaySfx("hit_ground_1");
+        break;
+    default:
+        break;
+    }
+}
+
+void FallingRollerUpdate(Entity& self)
+{
+    SpikeRollerData& d = self.Data<SpikeRollerData>();
+    Ecs_BaseUpdate(self);
+    if (d.mState == ROLLER_FALL && MoveTo(self.mV->mOffY, 0, Fx(60)))
+    {
+        FallingRollerEnter(self, ROLLER_ROLL);
+    }
+    else if (d.mState == ROLLER_ROLL && FxLength(d.mInitX - self.mT->mX, d.mInitY - self.mT->mY) >= Fx(112))
+    {
+        FallingRollerEnter(self, ROLLER_STOPPED);
+    }
+}
+
+void FallingRollerCollided(Entity& self, Entity& other)
+{
+    RollerCollided(self, other);
+    if (self.Data<SpikeRollerData>().mState == ROLLER_HIDDEN)
+    {
+        FallingRollerEnter(self, ROLLER_FALL); // TriggerEvent("PlayerOverlaps")
+    }
+}
+
+const EntityClass kFallingSpikeRoller = {
+    "FallingSpikeRoller", FallingRollerUpdate, nullptr, FallingRollerCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                    GROUP_PLAYER,        0,
+};
+
+const EntityClass kRollerShadow = {
+    "RollerShadow", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void BouncyRollerUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        self.mT->mVelX = -self.mT->mVelX;
+        self.mT->mVelY = -self.mT->mVelY;
+        Game_PlaySfx("hit_ground_1");
+        RollerChangedVelocity(self);
+    }
+}
+
+const EntityClass kBouncySpikeRoller = {
+    "BouncySpikeRoller", BouncyRollerUpdate, nullptr, RollerCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                   GROUP_PLAYER,       ECF_MAP_COLLISION,
+};
+
+// BaseSpikeRoller's constructor: frame 0 rolls up, 1 right, 2 left, 3 down.
+Entity* SpawnSpikeRoller(const EntityClass& cls, const MapEntity& preset, int frame)
+{
+    const bool horizontal = frame == 0 || frame == 3;
+    Entity* e = Spawn_Basic(cls, preset, horizontal ? "spike_roller_horizontal" : "spike_roller", horizontal ? 128 : 16,
+                            horizontal ? 16 : 128);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SpikeRollerData& d = e->Data<SpikeRollerData>();
+    d = SpikeRollerData();
+    e->mB->mW = static_cast<int16_t>(horizontal ? 128 : 16);
+    e->mB->mH = static_cast<int16_t>(horizontal ? 16 : 128);
+    switch (frame)
+    {
+    case 0:
+        e->mB->mH = 12;
+        d.mVelY = -Fx(20);
+        break;
+    case 1:
+        e->mB->mW = 12;
+        d.mVelX = Fx(20);
+        break;
+    case 2:
+        e->mB->mW = 12;
+        d.mVelX = -Fx(20);
+        break;
+    default:
+        e->mB->mH = 12;
+        d.mVelY = Fx(20);
+        break;
+    }
+    // CenterOffset(), then Position += offset again (as the C# does)
+    Ecs_CenterOffset(*e);
+    e->mT->mX += e->mV->mOffX;
+    e->mT->mY += e->mV->mOffY;
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mV->mLayer = LAYER_ROLLERS;
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, "idle");
+    return e;
+}
+} // namespace
+
+Entity* Spawn_SpikeRoller(const MapEntity& preset, Entity&)
+{
+    if (preset.mFrame >= 4)
+    {
+        Entity* e = SpawnSpikeRoller(kBouncySpikeRoller, preset, preset.mFrame % 4);
+        if (!e)
+        {
+            return nullptr;
+        }
+        SpikeRollerData& d = e->Data<SpikeRollerData>();
+        d.mCollisionOn = true;
+        e->mT->mVelX = d.mVelX * 2;
+        e->mT->mVelY = d.mVelY * 2;
+        e->mB->mMapInteraction = false;
+        e->mB->mImmovable = false;
+        Ecs_Play(*e, "roll");
+        RollerChangedVelocity(*e);
+        return e;
+    }
+    Entity* e = SpawnSpikeRoller(kFallingSpikeRoller, preset, preset.mFrame);
+    if (!e)
+    {
+        return nullptr;
+    }
+    SpikeRollerData& d = e->Data<SpikeRollerData>();
+    const bool horizontal = preset.mFrame == 0 || preset.mFrame == 3;
+    Entity* shadow = Ecs_Create(kRollerShadow, e->mT->mX - e->mV->mOffX, e->mT->mY - e->mV->mOffY, PART_VISUAL,
+                                nullptr, e);
+    if (!shadow)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*shadow, horizontal ? "spike_roller_horizontal_shadow" : "spike_roller_shadow", horizontal ? 128 : 16,
+                 horizontal ? 16 : 128);
+    shadow->mB->mW = static_cast<int16_t>(horizontal ? 128 : 16);
+    shadow->mB->mH = static_cast<int16_t>(horizontal ? 16 : 128);
+    shadow->mV->mLayer = LAYER_ENTITIES;
+    shadow->mV->mVisible = false;
+    d.mShadow = shadow;
+    e->mV->mVisible = false;
+    e->mV->mOffY = Fx(80);
+    e->mV->mLayer = LAYER_FG_SPRITES;
+    d.mInitX = e->mT->mX;
+    d.mInitY = e->mT->mY;
+    d.mState = ROLLER_HIDDEN;
     return e;
 }

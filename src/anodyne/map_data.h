@@ -46,6 +46,8 @@ struct MapCollisionData final
     uint32_t mUnpackedSize = 0;
     const uint8_t* mClasses = nullptr;
     const uint8_t* mPacked = nullptr;
+    uint16_t mTileCount = 0;          // every tile of the tileset:
+    const uint8_t* mTiles = nullptr; // its own (allow, event, direction), for ChangeTile
 };
 
 struct MapEntry final

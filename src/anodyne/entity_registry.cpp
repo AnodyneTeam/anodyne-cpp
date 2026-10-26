@@ -97,6 +97,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_SageRedCave;
     case EPT_SageCrowd:
         return Spawn_SageCrowd;
+    case EPT_BioFilm:
+        return Spawn_BioFilm;
     case EPT_Bunny:
         return Spawn_Bunny;
     case EPT_BunnyRun:
@@ -115,8 +117,16 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_Seer;
     case EPT_RedBoss:
         return Spawn_RedBoss;
+    case EPT_WallBoss:
+        return Spawn_WallBoss;
     case EPT_Person:
         return Spawn_Person;
+    case EPT_SpikeRoller:
+        return Spawn_SpikeRoller;
+    case EPT_Propelled:
+        return Spawn_Propelled;
+    case EPT_StopMarker:
+        return Spawn_StopMarker;
     case EPT_EyeLight:
         return Spawn_EyeLight;
     case EPT_FollowerBro:

@@ -577,14 +577,16 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             "          { { %s::gLayerWidth[0], %s::gLayerHeight[0], %s::gLayerUnpackedSize[0], %s::gLayer0Packed },\n"
             "            { %s::gLayerWidth[1], %s::gLayerHeight[1], %s::gLayerUnpackedSize[1], %s::gLayer1Packed },\n"
             "            { %s::gLayerWidth[2], %s::gLayerHeight[2], %s::gLayerUnpackedSize[2], %s::gLayer2Packed } } },\n"
-            "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked }\n"
+            "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked,\n"
+            "          %s::gColTileCount, %s::gColTiles }\n"
             "    },\n",
             name.c_str(), name.c_str(),                                                            // palette (2)
             name.c_str(), name.c_str(),                                                            // tileset (2)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // tile16 + layer 0 (6)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 1 (4)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 2 (4)
-            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str()     // collision (6)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // collision (6)
+            name.c_str(), name.c_str()                                                             // tile collision (2)
         );
     }
 

@@ -14,11 +14,15 @@ int botAt = Array.IndexOf(args, "--bot");
 string part = botAt >= 0 && botAt + 1 < args.Length ? args[botAt + 1] : null;
 // (a replay reads no pixels unless SIMHOST_SHOT asks for some: don't draw them)
 bool noRender = Array.IndexOf(args, "--replay") >= 0 && Environment.GetEnvironmentVariable("SIMHOST_SHOT") == null;
-var sim = Process.Start(new ProcessStartInfo(args[0], $"--headless --ipc {port}" + (noRender ? " --no-render" : ""))
+var simStart = new ProcessStartInfo(args[0], $"--headless --ipc {port}" + (noRender ? " --no-render" : ""))
 {
     RedirectStandardError = true,
     RedirectStandardOutput = true,
-});
+};
+// The C# game sees the bot's held keys as fresh presses every frame (headless, KeyInput.Update clears the key history
+// the bot keeps in the same dictionary): the port gets them the same way.
+simStart.Environment["ANODYNE_SIM_KEY_REPEAT"] = "1";
+var sim = Process.Start(simStart);
 // SIMHOST_STDERR=1: pass the simulator's stderr through (its debug prints)
 bool simStderr = Environment.GetEnvironmentVariable("SIMHOST_STDERR") == "1";
 sim.ErrorDataReceived += (_, e) => { if (simStderr && e.Data != null) Console.Error.WriteLine(e.Data); };

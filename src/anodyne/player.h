@@ -72,6 +72,14 @@ void Player_LoseBroomDust();
 void Player_UpdateBroomType();
 // slowMul = 0.5 for the next `ticks` updates and the one after (a Person in the way).
 void Player_SetSlowFor(int ticks);
+// Player.offset.Y (the height drawn above the shadow).
+fx Player_OffsetY();
+// FallDoor.Collided: the next map drops the player in from above (enter_fall); smack: it lands slumped (fall_smack).
+void Player_EnterFall(bool smack);
+// Player.DontFall: a platform under the player keeps it from slipping into a hole.
+void Player_DontFall();
+// Player.additionalVel += (x, y) (a moving platform carrying the player).
+void Player_AddAdditionalVel(fx x, fx y);
 // Player.additionalVel = (x, y) (a Mover pushing the player).
 void Player_SetAdditionalVel(fx x, fx y);
 // Player.raft: the dust ridden over water, or nullptr.

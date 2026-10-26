@@ -71,11 +71,16 @@
     X(OnOffLaser)               \
     X(Rotator)                  \
     X(RedBoss)                  \
+    X(WallBoss)                 \
     X(SageRedCave)              \
     X(SageCrowd)                \
+    X(BioFilm)                  \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \
+    X(SpikeRoller)              \
+    X(Propelled)                \
+    X(StopMarker)               \
     X(Door)
 
 enum EntityPresetType : unsigned char

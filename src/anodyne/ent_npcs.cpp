@@ -2672,3 +2672,43 @@ Entity* Spawn_BunnyRun(const MapEntity& preset, Entity&)
     Ecs_PlayFacing(*e, "walk");
     return e;
 }
+
+// ---- BioFilm (Crowd/BioFilm.cs) --------------------------------------------------------------------------------------
+// The membrane the falling player breaks through: until then a DoorToggle keeps the fall door under it shut.
+namespace
+{
+void BioFilmCollided(Entity& self, Entity&)
+{
+    if (!Preset_Activated(*self.mPreset) && Player_State() == PS_ENTER_FALL && Player_OffsetY() < Fx(16))
+    {
+        Preset_SetActivated(*self.mPreset, true);
+        Ecs_SetFrame(self, 1);
+        Game_PlaySfx("broom_hit");
+        Spawn_DoorToggle(self.mT->mX, self.mT->mY, 32, 32);
+    }
+}
+
+const EntityClass kBioFilm = {
+    "BioFilm", Ecs_BaseUpdate, nullptr, BioFilmCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+} // namespace
+
+Entity* Spawn_BioFilm(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBioFilm, preset, "biofilm", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    if (!Preset_Activated(preset))
+    {
+        Spawn_DoorToggle(e->mT->mX, e->mT->mY, 32, 32);
+        Ecs_SetFrame(*e, 0);
+    }
+    else
+    {
+        Ecs_SetFrame(*e, 1);
+    }
+    return e;
+}

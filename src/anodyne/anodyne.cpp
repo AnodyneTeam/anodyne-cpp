@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -394,6 +395,14 @@ int main()
         // already does) throttles this loop to once per real 60Hz frame.
         VBlankIntrWait();
         key_poll();
+#ifdef ANODYNE_SIM
+        // Driven by the C# bot (SimHost): every frame a key is held is a fresh press, as the C# game sees the bot's keys.
+        static const bool sKeyRepeat = getenv("ANODYNE_SIM_KEY_REPEAT") != nullptr;
+        if (sKeyRepeat)
+        {
+            __key_prev = 0;
+        }
+#endif
         Game_CountFrame();
         {
             static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test" };

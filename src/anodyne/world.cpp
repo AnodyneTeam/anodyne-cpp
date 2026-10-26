@@ -68,6 +68,9 @@ int gLayerH[kLayerCount] = {};
 int gCellsW = 0; // collision cells (16x16)
 int gCellsH = 0;
 const uint8_t* gClasses = nullptr;
+// The map's collision classes, copied so ChangeTile can add the ones its new tiles need.
+uint8_t gClassRam[256 * 3];
+int gClassCount = 0;
 
 const char* gMapName = "";
 const MapAudioData* gAudio = nullptr;
@@ -1432,7 +1435,9 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
 
     gCellsW = map.mCollision.mCellsW;
     gCellsH = map.mCollision.mCellsH;
-    gClasses = map.mCollision.mClasses;
+    gClassCount = map.mCollision.mClassCount;
+    memcpy(gClassRam, map.mCollision.mClasses, static_cast<size_t>(gClassCount) * 3);
+    gClasses = gClassRam;
     if (map.mCollision.mUnpackedSize <= kMaxCollisionCells)
     {
         LZ77UnCompWram(map.mCollision.mPacked, gCollisionGrid);
@@ -1873,6 +1878,78 @@ void World_GetCellsSize(int& w, int& h)
 {
     w = gCellsW;
     h = gCellsH;
+}
+
+void World_ChangeTile(int layer, int cx, int cy, int tile)
+{
+    // TileMap.ChangeTile: outside the layer does nothing
+    if (layer < 0 || layer >= kLayerCount || cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
+    {
+        return;
+    }
+    const_cast<uint16_t*>(gLayerTiles[layer])[cy * gLayerW[layer] + cx] = static_cast<uint16_t>(tile);
+
+    // The cell's class again, merged from BG and BG2 like the content compiler's
+    if (layer < 2 && cx < gCellsW && cy < gCellsH)
+    {
+        const MapCollisionData& col = gMap->mCollision;
+        auto tileClass = [&](uint32_t t, uint8_t out[3]) {
+            if (t < col.mTileCount)
+            {
+                memcpy(out, col.mTiles + t * 3, 3);
+            }
+            else
+            {
+                out[0] = t == 0 ? TOUCH_NONE : TOUCH_ANY;
+                out[1] = 0;
+                out[2] = TOUCH_ANY;
+            }
+        };
+        auto layerTile = [&](int l) -> uint32_t {
+            return (cx < gLayerW[l] && cy < gLayerH[l]) ? gLayerTiles[l][cy * gLayerW[l] + cx] : 0;
+        };
+        uint8_t merged[3];
+        tileClass(layerTile(0), merged);
+        const uint32_t t2 = layerTile(1);
+        if (t2 != 0)
+        {
+            uint8_t c2[3];
+            tileClass(t2, c2);
+            merged[0] |= c2[0];
+            if (c2[1] != 0)
+            {
+                merged[1] = c2[1];
+                merged[2] = c2[2];
+            }
+        }
+        if (merged[1] == 0)
+        {
+            merged[2] = TOUCH_ANY;
+        }
+        int index = 0;
+        while (index < gClassCount && memcmp(gClassRam + index * 3, merged, 3) != 0)
+        {
+            index++;
+        }
+        if (index == gClassCount && gClassCount < 256)
+        {
+            memcpy(gClassRam + index * 3, merged, 3);
+            gClassCount++;
+        }
+        if (index < gClassCount)
+        {
+            gCollisionGrid[cy * gCellsW + cx] = static_cast<uint8_t>(index);
+        }
+    }
+
+    // Redraw it if it's on the current screen (the streamed BG window holds it)
+    if (cx / kScreenCells == gGridX && cy / kScreenCells == gGridY)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            WriteBgTile(cx * 2 + (i & 1), cy * 2 + (i >> 1));
+        }
+    }
 }
 
 void World_GetCell(int cx, int cy, uint8_t& allow, uint8_t& event)
