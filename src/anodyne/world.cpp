@@ -1524,6 +1524,14 @@ void Screen_SetWave(bool on)
     gWave = on;
 }
 
+void Screen_StopWave()
+{
+    gWave = false;
+    gWaveReady = kWaveNone;
+    gWaveArmed = -1;
+    REG_DMA0CNT = 0;
+}
+
 bool Screen_Wave()
 {
     return gWave;

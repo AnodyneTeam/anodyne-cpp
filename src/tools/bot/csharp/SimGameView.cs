@@ -154,7 +154,8 @@ namespace AnodyneSharp.Recording
         public int MapKeys => Int("keys");
         public int PuzzlesSolved => Int("puzzles");
         public int EnemiesKilled => Int("killed");
-        public IPlayerView Player => Mode == "play" && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p, this) : null;
+        // (the C#'s credits still have the play state's player)
+        public IPlayerView Player => (Mode == "play" || Mode == "credits") && _state.TryGetProperty("player", out var p) ? new SimPlayerView(p, this) : null;
         /// <summary>A dialogue box or cutscene has the input (PlayState's child states, BotRunner.PlayBusy).</summary>
         public bool Busy => Bool("dialog") || Bool("cutscene") || DeathMenu;
         /// <summary>DeathState is up (BotRunner.InDeathMenu).</summary>

@@ -14,6 +14,7 @@ add_executable(CompileContent
     content_compiler/door_compiler.cpp
     content_compiler/entity_compiler.cpp
     content_compiler/title_compiler.cpp
+    content_compiler/ending_compiler.cpp
     content_compiler/collision_compiler.cpp
     content_compiler/sprite_defs.cpp
     content_compiler/vorbis_decode.cpp

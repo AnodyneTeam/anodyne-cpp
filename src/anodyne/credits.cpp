@@ -5,14 +5,17 @@
 #include "tonc.h"
 
 #include "dialog.h"
+#include "ending_data.h"
 #include "ecs.h"
 #include "game_state.h"
+#include "soft_mosaic.hpp"
+#include "sprite.h"
 #include "title_data.h"
 #include "world.h"
 
 // The C#'s logic runs as it does there, floats and all (the bot's held Accept runs it at 8x, so its timing decides
-// the frame the title comes back on). Drawn here: the labels (BG0, the font's 7px glyphs, centred like the C#'s) and
-// the save popup. Not yet: the "go" backdrop, the screenies and the cast's sprites.
+// the frame the title comes back on). Drawn here: the labels (BG0, the font's 7px glyphs, centred like the C#'s), the
+// "go" backdrop under its dim overlay (BG1), the cast's sprites and the save popup. Not yet: the screenies.
 namespace
 {
 constexpr int kMaxLabels = 28;
@@ -20,8 +23,116 @@ constexpr int kLineSep = 10;   // English font: 8 + 2
 constexpr int kCharW = 7;      // its spaceWidth
 constexpr int kViewTop = 10;   // the 180px C# screen shows rows 10..170, as on the title
 constexpr int kSbText = 31;
+constexpr int kSbGo = 28;  // 32x64: 28 and 29
+constexpr int kCbbGo = 2;
 constexpr int kCols = 20;      // 160px
 constexpr int kRingRows = 32;  // the BG's 256px wrap
+
+// CreateEntities: the cast, each at a label's position plus an offset, playing its own frames.
+struct CastDef final
+{
+    uint8_t mLabel;
+    int16_t mX;
+    int16_t mY;
+    const char* mSheet;
+    uint8_t mW;
+    uint8_t mH;
+    uint8_t mFps;
+    bool mFlip;
+    bool mFront; // SUBMENU_SLIDER: over the text
+    uint8_t mCount;
+    uint8_t mFrames[16];
+};
+
+const CastDef kCast[] = {
+    { 16, 8, 36, "slime", 16, 16, 5, false, false, 2, { 0, 1 } },
+    { 16, 134, 66, "annoyer", 16, 16, 8, false, false, 6, { 0, 1, 2, 3, 4, 5 } },
+    { 16, 9, 96, "pew_laser", 16, 16, 0, false, false, 1, { 0 } },
+    { 16, 134, 122, "shieldy", 16, 16, 5, false, false, 11, { 1, 2, 1, 0, 1, 2, 1, 0, 16, 17, 18 } },
+    { 16, 9, 114, "pew_laser_bullet", 16, 8, 8, false, false, 2, { 0, 1 } },
+    { 16, 15, 140, "sun_guy", 16, 24, 3, false, false, 5, { 0, 1, 2, 3, 4 } },
+    { 16, 129, 150, "light_orb", 16, 16, 6, false, false, 8, { 0, 1, 2, 3, 4, 3, 2, 1 } },
+    { 16, 12, 174, "sun_guy_wave", 128, 8, 8, false, false, 3, { 3, 4, 5 } },
+    { 17, 39, 6, "f_mover", 16, 16, 4, false, false, 2, { 0, 1 } },
+    { 17, 118, 30, "on_off_shooter", 16, 16, 2, false, false, 6, { 0, 1, 2, 2, 1, 0 } },
+    { 17, 14, 60, "f_four_shooter", 16, 16, 3, false, false, 6, { 0, 1, 2, 2, 1, 0 } },
+    { 17, 119, 80, "f_slasher", 24, 24, 3, false, false, 6, { 0, 1, 0, 1, 0, 1 } },
+    { 17, 16, 112, "red_boss", 32, 32, 3, false, false, 6, { 0, 0, 1, 0, 0, 2 } },
+    { 17, 8, 140, "red_boss_ripple", 48, 8, 12, false, false, 2, { 0, 1 } },
+    { 18, 26, 1, "dog", 16, 16, 4, false, false, 14, { 2, 3, 2, 3, 4, 5, 4, 5, 6, 7, 6, 7, 2, 3 } },
+    { 18, 122, 30, "frog", 16, 16, 2, false, false, 6, { 0, 1, 0, 1, 3, 3 } },
+    { 18, 24, 54, "f_rotator", 16, 16, 10, false, false, 2, { 0, 1 } },
+    { 18, 124, 84, "person", 16, 16, 5, false, false, 16, { 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5, 2, 3, 2, 3 } },
+    { 18, 0, 130, "wallboss_wall", 160, 32, 4, false, false, 6, { 0, 1, 0, 1, 0, 1 } },
+    { 18, 48, 130, "f_wallboss_face", 64, 32, 3, false, true, 6, { 0, 0, 1, 0, 0, 2 } },
+    { 18, 12, 160, "f_wallboss_l_hand", 32, 32, 1, false, true, 4, { 0, 1, 2, 3 } },
+    { 18, 122, 160, "f_wallboss_l_hand", 32, 32, 1, true, true, 4, { 0, 1, 2, 3 } },
+    { 19, 32, -2, "rat", 16, 16, 5, false, false, 2, { 0, 1 } },
+    { 19, 126, 30, "gas_guy", 16, 24, 4, false, false, 2, { 0, 1 } },
+    { 19, 141, 44, "gas_guy_cloud", 24, 24, 3, false, false, 2, { 0, 1 } },
+    { 19, 9, 56, "silverfish", 16, 16, 5, false, false, 2, { 4, 5 } },
+    { 19, 141, 92, "dash_trap", 16, 16, 12, false, false, 2, { 4, 5 } },
+    { 19, 9, 102, "spike_roller_horizontal", 128, 16, 5, false, false, 2, { 0, 1 } },
+    { 19, 66, 150, "splitboss", 24, 32, 5, false, false, 4, { 0, 1, 2, 1 } },
+    { 20, 14, -2, "dustmaid", 16, 24, 7, false, false, 11, { 0, 0, 0, 1, 2, 1, 2, 3, 4, 3, 4 } },
+    { 20, 124, 30, "burst_plant", 16, 16, 8, false, false, 10, { 0, 0, 1, 0, 1, 3, 3, 3, 3, 0 } },
+    { 20, 9, 80, "eye_boss_water", 24, 24, 6, false, false, 6, { 0, 1, 2, 3, 2, 1 } },
+    { 20, 124, 80, "eye_boss_water", 24, 24, 6, false, false, 7, { 4, 5, 4, 5, 6, 7, 6 } },
+    { 21, 14, -15, "lion", 32, 32, 4, false, false, 8, { 10, 11, 10, 11, 10, 11, 12, 12 } },
+    { 21, 140, -10, "contort_big", 16, 32, 9, false, false, 4, { 0, 1, 2, 1 } },
+    { 21, 140, 20, "contort_small", 16, 16, 9, false, false, 2, { 0, 1 } },
+    { 21, 118, 20, "contort_small", 16, 16, 9, false, false, 2, { 2, 3 } },
+    { 21, 126, 35, "contort_small", 16, 16, 9, false, false, 2, { 4, 5 } },
+    { 21, 9, 80, "fire_pillar_base", 16, 16, 8, false, false, 2, { 0, 1 } },
+    { 21, 9, 64, "fire_pillar", 16, 32, 9, false, true, 13, { 0, 0, 0, 0, 1, 2, 3, 4, 3, 4, 5, 6, 0 } },
+    { 21, 73, 122, "arthur_javiera", 16, 32, 8, false, false, 2, { 0, 1 } },
+    { 22, 18, 5, "follower_bro", 16, 24, 4, false, false, 4, { 1, 2, 1, 0 } },
+    { 22, 124, 30, "sadman", 16, 16, 2, false, false, 2, { 0, 1 } },
+    { 22, 10, 62, "beach_npcs", 16, 16, 3, false, false, 2, { 10, 11 } },
+    { 22, 124, 60, "redwalker", 32, 48, 6, false, false, 5, { 0, 1, 2, 3, 4 } },
+    { 22, 10, 108, "beach_npcs", 16, 16, 2, false, false, 1, { 0 } },
+    { 23, 133, 0, "forest_npcs", 16, 16, 4, false, false, 2, { 30, 31 } },
+    { 23, 6, 25, "fields_npcs", 16, 16, 4, false, false, 2, { 10, 11 } },
+    { 23, 6, 55, "fields_npcs", 16, 16, 4, false, false, 2, { 50, 51 } },
+    { 23, 144, 77, "fields_npcs", 16, 16, 4, false, false, 2, { 0, 1 } },
+    { 23, 6, 82, "fields_npcs", 32, 32, 18, false, false, 13, { 15, 15, 15, 15, 15, 15, 15, 15, 16, 17, 17, 18, 18 } },
+    { 23, 128, 117, "fields_npcs", 16, 16, 4, false, false, 2, { 20, 21 } },
+    { 24, 8, -4, "forest_npcs", 16, 16, 4, false, false, 2, { 0, 1 } },
+    { 24, 134, 18, "forest_npcs", 16, 16, 4, false, false, 6, { 10, 10, 11, 10, 10, 12 } },
+    { 24, 8, 36, "forest_npcs", 16, 16, 4, false, false, 4, { 20, 21, 20, 22 } },
+    { 24, 134, 58, "forest_npcs", 16, 16, 4, false, false, 2, { 30, 31 } },
+    { 24, 8, 76, "cliffs_npcs", 16, 16, 4, false, false, 15, { 1, 3, 1, 5, 1, 1, 1, 0, 2, 0, 4, 0, 0, 1, 1 } },
+    { 24, 7, 103, "suburb_walkers", 16, 16, 4, false, false, 2, { 0, 1 } },
+    { 24, 140, 100, "suburb_walkers", 16, 16, 4, false, false, 2, { 9, 10 } },
+    { 24, 7, 123, "suburb_walkers", 16, 16, 4, false, false, 2, { 18, 19 } },
+    { 24, 140, 123, "suburb_walkers", 16, 16, 4, false, false, 2, { 27, 28 } },
+    { 24, 7, 143, "suburb_walkers", 16, 16, 4, false, false, 2, { 36, 37 } },
+    { 24, 140, 143, "suburb_walkers", 16, 16, 4, false, false, 2, { 45, 46 } },
+    { 25, 16, -8, "chaser", 16, 32, 4, false, false, 2, { 8, 9 } },
+    { 25, 7, 116, "space_npcs", 32, 32, 4, true, false, 2, { 10, 11 } },
+    { 25, 120, 116, "space_npcs", 32, 32, 4, true, false, 2, { 12, 13 } },
+    { 25, 24, 56, "space_npcs", 16, 16, 4, false, false, 2, { 0, 1 } },
+    { 25, 124, 56, "space_npcs", 16, 16, 4, false, false, 2, { 10, 11 } },
+    { 25, 24, 86, "space_npcs", 16, 16, 4, false, false, 2, { 20, 21 } },
+    { 25, 124, 86, "space_npcs", 16, 16, 4, false, false, 2, { 22, 23 } },
+    { 26, 43, -3, "young_player", 16, 16, 6, false, false, 2, { 0, 1 } },
+    { 26, 114, 29, "mitra", 16, 16, 6, false, false, 2, { 0, 1 } },
+    { 26, 24, 56, "sage", 16, 16, 6, false, false, 2, { 0, 1 } },
+    { 26, 129, 89, "briar", 16, 16, 6, false, false, 2, { 0, 1 } },
+    { 27, 10, 38, "dev_npcs", 16, 16, 0, false, false, 1, { 0 } },
+    { 27, 140, 38, "dev_npcs", 16, 16, 0, false, false, 1, { 10 } },
+};
+constexpr int kCastCount = static_cast<int>(sizeof(kCast) / sizeof(kCast[0]));
+
+// The cast on screen: one OBJ palette bank and 8 OAM entries each (the box keeps bank 15 and OAM 120-127).
+constexpr int kLiveMax = 14;
+struct CastSprite final
+{
+    Sprite mSprite;
+    int mDef = -1;
+    int mIndex = 0;
+    float mTimer = 0;
+};
 
 struct Credits final
 {
@@ -40,7 +151,82 @@ struct Credits final
     bool mYes = true;
     bool mEndShown = false;
     int mBand[kRingRows]; // which 8px band of the content each ring row holds (INT32_MIN: none)
+    CastSprite mLive[kLiveMax];
+    bool mCastShown[kCastCount];
 } gC;
+ObjVramAllocator* gVram = nullptr;
+
+void HideCast(CastSprite& c)
+{
+    Sprite_Hide(c.mSprite);
+    Sprite_Destroy(c.mSprite, *gVram);
+    gC.mCastShown[c.mDef] = false;
+    c.mDef = -1;
+}
+
+// Shows the cast members on screen (UIEntity: position + velocity, so with their label), drops the others.
+void DrawCast(float dt)
+{
+    for (CastSprite& c : gC.mLive)
+    {
+        if (c.mDef < 0)
+        {
+            continue;
+        }
+        const CastDef& d = kCast[c.mDef];
+        const float y = gC.mLabelY[d.mLabel] + d.mY;
+        if (gC.mPopup || y + d.mH <= kViewTop || y >= kViewTop + 160)
+        {
+            HideCast(c);
+            continue;
+        }
+        if (d.mFps > 0)
+        {
+            c.mTimer += dt * d.mFps;
+            while (c.mTimer >= 1)
+            {
+                c.mTimer -= 1;
+                c.mIndex = (c.mIndex + 1) % d.mCount;
+            }
+        }
+        Sprite_SetFrame(c.mSprite, d.mFrames[c.mIndex]);
+        Sprite_Update(c.mSprite);
+        Sprite_Draw(c.mSprite, 40 + d.mX, static_cast<int>(y) - kViewTop, d.mFlip);
+    }
+    if (gC.mPopup)
+    {
+        return;
+    }
+    for (int i = 0; i < kCastCount; i++)
+    {
+        const CastDef& d = kCast[i];
+        const float y = gC.mLabelY[d.mLabel] + d.mY;
+        if (gC.mCastShown[i] || y + d.mH <= kViewTop || y >= kViewTop + 160)
+        {
+            continue;
+        }
+        for (int s = 0; s < kLiveMax; s++)
+        {
+            CastSprite& c = gC.mLive[s];
+            if (c.mDef >= 0)
+            {
+                continue;
+            }
+            if (Sprite_Create(c.mSprite, *gVram, d.mSheet, s, s * 8, d.mW, d.mH))
+            {
+                c.mSprite.mPriority = d.mFront ? 0 : 1;
+                c.mDef = i;
+                c.mIndex = 0;
+                c.mTimer = 0;
+                gC.mCastShown[i] = true;
+                Sprite_SetFrame(c.mSprite, d.mFrames[0]);
+                Sprite_Update(c.mSprite);
+                Sprite_Draw(c.mSprite, 40 + d.mX, static_cast<int>(y) - kViewTop, d.mFlip);
+            }
+            break;
+        }
+    }
+}
 
 // MathUtilities.MoveTo with GameTimes.DeltaTime scaled by TimeScale.
 bool MoveToScaled(float& v, float target, float speed, float dt)
@@ -144,7 +330,7 @@ void DrawText(const char* text, int top, int band, uint32_t* rowTiles)
 void RenderBand(int band)
 {
     const int ring = band & (kRingRows - 1);
-    uint32_t* rowTiles = reinterpret_cast<uint32_t*>(&tile_mem[0][ring * kCols]);
+    uint32_t* rowTiles = reinterpret_cast<uint32_t*>(&tile_mem[0][1 + ring * kCols]);
     memset(rowTiles, 0, kCols * 32);
     if (gC.mEndShown)
     {
@@ -185,6 +371,14 @@ void Draw()
     }
     REG_BG0HOFS = static_cast<uint16_t>(-40);
     REG_BG0VOFS = static_cast<uint16_t>(first);
+    // the backdrop, its top at C# y bgY, darkened by the overlay over it
+    if (!gC.mPopup)
+    {
+        REG_BG1HOFS = static_cast<uint16_t>(-40);
+        REG_BG1VOFS = static_cast<uint16_t>(kViewTop - static_cast<int>(gC.mBgY));
+        REG_BLDCNT = BLD_BG1 | BLD_BLACK;
+        REG_BLDY = static_cast<uint16_t>(static_cast<int>(gC.mDim * 16 + 0.5f));
+    }
 }
 
 void InvalidateRing()
@@ -222,11 +416,14 @@ bool Credits_TakeRequest()
     return r;
 }
 
-void Credits_Enter()
+void Credits_Enter(ObjVramAllocator& vram)
 {
     gC = Credits();
+    gVram = &vram;
+    Ecs_FlushRenderCaches(); // (the play state's sprite frames give their VRAM back)
+    Mosaic_End();
     // SetState: every effect is deactivated.
-    Screen_SetWave(false);
+    Screen_StopWave();
     Screen_SetFadeSparesUi(false);
     Screen_SetFadeWhite(false);
     Screen_SetFade(0);
@@ -256,16 +453,33 @@ void Credits_Enter()
     {
         se_mem[kSbText][i] = 0;
     }
+    memset(&tile_mem[0][0], 0, sizeof(TILE));
     for (int r = 0; r < kRingRows; r++)
     {
         for (int c = 0; c < kCols; c++)
         {
-            se_mem[kSbText][r * 32 + c] = static_cast<uint16_t>(r * kCols + c);
+            se_mem[kSbText][r * 32 + c] = static_cast<uint16_t>(1 + r * kCols + c);
         }
     }
     REG_BG0CNT = BG_CBB(0) | BG_SBB(kSbText) | BG_4BPP | BG_REG_32x32 | BG_PRIO(1);
+    // The backdrop: its own tiles and colours, the whole 160x480 in a 256x512 map.
+    memcpy(&pal_bg_mem[ending::kGoFirstColour], ending::kGoPalette, ending::kGoColours * 2);
+    memcpy(&tile8_mem[kCbbGo][0], ending::kGoTiles, sizeof(ending::kGoTiles));
+    SCR_ENTRY* goMap = se_mem[kSbGo]; // (32x64: the next screenblock holds the lower half)
+    for (int i = 0; i < 32 * 64; i++)
+    {
+        goMap[i] = 0;
+    }
+    for (int r = 0; r < ending::kGoTilesH; r++)
+    {
+        for (int c = 0; c < ending::kGoTilesW; c++)
+        {
+            goMap[r * 32 + c] = ending::kGoMap[r * ending::kGoTilesW + c];
+        }
+    }
+    REG_BG1CNT = BG_CBB(kCbbGo) | BG_SBB(kSbGo) | BG_8BPP | BG_REG_32x64 | BG_PRIO(2);
     Draw();
-    REG_DISPCNT = REG_DISPCNT | DCNT_BG0;
+    REG_DISPCNT = REG_DISPCNT | DCNT_BG0 | DCNT_BG1;
 }
 
 bool Credits_Update()
@@ -286,6 +500,7 @@ bool Credits_Update()
         }
     }
     const float dt = kDeltaTime * timeScale;
+    DrawCast(dt);
 
     // StateLogic
     switch (gC.mStep)
@@ -336,6 +551,8 @@ bool Credits_Update()
         gC.mPopup = true;
         gC.mEndShown = true;
         InvalidateRing();
+        REG_DISPCNT = REG_DISPCNT & ~DCNT_BG1;
+        REG_BLDCNT = 0;
         ShowPopup();
         gC.mStep = 6;
         break;
@@ -378,9 +595,16 @@ bool Credits_Update()
 
 void Credits_Exit()
 {
+    for (CastSprite& c : gC.mLive)
+    {
+        if (c.mDef >= 0)
+        {
+            HideCast(c);
+        }
+    }
     Dialog_HideLabels();
     Dialog_HidePanel();
-    REG_DISPCNT = REG_DISPCNT & ~DCNT_BG0;
-    REG_BG0HOFS = 0;
-    REG_BG0VOFS = 0;
+    REG_DISPCNT = REG_DISPCNT & ~(DCNT_BG0 | DCNT_BG1);
+    REG_BG0HOFS = REG_BG0VOFS = REG_BG1HOFS = REG_BG1VOFS = 0;
+    REG_BLDCNT = 0;
 }

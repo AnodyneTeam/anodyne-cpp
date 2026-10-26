@@ -640,11 +640,6 @@ int main()
             else
             {
                 World_Update();
-                if (Credits_TakeRequest())
-                {
-                    mode = AppMode::Credits;
-                    Credits_Enter();
-                }
                 int warpDark = 0;
                 int warpPix = 256;
                 bool swapped = false; // (the loader gave back the old screen's mosaic blocks)
@@ -661,6 +656,12 @@ int main()
                     warpShown = false;
                     Mosaic_End();
                     World_ScreenDarken(0);
+                }
+                if (Credits_TakeRequest())
+                {
+                    warpShown = false;
+                    mode = AppMode::Credits;
+                    Credits_Enter(objVram);
                 }
             }
         }

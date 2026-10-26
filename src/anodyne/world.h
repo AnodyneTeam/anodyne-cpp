@@ -111,6 +111,8 @@ void Screen_SetEndingBlack(fx alpha);
 // GlobalState.wave.active: the screen's rows ripple sideways (a GasGuy's gas, the Red Boss).
 void Screen_SetWave(bool on);
 bool Screen_Wave();
+// Off at once, the HBlank DMA too (leaving the play state: nothing updates the wave after).
+void Screen_StopWave();
 // The VBlank interrupt: arms the wave's HBlank DMA for the frame about to show (or stops it).
 void Screen_WaveOnVBlank();
 

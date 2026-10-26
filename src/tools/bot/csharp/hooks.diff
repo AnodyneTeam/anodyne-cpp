@@ -172,6 +172,28 @@ index 90822d3..f2a54eb 100644
                      })
                  .End()
                  .State("Hurt")
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
+index ab1f804..55c4171 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
+@@ -44,11 +44,16 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Happy
+             Sounds.SoundManager.StopSong();
+             var sound = Sounds.SoundManager.PlaySoundEffect("red_cave_rise");
+             GlobalState.Dialogue = Dialogue.DialogueManager.GetDialogue("happy_npc", "briar");
+-            while(!GlobalState.LastDialogueFinished || sound.State == Microsoft.Xna.Framework.Audio.SoundState.Playing)
++            // Deterministic runs: the sound plays for its length (3.475s) in game time, not by the wall clock.
++            float soundTime = 0f;
++            while(!GlobalState.LastDialogueFinished || (AnodyneSharp.Recording.RecordingManager.Deterministic
++                ? soundTime < 3.475f
++                : sound.State == Microsoft.Xna.Framework.Audio.SoundState.Playing))
+             {
+                 GlobalState.screenShake.Shake(0.02f, 0.1f);
+                 _p.dontMove = true;
+                 yield return "Dialogue";
++                soundTime += GameTimes.DeltaTime;
+             }
+             _p.dontMove = false;
+             GlobalState.events.IncEvent("HappyStarted");
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs
 index bd9bee4..9761566 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Player/Broom.cs
