@@ -97,6 +97,12 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_MiaoXiao;
     case EPT_OutsideMonster:
         return Spawn_OutsideMonster;
+    case EPT_SwitchPillar:
+        return Spawn_SwitchPillar;
+    case EPT_PillarSwitch:
+        return Spawn_PillarSwitch;
+    case EPT_InsideMonster:
+        return Spawn_InsideMonster;
     case EPT_Door:
         return Spawn_Door;
     default:

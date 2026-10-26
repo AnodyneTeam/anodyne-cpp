@@ -43,6 +43,9 @@
     X(MitraFields)              \
     X(MiaoXiao)                 \
     X(OutsideMonster)           \
+    X(SwitchPillar)             \
+    X(PillarSwitch)             \
+    X(InsideMonster)            \
     X(HealthCicada)             \
     X(Sadbro)                   \
     X(FollowerBro)              \

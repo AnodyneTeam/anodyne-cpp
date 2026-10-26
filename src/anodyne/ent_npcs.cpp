@@ -1680,6 +1680,63 @@ const EntityClass kBoxIcky = {
     0,         GROUP_PLAYER,  ECF_INTERACTABLE,
 };
 
+// InsideMonster: in the house, wants the 12 dusts down the holes; then steps aside from the chest.
+struct InsideMonsterData final
+{
+    int mDustLeft;
+};
+
+void InsideMonsterUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    if (Preset_Activated(*self.mPreset) && t.mVelX != 0 && t.mX.mV >= static_cast<float>(self.mPreset->mX) + 31.5f)
+    {
+        t.mVelX = 0;
+        Ecs_Play(self, "walk_d@3");
+    }
+}
+
+void InsideMonsterEvent(Entity& self, int gameEvent)
+{
+    if (!self.mExists)
+    {
+        return;
+    }
+    if (gameEvent == GEV_DUST_FALL)
+    {
+        if (--self.Data<InsideMonsterData>().mDustLeft == 0)
+        {
+            Game_ShowDialogue("goldman", "etc", 1);
+            Preset_SetActivated(*self.mPreset, true);
+            self.mT->mVelX = Fx(20);
+            Ecs_Play(self, "walk_r@3");
+        }
+    }
+    else if (gameEvent == GEV_EMPTY_TREASURE)
+    {
+        Game_ShowDialogueFor("misc", "any", "treasure", 8); // shopkeep must have stolen it!
+    }
+}
+
+bool InsideMonsterInteract(Entity& self, Facing)
+{
+    if (Preset_Activated(*self.mPreset))
+    {
+        Game_ShowDialogue("goldman", "etc", 1);
+    }
+    else
+    {
+        Game_ShowDialogue("goldman", "inside");
+    }
+    return true;
+}
+
+const EntityClass kInsideMonster = {
+    "InsideMonster", InsideMonsterUpdate, nullptr, TradeCollided, InsideMonsterInteract, nullptr, InsideMonsterEvent,
+    nullptr,         0,                   GROUP_PLAYER,  ECF_INTERACTABLE | ECF_MAP_COLLISION,
+};
+
 Entity* MakeTradeNpc(const EntityClass& cls, fx x, fx y, const char* anim, const MapEntity* preset)
 {
     Entity* e = Ecs_Create(cls, x, y, PART_VISUAL | PART_BRAIN, preset);
@@ -1718,6 +1775,34 @@ Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity&)
     if (gGame.mSpookedMonster)
     {
         e->mExists = false;
+    }
+    return e;
+}
+
+Entity* Spawn_InsideMonster(const MapEntity& preset, Entity&)
+{
+    Entity* e = MakeTradeNpc(kInsideMonster, Fx(preset.mX), Fx(preset.mY), "walk_d@3", &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->Data<InsideMonsterData>().mDustLeft = 12;
+    if (!gGame.mSpookedMonster)
+    {
+        e->mExists = false;
+    }
+    else if (Preset_Activated(preset))
+    {
+        e->mT->mX += Fx(32);
+    }
+    else
+    {
+        const fx left = Fx(preset.mX / 160 * 160);
+        const fx top = Fx(preset.mY / 160 * 160);
+        for (int i = 0; i < 3; i++)
+        {
+            Spawn_DustAt(left + Fx(16), top + Fx(16 + 32 * i));
+        }
     }
     return e;
 }

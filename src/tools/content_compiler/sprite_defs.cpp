@@ -219,10 +219,10 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "crackedtiles", 16, 16, {
     } },
     { "dame-switch-pillar", 16, 16, {
-        { "up", { 0 }, 1.0f, false },  // variant-relative
-        { "down", { 0 }, 1.0f, false },  // variant-relative
-        { "dissolve", { 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0 }, 15.0f, false },  // variant-relative
-        { "solidify", { 0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 0 }, 15.0f, false },  // variant-relative
+        { "up", { 0 }, 1.0f, false },
+        { "down", { 1 }, 1.0f, false },
+        { "dissolve", { 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 1 }, 15.0f, false },
+        { "solidify", { 1, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 0 }, 15.0f, false },
     } },
     { "dash_pads", 16, 16, {
     } },

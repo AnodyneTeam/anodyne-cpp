@@ -114,6 +114,7 @@ void Entities_SetMap(const MapEntityList& list, const char* const* sheetNames, u
     if (gHaveMap)
     {
         Preset_ReviveMap(gList);
+        gGame.mPillarSwitchOn = 0;
     }
     FreeScreen();
     Ecs_FlushRenderCaches();

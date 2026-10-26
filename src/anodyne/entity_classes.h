@@ -81,6 +81,9 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);
 Entity* Spawn_MitraFields(const MapEntity& preset, Entity& player);
 Entity* Spawn_MiaoXiao(const MapEntity& preset, Entity& player);
 Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity& player);
+Entity* Spawn_SwitchPillar(const MapEntity& preset, Entity& player);
+Entity* Spawn_PillarSwitch(const MapEntity& preset, Entity& player);
+Entity* Spawn_InsideMonster(const MapEntity& preset, Entity& player);
 
 // For the bot link (game_probe.cpp): the C# fields of an entity's class that the C# bot reads and the port keeps in its
 // brain, written as JSON members ("name":value,...; C# names, float fields as 16.16). Returns the length, 0 for none.

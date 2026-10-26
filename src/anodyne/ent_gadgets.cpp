@@ -350,8 +350,9 @@ void OpenTreasure(Entity& chest)
         {
             if (item)
             {
-                item->mExists = false; // EmptyTreasureEvent
+                item->mExists = false;
             }
+            Ecs_FireEvent(GEV_EMPTY_TREASURE);
         }
         else
         {
@@ -509,6 +510,10 @@ void DustPostUpdate(Entity& self)
     if (Ecs_AnimFinished(self) && (Ecs_AnimIs(self, "fallpoof") || Ecs_AnimIs(self, "poof")))
     {
         self.mExists = false;
+        if (Ecs_AnimIs(self, "fallpoof"))
+        {
+            Ecs_FireEvent(GEV_DUST_FALL);
+        }
     }
 }
 
@@ -544,6 +549,86 @@ Entity* MakeDust(fx x, fx y, const MapEntity* preset)
     Ecs_Play(*e, "poofed");
     return e;
 }
+
+// ---- SwitchPillar / PillarSwitch (Switches/*.cs) ------------------------------------------------------------
+// Hitting a PillarSwitch flips GlobalState.PillarSwitchOn; each SwitchPillar is up (solid) or down by it.
+struct PillarData final
+{
+    int mDefaultFrame;
+    int mCurrent;
+    float mHitTimer; // PillarSwitch.hit_tm
+};
+
+int PillarTarget(const PillarData& d)
+{
+    const int t = d.mDefaultFrame - gGame.mPillarSwitchOn;
+    return t < 0 ? -t : t;
+}
+
+void SwitchPillarUpdate(Entity& self)
+{
+    PillarData& d = self.Data<PillarData>();
+    Ecs_BaseUpdate(self);
+    if (PillarTarget(d) != d.mCurrent)
+    {
+        if (d.mCurrent == 1)
+        {
+            Game_PlaySfx("dash_pad_2");
+            Ecs_Play(self, "solidify");
+        }
+        else
+        {
+            Game_PlaySfx("dash_pad_1");
+            Ecs_Play(self, "dissolve");
+        }
+        d.mCurrent = PillarTarget(d);
+    }
+}
+
+void SwitchPillarCollided(Entity& self, Entity& other)
+{
+    if (Ecs_Frame(self) == 0)
+    {
+        Ecs_Separate(self, other);
+    }
+}
+
+const EntityClass kSwitchPillar = {
+    "SwitchPillar", SwitchPillarUpdate, nullptr, SwitchPillarCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              0,                  ECF_PART_OF_MAP,
+};
+
+void PillarSwitchUpdate(Entity& self)
+{
+    PillarData& d = self.Data<PillarData>();
+    Ecs_BaseUpdate(self);
+    if (d.mHitTimer > 0)
+    {
+        d.mHitTimer -= kDeltaTime;
+        if (d.mHitTimer <= 0)
+        {
+            Ecs_Play(self, gGame.mPillarSwitchOn == 0 ? "up" : "down");
+        }
+    }
+}
+
+void PillarSwitchCollided(Entity& self, Entity& other)
+{
+    PillarData& d = self.Data<PillarData>();
+    Ecs_Separate(self, other);
+    if ((other.mClass->mGroups & GROUP_BROOM) && d.mHitTimer <= 0)
+    {
+        Ecs_Play(self, "hit");
+        d.mHitTimer = 1.0f;
+        Game_PlaySfx("broom_hit");
+        gGame.mPillarSwitchOn = 1 - gGame.mPillarSwitchOn;
+    }
+}
+
+const EntityClass kPillarSwitch = {
+    "PillarSwitch", PillarSwitchUpdate, nullptr, PillarSwitchCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_BROOM,        ECF_PART_OF_MAP,
+};
 
 // ---- CrackedTile / Hole (Holes/*.cs) ----------------------------------------------------------------------------
 void HoleCollided(Entity& self, Entity&)
@@ -1547,7 +1632,40 @@ Entity* Spawn_Dust(const MapEntity& preset, Entity&)
 
 Entity* Spawn_DustAt(fx x, fx y)
 {
-    return MakeDust(x, y, nullptr);
+    Entity* e = MakeDust(x, y, nullptr);
+    if (e)
+    {
+        e->mKeep = true; // (no preset to keep it: the broom may be carrying it)
+    }
+    return e;
+}
+
+Entity* Spawn_SwitchPillar(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSwitchPillar, preset, "dame-switch-pillar");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    PillarData& d = e->Data<PillarData>();
+    d.mDefaultFrame = 1 - preset.mFrame; // inverse of what the level editor suggests
+    Ecs_Play(*e, PillarTarget(d) == 0 ? "up" : "down");
+    d.mCurrent = PillarTarget(d);
+    return e;
+}
+
+Entity* Spawn_PillarSwitch(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kPillarSwitch, preset, "pillar_switch");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, gGame.mPillarSwitchOn == 0 ? "up" : "down");
+    return e;
 }
 
 Entity* Spawn_CrackedTile(const MapEntity& preset, Entity&)

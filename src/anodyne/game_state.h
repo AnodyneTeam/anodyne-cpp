@@ -16,6 +16,8 @@ enum GameEvent : uint8_t
     GEV_END_WARP,
     GEV_BROOM_USED,
     GEV_CHANGE_CARD_COUNT,
+    GEV_DUST_FALL,      // a dust fell down a hole
+    GEV_EMPTY_TREASURE, // a card chest was opened for a card already held
 };
 
 // Broom types (InventoryManager.BroomType).
@@ -55,6 +57,7 @@ struct GameState final
     bool mCanJump; // InventoryManager.CanJump (the jump shoes)
     uint8_t mTradeState; // InventoryManager.TradeState: NONE, SHOES, BOX
     bool mSpookedMonster; // EventRegister.SpookedMonster
+    int mPillarSwitchOn;  // GlobalState.PillarSwitchOn: reset entering another map
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
     bool mSecretStatus[14];
