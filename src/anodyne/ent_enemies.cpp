@@ -6229,6 +6229,962 @@ const EntityClass kSteamPipe = {
     0,           GROUP_PLAYER | GROUP_DUST, 0,
 };
 
+// ---- SpaceFace (Etc/SpaceFace.cs): drifts towards the player now and then
+struct SpaceFaceData final
+{
+    float mWait;
+    float mWaitMax;
+};
+
+void SpaceFaceUpdate(Entity& self)
+{
+    SpaceFaceData& d = self.Data<SpaceFaceData>();
+    Ecs_BaseUpdate(self);
+    d.mWait += kDeltaTime;
+    if (d.mWait >= d.mWaitMax)
+    {
+        d.mWait = 0;
+        const Entity& p = *World_Player();
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(55));
+        self.mT->mDragX = self.mT->mDragY = Fx(Rng_Range(15, 26));
+    }
+}
+
+const EntityClass kSpaceFace = {
+    "SpaceFace", SpaceFaceUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- Chaser (Cell/Chaser.cs): walks at the player along its row/column once lined up, faster after a broom swing
+struct ChaserData final
+{
+    bool mHorizontal;
+    float mTargetVel;
+};
+
+void ChaserCheckStartMove(Entity& self, ChaserData& d)
+{
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    if (d.mHorizontal)
+    {
+        if (p.mT->mY > t.mY - Fx(p.mB->mH) && p.mT->mY < t.mY + Fx(self.mB->mH))
+        {
+            Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+            t.mVelX = Fx(15 * FacingX(static_cast<Facing>(self.mFacing)));
+            t.mVelY = 0;
+            if (t.mVelX != 0)
+            {
+                Ecs_PlayFacing(self, "walking");
+            }
+        }
+    }
+    else
+    {
+        if (p.mT->mX > t.mX - Fx(p.mB->mW) && p.mT->mX < t.mX + Fx(self.mB->mW))
+        {
+            Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+            t.mVelX = 0;
+            t.mVelY = Fx(15 * FacingY(static_cast<Facing>(self.mFacing)));
+            if (t.mVelY != 0)
+            {
+                Ecs_PlayFacing(self, "walking");
+            }
+        }
+    }
+}
+
+void ChaserUpdate(Entity& self)
+{
+    ChaserData& d = self.Data<ChaserData>();
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    if (t.mVelX == 0 && t.mVelY == 0)
+    {
+        ChaserCheckStartMove(self, d);
+        return;
+    }
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        t.mVelX = -t.mVelX;
+        t.mVelY = -t.mVelY;
+        self.mFacing = FlipFacing(static_cast<Facing>(self.mFacing));
+        Ecs_PlayFacing(self, "walking");
+    }
+    if (d.mTargetVel != 0)
+    {
+        fx& v = d.mHorizontal ? t.mVelX : t.mVelY;
+        const float sign = v.mV > 0 ? 1.0f : (v.mV < 0 ? -1.0f : 0.0f);
+        if (MoveTo(v, fx(d.mTargetVel * sign), fx(d.mTargetVel * (0.6f / 1.6f) / 0.3f)))
+        {
+            d.mTargetVel = 0;
+        }
+    }
+}
+
+void ChaserCollided(Entity&, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(6);
+    }
+}
+
+void ChaserEvent(Entity& self, int gameEvent)
+{
+    if (gameEvent != GEV_BROOM_USED)
+    {
+        return;
+    }
+    ChaserData& d = self.Data<ChaserData>();
+    Game_PlaySfx("mover_move");
+    const float vx = self.mT->mVelX.mV;
+    const float vy = self.mT->mVelY.mV;
+    d.mTargetVel = sqrtf(vx * vx + vy * vy) * 1.6f;
+    if (d.mTargetVel > 100)
+    {
+        d.mTargetVel = 100;
+    }
+}
+
+const EntityClass kChaser = {
+    "Chaser", ChaserUpdate, nullptr, ChaserCollided, nullptr, nullptr, ChaserEvent, nullptr,
+    0,        GROUP_PLAYER, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+// ---- FirePillar (Circus/FirePillar.cs): flames up out of its base every couple of seconds; dust or a roller on it
+// puts it out (hides it until it next emerges)
+enum PillarState : uint8_t
+{
+    PILLAR_IDLE,
+    PILLAR_EMERGE,
+    PILLAR_FLAME,
+    PILLAR_RECEDE,
+};
+
+struct FirePillarData final
+{
+    uint8_t mState;
+    // Each state object's TimerState lives as long as the pillar: its clock only runs while the state does.
+    TimerState<1> mTimers[4];
+};
+
+void PillarEnter(Entity& self, uint8_t state)
+{
+    self.Data<FirePillarData>().mState = state;
+    switch (state)
+    {
+    case PILLAR_IDLE:
+        Ecs_Play(self, "idle");
+        self.mV->mVisible = true;
+        break;
+    case PILLAR_EMERGE:
+        Ecs_Play(self, "emerge");
+        Ecs_Flicker(self, FxSec(0.25f));
+        break;
+    case PILLAR_FLAME:
+        Ecs_Play(self, "flame");
+        Game_PlaySfx("flame_pillar");
+        break;
+    default:
+        Ecs_Play(self, "recede");
+        break;
+    }
+}
+
+void FirePillarUpdate(Entity& self)
+{
+    FirePillarData& d = self.Data<FirePillarData>();
+    Ecs_BaseUpdate(self);
+    TimerState<1>& timers = d.mTimers[d.mState];
+    timers.Tick(kDeltaTime);
+    const uint8_t from = d.mState;
+    while (timers.Pop() >= 0)
+    {
+        PillarEnter(self, static_cast<uint8_t>((from + 1) % 4));
+    }
+}
+
+void FirePillarCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        if (self.Data<FirePillarData>().mState == PILLAR_FLAME)
+        {
+            Player_ReceiveDamage(1);
+        }
+    }
+    else
+    {
+        PillarEnter(self, PILLAR_IDLE);
+        self.mV->mVisible = false;
+    }
+}
+
+const EntityClass kFirePillar = {
+    "FirePillar", FirePillarUpdate, nullptr, FirePillarCollided, nullptr, nullptr, nullptr, nullptr,
+    0,            GROUP_PLAYER | GROUP_DUST | GROUP_SPIKE_ROLLER, 0,
+};
+
+const EntityClass kPillarBase = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ---- Contort (Circus/Contort.cs): bounces around the room; three hits and it splits into three smalls that hop out
+// and roll about (ContortSmall, a HealthDropper)
+constexpr float kContortVel = 35;
+constexpr int kContortSmalls = 3;
+
+struct ContortData final
+{
+    float mDeathTimer;
+    int mHealth;
+    Entity* mSmalls[kContortSmalls];
+};
+
+struct ContortSmallData final
+{
+    float mRollTimer;
+    Parabola mArc;
+    Entity* mShadow;
+};
+
+// Bounce off whatever it hit.
+void ContortBounce(Entity& self)
+{
+    const uint8_t touching = self.mB->mTouching;
+    if (touching & (TOUCH_RIGHT | TOUCH_LEFT))
+    {
+        self.mT->mVelX = -self.mT->mVelX;
+    }
+    if (touching & (TOUCH_UP | TOUCH_DOWN))
+    {
+        self.mT->mVelY = -self.mT->mVelY;
+    }
+}
+
+float ContortRandomVel()
+{
+    const float sign = Rng_NextDouble() > 0.5 ? 1.0f : -1.0f;
+    return kContortVel * sign + static_cast<float>(Rng_Range(-5, 5));
+}
+
+void ContortUpdate(Entity& self)
+{
+    ContortData& d = self.Data<ContortData>();
+    Ecs_BaseUpdate(self);
+    if (d.mDeathTimer > 0)
+    {
+        ContortBounce(self);
+        if (d.mHealth == 0)
+        {
+            d.mDeathTimer -= kDeltaTime;
+            if (d.mDeathTimer <= 0)
+            {
+                Ecs_Flicker(self, 0);
+                // Split
+                self.mV->mVisible = false;
+                Spawn_Explosion(self);
+                for (Entity* s : d.mSmalls)
+                {
+                    s->mT->mX = self.mT->mX;
+                    s->mT->mY = self.mT->mY;
+                    s->mExists = true;
+                    s->Data<ContortSmallData>().mShadow->mExists = true;
+                }
+            }
+        }
+        return;
+    }
+    for (Entity* s : d.mSmalls)
+    {
+        if (s->mExists)
+        {
+            return;
+        }
+    }
+    if (self.mPreset)
+    {
+        Preset_SetAlive(*self.mPreset, false);
+    }
+    self.mExists = false;
+}
+
+void ContortCollided(Entity& self, Entity& other)
+{
+    ContortData& d = self.Data<ContortData>();
+    if (d.mHealth == 0)
+    {
+        return;
+    }
+    if (IsBroom(other) && !self.mV->mFlickering)
+    {
+        d.mHealth--;
+        if (d.mHealth == 0)
+        {
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+        Ecs_Flicker(self, FxSec(1.5f));
+    }
+    else if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+// Contort.Fall: it doesn't.
+void ContortMapEvent(Entity&, MapEvent, uint8_t, fx, fx)
+{
+}
+
+void ContortSmallUpdate(Entity& self)
+{
+    ContortSmallData& d = self.Data<ContortSmallData>();
+    Ecs_BaseUpdate(self);
+    // (Shadow.Update: it follows in base.Update, PositionOffset = (0, -5) - (16, 16) / 4)
+    d.mShadow->mT->mX = self.mT->mX + Fx(4);
+    d.mShadow->mT->mY = self.mT->mY + Fx(9);
+    if (ParabolaTick(d.mArc, self, d.mShadow, 3))
+    {
+        d.mShadow->mV->mVisible = false;
+        d.mRollTimer += kDeltaTime;
+        if (d.mRollTimer >= 0.8f)
+        {
+            d.mRollTimer = 0;
+            self.mT->mVelX = fx(ContortRandomVel());
+            self.mT->mVelY = fx(ContortRandomVel());
+        }
+    }
+    ContortBounce(self);
+}
+
+void ContortSmallCollided(Entity& self, Entity& other)
+{
+    if (IsBroom(other) && !self.mV->mFlickering)
+    {
+        Die(self, 0.4f);
+        self.Data<ContortSmallData>().mShadow->mExists = false;
+        Spawn_Explosion(self);
+    }
+    else if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kContort = {
+    "Contort", ContortUpdate, nullptr, ContortCollided, nullptr, ContortMapEvent, nullptr, nullptr,
+    0,         GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_ENEMY,
+};
+
+const EntityClass kContortSmall = {
+    "ContortSmall", ContortSmallUpdate, nullptr, ContortSmallCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+// ---- Lion (Circus/Lion.cs): paces, spits fireballs at the player or backs off and pounces
+enum LionState : uint8_t
+{
+    LION_PACE,
+    LION_SHOOT_WARNING,
+    LION_SHOOT,
+    LION_CHARGE_WALK,
+    LION_CHARGE_WARN,
+    LION_CHARGE,
+    LION_DYING,
+};
+
+constexpr int kLionMaxShots = 18;
+constexpr int kLionFireballs = 10;
+// Each state's TimerState (one timer each; Dying has none): due at mAt on a clock that only runs while it's active.
+constexpr float kLionTimerMax[LION_DYING] = { 0.8f, 0.8f, 0.165f, 1.4f, 0.6f, 0.6f };
+
+struct LionData final
+{
+    float mClock[LION_DYING];
+    float mAt[LION_DYING];
+    Parabola mArc;
+    Entity* mShadowV;
+    Entity* mShadowH;
+    Entity* mShadow; // Entity.shadow: whichever the last anim picked (null until then)
+    int mHealth;
+    int mShotsFired;
+    uint8_t mState;
+};
+
+extern const EntityClass kLionFireball;
+
+struct LionFireballData final
+{
+    fx mStartX;
+    fx mStartY;
+};
+
+// AnimationChanged: horizontal anims get the wide box and shadow, vertical ones the tall.
+void LionPlay(Entity& self, const char* prefix)
+{
+    static const char kSuffix[4] = { 'l', 'r', 'u', 'd' };
+    char name[12];
+    snprintf(name, sizeof(name), "%s_%c", prefix, kSuffix[self.mFacing & 3]);
+    if (!Ecs_Play(self, name))
+    {
+        return;
+    }
+    LionData& d = self.Data<LionData>();
+    const char last = kSuffix[self.mFacing & 3];
+    self.mV->mHFlip = last == 'l';
+    if (last == 'l' || last == 'r')
+    {
+        d.mShadow = d.mShadowH;
+        self.mB->mW = 26;
+        self.mB->mH = 13;
+        self.mV->mOffX = Fx(3);
+        self.mV->mOffY = Fx(11);
+    }
+    else
+    {
+        d.mShadow = d.mShadowV;
+        self.mB->mW = 10;
+        self.mB->mH = 20;
+        self.mV->mOffX = Fx(10);
+        self.mV->mOffY = Fx(4);
+    }
+    d.mShadowH->mExists = d.mShadow == d.mShadowH;
+    d.mShadowV->mExists = d.mShadow == d.mShadowV;
+    d.mShadow->mV->mVisible = false;
+}
+
+void LionFireballSpawn(Entity& b, const Entity& lion)
+{
+    Game_PlaySfx("fireball");
+    Transform& t = *b.mT;
+    const fx px = lion.mT->mX;
+    const fx py = lion.mT->mY;
+    float vx = 0;
+    float vy = 0;
+    switch (lion.mFacing)
+    {
+    case FACE_UP:
+        t.mX = px + Fx(8);
+        t.mY = py - Fx(2);
+        vx = static_cast<float>(Rng_Range(-16, 17));
+        vy = -32;
+        break;
+    case FACE_DOWN:
+        t.mX = px + Fx(8);
+        t.mY = py + Fx(lion.mB->mH) + Fx(2);
+        vx = static_cast<float>(Rng_Range(-16, 17));
+        vy = 32;
+        break;
+    case FACE_RIGHT:
+        t.mX = px + Fx(30);
+        t.mY = py + Fx(2);
+        vx = 32;
+        vy = static_cast<float>(Rng_Range(-26, 27));
+        break;
+    default:
+        t.mX = px;
+        t.mY = py + Fx(2);
+        vx = -32;
+        vy = static_cast<float>(Rng_Range(-26, 27));
+        break;
+    }
+    // Vector2.Normalize (x and y times 1 / length), then * 88
+    const float inv = 1.0f / sqrtf(vx * vx + vy * vy);
+    t.mVelX = fx(vx * inv * 88.0f);
+    t.mVelY = fx(vy * inv * 88.0f);
+    LionFireballData& d = b.Data<LionFireballData>();
+    d.mStartX = t.mX;
+    d.mStartY = t.mY;
+    Ecs_Play(b, "shoot");
+}
+
+void LionEnter(Entity& self, uint8_t state)
+{
+    LionData& d = self.Data<LionData>();
+    const Entity& p = *World_Player();
+    Transform& t = *self.mT;
+    if (d.mState == LION_CHARGE)
+    {
+        t.mVelX = t.mVelY = 0; // Charge's Exit
+    }
+    d.mState = state;
+    switch (state)
+    {
+    case LION_SHOOT_WARNING:
+        t.mVelX = t.mVelY = 0;
+        self.mFacing = p.mT->mX > t.mX + Fx(16) ? FACE_RIGHT : FACE_LEFT;
+        LionPlay(self, "warn");
+        break;
+    case LION_CHARGE_WALK:
+        t.mVelX = Fx(20);
+        t.mVelY = 0;
+        if (p.mT->mX > t.mX)
+        {
+            self.mFacing = FACE_RIGHT;
+            t.mVelX = -t.mVelX;
+        }
+        else
+        {
+            self.mFacing = FACE_LEFT;
+        }
+        LionPlay(self, "walk");
+        break;
+    case LION_CHARGE_WARN:
+        t.mVelX = Fx(self.mFacing == FACE_LEFT ? -10 : 10);
+        t.mVelY = 0;
+        LionPlay(self, "warn");
+        break;
+    case LION_CHARGE:
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(110));
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        d.mShadow->mV->mVisible = true;
+        LionPlay(self, "pounce");
+        break;
+    default:
+        break;
+    }
+}
+
+void LionGetHit(Entity& self)
+{
+    LionData& d = self.Data<LionData>();
+    if (self.mV->mFlickering)
+    {
+        return;
+    }
+    Game_PlaySfx("broom_hit");
+    Ecs_Flicker(self, FxSec(1.0f));
+    d.mHealth--;
+    if (d.mHealth <= 0)
+    {
+        LionEnter(self, LION_DYING);
+    }
+}
+
+// The timer event of `state` (the state that owned the timer, even once something changed it).
+void LionTimerEvent(Entity& self, uint8_t state)
+{
+    LionData& d = self.Data<LionData>();
+    switch (state)
+    {
+    case LION_PACE:
+    {
+        const double r = Rng_NextDouble();
+        if (r < 0.25)
+        {
+            LionEnter(self, LION_SHOOT_WARNING);
+        }
+        else if (r < 0.55)
+        {
+            LionEnter(self, LION_CHARGE_WALK);
+        }
+        else
+        {
+            const int paceR = Rng_Range(0, 6);
+            if (paceR < 4)
+            {
+                static const Facing kFacings[4] = { FACE_RIGHT, FACE_DOWN, FACE_LEFT, FACE_UP };
+                self.mFacing = kFacings[paceR];
+                LionPlay(self, "walk");
+                self.mT->mVelX = Fx(43 * FacingX(kFacings[paceR]));
+                self.mT->mVelY = Fx(43 * FacingY(kFacings[paceR]));
+            }
+        }
+        break;
+    }
+    case LION_SHOOT_WARNING:
+        LionEnter(self, LION_SHOOT);
+        break;
+    case LION_SHOOT:
+        if (d.mShotsFired < kLionMaxShots)
+        {
+            // fireballs.Spawn: the first one not out
+            for (Entity* b = self.mNext; b; b = b->mNext)
+            {
+                if (b->mParent == &self && b->mClass == &kLionFireball && !b->mExists)
+                {
+                    b->mExists = true;
+                    LionFireballSpawn(*b, self);
+                    d.mShotsFired++;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            d.mShotsFired = 0;
+            LionEnter(self, LION_PACE);
+        }
+        break;
+    case LION_CHARGE_WALK:
+        LionEnter(self, LION_CHARGE_WARN);
+        break;
+    default:
+        break; // ChargeWarn's WarnTimer; Charge has the same timer and no handler for it
+    }
+}
+
+void LionUpdate(Entity& self)
+{
+    LionData& d = self.Data<LionData>();
+    Ecs_BaseUpdate(self);
+    if (d.mShadow)
+    {
+        // (Shadow.Update: PositionOffset = (8, -6) - (32, 32) / 4)
+        d.mShadow->mT->mX = self.mT->mX;
+        d.mShadow->mT->mY = self.mT->mY + Fx(14);
+    }
+    const uint8_t state = d.mState;
+    if (state != LION_DYING)
+    {
+        // TimerState.Update: fire what's due, then the state's own Update
+        d.mClock[state] += kDeltaTime;
+        if (d.mAt[state] <= d.mClock[state])
+        {
+            d.mAt[state] = d.mClock[state] + kLionTimerMax[state];
+            LionTimerEvent(self, state);
+        }
+    }
+    const Entity& p = *World_Player();
+    switch (state)
+    {
+    case LION_SHOOT:
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        LionPlay(self, "shoot");
+        break;
+    case LION_CHARGE:
+        if (ParabolaTick(d.mArc, self, d.mShadow, 4) ||
+            (self.mB->mTouching != TOUCH_NONE && self.mV->mOffY > Fx(4)))
+        {
+            self.mV->mOffY = 0;
+            d.mArc.mT = 0;
+            d.mShadowH->mV->mVisible = false;
+            LionPlay(self, "walk");
+            LionEnter(self, LION_PACE);
+        }
+        break;
+    case LION_DYING:
+        self.mV->mOpacity -= FxF(0.05f);
+        if (self.mV->mOpacity <= 0)
+        {
+            Spawn_Explosion(self);
+            self.mExists = false;
+            d.mShadowH->mExists = d.mShadowV->mExists = false;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void LionCollided(Entity& self, Entity& other)
+{
+    LionData& d = self.Data<LionData>();
+    if (d.mState == LION_DYING)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other))
+    {
+        LionGetHit(self);
+        if (d.mState == LION_SHOOT)
+        {
+            d.mShotsFired = kLionMaxShots;
+        }
+    }
+}
+
+void LionFireballUpdate(Entity& self)
+{
+    if (Ecs_AnimFinished(self) && Ecs_AnimIs(self, "poof"))
+    {
+        self.mExists = false;
+        return;
+    }
+    const LionFireballData& d = self.Data<LionFireballData>();
+    const fx dx = d.mStartX - self.mT->mX;
+    const fx dy = d.mStartY - self.mT->mY;
+    if ((dx < 0 ? -dx : dx) > Fx(80) || (dy < 0 ? -dy : dy) > Fx(80))
+    {
+        Ecs_Play(self, "poof");
+    }
+}
+
+void LionFireballCollided(Entity& self, Entity& other)
+{
+    if (Ecs_AnimIs(self, "poof"))
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    Ecs_Play(self, "poof");
+}
+
+const EntityClass kLion = {
+    "Lion", LionUpdate, nullptr, LionCollided, nullptr, nullptr, nullptr, nullptr,
+    0,      GROUP_PLAYER | GROUP_BROOM, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_ENEMY,
+};
+
+const EntityClass kLionFireball = {
+    "Fireball", LionFireballUpdate, nullptr, LionFireballCollided, nullptr, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_BROOM | GROUP_DUST, 0,
+};
+
+// ---- ArthurDanger / JavieraDanger (Npc/Circus/*Danger.cs): the acrobats stuck up on the circus walls. Arthur wobbles
+// on his ledge until dust is under him, then drops onto the dust pillow; Javiera waits for the room's enemies to die.
+// The C#'s StateLogic coroutines, as steps.
+enum FolksStep : uint8_t
+{
+    FOLKS_TRANSITION,
+    FOLKS_TALK,
+    FOLKS_WOBBLE,
+    FOLKS_FALL,
+    FOLKS_WAIT_KILLS,
+    FOLKS_WAIT,
+    FOLKS_TALK_AGAIN,
+    FOLKS_WALK_DOWN,
+    FOLKS_HOP,
+    FOLKS_WALK_LEFT,
+};
+
+struct FolksData final
+{
+    float mHurtTimer;
+    float mWaitTimer;
+    fx mInitX;
+    fx mInitY;
+    Parabola mArc;
+    Entity* mShadow;
+    Entity* mPillow;
+    bool mCollided;
+    uint8_t mStep;
+};
+
+// Play, plus AnimationChanged: the left anims are the right ones flipped.
+void FolksPlay(Entity& self, const char* anim)
+{
+    if (Ecs_Play(self, anim))
+    {
+        self.mV->mHFlip = anim[strlen(anim) - 1] == 'l';
+    }
+}
+
+void FolksLeave(Entity& self)
+{
+    if (self.mPreset)
+    {
+        Preset_SetAlive(*self.mPreset, false);
+    }
+    self.mExists = false;
+}
+
+void ArthurUpdate(Entity& self)
+{
+    FolksData& d = self.Data<FolksData>();
+    Ecs_BaseUpdate(self);
+    Visual& v = *self.mV;
+    Transform& t = *self.mT;
+    // (Shadow.Update: PositionOffset = (0, -2) - (16, 16) / 4)
+    d.mShadow->mT->mX = t.mX + Fx(4);
+    d.mShadow->mT->mY = t.mY + Fx(6);
+    switch (d.mStep)
+    {
+    case FOLKS_TRANSITION:
+        if (World_InTransition())
+        {
+            break;
+        }
+        Game_ShowDialogue("arthur", "alone", 0);
+        d.mStep = FOLKS_TALK;
+        [[fallthrough]];
+    case FOLKS_TALK:
+        if (!Game_DialogueFinished())
+        {
+            break;
+        }
+        d.mStep = FOLKS_WOBBLE;
+        [[fallthrough]];
+    case FOLKS_WOBBLE:
+        if (!(d.mCollided && v.mOffX < FxF(0.5f)))
+        {
+            d.mHurtTimer += kDeltaTime;
+            v.mOffX = fx(-3 * static_cast<float>(sin(static_cast<double>(d.mHurtTimer / 1.3f) * 6.28)));
+            d.mShadow->mV->mOffX = v.mOffX;
+            break;
+        }
+        v.mOffX = d.mShadow->mV->mOffX = 0;
+        FolksPlay(self, "fall_1");
+        Game_PlaySfx("fall_1");
+        d.mStep = FOLKS_FALL;
+        [[fallthrough]];
+    case FOLKS_FALL:
+        if (v.mOffY > 0)
+        {
+            const float y = v.mOffY.mV;
+            v.mOffY = fx(y - kDeltaTime * 30 * (1 + 3 * ((80 - y) / 80)));
+            const float h = v.mOffY.mV / 80;
+            const int frame = static_cast<int>(ceilf(h * 4)) - 1;
+            if (frame < 0)
+            {
+                d.mShadow->mV->mVisible = false;
+            }
+            else
+            {
+                UpdateShadowFrames(*d.mShadow, h, 3);
+            }
+            break;
+        }
+        Ecs_Play(*d.mPillow, "poof");
+        Game_PlaySfx("dustpoof");
+        FolksPlay(self, "stunned");
+        gGame.mPuzzlesSolved++;
+        Screen_Shake(FxF(0.01f), FxF(0.2f));
+        d.mShadow->mV->mVisible = false;
+        d.mStep = FOLKS_WAIT;
+        [[fallthrough]];
+    case FOLKS_WAIT:
+        if (d.mWaitTimer < 1)
+        {
+            d.mWaitTimer += kDeltaTime;
+            break;
+        }
+        Game_ShowDialogue("arthur", "alone", 1);
+        d.mStep = FOLKS_TALK_AGAIN;
+        [[fallthrough]];
+    case FOLKS_TALK_AGAIN:
+        if (!Game_DialogueFinished())
+        {
+            break;
+        }
+        FolksPlay(self, "walk_d");
+        d.mStep = FOLKS_WALK_DOWN;
+        [[fallthrough]];
+    case FOLKS_WALK_DOWN:
+        if (!MoveTo(t.mY, d.mInitY + Fx(32), Fx(60)))
+        {
+            break;
+        }
+        FolksPlay(self, "walk_l");
+        d.mStep = FOLKS_HOP;
+        [[fallthrough]];
+    case FOLKS_HOP:
+        if (!ParabolaTick(d.mArc, self, d.mShadow, 3))
+        {
+            break;
+        }
+        d.mStep = FOLKS_WALK_LEFT;
+        [[fallthrough]];
+    case FOLKS_WALK_LEFT:
+        if (!MoveTo(t.mX, d.mInitX - Fx(40), Fx(60)))
+        {
+            break;
+        }
+        FolksLeave(self);
+        d.mShadow->mExists = false;
+        break;
+    default:
+        break;
+    }
+}
+
+void ArthurCollided(Entity& self, Entity&)
+{
+    self.Data<FolksData>().mCollided = true;
+}
+
+const EntityClass kArthurDanger = {
+    "ArthurDanger", ArthurUpdate, nullptr, ArthurCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_DUST,   0,
+};
+
+void JavieraUpdate(Entity& self)
+{
+    FolksData& d = self.Data<FolksData>();
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case FOLKS_TRANSITION:
+        if (World_InTransition())
+        {
+            break;
+        }
+        Game_ShowDialogue("javiera", "alone", 0);
+        d.mStep = FOLKS_TALK;
+        [[fallthrough]];
+    case FOLKS_TALK:
+        if (!Game_DialogueFinished())
+        {
+            break;
+        }
+        Ecs_SetSheet(self, "javiera", 16, 16);
+        FolksPlay(self, "walk_d");
+        d.mStep = FOLKS_WAIT_KILLS;
+        [[fallthrough]];
+    case FOLKS_WAIT_KILLS:
+        if (gGame.mEnemiesKilled < 2)
+        {
+            break;
+        }
+        d.mStep = FOLKS_WAIT;
+        [[fallthrough]];
+    case FOLKS_WAIT:
+        if (d.mWaitTimer < 1)
+        {
+            d.mWaitTimer += kDeltaTime;
+            break;
+        }
+        Game_ShowDialogue("javiera", "alone", 1);
+        d.mStep = FOLKS_TALK_AGAIN;
+        [[fallthrough]];
+    case FOLKS_TALK_AGAIN:
+        if (!Game_DialogueFinished())
+        {
+            break;
+        }
+        d.mStep = FOLKS_WALK_DOWN;
+        [[fallthrough]];
+    case FOLKS_WALK_DOWN:
+        if (!MoveTo(t.mY, d.mInitY, Fx(60)))
+        {
+            break;
+        }
+        FolksPlay(self, "walk_l");
+        d.mStep = FOLKS_WALK_LEFT;
+        [[fallthrough]];
+    case FOLKS_WALK_LEFT:
+        if (!MoveTo(t.mX, d.mInitX - Fx(66), Fx(60)))
+        {
+            break;
+        }
+        FolksLeave(self);
+        gGame.mPuzzlesSolved++;
+        break;
+    default:
+        break;
+    }
+}
+
+const EntityClass kJavieraDanger = {
+    "JavieraDanger", JavieraUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// ArthurDead / JavieraDead (Npc/Circus/CircusFolksDead.cs): what's left of them after the boss.
+const EntityClass kArthurDead = {
+    "ArthurDead", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kJavieraDead = {
+    "JavieraDead", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
 // ---- EyebossPreview (Npc/Hotel/EyebossPreview.cs): the eye boss peeks in, blinks and fades away
 // (its CompositeSpriteRenderer: the sclera is the entity, the pupil and the eyelids are "Entity" children)
 struct EyePreviewData final
@@ -8252,7 +9208,7 @@ void FallingRollerCollided(Entity& self, Entity& other)
 
 const EntityClass kFallingSpikeRoller = {
     "FallingSpikeRoller", FallingRollerUpdate, nullptr, FallingRollerCollided, nullptr, nullptr, nullptr, nullptr,
-    0,                    GROUP_PLAYER,        0,
+    GROUP_SPIKE_ROLLER,   GROUP_PLAYER,        0,
 };
 
 const EntityClass kRollerShadow = {
@@ -8273,7 +9229,7 @@ void BouncyRollerUpdate(Entity& self)
 
 const EntityClass kBouncySpikeRoller = {
     "BouncySpikeRoller", BouncyRollerUpdate, nullptr, RollerCollided, nullptr, nullptr, nullptr, nullptr,
-    0,                   GROUP_PLAYER,       ECF_MAP_COLLISION,
+    GROUP_SPIKE_ROLLER,  GROUP_PLAYER,       ECF_MAP_COLLISION,
 };
 
 // BaseSpikeRoller's constructor: frame 0 rolls up, 1 right, 2 left, 3 down.
@@ -8802,5 +9758,235 @@ Entity* Spawn_EyeBossLand(const MapEntity& preset, Entity&)
         LandToLandStep(*e, d); // the initial setup
     }
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
+    return e;
+}
+
+Entity* Spawn_SpaceFace(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSpaceFace, preset, "space_npcs", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mLayer = LAYER_BG_ENTITIES;
+    Ecs_Play(*e, preset.mFrame == 0 ? "a@2" : "a");
+    SpaceFaceData& d = e->Data<SpaceFaceData>();
+    d = SpaceFaceData();
+    d.mWaitMax = static_cast<float>(0.5 + 1.5 * Rng_NextDouble());
+    return e;
+}
+
+Entity* Spawn_Chaser(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kChaser, preset, "chaser", 16, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 8;
+    e->mV->mOffX = Fx(4);
+    e->mV->mOffY = Fx(20);
+    e->mT->mX += Fx(4);
+    e->mT->mY += Fx(20);
+    ChaserData& d = e->Data<ChaserData>();
+    d = ChaserData();
+    d.mHorizontal = preset.mFrame == 0;
+    Ecs_Play(*e, d.mHorizontal ? "face_r" : "face_d");
+    return e;
+}
+
+Entity* Spawn_FirePillar(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFirePillar, preset, "fire_pillar", 16, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Entity* base = Ecs_Create(kPillarBase, Fx(preset.mX), Fx(preset.mY + 16), PART_VISUAL, nullptr, e);
+    if (!base)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*base, "fire_pillar_base", 16, 16);
+    base->mV->mLayer = LAYER_VERY_BG_ENTITIES;
+    Ecs_SetSolid(*base, false);
+    Ecs_Play(*base, "dormant");
+    e->mB->mH = 9;
+    e->mV->mOffY = Fx(16);
+    e->mT->mY += Fx(16);
+    FirePillarData& d = e->Data<FirePillarData>();
+    d = FirePillarData();
+    d.mTimers[PILLAR_IDLE].Add(0.74f, 0);
+    d.mTimers[PILLAR_EMERGE].Add(0.3f, 0);
+    d.mTimers[PILLAR_FLAME].Add(1.0f, 0);
+    d.mTimers[PILLAR_RECEDE].Add(0.3f, 0);
+    PillarEnter(*e, PILLAR_IDLE);
+    return e;
+}
+
+Entity* Spawn_Contort(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kContort, preset, "contort_big", 16, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 12;
+    e->mV->mOffX = Fx(2);
+    e->mV->mOffY = Fx(20);
+    Ecs_Play(*e, "move");
+    ContortData& d = e->Data<ContortData>();
+    d = ContortData();
+    d.mDeathTimer = 1;
+    d.mHealth = 3;
+    e->mT->mVelX = Fx(Rng_NextDouble() > 0.5 ? 35 : -35);
+    e->mT->mVelY = Fx(Rng_NextDouble() > 0.5 ? 35 : -35);
+    static const int kStartFrames[kContortSmalls] = { 0, 2, 4 };
+    static const int kHeights[kContortSmalls] = { 0, 2, 1 };
+    for (int i = 0; i < kContortSmalls; i++)
+    {
+        Entity* s = Ecs_Create(kContortSmall, e->mT->mX, e->mT->mY, PART_VISUAL | PART_BRAIN, nullptr, e);
+        Entity* shadow = s ? Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, s) : nullptr;
+        if (!shadow)
+        {
+            return nullptr;
+        }
+        s->mB->mW = s->mB->mH = 16;
+        Ecs_SetSheet(*s, "contort_small", 16, 16);
+        Ecs_SetFrameBase(*s, kStartFrames[i]);
+        Ecs_Play(*s, "move");
+        Ecs_SetSheet(*shadow, "8x8_shadow", 8, 8);
+        shadow->mV->mLayer = LAYER_SHADOWS;
+        Ecs_SetSolid(*shadow, false);
+        ContortSmallData& sd = s->Data<ContortSmallData>();
+        sd = ContortSmallData();
+        ParabolaInit(sd.mArc, *s, static_cast<float>(16 + 8 * kHeights[i]), 1.2f);
+        sd.mShadow = shadow;
+        s->mT->mVelX = fx(ContortRandomVel());
+        s->mT->mVelY = fx(ContortRandomVel());
+        Ecs_Flicker(*s, FxSec(1.0f));
+        Ecs_KeepPooled(*s);
+        Ecs_KeepPooled(*shadow);
+        d.mSmalls[i] = s;
+    }
+    return e;
+}
+
+Entity* Spawn_Lion(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kLion, preset, "lion", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 32;
+    LionData& d = e->Data<LionData>();
+    d = LionData();
+    d.mHealth = 4;
+    for (int i = 0; i < LION_DYING; i++)
+    {
+        d.mAt[i] = kLionTimerMax[i];
+    }
+    ParabolaInit(d.mArc, *e, 12, 1);
+    for (int i = 0; i < kLionFireballs; i++)
+    {
+        Entity* b = Ecs_Create(kLionFireball, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*b, "lion_fireballs", 16, 16);
+        b->mV->mLayer = LAYER_FG_SPRITES;
+        b->mV->mFpsOverride = 10;
+        b->mB->mW = b->mB->mH = 8;
+        b->mV->mOffX = b->mV->mOffY = Fx(4);
+        b->Data<LionFireballData>() = LionFireballData();
+        Ecs_KeepPooled(*b);
+    }
+    d.mShadowV = Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, e);
+    d.mShadowH = Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, e);
+    if (!d.mShadowV || !d.mShadowH)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mShadowV, "10x28_shadow", 10, 28);
+    Ecs_SetSheet(*d.mShadowH, "28x10_shadow", 28, 10);
+    Entity* const shadows[2] = { d.mShadowV, d.mShadowH };
+    for (Entity* s : shadows)
+    {
+        s->mV->mLayer = LAYER_SHADOWS;
+        Ecs_SetSolid(*s, false);
+        Ecs_KeepPooled(*s);
+    }
+    d.mState = LION_PACE;
+    return e;
+}
+
+Entity* Spawn_ArthurDanger(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kArthurDanger, preset, "arthur", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "wobble");
+    FolksData& d = e->Data<FolksData>();
+    d = FolksData();
+    ParabolaInit(d.mArc, *e, 32, 1);
+    d.mShadow = Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, e);
+    if (!d.mShadow)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mShadow, "8x8_shadow", 8, 8);
+    d.mShadow->mV->mLayer = LAYER_SHADOWS;
+    Ecs_SetSolid(*d.mShadow, false);
+    e->mT->mY -= Fx(32);
+    e->mV->mOffY = Fx(5 * 16);
+    d.mInitX = e->mT->mX;
+    d.mInitY = e->mT->mY;
+    d.mShadow->mT->mX = e->mT->mX + Fx(4);
+    d.mShadow->mT->mY = e->mT->mY + Fx(6);
+    d.mPillow = Spawn_DustAt(GridLeft() + Fx(46), GridTop() + Fx(16));
+    if (!d.mPillow)
+    {
+        return nullptr;
+    }
+    return e;
+}
+
+Entity* Spawn_JavieraDanger(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kJavieraDanger, preset, "javiera_juggle", 16, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mH = 24;
+    Ecs_Play(*e, "juggle");
+    FolksData& d = e->Data<FolksData>();
+    d = FolksData();
+    d.mInitX = e->mT->mX;
+    d.mInitY = e->mT->mY;
+    return e;
+}
+
+Entity* Spawn_ArthurDead(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kArthurDead, preset, "arthur", 16, 16);
+    if (e)
+    {
+        Ecs_SetFrame(*e, 18);
+    }
+    return e;
+}
+
+Entity* Spawn_JavieraDead(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kJavieraDead, preset, "javiera", 16, 16);
+    if (e)
+    {
+        Ecs_SetFrame(*e, 12);
+    }
     return e;
 }

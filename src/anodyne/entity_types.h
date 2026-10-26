@@ -95,6 +95,18 @@
     X(Elevator)                \
     X(EyeBossWater)            \
     X(EyeBossLand)             \
+    X(SpaceFace)               \
+    X(SpaceNpc)                \
+    X(Chaser)                  \
+    X(CliffDog)                \
+    X(CellBody)                \
+    X(FirePillar)              \
+    X(Contort)                 \
+    X(Lion)                    \
+    X(ArthurDanger)           \
+    X(JavieraDanger)          \
+    X(ArthurDead)             \
+    X(JavieraDead)            \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

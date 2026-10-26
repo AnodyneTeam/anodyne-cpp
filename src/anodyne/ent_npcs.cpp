@@ -3434,3 +3434,162 @@ Entity* Spawn_HotelGuy(const MapEntity& preset, Entity&)
     e->mB->mImmovable = true;
     return e;
 }
+
+// ---- SpaceNPC (Npc/Space/SpaceNPC.cs): the geoms, gray (frames 0-9) and colour (10-) ------------------------------
+namespace
+{
+struct SpaceNpcData final
+{
+    const char* mDialogue;
+};
+
+bool SpaceNpcInteract(Entity& self, Facing playerFacing)
+{
+    if (strncmp(Ecs_AnimName(self), "walk", 4) == 0)
+    {
+        FacePlayerTalking(self, playerFacing);
+        Ecs_PlayFacing(self, "walk");
+    }
+    Game_ShowDialogue("geoms", self.Data<SpaceNpcData>().mDialogue);
+    return true;
+}
+
+const EntityClass kSpaceNpc = {
+    "SpaceNPC", nullptr, nullptr, SeparateFromAny, SpaceNpcInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER, ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_SpaceNpc(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSpaceNpc, preset, "space_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_SetFrameBase(*e, preset.mFrame >= 10 ? 10 : 0);
+    Ecs_Play(*e, "walk_d");
+    const char* dialogue = "";
+    switch (preset.mFrame)
+    {
+    case 0:
+        dialogue = "gray1";
+        break;
+    case 1:
+        dialogue = "gray2";
+        break;
+    case 3:
+        dialogue = "gray3";
+        break;
+    case 10:
+        dialogue = "color1";
+        break;
+    case 11:
+        dialogue = "color2";
+        break;
+    case 12:
+        dialogue = "color3";
+        break;
+    case 2:
+        dialogue = "grayspin";
+        Ecs_Play(*e, "spin");
+        break;
+    case 8:
+        dialogue = "colordead";
+        Ecs_Play(*e, "dead");
+        break;
+    case 18:
+        dialogue = "graydead";
+        Ecs_Play(*e, "dead");
+        break;
+    default:
+        break;
+    }
+    e->Data<SpaceNpcData>().mDialogue = dialogue;
+    return e;
+}
+
+// ---- CliffDog (Npc/CliffDog.cs): the dog on the cliffs, wandering left and right now and then
+namespace
+{
+struct CliffDogData final
+{
+    float mTimer;
+};
+
+void CliffDogUpdate(Entity& self)
+{
+    CliffDogData& d = self.Data<CliffDogData>();
+    Transform& t = *self.mT;
+    d.mTimer += kDeltaTime;
+    if (d.mTimer > 1)
+    {
+        if (strcmp(Ecs_AnimName(self), "walk") == 0)
+        {
+            Ecs_FaceTowards(self, t.mX - t.mVelX, t.mY - t.mVelY);
+            t.mVelX = 0;
+            t.mVelY = 0;
+            Ecs_Play(self, "stop");
+            self.mV->mHFlip = false;
+        }
+        else if (Rng_NextDouble() > 0.6)
+        {
+            const Facing f = static_cast<Facing>(self.mFacing);
+            t.mVelX = Fx(15 * FacingX(f));
+            t.mVelY = Fx(15 * FacingY(f));
+            Ecs_Play(self, "walk", false, 8);
+            if (f == FACE_LEFT)
+            {
+                self.mV->mHFlip = true;
+            }
+        }
+        d.mTimer = 0;
+    }
+    Ecs_BaseUpdate(self);
+}
+
+bool CliffDogInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("cliff_dog", "top_left");
+    return true;
+}
+
+const EntityClass kCliffDog = {
+    "CliffDog", CliffDogUpdate, nullptr, SeparateFromAny, CliffDogInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_CliffDog(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kCliffDog, preset, "dog");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, "stop");
+    e->mFacing = FACE_RIGHT;
+    e->Data<CliffDogData>() = CliffDogData();
+    return e;
+}
+
+// ---- CellBody (Npc/Cell/CellBody.cs): a body lying in the cell, just a picture
+namespace
+{
+const EntityClass kCellBody = {
+    "CellBody", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_CellBody(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kCellBody, preset, "cell_bodies", 16, 16);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrame(*e, preset.mFrame);
+    return e;
+}

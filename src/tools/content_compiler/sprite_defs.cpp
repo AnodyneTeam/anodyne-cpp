@@ -752,6 +752,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     } },
     { "space_npcs", 16, 16, {
         { "a", { 20, 21 }, 6.0f, true },
+        { "a@2", { 22, 23 }, 6.0f, true },
         { "walk_d", { 0, 1 }, 4.0f, true },  // variant-relative
         { "walk_r", { 2, 3 }, 4.0f, true },  // variant-relative
         { "walk_u", { 4, 5 }, 4.0f, true },  // variant-relative

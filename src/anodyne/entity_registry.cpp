@@ -115,6 +115,30 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_EyeBossWater;
     case EPT_EyeBossLand:
         return Spawn_EyeBossLand;
+    case EPT_SpaceFace:
+        return Spawn_SpaceFace;
+    case EPT_SpaceNpc:
+        return Spawn_SpaceNpc;
+    case EPT_Chaser:
+        return Spawn_Chaser;
+    case EPT_CliffDog:
+        return Spawn_CliffDog;
+    case EPT_CellBody:
+        return Spawn_CellBody;
+    case EPT_FirePillar:
+        return Spawn_FirePillar;
+    case EPT_Contort:
+        return Spawn_Contort;
+    case EPT_Lion:
+        return Spawn_Lion;
+    case EPT_ArthurDanger:
+        return Spawn_ArthurDanger;
+    case EPT_JavieraDanger:
+        return Spawn_JavieraDanger;
+    case EPT_ArthurDead:
+        return Spawn_ArthurDead;
+    case EPT_JavieraDead:
+        return Spawn_JavieraDead;
     case EPT_SplitBoss:
         return Spawn_SplitBoss;
     case EPT_Rat:
