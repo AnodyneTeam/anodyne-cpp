@@ -13,8 +13,9 @@ bool World_Init(ObjVramAllocator& vram);
 
 // Loads the map's palette/tileset into VRAM and its collision into RAM, then puts the player on a free spot.
 // mapName (e.g. "FIELDS") selects the map's foot-overlay sprites; `audio` is its music/ambience settings and `scroll` its scrolling background (if any).
+// loadEntities false: a World_PlaceAt follows (a warp or a new game), so that free spot's screen isn't loaded first.
 void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
-                const MapDoorList& doors, const MapDarkData& dark);
+                const MapDoorList& doors, const MapDarkData& dark, bool loadEntities = true);
 
 // Per-frame: input, movement, collision, screen transitions, background scrolling and the player sprite.
 void World_Update();

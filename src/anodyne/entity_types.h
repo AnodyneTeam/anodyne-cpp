@@ -73,6 +73,9 @@
     X(RedBoss)                  \
     X(SageRedCave)              \
     X(SageCrowd)                \
+    X(Bunny)                    \
+    X(BunnyRun)                 \
+    X(Person)                   \
     X(Door)
 
 enum EntityPresetType : unsigned char

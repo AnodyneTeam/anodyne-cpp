@@ -1418,7 +1418,7 @@ static void LoadMapGraphics(const MapEntry& map)
 }
 
 void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& audio, const MapScrollData& scroll,
-                const MapDoorList& doors, const MapDarkData& dark)
+                const MapDoorList& doors, const MapDarkData& dark, bool loadEntities)
 {
     gDarkData = &dark;
     Darkness_SetPlayerLight(*gPlayerLight);
@@ -1456,7 +1456,10 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     UpdateDarkness(false);
     gDeathFallbackX = Player_Entity()->mT->mX;
     gDeathFallbackY = Player_Entity()->mT->mY;
-    Entities_LoadGrid(gGridX, gGridY, true);
+    if (loadEntities)
+    {
+        Entities_LoadGrid(gGridX, gGridY, true);
+    }
 }
 
 void World_GetBgOffsets(int16_t x[4], int16_t y[4])

@@ -2594,3 +2594,81 @@ Entity* Spawn_Sign(const MapEntity& preset, Entity&)
     Ecs_SetFrame(*e, preset.mFrame);
     return e;
 }
+
+// ---- Bunny and BunnyRun (Forest/Bunny.cs) ---------------------------------------------------------------------------
+namespace
+{
+void BunnyUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    const Entity& p = *World_Player();
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+    Ecs_PlayFacing(self, "walk");
+}
+
+bool BunnyInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("forest_npc", "bunny");
+    return true;
+}
+
+const EntityClass kBunny = {
+    "Bunny", BunnyUpdate, nullptr, SeparateFromPlayer, BunnyInteract, nullptr, nullptr, nullptr,
+    0,       GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+// Sits there until the player is close, then bolts off the screen the way it faces.
+void BunnyRunUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    if (t.mVelX != 0 || t.mVelY != 0)
+    {
+        const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+        if (!Ecs_Intersects(screen, Ecs_Hitbox(self)))
+        {
+            self.mExists = false;
+        }
+    }
+    else if (DistanceToPlayer(self) < Fx(48))
+    {
+        const Facing f = static_cast<Facing>(self.mFacing);
+        t.mVelX = Fx(FacingX(f) * 100);
+        t.mVelY = Fx(FacingY(f) * 100);
+        Game_PlaySfx("rat_move");
+    }
+}
+
+const EntityClass kBunnyRun = {
+    "BunnyRun", BunnyRunUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_Bunny(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBunny, preset, "forest_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_Play(*e, "walk_d");
+    return e;
+}
+
+Entity* Spawn_BunnyRun(const MapEntity& preset, Entity&)
+{
+    // (only one in four shows up, each time the screen loads)
+    if (Rng_NextDouble() >= 0.25)
+    {
+        return nullptr;
+    }
+    Entity* e = Spawn_Basic(kBunnyRun, preset, "forest_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mFacing = static_cast<uint8_t>(Rng_Range(0, 4));
+    Ecs_PlayFacing(*e, "walk");
+    return e;
+}

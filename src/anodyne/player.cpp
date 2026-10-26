@@ -56,6 +56,7 @@ struct PlayerData final
     bool mOnConveyor;
     bool mSinking;
     bool mSlow; // slowMul = 0.5
+    int mSlowTicks;
     Entity* mRaft; // the dust ridden over water
     uint8_t mJumpStage; // 0: not started, 1: in the air, 2: landed (one more frame)
     fx mInvincibilityTime;
@@ -755,7 +756,14 @@ void PlayerUpdate(Entity& self)
         d.mJustFell = false;
     }
     Movement();
-    d.mSlow = false; // slowTicks is never set before the Seer: slowMul goes back to 1 every frame
+    if (d.mSlowTicks > 0)
+    {
+        d.mSlowTicks--;
+    }
+    else
+    {
+        d.mSlow = false;
+    }
     d.mAddVelX = d.mAddVelY = 0;
     Ecs_BaseUpdate(self);
 }
@@ -1226,6 +1234,12 @@ void Player_SetGridEntrance()
 {
     P().mGridEntranceX = gPlayer->mT->mX;
     P().mGridEntranceY = gPlayer->mT->mY;
+}
+
+void Player_SetSlowFor(int ticks)
+{
+    P().mSlow = true;
+    P().mSlowTicks = ticks;
 }
 
 void Player_SetGridEntranceAt(fx x, fx y)

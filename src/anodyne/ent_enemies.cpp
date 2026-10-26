@@ -4299,3 +4299,111 @@ Entity* Spawn_RedBoss(const MapEntity& preset, Entity&)
     }
     return e;
 }
+
+// ---- Person (Crowd/Person.cs): wanders and chatters, and the player wades through them at half speed -------------
+namespace
+{
+constexpr int kPersonSpeed = 10;
+
+struct PersonData final
+{
+    float mSwitchDirMax;
+    float mSwitchDir;
+    float mTalk;
+};
+
+void PersonSetFlip(Entity& self)
+{
+    self.mV->mHFlip = self.mT->mVelX < 0;
+}
+
+void PersonFace(Entity& self, Facing f)
+{
+    self.mFacing = f;
+    Ecs_PlayFacing(self, "walk");
+    self.mT->mVelX = Fx(FacingX(f) * kPersonSpeed);
+    self.mT->mVelY = Fx(FacingY(f) * kPersonSpeed);
+    PersonSetFlip(self);
+}
+
+void PersonUpdate(Entity& self)
+{
+    PersonData& d = self.Data<PersonData>();
+    Ecs_BaseUpdate(self);
+    d.mSwitchDir -= kDeltaTime;
+    if (d.mSwitchDir < 0)
+    {
+        d.mSwitchDir = d.mSwitchDirMax;
+        PersonFace(self, static_cast<Facing>(Rng_Range(0, 4)));
+    }
+    d.mTalk -= kDeltaTime;
+    if (d.mTalk < 0)
+    {
+        d.mTalk = static_cast<float>(0.5 + Rng_NextDouble());
+        static const char* const kTalk[] = { "talk_1", "talk_1", "talk_2", "talk_3", "talk_3" };
+        Game_PlaySfxOneOf(kTalk, 5);
+    }
+}
+
+void PersonCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        Player_SetSlowFor(7);
+        Ecs_Separate(self, other);
+    }
+}
+
+const EntityClass kPerson = {
+    "Person", PersonUpdate, nullptr, PersonCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER, ECF_MAP_COLLISION,
+};
+} // namespace
+
+Entity* Spawn_Person(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kPerson, preset, "person");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 6;
+    e->mB->mH = 4;
+    Ecs_CenterOffset(*e);
+    e->mT->mLastX = e->mT->mX;
+    e->mT->mLastY = e->mT->mY;
+    e->mV->mOffY += Fx(4);
+    PersonData& d = e->Data<PersonData>();
+    d.mSwitchDirMax = 1.3f;
+    d.mSwitchDir = 2.0f;
+    d.mTalk = static_cast<float>(0.5 + Rng_NextDouble());
+    switch (preset.mFrame)
+    {
+    case 0:
+        PersonFace(*e, FACE_DOWN);
+        break;
+    case 1:
+        PersonFace(*e, FACE_RIGHT);
+        break;
+    case 2:
+        PersonFace(*e, FACE_UP);
+        break;
+    case 3:
+        PersonFace(*e, FACE_LEFT);
+        break;
+    case 4:
+    {
+        // new Vector2(v): the same on both axes
+        const fx v = Fx(Rng_Range(-kPersonSpeed, kPersonSpeed));
+        e->mT->mVelX = e->mT->mVelY = v;
+        Ecs_Play(*e, v > 0 ? "walk_r" : "walk_l");
+        d.mSwitchDirMax = 0.5f;
+        PersonSetFlip(*e);
+        break;
+    }
+    default:
+        Ecs_Play(*e, "walk_d");
+        break;
+    }
+    return e;
+}

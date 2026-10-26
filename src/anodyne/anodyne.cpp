@@ -150,7 +150,8 @@ static void SetReturnTargetToNexus()
     }
 }
 
-static void LoadWorldMap()
+// placedAfter: the caller puts the player somewhere with World_PlaceAt straight after (which loads that screen).
+static void LoadWorldMap(bool placedAfter = false)
 {
     // PlayState.Warp: leaving a map whose boss is beaten.
     if (gGame.mMapName && gGame.mCurrentMap != static_cast<int>(gCurrentMap) &&
@@ -169,7 +170,7 @@ static void LoadWorldMap()
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
     World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap],
-               kMapDark[gCurrentMap]);
+               kMapDark[gCurrentMap], !placedAfter);
     Dialog_SetArea(kMapNames[gCurrentMap]);
 }
 
@@ -180,7 +181,7 @@ static void LoadWarpMap(uint8_t map)
     if (map != gCurrentMap)
     {
         gCurrentMap = map;
-        LoadWorldMap();
+        LoadWorldMap(true);
     }
 }
 
@@ -540,7 +541,7 @@ int main()
                 mode = AppMode::MapViewer;
                 EnterMapViewerMode();
                 galleryOn = false;
-                LoadWorldMap();
+                LoadWorldMap(true);
                 World_PlaceAt(77, 87, 0); // IntroState: the new game starts in BLANK at (77, 87)
                 const int street = Game_MapIndex("STREET");
                 if (street >= 0)
