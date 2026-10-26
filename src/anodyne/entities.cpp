@@ -60,6 +60,7 @@ bool IsEnemyType(uint8_t type)
     case EPT_Annoyer:
     case EPT_Seer:
     case EPT_Dog:
+    case EPT_BurstPlant:
         return true;
     default:
         return false;

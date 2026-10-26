@@ -57,6 +57,7 @@ Entity* Spawn_Annoyer(const MapEntity& preset, Entity& player);
 Entity* Spawn_PewLaser(const MapEntity& preset, Entity& player);
 Entity* Spawn_Shieldy(const MapEntity& preset, Entity& player);
 Entity* Spawn_Dog(const MapEntity& preset, Entity& player);
+Entity* Spawn_BurstPlant(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
 Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).
@@ -79,6 +80,7 @@ Entity* Spawn_BigKey(const MapEntity& preset, Entity& player);
 Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity& player);
 Entity* Spawn_MitraFields(const MapEntity& preset, Entity& player);
 Entity* Spawn_MiaoXiao(const MapEntity& preset, Entity& player);
+Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity& player);
 
 // For the bot link (game_probe.cpp): the C# fields of an entity's class that the C# bot reads and the port keeps in its
 // brain, written as JSON members ("name":value,...; C# names, float fields as 16.16). Returns the length, 0 for none.

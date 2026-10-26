@@ -160,6 +160,7 @@ const NamedEntity kNamed[] = {
     { "Mitra", nullptr, "OVERWORLD", {}, EPT_MitraOverworld },
     { "Mitra", nullptr, "FIELDS", {}, EPT_MitraFields },
     { "Trade_NPC", nullptr, nullptr, { 0 }, EPT_MiaoXiao },
+    { "Trade_NPC", nullptr, nullptr, { 2 }, EPT_OutsideMonster },
     { "Health_Cicada", nullptr, nullptr, {}, EPT_HealthCicada },
     { "Sadbro", nullptr, nullptr, {}, EPT_Sadbro },
     { "Follower_Bro", nullptr, nullptr, {}, EPT_FollowerBro },
@@ -169,6 +170,7 @@ const NamedEntity kNamed[] = {
     { "Annoyer", nullptr, nullptr, {}, EPT_Annoyer },
     { "Sun_Guy", nullptr, nullptr, {}, EPT_Seer },
     { "Dog", nullptr, nullptr, {}, EPT_Dog },
+    { "Burst_Plant", nullptr, nullptr, {}, EPT_BurstPlant },
     { "Rotator", nullptr, nullptr, {}, EPT_Rotator },
     { "Door", nullptr, nullptr, {}, EPT_Door },
 };

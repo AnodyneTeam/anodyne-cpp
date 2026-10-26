@@ -742,19 +742,21 @@ bool Ecs_Play(Entity& e, const char* anim, bool force, int fps)
     return false;
 }
 
-void Ecs_PlayFacing(Entity& e, const char* prefix)
+void Ecs_PlayFacing(Entity& e, const char* prefix, const char* variant)
 {
     static const char kSuffix[4] = { 'l', 'r', 'u', 'd' };
     char name[24];
     const size_t n = strlen(prefix);
-    if (n + 3 > sizeof(name))
+    const size_t v = variant ? strlen(variant) : 0;
+    if (n + v + 3 > sizeof(name))
     {
         return;
     }
     memcpy(name, prefix, n);
     name[n] = '_';
     name[n + 1] = kSuffix[e.mFacing & 3];
-    name[n + 2] = '\0';
+    memcpy(name + n + 2, variant ? variant : "", v);
+    name[n + 2 + v] = '\0';
     Ecs_Play(e, name);
 }
 

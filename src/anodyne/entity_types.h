@@ -42,6 +42,7 @@
     X(MitraOverworld)           \
     X(MitraFields)              \
     X(MiaoXiao)                 \
+    X(OutsideMonster)           \
     X(HealthCicada)             \
     X(Sadbro)                   \
     X(FollowerBro)              \
@@ -51,6 +52,7 @@
     X(Annoyer)                  \
     X(Seer)                     \
     X(Dog)                      \
+    X(BurstPlant)               \
     X(Rotator)                  \
     X(Door)
 

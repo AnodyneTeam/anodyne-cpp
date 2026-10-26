@@ -419,6 +419,7 @@ enum EntityClassFlags : uint8_t
     ECF_ENEMY = 1 << 3,          // [Enemy]: counts for ENEMIES_KILLED once it stops existing
     ECF_ALWAYS_SPAWN = 1 << 4,   // ignore EntityPreset.Alive when loading the screen
     ECF_INTERACTABLE = 1 << 5,   // Accept checks it
+    ECF_PROBE_OWNED = 1 << 6,    // the bot link lists it even while the player owns it (Player.follower)
 };
 
 struct Entity final
@@ -548,7 +549,8 @@ int Ecs_CountChildren(const Entity& parent, const EntityClass& cls);
 // Entity.Play / SetFrame / PlayFacing on the visual. Play returns true when the anim changed (AnimationChanged).
 bool Ecs_SetSheet(Entity& e, const char* sheet, int frameW = 0, int frameH = 0);
 bool Ecs_Play(Entity& e, const char* anim, bool force = false, int fps = 0);
-void Ecs_PlayFacing(Entity& e, const char* prefix);
+// `variant`: "@N" for a sheet's Nth anim set of that name.
+void Ecs_PlayFacing(Entity& e, const char* prefix, const char* variant = nullptr);
 void Ecs_SetFrame(Entity& e, int frame);
 int Ecs_Frame(const Entity& e);        // the sheet frame shown
 inline void Ecs_SetFrameBase(Entity& e, int base)

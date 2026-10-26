@@ -3,6 +3,7 @@
 
 #include "player.h"
 
+#include <math.h>
 #include <string.h>
 
 namespace
@@ -1055,6 +1056,210 @@ const EntityClass kDog = {
     ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_ENEMY,
 };
 
+// ---- Burst_Plant (Hotel/Burst_Plant.cs) -------------------------------------------------------------------------
+enum BurstState : uint8_t
+{
+    BURST_INITIAL,
+    BURST_IDLE,
+    BURST_CHARGING,
+    BURST_BULLETS_FLYING,
+};
+
+constexpr int kBurstBullets = 8;
+
+struct BurstPlantData final
+{
+    uint8_t mState;
+    int mHealth;
+    Entity* mBullets[kBurstBullets]; // its EntityPool, made with it
+    // Each state object's TimerState lives as long as the plant: its clock only runs while the state does.
+    TimerState<1> mInitial;  // goToIdle
+    TimerState<1> mIdle;     // idleTimer
+    TimerState<1> mCharging; // Fire, armed once when the plant is made and never reset
+};
+
+struct BurstBulletData final
+{
+    bool mSplash;
+    fx mT; // its Parabola_Thing
+    fx mPeriod;
+    int mHeight;
+};
+
+void BurstBulletUpdate(Entity& self)
+{
+    BurstBulletData& d = self.Data<BurstBulletData>();
+    Ecs_BaseUpdate(self);
+    if (!d.mSplash)
+    {
+        if (ParabolaTick(d.mT, d.mPeriod, d.mHeight, self.mV->mOffY))
+        {
+            d.mSplash = true;
+            Ecs_Play(self, "explode");
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+        Game_PlaySfx("4sht_pop");
+    }
+}
+
+void BurstBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && self.mV->mOffY <= Fx(4) && (self.mT->mVelX != 0 || self.mT->mVelY != 0))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kBurstBullet = {
+    "BurstBullet", BurstBulletUpdate, nullptr, BurstBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,             GROUP_PLAYER,      0,
+};
+
+// EntityPool.Spawn: the bullet's Move state from the plant (Parabola_Thing from offset 0). `period` < 0: a random
+// one, drawn after the height.
+void BurstBulletStart(Entity& b, const Entity& plant, float period)
+{
+    BurstBulletData& d = b.Data<BurstBulletData>();
+    b.mExists = true;
+    b.mT->mX = plant.mT->mX + Fx(5);
+    b.mT->mY = plant.mT->mY + Fx(5);
+    d.mHeight = Rng_Range(24, 34);
+    d.mPeriod = fx(period >= 0 ? period : 0.7f + static_cast<float>(Rng_NextDouble()));
+    d.mT = 0;
+    d.mSplash = false;
+    b.mV->mOffY = 0;
+    b.mV->mOpacity = kFxOne;
+    Ecs_Play(b, "move");
+}
+
+void BurstEnter(Entity& self, uint8_t state)
+{
+    BurstPlantData& d = self.Data<BurstPlantData>();
+    d.mState = state;
+    if (state == BURST_IDLE)
+    {
+        Ecs_Play(self, "idle");
+        d.mIdle.Reset();
+        d.mIdle.Add(0.4f + static_cast<float>(Rng_NextDouble()), 0);
+    }
+    else if (state == BURST_CHARGING)
+    {
+        Ecs_Play(self, "charging");
+    }
+}
+
+void BurstFire(Entity& self)
+{
+    BurstPlantData& d = self.Data<BurstPlantData>();
+    const int sign = Rng_Range(0, 2) == 0 ? -1 : 1; // MathUtilities.OneRandomOf(-1, 1)
+    const float maxVel = 10 + 30 * static_cast<float>(Rng_NextDouble());
+    const Entity& p = *World_Player();
+    int spawned = 0;
+    for (Entity* b : d.mBullets)
+    {
+        if (!b || b->mExists)
+        {
+            continue;
+        }
+        if (spawned == 0)
+        {
+            // one straight to the player
+            BurstBulletStart(*b, self, 1.5f);
+            Ecs_MoveTowards(*b, Ecs_CenterX(p), Ecs_CenterY(p), fx(maxVel * 2.5f));
+        }
+        else
+        {
+            BurstBulletStart(*b, self, -1);
+            const float vx = -maxVel + 2 * maxVel * static_cast<float>(Rng_NextDouble());
+            b->mT->mVelX = fx(vx);
+            b->mT->mVelY = fx(sign * sqrtf(maxVel * maxVel - vx * vx));
+        }
+        if (++spawned == 8)
+        {
+            break;
+        }
+    }
+    Ecs_Play(self, "shoot");
+    Game_PlaySfx("bubble_triple");
+    BurstEnter(self, BURST_BULLETS_FLYING);
+}
+
+void BurstPlantUpdate(Entity& self)
+{
+    BurstPlantData& d = self.Data<BurstPlantData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mState)
+    {
+    case BURST_INITIAL:
+        d.mInitial.Tick(kDeltaTime);
+        while (d.mInitial.Pop() >= 0)
+        {
+            BurstEnter(self, BURST_IDLE);
+        }
+        break;
+    case BURST_IDLE:
+        d.mIdle.Tick(kDeltaTime);
+        while (d.mIdle.Pop() >= 0)
+        {
+            BurstEnter(self, BURST_CHARGING);
+        }
+        break;
+    case BURST_CHARGING:
+        d.mCharging.Tick(kDeltaTime);
+        while (d.mCharging.Pop() >= 0)
+        {
+            BurstFire(self);
+        }
+        break;
+    default:
+    {
+        bool alive = false;
+        for (const Entity* b : d.mBullets)
+        {
+            alive = alive || (b && b->mExists);
+        }
+        if (!alive)
+        {
+            BurstEnter(self, BURST_IDLE);
+        }
+        break;
+    }
+    }
+}
+
+void BurstPlantCollided(Entity& self, Entity&)
+{
+    BurstPlantData& d = self.Data<BurstPlantData>();
+    if (self.mV->mFlickering)
+    {
+        return;
+    }
+    d.mHealth--;
+    Ecs_Flicker(self, FxSec(1.0f));
+    Game_PlaySfx("broom_hit");
+    if (d.mHealth <= 0)
+    {
+        Spawn_Explosion(self);
+        Die(self, 0.7f);
+        for (Entity* b : d.mBullets)
+        {
+            if (b)
+            {
+                b->mExists = false;
+            }
+        }
+    }
+}
+
+const EntityClass kBurstPlant = {
+    "Burst_Plant", BurstPlantUpdate, nullptr, BurstPlantCollided, nullptr, nullptr, nullptr, nullptr,
+    0,             GROUP_BROOM,      ECF_ENEMY,
+};
+
 // Dog.DogRegion: a 96x96 box round the dog that wakes it when the player is in it.
 void DogRegionUpdate(Entity& self)
 {
@@ -1701,6 +1906,35 @@ Entity* Spawn_Slime(const MapEntity& preset, Entity&)
     d.mMove.Add(0.5f, SLIME_MOVE_TIMER);
     d.mExitFrame = Game_Frame();
     SlimeEnterMove(*e);
+    return e;
+}
+
+Entity* Spawn_BurstPlant(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kBurstPlant, preset, "burst_plant");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    BurstPlantData& d = e->Data<BurstPlantData>();
+    d.mHealth = 2;
+    for (Entity*& b : d.mBullets)
+    {
+        b = Ecs_Create(kBurstBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSolid(*b, false);
+        b->mB->mW = b->mB->mH = 8;
+        Ecs_SetSheet(*b, "burst_plant_bullet");
+        b->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_KeepPooled(*b);
+    }
+    d.mCharging.Add(0.5f, 0);
+    d.mState = BURST_INITIAL;
+    d.mInitial.Add(0.4f, 0);
     return e;
 }
 

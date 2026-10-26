@@ -57,6 +57,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_PewLaser;
     case EPT_Shieldy:
         return Spawn_Shieldy;
+    case EPT_BurstPlant:
+        return Spawn_BurstPlant;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:
@@ -93,6 +95,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_MitraFields;
     case EPT_MiaoXiao:
         return Spawn_MiaoXiao;
+    case EPT_OutsideMonster:
+        return Spawn_OutsideMonster;
     case EPT_Door:
         return Spawn_Door;
     default:

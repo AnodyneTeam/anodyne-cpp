@@ -113,7 +113,7 @@ extern "C" int GameProbe_Json(char* buf, int cap)
     bool first = true;
     for (const Entity* e = Ecs_First(); e; e = e->mNext)
     {
-        if (e->mPlayerOwned || e->mOld || e->mSpawned)
+        if ((e->mPlayerOwned && !(e->mClass->mFlags & ECF_PROBE_OWNED)) || e->mOld || e->mSpawned)
         {
             continue;
         }

@@ -1340,7 +1340,7 @@ void MiaoFollowerUpdate(Entity& self)
         t.mVelX = t.mVelY = 0;
     }
     Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
-    Ecs_PlayFacing(self, "walk");
+    Ecs_PlayFacing(self, "walk", "@2"); // (MiaoGraphics' anims)
 
     if (Entity* dust = d.mFollower)
     {
@@ -1477,7 +1477,7 @@ const EntityClass kMiaoXiao = {
 
 const EntityClass kMiaoFollower = {
     "MiaoXiaoFollower", MiaoFollowerUpdate, nullptr, nullptr, nullptr, MiaoFollowerMapEvent, MiaoFollowerEvent,
-    MiaoFollowerDestroy, 0, 0, ECF_MAP_COLLISION,
+    MiaoFollowerDestroy, 0, 0, ECF_MAP_COLLISION | ECF_PROBE_OWNED,
 };
 
 const EntityClass kMiaoDust = {
@@ -1492,11 +1492,235 @@ Entity* MakeMiao(const EntityClass& cls, fx x, fx y, const MapEntity* preset)
         return nullptr;
     }
     Ecs_SetSheet(*e, "fields_npcs", 16, 16);
+    Ecs_Play(*e, "walk_d@2");
     e->mB->mW = e->mB->mH = 12;
     e->mV->mOffX = e->mV->mOffY = Fx(2);
     return e;
 }
+
+// ---- OutsideMonster, Box, BoxIcky (RunningTradeNPCs/OutsideMonster.cs) --------------------------------------------
+// The monster guards Icky's box; with the cat along it is spooked off, the box opens and Icky walks out.
+struct TradeData final
+{
+    uint8_t mStep;      // within its cutscene
+    bool mLastBit;      // BoxIcky._state: MoveLastBit running
+    bool mLastBitDone;
+    Entity* mSub;       // the monster's box, the box's Icky
+    const MapEntity* mPreset; // the box: the monster's preset
+};
+
+// MapUtilities.GetInGridPosition
+float InGrid(fx v)
+{
+    return v.mV - static_cast<float>(static_cast<int>(v.mV / 160) * 160);
+}
+
+void TradeCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+bool OutsideMonsterCutscene(Entity& self)
+{
+    TradeData& d = self.Data<TradeData>();
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case 0:
+        Game_ShowCutsceneDialogue("goldman", "etc", 0);
+        d.mStep = 1;
+        return false;
+    case 1:
+        Ecs_SetSolid(self, false);
+        t.mVelX = 0;
+        t.mVelY = -Fx(40);
+        Ecs_Play(self, "walk_u@3");
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (InGrid(t.mY) > 6 * 16)
+        {
+            return false;
+        }
+        t.mVelX = Fx(40);
+        t.mVelY = 0;
+        Ecs_Play(self, "walk_r@3");
+        d.mStep = 3;
+        [[fallthrough]];
+    default:
+        if (InGrid(t.mX) > 10) // wraps around when on next screen
+        {
+            return false;
+        }
+        self.mExists = false;
+        return true;
+    }
+}
+
+bool OutsideMonsterInteract(Entity& self, Facing)
+{
+    if (gMiaoFollower)
+    {
+        gGame.mSpookedMonster = true;
+        self.Data<TradeData>().mStep = 0;
+        Game_StartCutscene(self, OutsideMonsterCutscene);
+    }
+    else
+    {
+        Game_ShowDialogue("goldman", "outside");
+    }
+    return true;
+}
+
+bool BoxIckyCutscene(Entity& self)
+{
+    TradeData& d = self.Data<TradeData>();
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case 0:
+        Event_Inc("icky.rescued");
+        t.mVelX = Fx(20);
+        t.mVelY = 0;
+        Ecs_Play(self, "walk_r");
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (InGrid(t.mX) < 85)
+        {
+            return false;
+        }
+        t.mVelX = t.mVelY = 0;
+        Ecs_Play(self, "walk_d");
+        Game_ShowCutsceneDialogue("goldman", "etc", 3);
+        d.mStep = 2;
+        return false;
+    default:
+        d.mLastBit = true;
+        return true;
+    }
+}
+
+bool BoxCutscene(Entity& self)
+{
+    TradeData& d = self.Data<TradeData>();
+    if (d.mStep == 0)
+    {
+        Game_ShowCutsceneDialogue("goldman", "etc", 2);
+        d.mStep = 1;
+        return false;
+    }
+    gGame.mTradeState = TRADE_BOX;
+    self.mExists = false;
+    if (d.mPreset)
+    {
+        Preset_SetAlive(*d.mPreset, false);
+    }
+    if (Entity* icky = d.mSub)
+    {
+        icky->mExists = true;
+        icky->Data<TradeData>().mStep = 0;
+        Game_StartCutscene(*icky, BoxIckyCutscene);
+    }
+    return true;
+}
+
+bool BoxInteract(Entity& self, Facing)
+{
+    if (!gGame.mSpookedMonster)
+    {
+        return false;
+    }
+    Ecs_Play(self, "open");
+    Game_PlaySfx("broom_hit");
+    self.Data<TradeData>().mStep = 0;
+    Game_StartCutscene(self, BoxCutscene);
+    return true;
+}
+
+bool BoxIckyInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("goldman", "etc", 4);
+    return true;
+}
+
+void BoxIckyUpdate(Entity& self)
+{
+    TradeData& d = self.Data<TradeData>();
+    Ecs_BaseUpdate(self);
+    // MoveLastBit
+    if (d.mLastBit && !d.mLastBitDone)
+    {
+        Transform& t = *self.mT;
+        if (t.mVelX == 0)
+        {
+            t.mVelX = Fx(20);
+            Ecs_Play(self, "walk_r");
+        }
+        if (InGrid(t.mX) >= 6 * 16)
+        {
+            t.mVelX = 0;
+            Ecs_Play(self, "walk_d");
+            d.mLastBitDone = true;
+        }
+    }
+}
+
+const EntityClass kOutsideMonster = {
+    "OutsideMonster", nullptr, nullptr, TradeCollided, OutsideMonsterInteract, nullptr, nullptr, nullptr,
+    0,                GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+const EntityClass kBox = {
+    "Box", nullptr, nullptr, TradeCollided, BoxInteract, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+const EntityClass kBoxIcky = {
+    "BoxIcky", BoxIckyUpdate, nullptr, TradeCollided, BoxIckyInteract, nullptr, nullptr, nullptr,
+    0,         GROUP_PLAYER,  ECF_INTERACTABLE,
+};
+
+Entity* MakeTradeNpc(const EntityClass& cls, fx x, fx y, const char* anim, const MapEntity* preset)
+{
+    Entity* e = Ecs_Create(cls, x, y, PART_VISUAL | PART_BRAIN, preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*e, "fields_npcs", 16, 16);
+    Ecs_Play(*e, anim);
+    e->mB->mW = e->mB->mH = 16;
+    e->mB->mImmovable = true;
+    Ecs_SetSolid(*e, true);
+    return e;
+}
 } // namespace
+
+Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity&)
+{
+    Entity* e = MakeTradeNpc(kOutsideMonster, Fx(preset.mX), Fx(preset.mY), "walk_d@3", &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Entity* box = MakeTradeNpc(kBox, e->mT->mX, e->mT->mY - Fx(20), "closed", nullptr);
+    if (box)
+    {
+        box->Data<TradeData>().mPreset = &preset;
+        Entity* icky = MakeTradeNpc(kBoxIcky, box->mT->mX, box->mT->mY - Fx(10), "walk_r", nullptr);
+        if (icky)
+        {
+            Ecs_KeepPooled(*icky);
+            box->Data<TradeData>().mSub = icky;
+        }
+        e->Data<TradeData>().mSub = box;
+    }
+    if (gGame.mSpookedMonster)
+    {
+        e->mExists = false;
+    }
+    return e;
+}
 
 Entity* Spawn_MiaoXiao(const MapEntity& preset, Entity&)
 {
