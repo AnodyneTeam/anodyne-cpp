@@ -227,6 +227,51 @@ void GiveBroom(BroomType type)
     }
 }
 
+Entity* MakeTreasureItem(uint8_t kind, const char* sheet, int frame, fx x, fx y)
+{
+    Entity* item = Ecs_Create(kTreasure, x, y, PART_VISUAL | PART_BRAIN);
+    if (item)
+    {
+        item->mB->mW = item->mB->mH = 16;
+        Ecs_SetSolid(*item, false);
+        Ecs_SetSheet(*item, sheet);
+        Ecs_SetFrame(*item, frame);
+        item->mV->mLayer = LAYER_FG_SPRITES;
+        TreasureData& d = item->Data<TreasureData>();
+        d.mKind = kind;
+        d.mEndY = y - Fx(16);
+        if (kind == TK_CARD)
+        {
+            item->mV->mScale = kFxOne / 2;
+            item->mV->mOffX = item->mV->mOffY = Fx(12);
+            item->mT->mX += Fx(9);
+        }
+        else
+        {
+            Ecs_Flicker(*item, FxSec(1.0f));
+        }
+    }
+    return item;
+}
+
+// CardTreasure.GetTreasure
+void GiveCard(Entity* item, int card)
+{
+    if (gGame.mCardStatus[card])
+    {
+        if (item)
+        {
+            item->mExists = false;
+        }
+        Ecs_FireEvent(GEV_EMPTY_TREASURE);
+    }
+    else
+    {
+        gGame.mCardStatus[card] = 1;
+        Ecs_FireEvent(GEV_CHANGE_CARD_COUNT);
+    }
+}
+
 // TreasureChest.SetTreasure + BaseTreasure.GetTreasure: the chest's contents appear and take effect.
 void OpenTreasure(Entity& chest)
 {
@@ -304,28 +349,7 @@ void OpenTreasure(Entity& chest)
     Game_PlaySfx("gettreasure");
     ShowTreasureDialogue(dialogue);
 
-    Entity* item = Ecs_Create(kTreasure, chest.mT->mX, chest.mT->mY, PART_VISUAL | PART_BRAIN);
-    if (item)
-    {
-        item->mB->mW = item->mB->mH = 16;
-        Ecs_SetSolid(*item, false);
-        Ecs_SetSheet(*item, sheet);
-        Ecs_SetFrame(*item, frame);
-        item->mV->mLayer = LAYER_FG_SPRITES;
-        TreasureData& d = item->Data<TreasureData>();
-        d.mKind = kind;
-        d.mEndY = chest.mT->mY - Fx(16);
-        if (kind == TK_CARD)
-        {
-            item->mV->mScale = kFxOne / 2;
-            item->mV->mOffX = item->mV->mOffY = Fx(12);
-            item->mT->mX += Fx(9);
-        }
-        else
-        {
-            Ecs_Flicker(*item, FxSec(1.0f));
-        }
-    }
+    Entity* item = MakeTreasureItem(kind, sheet, frame, chest.mT->mX, chest.mT->mY);
 
     switch (kind)
     {
@@ -346,19 +370,7 @@ void OpenTreasure(Entity& chest)
         Inventory_AddMapKey();
         break;
     case TK_CARD:
-        if (gGame.mCardStatus[p.mLinkId])
-        {
-            if (item)
-            {
-                item->mExists = false;
-            }
-            Ecs_FireEvent(GEV_EMPTY_TREASURE);
-        }
-        else
-        {
-            gGame.mCardStatus[p.mLinkId] = 1;
-            Ecs_FireEvent(GEV_CHANGE_CARD_COUNT);
-        }
+        GiveCard(item, p.mLinkId);
         break;
     case TK_SECRET:
         gGame.mSecretStatus[f - 7] = true;
@@ -495,7 +507,13 @@ const EntityClass kVBlocker = {
 };
 
 // ---- Dust (Dust.cs) ---------------------------------------------------------------------------------------------
-void DustCollided(Entity& self, Entity&)
+struct DustData final
+{
+    bool mOnConveyor; // ON_CONVEYOR
+    bool mIsRaft;     // IS_RAFT
+};
+
+void DustCollided(Entity& self, Entity& o)
 {
     if (!Ecs_AnimFinished(self) && Ecs_AnimIs(self, "unpoof") && Player_BroomDust() == &self)
     {
@@ -507,6 +525,7 @@ void DustCollided(Entity& self, Entity&)
 void DustPostUpdate(Entity& self)
 {
     self.mT->mVelX = self.mT->mVelY = 0;
+    self.Data<DustData>().mOnConveyor = false;
     if (Ecs_AnimFinished(self) && (Ecs_AnimIs(self, "fallpoof") || Ecs_AnimIs(self, "poof")))
     {
         self.mExists = false;
@@ -517,12 +536,22 @@ void DustPostUpdate(Entity& self)
     }
 }
 
-void DustMapEvent(Entity& self, MapEvent ev, uint8_t, fx, fx)
+void DustMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx, fx)
 {
+    DustData& d = self.Data<DustData>();
     // Dust.Fall: only dust just put down over a hole falls in.
-    if (ev == MAPEV_FALL && Ecs_AnimIs(self, "unpoof") && Ecs_AnimFinished(self))
+    if (ev == MAPEV_FALL && !d.mIsRaft && Ecs_AnimIs(self, "unpoof") && Ecs_AnimFinished(self))
     {
         Ecs_Play(self, "fallpoof");
+    }
+    else if (ev == MAPEV_CONVEYOR)
+    {
+        if (dir != TOUCH_ANY && !d.mIsRaft)
+        {
+            self.mT->mVelX = Fx(10 * (dir == TOUCH_RIGHT ? 1 : (dir == TOUCH_LEFT ? -1 : 0)));
+            self.mT->mVelY = Fx(10 * (dir == TOUCH_DOWN ? 1 : (dir == TOUCH_UP ? -1 : 0)));
+        }
+        d.mOnConveyor = true;
     }
 }
 
@@ -533,12 +562,12 @@ void DustDestroy(Entity& self)
 
 const EntityClass kDust = {
     "Dust",     nullptr,    DustPostUpdate, DustCollided, nullptr, DustMapEvent, nullptr, DustDestroy,
-    GROUP_DUST, GROUP_DUST, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+    GROUP_DUST, GROUP_DUST, ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_PROBE_OWNED,
 };
 
 Entity* MakeDust(fx x, fx y, const MapEntity* preset)
 {
-    Entity* e = Ecs_Create(kDust, x, y, PART_VISUAL, preset);
+    Entity* e = Ecs_Create(kDust, x, y, PART_VISUAL | PART_BRAIN, preset);
     if (!e)
     {
         return nullptr;
@@ -1479,6 +1508,24 @@ void SetReturnTarget(int x, int y)
     gGame.mReturnY = y - 34;
 }
 } // namespace
+
+bool Dust_OnConveyor(Entity& dust)
+{
+    return dust.Data<DustData>().mOnConveyor;
+}
+
+void Dust_SetRaft(Entity& dust, bool raft)
+{
+    dust.Data<DustData>().mIsRaft = raft;
+    dust.mPlayerOwned = raft; // Player.SubEntities: the raft goes along with the player
+}
+
+void Treasure_GiveCard(fx x, fx y, int card)
+{
+    Entity* item = MakeTreasureItem(TK_CARD, card != 48 ? "card_sheet" : "card_49", card, x, y);
+    Game_PlaySfx("gettreasure");
+    GiveCard(item, card);
+}
 
 Entity* Spawn_Console(const MapEntity& preset, Entity&)
 {

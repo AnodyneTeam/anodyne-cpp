@@ -56,6 +56,7 @@ struct PlayerData final
     bool mOnConveyor;
     bool mSinking;
     bool mSlow; // slowMul = 0.5
+    Entity* mRaft; // the dust ridden over water
     uint8_t mJumpStage; // 0: not started, 1: in the air, 2: landed (one more frame)
     fx mInvincibilityTime;
     fx mBumpTimer;
@@ -570,6 +571,15 @@ void LadderLogic()
     d.mAnimState = AS_IDLE;
 }
 
+// The raft sits under the player, 2 px up-left.
+void RaftFollow()
+{
+    const Transform& t = *gPlayer->mT;
+    Transform& r = *P().mRaft->mT;
+    r.mX = t.mX - Fx(2);
+    r.mY = t.mY - Fx(2);
+}
+
 void Movement()
 {
     PlayerData& d = P();
@@ -601,6 +611,29 @@ void Movement()
             {
                 gPlayer->mV->mYPush = 0;
             }
+            if (d.mRaft)
+            {
+                if (d.mOnConveyor)
+                {
+                    RaftFollow();
+                }
+                else if ((t.mVelX != 0 || t.mVelY != 0) && !d.mIsSlipping && !d.mHasFallen)
+                {
+                    // stepping off: the raft is pushed back 3 px
+                    const float vx = t.mVelX.mV;
+                    const float vy = t.mVelY.mV;
+                    const float len = sqrtf(vx * vx + vy * vy);
+                    Transform& r = *d.mRaft->mT;
+                    r.mX -= fx(vx / len * 3);
+                    r.mY -= fx(vy / len * 3);
+                    Dust_SetRaft(*d.mRaft, false);
+                    d.mRaft = nullptr;
+                }
+            }
+        }
+        if (d.mRaft && d.mOnConveyor)
+        {
+            RaftFollow();
         }
         d.mStepTimer -= kFxTick;
         if (d.mStepTimer < 0 && (t.mVelX != 0 || t.mVelY != 0) && d.mOnConveyor)
@@ -630,6 +663,10 @@ void Movement()
         else
         {
             SetInitVel(FxF(0.83f));
+            if (d.mRaft && d.mOnConveyor)
+            {
+                RaftFollow();
+            }
             t.mVelX += d.mAddVelX;
             t.mVelY += d.mAddVelY;
             JumpStep();
@@ -680,8 +717,11 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
         {
             d.mAddVelX = dir == TOUCH_RIGHT ? kConveyorVel : (dir == TOUCH_LEFT ? -kConveyorVel : 0);
             d.mAddVelY = dir == TOUCH_DOWN ? kConveyorVel : (dir == TOUCH_UP ? -kConveyorVel : 0);
-            d.mSlow = true;
-            d.mSinking = true;
+            if (!d.mRaft)
+            {
+                d.mSlow = true;
+                d.mSinking = true;
+            }
         }
         break;
     case MAPEV_SPIKE:
@@ -719,6 +759,26 @@ void PlayerUpdate(Entity& self)
     Ecs_BaseUpdate(self);
 }
 
+void PlayerCollided(Entity& self, Entity& other)
+{
+    // other is a Dust: the only class in GROUP_DUST
+    PlayerData& d = P();
+    if (!d.mRaft && Dust_OnConveyor(other) && d.mOnConveyor)
+    {
+        const Rect h = Ecs_Hitbox(other);
+        const float cx = Ecs_CenterX(self).mV;
+        const float cy = Ecs_CenterY(self).mV;
+        if (static_cast<float>(h.mX) <= cx && cx < static_cast<float>(h.mX + h.mW) && static_cast<float>(h.mY) <= cy &&
+            cy < static_cast<float>(h.mY + h.mH))
+        {
+            d.mRaft = &other;
+            Dust_SetRaft(other, true);
+            d.mSinking = false;
+            self.mV->mYPush = 0;
+        }
+    }
+}
+
 void PlayerPostUpdate(Entity&)
 {
     PlayerData& d = P();
@@ -728,8 +788,8 @@ void PlayerPostUpdate(Entity&)
 }
 
 const EntityClass kPlayerClass = {
-    "Player", PlayerUpdate, PlayerPostUpdate, nullptr, nullptr, PlayerMapEvent, nullptr, nullptr,
-    GROUP_PLAYER, 0, ECF_MAP_COLLISION,
+    "Player", PlayerUpdate, PlayerPostUpdate, PlayerCollided, nullptr, PlayerMapEvent, nullptr, nullptr,
+    GROUP_PLAYER, GROUP_DUST, ECF_MAP_COLLISION,
 };
 
 // ---- Broom ------------------------------------------------------------------------------------------------------
@@ -763,7 +823,7 @@ fx DustDistance(const Entity& dust)
 void BroomCollided(Entity&, Entity& other)
 {
     BroomData& b = B();
-    if (!b.mCarrying && !b.mJustReleased)
+    if (!b.mCarrying && !b.mJustReleased && &other != P().mRaft)
     {
         if (!b.mCandidate || DustDistance(*b.mCandidate) < DustDistance(other))
         {
@@ -877,8 +937,9 @@ void BroomAttack()
             // shows and does nothing)
             if (bd.mDust)
             {
-                bd.mDust->mT->mX = bd.mDust->mT->mLastX = x;
-                bd.mDust->mT->mY = bd.mDust->mT->mLastY = y;
+                // (the C# leaves lastPosition where the dust was picked up, so its first map collision sweeps from there)
+                bd.mDust->mT->mX = x;
+                bd.mDust->mT->mY = y;
                 bd.mDust->mExists = true;
                 Ecs_Play(*bd.mDust, "unpoof", true);
             }
@@ -1141,6 +1202,11 @@ void Player_Reset(const char* mapName)
     d.mDontMove = false;
     d.mSlow = false;
     d.mJumpStage = 0;
+    if (d.mRaft)
+    {
+        Dust_SetRaft(*d.mRaft, false);
+        d.mRaft = nullptr;
+    }
 }
 
 void Player_PlaceAt(fx x, fx y, int facing)
@@ -1245,9 +1311,21 @@ void Player_SetFacing(Facing f)
     gPlayer->mFacing = f;
 }
 
+Entity* Player_Raft()
+{
+    return P().mRaft;
+}
+
 Entity* Player_BroomDust()
 {
     return B().mDust;
+}
+
+void Player_LoseBroomDust()
+{
+    BroomData& b = B();
+    b.mDust = nullptr;
+    b.mCarrying = false;
 }
 
 void Player_DropBroomDust()
@@ -1274,6 +1352,10 @@ void Player_DustFreed(Entity& dust)
     if (b.mCandidate == &dust)
     {
         b.mCandidate = nullptr;
+    }
+    if (P().mRaft == &dust)
+    {
+        P().mRaft = nullptr;
     }
 }
 

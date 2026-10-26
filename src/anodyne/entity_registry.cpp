@@ -59,6 +59,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_Shieldy;
     case EPT_BurstPlant:
         return Spawn_BurstPlant;
+    case EPT_Frog:
+        return Spawn_Frog;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:
@@ -103,6 +105,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_PillarSwitch;
     case EPT_InsideMonster:
         return Spawn_InsideMonster;
+    case EPT_ShopKeep:
+        return Spawn_ShopKeep;
     case EPT_Door:
         return Spawn_Door;
     default:

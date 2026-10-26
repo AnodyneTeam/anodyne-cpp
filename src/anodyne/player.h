@@ -63,6 +63,10 @@ void Player_SetFacing(Facing f);
 
 // The broom's dust (Broom.dust): the dust entity carried or just put down (nullptr if none or freed).
 Entity* Player_BroomDust();
+// PlayState screen transition: broom.dust = null (a carried dust is gone).
+void Player_LoseBroomDust();
+// Player.raft: the dust ridden over water, or nullptr.
+Entity* Player_Raft();
 // broom.dust = null: whatever the broom was carrying is gone.
 void Player_DropBroomDust();
 // Dust.Collided on another dust: the one just put down merged back (just_released_dust = false).

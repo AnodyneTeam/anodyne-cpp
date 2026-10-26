@@ -620,6 +620,12 @@ void Ecs_FreeDead()
     }
 }
 
+void Ecs_MoveLast(Entity& e)
+{
+    Unlink(&e);
+    Link(&e);
+}
+
 void Ecs_MovePlayerOwnedLast()
 {
     Entity* owned[kMaxEntities];

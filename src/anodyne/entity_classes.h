@@ -46,6 +46,14 @@ Entity* Spawn_BossKeyReset(const MapEntity& preset, Entity& player);
 // Run-time entities other classes create.
 // A dust put down by the broom after its own entity went with an old screen.
 Entity* Spawn_DustAt(fx x, fx y);
+// Dust.ON_CONVEYOR (the only class in GROUP_DUST)
+bool Dust_OnConveyor(Entity& dust);
+// Dust.IS_RAFT: the player rides it over water.
+void Dust_SetRaft(Entity& dust, bool raft);
+// Moves Player.follower (and its dust) to the end of the update order.
+void Miao_MoveFollowerLast();
+// A CardTreasure for `card` spawned at (x, y) and given (GetTreasure).
+void Treasure_GiveCard(fx x, fx y, int card);
 // HealthDropper.Die: a health pickup (big: 3 hearts).
 Entity* Spawn_HealthDrop(fx x, fx y, bool big);
 // new Explosion(parent).
@@ -58,6 +66,7 @@ Entity* Spawn_PewLaser(const MapEntity& preset, Entity& player);
 Entity* Spawn_Shieldy(const MapEntity& preset, Entity& player);
 Entity* Spawn_Dog(const MapEntity& preset, Entity& player);
 Entity* Spawn_BurstPlant(const MapEntity& preset, Entity& player);
+Entity* Spawn_Frog(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
 Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).
@@ -84,6 +93,7 @@ Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity& player);
 Entity* Spawn_SwitchPillar(const MapEntity& preset, Entity& player);
 Entity* Spawn_PillarSwitch(const MapEntity& preset, Entity& player);
 Entity* Spawn_InsideMonster(const MapEntity& preset, Entity& player);
+Entity* Spawn_ShopKeep(const MapEntity& preset, Entity& player);
 
 // For the bot link (game_probe.cpp): the C# fields of an entity's class that the C# bot reads and the port keeps in its
 // brain, written as JSON members ("name":value,...; C# names, float fields as 16.16). Returns the length, 0 for none.

@@ -1,6 +1,7 @@
 #include "entities.h"
 
 #include "entity_classes.h"
+#include "player.h"
 #include "sprite.h"
 
 #include "tonc.h"
@@ -61,6 +62,7 @@ bool IsEnemyType(uint8_t type)
     case EPT_Seer:
     case EPT_Dog:
     case EPT_BurstPlant:
+    case EPT_Frog:
         return true;
     default:
         return false;
@@ -189,6 +191,12 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
         }
     }
     Ecs_MovePlayerOwnedLast();
+    // Player.SubEntities ends with the raft, then the follower.
+    if (Entity* raft = Player_Raft())
+    {
+        Ecs_MoveLast(*raft);
+        Miao_MoveFollowerLast();
+    }
     gGame.mGridX = gx;
     gGame.mGridY = gy;
 }

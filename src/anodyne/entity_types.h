@@ -46,6 +46,7 @@
     X(SwitchPillar)             \
     X(PillarSwitch)             \
     X(InsideMonster)            \
+    X(ShopKeep)                 \
     X(HealthCicada)             \
     X(Sadbro)                   \
     X(FollowerBro)              \
@@ -56,6 +57,7 @@
     X(Seer)                     \
     X(Dog)                      \
     X(BurstPlant)               \
+    X(Frog)                     \
     X(Rotator)                  \
     X(Door)
 

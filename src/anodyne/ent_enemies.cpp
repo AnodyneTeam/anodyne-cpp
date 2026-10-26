@@ -1260,6 +1260,159 @@ const EntityClass kBurstPlant = {
     0,             GROUP_BROOM,      ECF_ENEMY,
 };
 
+// ---- Frog (Crowd/Frog.cs) ----------------------------------------------------------------------------------------
+enum FrogState : uint8_t
+{
+    FROG_INITIAL,
+    FROG_IDLE,
+    FROG_BULLETS_FLYING,
+};
+
+constexpr int kFrogBullets = 3;
+
+struct FrogData final
+{
+    uint8_t mState;
+    int mHealth;
+    Entity* mBullets[kFrogBullets]; // its EntityPool, made with it
+    TimerState<1> mInitial;         // goToIdle
+};
+
+struct FrogBulletData final
+{
+    bool mSplash;
+    int mMultiplier;
+    fx mT; // its Parabola_Thing
+    fx mPeriod;
+};
+
+void FrogBulletUpdate(Entity& self)
+{
+    FrogBulletData& d = self.Data<FrogBulletData>();
+    Ecs_BaseUpdate(self);
+    if (!d.mSplash)
+    {
+        if (ParabolaTick(d.mT, d.mPeriod, 16, self.mV->mOffY))
+        {
+            d.mSplash = true;
+            Ecs_Play(self, "explode");
+            self.mT->mVelX = self.mT->mVelY = 0;
+        }
+    }
+    else if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+        static const char* const kSplash[4] = { "bubble_1", "bubble_1", "bubble_2", "bubble_3" };
+        Game_PlaySfxOneOf(kSplash, 4);
+    }
+}
+
+void FrogBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && self.mV->mOffY <= Fx(8) && (self.mT->mVelX != 0 || self.mT->mVelY != 0))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kFrogBullet = {
+    "BurstBullet", FrogBulletUpdate, nullptr, FrogBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,             GROUP_PLAYER,     0,
+};
+
+void FrogUpdate(Entity& self)
+{
+    FrogData& d = self.Data<FrogData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mState)
+    {
+    case FROG_INITIAL:
+        d.mInitial.Tick(kDeltaTime);
+        while (d.mInitial.Pop() >= 0)
+        {
+            d.mState = FROG_IDLE;
+            Ecs_Play(self, "idle");
+        }
+        break;
+    case FROG_IDLE:
+    {
+        const Entity& p = *World_Player();
+        const float dx = (Ecs_CenterX(self) - Ecs_CenterX(p)).mV;
+        const float dy = (Ecs_CenterY(self) - Ecs_CenterY(p)).mV;
+        if (dx * dx + dy * dy < 64 * 64)
+        {
+            // EntityPool.Spawn(b => b.Spawn(this, _player), 3)
+            for (Entity* b : d.mBullets)
+            {
+                if (!b || b->mExists)
+                {
+                    continue;
+                }
+                FrogBulletData& bd = b->Data<FrogBulletData>();
+                b->mExists = true;
+                b->mT->mX = self.mT->mX;
+                b->mT->mY = self.mT->mY;
+                Ecs_MoveTowards(*b, Ecs_CenterX(p), Ecs_CenterY(p), Fx(15 * bd.mMultiplier));
+                bd.mSplash = false;
+                bd.mT = 0;
+                b->mV->mOffY = 0;
+                b->mV->mOpacity = kFxOne;
+                Ecs_Play(*b, "move@2");
+            }
+            Ecs_FaceTowards(self, Ecs_CenterX(p), Ecs_CenterY(p));
+            Ecs_PlayFacing(self, "shoot");
+            self.mV->mHFlip = Ecs_AnimIs(self, "shoot_l");
+            Game_PlaySfx("bubble_triple");
+            d.mState = FROG_BULLETS_FLYING;
+        }
+        break;
+    }
+    default:
+    {
+        bool alive = false;
+        for (const Entity* b : d.mBullets)
+        {
+            alive = alive || (b && b->mExists);
+        }
+        if (!alive)
+        {
+            d.mState = FROG_IDLE;
+            Ecs_Play(self, "idle");
+            self.mV->mHFlip = false;
+        }
+        break;
+    }
+    }
+}
+
+void FrogCollided(Entity& self, Entity& other)
+{
+    FrogData& d = self.Data<FrogData>();
+    if (IsBroom(other))
+    {
+        if (!self.mV->mFlickering)
+        {
+            d.mHealth--;
+            Ecs_Flicker(self, FxSec(1.0f));
+            Game_PlaySfx("broom_hit");
+            if (d.mHealth <= 0)
+            {
+                Spawn_Explosion(self);
+                Die(self, 0.7f);
+            }
+        }
+    }
+    else if (IsPlayer(other) && Player_State() != PS_AIR)
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kFrog = {
+    "Frog", FrogUpdate, nullptr, FrogCollided, nullptr, nullptr, nullptr, nullptr,
+    0,      GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
+};
+
 // Dog.DogRegion: a 96x96 box round the dog that wakes it when the player is in it.
 void DogRegionUpdate(Entity& self)
 {
@@ -1935,6 +2088,38 @@ Entity* Spawn_BurstPlant(const MapEntity& preset, Entity&)
     d.mCharging.Add(0.5f, 0);
     d.mState = BURST_INITIAL;
     d.mInitial.Add(0.4f, 0);
+    return e;
+}
+
+Entity* Spawn_Frog(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFrog, preset, "frog");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    FrogData& d = e->Data<FrogData>();
+    d.mHealth = 2;
+    for (int i = 0; i < kFrogBullets; ++i)
+    {
+        Entity* b = Ecs_Create(kFrogBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        d.mBullets[i] = b;
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSolid(*b, false);
+        b->mB->mW = b->mB->mH = 8;
+        Ecs_SetSheet(*b, "frog_bullet");
+        b->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_KeepPooled(*b);
+        FrogBulletData& bd = b->Data<FrogBulletData>();
+        bd.mMultiplier = i + 1;
+        bd.mPeriod = fx(static_cast<float>(0.8 + Rng_NextDouble()));
+    }
+    d.mState = FROG_INITIAL;
+    d.mInitial.Add(0.8f, 0);
     return e;
 }
 

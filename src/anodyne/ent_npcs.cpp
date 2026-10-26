@@ -1751,7 +1751,148 @@ Entity* MakeTradeNpc(const EntityClass& cls, fx x, fx y, const char* anim, const
     Ecs_SetSolid(*e, true);
     return e;
 }
+
+// ---- ShopKeep, ShopItem (RunningTradeNPCs/ShopKeep.cs) --------------------------------------------------------------
+// The beaver in the fields shop: trades Icky's box for the jump shoes (preset Activated once given the box).
+struct ShopKeepData final
+{
+    Entity* mItems[3];
+};
+
+struct ShopItemData final
+{
+    bool mChecked;
+    fx mStartX;
+    fx mStartY;
+};
+
+// GetDialogue("misc", "any", "tradenpc", i)
+const char* TradeNpcText(int i)
+{
+    const char* text = Dialog_GetFor("misc", "any", "tradenpc", i);
+    return text ? text : "";
+}
+
+// GlobalState.Dialogue = the lines joined with spaces.
+void ShowTradeNpcText(int a, int b, int c = -1)
+{
+    char text[512];
+    if (c < 0)
+    {
+        snprintf(text, sizeof(text), "%s %s", TradeNpcText(a), TradeNpcText(b));
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "%s %s %s", TradeNpcText(a), TradeNpcText(b), TradeNpcText(c));
+    }
+    Game_ShowText(text);
+}
+
+bool ShopKeepInteract(Entity& self, Facing)
+{
+    const MapEntity& preset = *self.mPreset;
+    if (Event_Get("shopkeep.init") == 0)
+    {
+        Game_ShowDialogueFor("misc", "any", "tradenpc", 0);
+        Event_Inc("shopkeep.init");
+    }
+    else if (Preset_Activated(preset))
+    {
+        Game_ShowDialogueFor("misc", "any", "tradenpc", 1);
+    }
+    else if (gGame.mTradeState == TRADE_BOX)
+    {
+        Preset_SetActivated(preset, true);
+        if (gGame.mCanJump)
+        {
+            // Young can already jump, so shopkeep exchanges something else for the box
+            gGame.mTradeState = TRADE_NONE;
+            if (gGame.mCardStatus[43])
+            {
+                ShowTradeNpcText(2, 11, 3);
+                gGame.mCurHealth = gGame.mMaxHealth;
+            }
+            else
+            {
+                ShowTradeNpcText(2, 11);
+                Treasure_GiveCard(self.mT->mX + Fx(20), self.mT->mY, 43);
+            }
+        }
+        else
+        {
+            ShowTradeNpcText(2, 4);
+            gGame.mTradeState = TRADE_SHOES;
+            if (Entity* shoes = self.Data<ShopKeepData>().mItems[2])
+            {
+                shoes->mT->mAccY = -Fx(10); // ActivateAnim
+            }
+        }
+    }
+    else
+    {
+        Game_ShowDialogueFor("misc", "any", "tradenpc", 5);
+    }
+    return true;
+}
+
+void ShopItemUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    Transform& t = *self.mT;
+    if (t.mVelY < -Fx(10) && t.mVelY > -Fx(15))
+    {
+        Ecs_Flicker(self, FxSec(1.0f));
+    }
+    else if (t.mVelY < -Fx(25))
+    {
+        const ShopItemData& d = self.Data<ShopItemData>();
+        t.mAccX = t.mAccY = 0;
+        t.mVelX = t.mVelY = 0;
+        t.mX = d.mStartX;
+        t.mY = d.mStartY;
+        Ecs_SetFrame(self, Ecs_Frame(self) + 1);
+        self.mV->mOpacity = 0;
+    }
+    MoveTo(self.mV->mOpacity, kFxOne, FxF(0.3f));
+}
+
+bool ShopItemInteract(Entity& self, Facing)
+{
+    ShopItemData& d = self.Data<ShopItemData>();
+    if (d.mChecked)
+    {
+        Game_ShowDialogueFor("misc", "any", "tradenpc", 6);
+    }
+    else
+    {
+        Game_ShowDialogueFor("misc", "any", "tradenpc", Ecs_Frame(self) - 47);
+        d.mChecked = true;
+    }
+    return true;
+}
+
+const EntityClass kShopKeep = {
+    "ShopKeep", nullptr, nullptr, TradeCollided, ShopKeepInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER, ECF_INTERACTABLE,
+};
+
+const EntityClass kShopItem = {
+    "ShopItem", ShopItemUpdate, nullptr, TradeCollided, ShopItemInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER,   ECF_INTERACTABLE,
+};
 } // namespace
+
+void Miao_MoveFollowerLast()
+{
+    if (gMiaoFollower)
+    {
+        Ecs_MoveLast(*gMiaoFollower);
+        if (Entity* dust = gMiaoFollower->Data<MiaoData>().mFollower)
+        {
+            Ecs_MoveLast(*dust);
+        }
+    }
+}
 
 Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity&)
 {
@@ -1775,6 +1916,41 @@ Entity* Spawn_OutsideMonster(const MapEntity& preset, Entity&)
     if (gGame.mSpookedMonster)
     {
         e->mExists = false;
+    }
+    return e;
+}
+
+Entity* Spawn_ShopKeep(const MapEntity& preset, Entity&)
+{
+    Entity* e = MakeTradeNpc(kShopKeep, Fx(preset.mX), Fx(preset.mY), "a", &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    static const int kItemFrames[3] = { 54, 55, 56 };
+    for (int i = 0; i < 3; ++i)
+    {
+        int frame = kItemFrames[i];
+        if (i == 2 && (Preset_Activated(preset) || gGame.mCanJump))
+        {
+            frame = 57;
+        }
+        const fx x = e->mT->mX - Fx(30) + Fx(34 * i);
+        const fx y = e->mT->mY + Fx(32);
+        Entity* item = Ecs_Create(kShopItem, x, y, PART_VISUAL | PART_BRAIN);
+        if (item)
+        {
+            Ecs_SetSheet(*item, "fields_npcs", 16, 16);
+            Ecs_SetFrame(*item, frame);
+            item->mV->mLayer = LAYER_BG_ENTITIES;
+            item->mB->mW = item->mB->mH = 16;
+            item->mB->mImmovable = true;
+            Ecs_SetSolid(*item, true);
+            ShopItemData& d = item->Data<ShopItemData>();
+            d.mStartX = x;
+            d.mStartY = y;
+        }
+        e->Data<ShopKeepData>().mItems[i] = item;
     }
     return e;
 }

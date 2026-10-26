@@ -536,6 +536,8 @@ Entity* Ecs_First();
 void Ecs_MovePlayerOwnedLast();
 // Moves `e` to just after `after` in the update order (a sub-entity made late that the C# has after its owner).
 void Ecs_MoveAfter(Entity& e, Entity& after);
+// Moves `e` to the end of the update order.
+void Ecs_MoveLast(Entity& e);
 // Frees every entity of the previous screen (mOld) / every entity not owned by the player.
 void Ecs_FreeOld();
 void Ecs_MarkScreenOld();

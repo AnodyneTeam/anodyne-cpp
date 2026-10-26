@@ -1003,6 +1003,7 @@ void CheckForTransition()
     UpdateDarkness(true);
     Player_SetGridEntrance();
     Player_SetDontMove(true);
+    Player_LoseBroomDust();
     t.mVelX = t.mVelY = 0;
     Entities_LoadGrid(gGridX, gGridY, false);
 }
