@@ -5016,7 +5016,8 @@ Entity* Spawn_Dog(const MapEntity& preset, Entity&)
     d.mSuper = Preset_TypeValue(preset)[0] == '1';
     d.mAttack.Add(1.0f, 0);
     Ecs_Play(*e, "stop");
-    Entity* region = Ecs_Create(kDogRegion, e->mT->mX, e->mT->mY, 0, nullptr, e);
+    // (at the origin until its first Update moves it round the dog)
+    Entity* region = Ecs_Create(kDogRegion, 0, 0, 0, nullptr, e);
     if (region)
     {
         region->mB->mW = region->mB->mH = 96;

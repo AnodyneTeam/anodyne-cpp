@@ -1244,11 +1244,16 @@ void Player_Reset(const char* mapName)
     }
 }
 
-void Player_PlaceAt(fx x, fx y, int facing)
+void Player_PlaceAt(fx x, fx y, int facing, bool keepLast)
 {
     Transform& t = *gPlayer->mT;
-    t.mX = t.mLastX = x;
-    t.mY = t.mLastY = y;
+    t.mX = x;
+    t.mY = y;
+    if (!keepLast)
+    {
+        t.mLastX = x;
+        t.mLastY = y;
+    }
     if (facing >= 0 && facing <= 3)
     {
         gPlayer->mFacing = static_cast<uint8_t>(facing);

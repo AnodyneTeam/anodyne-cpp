@@ -22,8 +22,9 @@ Entity* Player_Entity();
 // Player.Reset: back to standing idle on the ground, for a new map (`mapName` picks the foot overlay's sheets).
 void Player_Reset(const char* mapName);
 // Puts the hitbox's top-left at (x, y) map pixels; facing 0-3 is Facing (LEFT, RIGHT, UP, DOWN), other = keep.
-// The grid entrance (where falling or drowning respawns) becomes this spot.
-void Player_PlaceAt(fx x, fx y, int facing);
+// The grid entrance (where falling or drowning respawns) becomes this spot. keepLast: PlayState.Warp only sets
+// Position, so the first collisions there still see the old lastPosition.
+void Player_PlaceAt(fx x, fx y, int facing, bool keepLast = false);
 void Player_SetGridEntrance();
 // Player.grid_entrance = (x, y): where falling or drowning on this screen respawns (bosses set their own).
 void Player_SetGridEntranceAt(fx x, fx y);

@@ -897,7 +897,7 @@ void WarpNow()
     {
         gMapLoader(w.mMap);
     }
-    World_PlaceAt(w.mX, w.mY, w.mFacing);
+    World_PlaceAt(w.mX, w.mY, w.mFacing, true);
     gWarp = w; // (loading a map resets the doors' state)
     gWarp.mSwapped = true;
 }
@@ -1840,13 +1840,13 @@ void World_TakeDoor(const MapDoor& d)
     World_RequestWarp(d.mDestMap, d.mDestX, d.mDestY, d.mFacing);
 }
 
-void World_PlaceAt(int x, int y, uint8_t facing)
+void World_PlaceAt(int x, int y, uint8_t facing, bool warp)
 {
     // World facing order (0 down, 1 right, 2 up, 3 left) -> Facing.
     static const int kFacing[4] = { FACE_DOWN, FACE_RIGHT, FACE_UP, FACE_LEFT };
     gTransition = false;
     Player_Reset(gMapName);
-    Player_PlaceAt(Fx(x), Fx(y), facing <= 3 ? kFacing[facing] : -1);
+    Player_PlaceAt(Fx(x), Fx(y), facing <= 3 ? kFacing[facing] : -1, warp);
     Player_BeIdle();
     gGridX = x / kScreenPx;
     gGridY = y / kScreenPx;

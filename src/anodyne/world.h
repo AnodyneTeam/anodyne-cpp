@@ -34,7 +34,8 @@ void World_SetMapLoader(void (*load)(uint8_t map));
 // The fade of the warp under way, for the screen: black_overlay's alpha (16.16, 0..1) and the pixelation (8.8, 1 =
 // none). swapped: the map was swapped this frame. False when no warp is under way.
 bool World_GetWarpFade(int& dark, int& pixelation, bool& swapped);
-void World_PlaceAt(int x, int y, uint8_t facing);
+// warp: a PlayState.Warp, which leaves the player's lastPosition where it was.
+void World_PlaceAt(int x, int y, uint8_t facing, bool warp = false);
 // The current map's door trigger of the Door preset at (presetX, presetY), nullptr if it has none.
 const MapDoor* World_FindDoor(int presetX, int presetY);
 // DoorMapPair.Warp: GlobalState.WARP to the door's linked door.
