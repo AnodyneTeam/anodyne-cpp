@@ -65,6 +65,8 @@ void Player_SetFacing(Facing f);
 Entity* Player_BroomDust();
 // PlayState screen transition: broom.dust = null (a carried dust is gone).
 void Player_LoseBroomDust();
+// PlayState.Refreshes after the equipped broom changed: Broom.UpdateBroomType.
+void Player_UpdateBroomType();
 // Player.raft: the dust ridden over water, or nullptr.
 Entity* Player_Raft();
 // broom.dust = null: whatever the broom was carrying is gone.

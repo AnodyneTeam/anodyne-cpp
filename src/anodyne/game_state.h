@@ -20,14 +20,15 @@ enum GameEvent : uint8_t
     GEV_EMPTY_TREASURE, // a card chest was opened for a card already held
 };
 
-// Broom types (InventoryManager.BroomType).
+// Broom types (BroomType, in the C#'s order: SwitchBroom steps through it).
 enum BroomType : uint8_t
 {
     BROOM_NONE,
     BROOM_NORMAL,
-    BROOM_WIDE,
     BROOM_LONG,
+    BROOM_WIDE,
     BROOM_TRANSFORMER,
+    BROOM_TYPE_COUNT,
 };
 
 // InventoryManager.TradeState.
@@ -51,13 +52,16 @@ struct GameState final
     int mMaxHealth; // MAX_HEALTH, at most 16
 
     // InventoryManager
-    uint8_t mEquippedBroom; // BroomType
+    uint8_t mEquippedBroom; // BroomType (_equippedBroom: read it with Inventory_EquippedBroom)
+    bool mEquippedBroomChanged; // InventoryManager.EquippedBroomChanged: PlayState.Refreshes takes it
     bool mHasBroom[5];      // by BroomType (NONE unused)
     bool mBroomActive;
     bool mCanJump; // InventoryManager.CanJump (the jump shoes)
     uint8_t mTradeState; // InventoryManager.TradeState: NONE, SHOES, BOX
     bool mSpookedMonster; // EventRegister.SpookedMonster
     int mPillarSwitchOn;  // GlobalState.PillarSwitchOn: reset entering another map
+    bool mDisableMenu;    // GlobalState.disable_menu: no pause menu (from dying until Continue)
+    bool mInDeathRoom;    // GlobalState.InDeathRoom
     uint8_t mCardStatus[49];
     bool mBigKeyStatus[3];  // green, red, blue
     bool mSecretStatus[14];
@@ -106,6 +110,15 @@ int Inventory_MapKeys();
 void Inventory_AddMapKey();
 void Inventory_RemoveMapKey();
 int Inventory_CardCount();
+// GlobalState.CanChangeBroom: not in the death room, CELL or SUBURB (there only the plain broom or the transformer).
+bool Game_CanChangeBroom();
+// InventoryManager.HasBroomType / HasAnyBroom.
+bool Inventory_HasBroomType(uint8_t type);
+bool Inventory_HasAnyBroom();
+// InventoryManager.EquippedBroom: the getter (the plain broom where it can't be changed) and the setter (only a broom
+// that is held; sets mEquippedBroomChanged when it changes).
+uint8_t Inventory_EquippedBroom();
+void Inventory_SetEquippedBroom(uint8_t type);
 
 // Room for the content compiler's kEntityPresetCount (anodyne.cpp checks it fits).
 constexpr unsigned kMaxPresets = 4096;

@@ -381,7 +381,8 @@ void UpdateActions()
     {
         if (key_hit(KEY_A) && d.mActionLatency <= 0 && !d.mSkipBroom)
         {
-            if (gGame.mEquippedBroom != BROOM_NONE && gGame.mEquippedBroom != BROOM_TRANSFORMER && !gBroom->mExists)
+            const uint8_t broom = Inventory_EquippedBroom();
+            if (broom != BROOM_NONE && broom != BROOM_TRANSFORMER && !gBroom->mExists)
             {
                 BroomAttack();
                 d.mActionLatency = kActionLatencyMax;
@@ -1326,6 +1327,17 @@ void Player_LoseBroomDust()
     BroomData& b = B();
     b.mDust = nullptr;
     b.mCarrying = false;
+}
+
+void Player_UpdateBroomType()
+{
+    // Broom.UpdateBroomType (the sheet follows the broom type when it is drawn)
+    Entity& b = *gBroom;
+    b.mT->mX = gPlayer->mT->mX - Fx(10);
+    b.mT->mY = gPlayer->mT->mY;
+    b.mB->mW = b.mB->mH = 16;
+    b.mV->mOffX = 0;
+    b.mV->mOffY = 0;
 }
 
 void Player_DropBroomDust()

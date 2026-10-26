@@ -108,6 +108,48 @@ int Game_MapIndex(const char* name)
     return -1;
 }
 
+// PlayState.Warp: GlobalState.ReturnTarget = the Nexus door of this map's Nexus pad (EntityManager.
+// GetNexusGateForCurrentMap), else, once the Nexus has been visited, its dungeon entrance; else none.
+static void SetReturnTargetToNexus()
+{
+    const MapDoorList& doors = kMapDoors[gCurrentMap];
+    const MapDoor* pad = nullptr;
+    int pads = 0;
+    for (uint32_t i = 0; i < doors.mCount; i++)
+    {
+        if (doors.mDoors[i].mType == 16) // NexusPad
+        {
+            pad = &doors.mDoors[i];
+            pads++;
+        }
+    }
+    if (pads == 1)
+    {
+        // (the pad's trigger warps to its linked door + (10, 34), the offset the menu's warp adds back)
+        gGame.mReturnMap = pad->mDestMap;
+        gGame.mReturnX = pad->mDestX - 10;
+        gGame.mReturnY = pad->mDestY - 34;
+        return;
+    }
+    gGame.mReturnMap = -1;
+    const int nexus = Game_MapIndex("NEXUS");
+    if (nexus < 0 || !((gGame.mVisitedMaps >> nexus) & 1))
+    {
+        return;
+    }
+    const MapEntityList& list = kMapEntities[nexus];
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        if (list.mEntities[i].mType == EPT_DungeonEntrance)
+        {
+            gGame.mReturnMap = nexus;
+            gGame.mReturnX = list.mEntities[i].mX;
+            gGame.mReturnY = list.mEntities[i].mY;
+            return;
+        }
+    }
+}
+
 static void LoadWorldMap()
 {
     // PlayState.Warp: leaving a map whose boss is beaten.
@@ -119,6 +161,10 @@ static void LoadWorldMap()
     gGame.mCurrentMap = gCurrentMap;
     gGame.mMapName = kMapNames[gCurrentMap];
     gGame.mVisitedMaps |= 1u << gCurrentMap;
+    if (gGame.mReturnMap != static_cast<int>(gCurrentMap) || strcmp(gGame.mMapName, "NEXUS") == 0)
+    {
+        SetReturnTargetToNexus();
+    }
     // Entities first: World_Load places the player and loads the screen's entities.
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
@@ -505,17 +551,9 @@ int main()
         else
         {
             // ------------------------------------------------------------
-            // MAP CYCLING (START/SELECT alone - the combo above is caught
-            // before key_hit() would see either as a single press)
+            // MAP CYCLING (SELECT alone - the combo above is caught before
+            // key_hit() would see it as a single press; START is the pause menu)
             // ------------------------------------------------------------
-            if (key_hit(KEY_START) && !modeComboDown)
-            {
-                gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                ScreenBlack(true);
-                LoadWorldMap();
-                blackFrames = 2;
-            }
-
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);

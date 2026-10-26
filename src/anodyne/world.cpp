@@ -1,6 +1,7 @@
 #include "world.h"
 #include "dialog.h"
 #include "entities.h"
+#include "pause.h"
 #include "player.h"
 
 #include <stdio.h>
@@ -1065,6 +1066,7 @@ void DeathStart()
 {
     gDeath = Death();
     gDeath.mActive = true;
+    gGame.mDisableMenu = true;
     AudioManager_StopBGM();
     Entity& p = *Player_Entity();
     const fx px = p.mT->mX;
@@ -1179,7 +1181,12 @@ void DeathUpdate()
         Dialog_HideLabels();
         if (d.mNo)
         {
-            gGame.mEquippedBroom = BROOM_NONE;
+            // (EquippedBroom = NONE is refused by the setter: the death room's own rule leaves only the plain broom)
+            gGame.mInDeathRoom = true;
+        }
+        else
+        {
+            gGame.mDisableMenu = false;
         }
         return;
     }
@@ -1463,12 +1470,44 @@ void World_SetPlayerVisible(bool visible)
     }
 }
 
+// PlayState.SetBroom: menu_move when the broom changed.
+void SetBroom(uint8_t broom)
+{
+    Inventory_SetEquippedBroom(broom);
+    if (gGame.mEquippedBroomChanged)
+    {
+        Game_PlaySfx("menu_move");
+    }
+}
+
+// PlayState.SwitchBroom: the next (R) or previous (L) broom held, round BroomType's order.
+void SwitchBroom(bool next)
+{
+    if (!Inventory_HasAnyBroom())
+    {
+        return;
+    }
+    int current = Inventory_EquippedBroom();
+    if (!Game_CanChangeBroom())
+    {
+        // (only the plain broom and the transformer: step forward from just before the other one)
+        current = (current == BROOM_TRANSFORMER ? BROOM_NORMAL : BROOM_TRANSFORMER) - 1;
+        next = true;
+    }
+    do
+    {
+        current += next ? 1 : -1;
+        current = (current + BROOM_TYPE_COUNT) % BROOM_TYPE_COUNT;
+    } while (!Inventory_HasBroomType(static_cast<uint8_t>(current)));
+    SetBroom(static_cast<uint8_t>(current));
+}
+
 // PlayState.Update.
 void World_Update()
 {
     Ecs_ReleaseSpawned();
-    const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive;
-    bool updateEntities = !gDeath.mActive;
+    const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive || Pause_IsOpen();
+    bool updateEntities = !gDeath.mActive && !Pause_IsOpen();
     if (child)
     {
         // A child state (dialogue, cutscene, death): the player stands still; entities keep updating (except death).
@@ -1504,7 +1543,11 @@ void World_Update()
         {
             DeathUpdate();
         }
-        if (!gDialogOpen && (!gCutscene.mFn || cutsceneEnded) && !gDeath.mActive)
+        if (Pause_IsOpen())
+        {
+            Pause_Update();
+        }
+        if (!gDialogOpen && (!gCutscene.mFn || cutsceneEnded) && !gDeath.mActive && !Pause_IsOpen())
         {
             Player_SetDontMove(false);
             Player_SetActionsDisabled(false);
@@ -1531,6 +1574,12 @@ void World_Update()
         {
             WarpEnter();
         }
+        else if (key_hit(KEY_START) && !gGame.mDisableMenu)
+        {
+            // StateNormal: Pause opens the menu, and nothing else this frame
+            Pause_Open();
+            Game_PlaySfx("pause_sound");
+        }
         else if (gWarp.mPending)
         {
             gWarp.mState = WARP_EXIT; // StateNormal: GlobalState.WARP -> S_MAP_EXIT, and nothing else this frame
@@ -1539,6 +1588,17 @@ void World_Update()
         else
         {
             CheckForTransition();
+            if (!Player_BroomOut())
+            {
+                if (key_hit(KEY_R))
+                {
+                    SwitchBroom(true);
+                }
+                else if (key_hit(KEY_L))
+                {
+                    SwitchBroom(false);
+                }
+            }
         }
         // No player-map collision during a screen transition.
         Ecs_DoCollisions(wasTransition || gTransition, gGridX * kScreenPx, gGridY * kScreenPx);
@@ -1548,7 +1608,7 @@ void World_Update()
     if (updateEntities)
     {
         Entity& player = *Player_Entity();
-        if (key_hit(KEY_A) && !child && Player_State() == PS_GROUND && !Player_SkipBroom() &&
+        if (key_hit(KEY_A) && !child && !Pause_IsOpen() && Player_State() == PS_GROUND && !Player_SkipBroom() &&
             Ecs_CheckInteraction(player))
         {
             Player_SetSkipBroom();
@@ -1559,15 +1619,21 @@ void World_Update()
     }
 
     // GlobalState.SetDialogueMode: something opened the dialogue box this frame.
-    if (!gDialogOpen && Dialog_IsOpen())
+    if (!gDialogOpen && !Pause_IsOpen() && Dialog_IsOpen())
     {
         gDialogOpen = true;
         Player_BeIdle();
     }
     gGame.mEnemiesKilled = Ecs_KilledEnemies();
 
+    // PlayState.Refreshes
+    if (gGame.mEquippedBroomChanged)
+    {
+        gGame.mEquippedBroomChanged = false;
+        Player_UpdateBroomType();
+    }
     // PlayState.UpdateHealth
-    if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive && !gWarp.mPending && gGame.mCurHealth == 0)
+    if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive && !Pause_IsOpen() && !gWarp.mPending && gGame.mCurHealth == 0)
     {
         DeathStart();
     }
@@ -1652,6 +1718,11 @@ bool World_GetWarpFade(int& dark, int& pixelation, bool& swapped)
 bool World_InTransition()
 {
     return gTransition;
+}
+
+bool World_WarpPending()
+{
+    return gWarp.mPending;
 }
 
 void World_RequestWarp(int map, int x, int y, uint8_t facing)

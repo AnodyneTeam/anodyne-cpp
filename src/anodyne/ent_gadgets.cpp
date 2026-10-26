@@ -219,11 +219,11 @@ void GiveBroom(BroomType type)
     gGame.mHasBroom[type] = true;
     if (type == BROOM_NORMAL)
     {
-        gGame.mEquippedBroom = BROOM_NORMAL;
+        Inventory_SetEquippedBroom(BROOM_NORMAL);
     }
-    if (gGame.mEquippedBroom == BROOM_NONE)
+    if (Inventory_EquippedBroom() == BROOM_NONE)
     {
-        gGame.mEquippedBroom = type;
+        Inventory_SetEquippedBroom(type);
     }
 }
 

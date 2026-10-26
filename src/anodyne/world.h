@@ -40,6 +40,8 @@ const MapDoor* World_FindDoor(int presetX, int presetY);
 void World_TakeDoor(const MapDoor& d);
 // A warp that isn't a door (teleporting entities, the bot link's test warp): GlobalState.WARP, taken like a door's.
 void World_RequestWarp(int map, int x, int y, uint8_t facing);
+// GlobalState.WARP: a warp is under way (asked for, or fading out and in).
+bool World_WarpPending();
 // GlobalState.ScreenTransition: the camera is scrolling to the next screen.
 bool World_InTransition();
 

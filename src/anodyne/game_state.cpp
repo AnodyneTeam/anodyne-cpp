@@ -5,6 +5,7 @@
 #include "audio_manager.h"
 #include "dialog.h"
 #include "ecs.h"
+#include "pause.h"
 
 
 GameState gGame;
@@ -82,6 +83,7 @@ void GameState_Reset()
     memset(gActivated, 0, sizeof(gActivated));
     gEventCount = 0;
     gDialogueFinished = true;
+    Pause_Reset();
 }
 
 void GameState_SetHealth(int health)
@@ -169,6 +171,44 @@ int Inventory_CardCount()
         n += c ? 1 : 0;
     }
     return n;
+}
+
+bool Game_CanChangeBroom()
+{
+    const char* map = gGame.mMapName ? gGame.mMapName : "";
+    return !gGame.mInDeathRoom && strcmp(map, "CELL") != 0 && strcmp(map, "SUBURB") != 0;
+}
+
+bool Inventory_HasBroomType(uint8_t type)
+{
+    return type != BROOM_NONE && type < BROOM_TYPE_COUNT && gGame.mHasBroom[type];
+}
+
+bool Inventory_HasAnyBroom()
+{
+    return gGame.mHasBroom[BROOM_NORMAL] || gGame.mHasBroom[BROOM_LONG] || gGame.mHasBroom[BROOM_WIDE] ||
+           gGame.mHasBroom[BROOM_TRANSFORMER];
+}
+
+uint8_t Inventory_EquippedBroom()
+{
+    const uint8_t b = gGame.mEquippedBroom;
+    if (!Game_CanChangeBroom() && b != BROOM_TRANSFORMER && b != BROOM_NONE)
+    {
+        return BROOM_NORMAL;
+    }
+    return b;
+}
+
+void Inventory_SetEquippedBroom(uint8_t type)
+{
+    if (!Inventory_HasBroomType(type))
+    {
+        return;
+    }
+    const uint8_t old = gGame.mEquippedBroom;
+    gGame.mEquippedBroom = (!Game_CanChangeBroom() && type != BROOM_TRANSFORMER) ? BROOM_NORMAL : type;
+    gGame.mEquippedBroomChanged = gGame.mEquippedBroom != old;
 }
 
 bool Preset_Alive(const MapEntity& preset)
