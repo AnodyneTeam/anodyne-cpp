@@ -4,6 +4,7 @@
 #include "player.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 namespace
@@ -1570,6 +1571,376 @@ bool IsOnSightDashTrap(const Entity& e)
     return e.mClass == &kOnSightDashTrap;
 }
 
+// ---- Four_Shooter (Redcave/Four_Shooter.cs) ----------------------------------------------------------------------
+constexpr int kFourShooterBullets = 12;
+constexpr float kFourShooterTime = 1.5f;
+
+struct FourShooterData final
+{
+    float mTimer;
+    Entity* mBullets[kFourShooterBullets]; // its EntityPool, made with it
+};
+
+void FourShooterBulletPop(Entity& self)
+{
+    self.mT->mVelX = self.mT->mVelY = 0;
+    Ecs_Play(self, "explode");
+    Game_PlaySfx("4sht_pop");
+}
+
+void FourShooterBulletUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+        return;
+    }
+    if (self.mB->mTouching != TOUCH_NONE && !Ecs_AnimIs(self, "explode"))
+    {
+        FourShooterBulletPop(self);
+    }
+}
+
+void FourShooterBulletCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && Player_State() != PS_AIR && !Ecs_AnimIs(self, "explode"))
+    {
+        Player_ReceiveDamage(1);
+        FourShooterBulletPop(self);
+    }
+}
+
+const EntityClass kFourShooterBullet = {
+    "Bullet", FourShooterBulletUpdate, nullptr, FourShooterBulletCollided, nullptr, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER,            ECF_MAP_COLLISION,
+};
+
+// EntityPool.Spawn(b => b.Spawn(Center, dir))
+void FourShooterFire(FourShooterData& d, float cx, float cy, float dx, float dy)
+{
+    for (Entity* b : d.mBullets)
+    {
+        if (!b || b->mExists)
+        {
+            continue;
+        }
+        const float len = sqrtf(dx * dx + dy * dy);
+        dx /= len;
+        dy /= len;
+        b->mExists = true;
+        b->mT->mX = fx(cx + dx * 8 - 2);
+        b->mT->mY = fx(cy + dy * 8 - 2);
+        b->mT->mVelX = fx(dx * 50);
+        b->mT->mVelY = fx(dy * 50);
+        Ecs_Play(*b, "move");
+        return;
+    }
+}
+
+void FourShooterUpdate(Entity& self)
+{
+    FourShooterData& d = self.Data<FourShooterData>();
+    Ecs_BaseUpdate(self);
+    d.mTimer -= kDeltaTime;
+    if (d.mTimer <= 0)
+    {
+        d.mTimer = kFourShooterTime;
+        Game_PlaySfx("4sht_shoot");
+        const float cx = Ecs_CenterX(self).mV;
+        const float cy = Ecs_CenterY(self).mV;
+        if (Ecs_Frame(self) == 0)
+        {
+            Ecs_Play(self, "axis_to_diag");
+            FourShooterFire(d, cx, cy, 1, 0);
+            FourShooterFire(d, cx, cy, -1, 0);
+            FourShooterFire(d, cx, cy, 0, 1);
+            FourShooterFire(d, cx, cy, 0, -1);
+        }
+        else
+        {
+            Ecs_Play(self, "diag_to_axis");
+            FourShooterFire(d, cx, cy, 1, 1);
+            FourShooterFire(d, cx, cy, -1, -1);
+            FourShooterFire(d, cx, cy, -1, 1);
+            FourShooterFire(d, cx, cy, 1, -1);
+        }
+    }
+}
+
+void FourShooterCollided(Entity& self, Entity& other)
+{
+    Ecs_Separate(self, other);
+}
+
+const EntityClass kFourShooter = {
+    "Four_Shooter", FourShooterUpdate, nullptr, FourShooterCollided, nullptr, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,      0,
+};
+
+// ---- Slasher (Redcave/Slasher.cs) --------------------------------------------------------------------------------
+enum SlasherState : uint8_t
+{
+    SLASHER_MOVE,
+    SLASHER_WARNING,
+    SLASHER_WIDE_ATTACK,
+    SLASHER_WIDE_ATTACK_DELAY,
+    SLASHER_LONG_ATTACK,
+};
+
+constexpr int kSlasherWideAtkDistance = 36;
+
+struct SlasherData final
+{
+    uint8_t mState;
+    uint8_t mOldFacing;
+    int mHealth;
+    Entity* mHorizontal; // HorizontalSlash: 36x10 (f_slasher_wide)
+    Entity* mVertical;   // VerticalSlash: 10x36 (f_slasher_long)
+    // Each state object's TimerState lives as long as the slasher: its clock only runs while the state does.
+    TimerState<1> mTimers[5];
+};
+
+// PlayFacingFix: right is the left animation flipped.
+void SlasherPlayFacing(Entity& self, const char* anim)
+{
+    if (self.mFacing == FACE_RIGHT)
+    {
+        char name[24];
+        snprintf(name, sizeof(name), "%s_l", anim);
+        Ecs_Play(self, name);
+        self.mV->mHFlip = true;
+    }
+    else
+    {
+        Ecs_PlayFacing(self, anim);
+        self.mV->mHFlip = false;
+    }
+}
+
+void SlasherMove(Entity& self)
+{
+    SlasherData& d = self.Data<SlasherData>();
+    const Entity& p = *World_Player();
+    MoveTo(self.mT->mX, p.mT->mX, Fx(20));
+    MoveTo(self.mT->mY, p.mT->mY, Fx(20));
+    d.mOldFacing = self.mFacing;
+    Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+}
+
+// Slash.Reset
+void SlashReset(Entity& s, fx x, fx y)
+{
+    s.mExists = true;
+    s.mT->mX = x;
+    s.mT->mY = y;
+    s.mV->mOffX = s.mV->mOffY = 0;
+    s.mV->mHFlip = s.mV->mVFlip = false;
+}
+
+void SlasherEnter(Entity& self, uint8_t state)
+{
+    SlasherData& d = self.Data<SlasherData>();
+    d.mState = state;
+    TimerState<1>& timer = d.mTimers[state];
+    timer.Reset();
+    const fx x = self.mT->mX;
+    const fx y = self.mT->mY;
+    const bool vertical = self.mFacing == FACE_UP || self.mFacing == FACE_DOWN;
+    switch (state)
+    {
+    case SLASHER_MOVE:
+        SlasherPlayFacing(self, "float");
+        timer.Add(1.4f, 0);
+        break;
+    case SLASHER_WARNING:
+        SlasherPlayFacing(self, "warning");
+        timer.Add(0.5f, 0);
+        break;
+    case SLASHER_WIDE_ATTACK:
+        Game_PlaySfx("slasher_atk");
+        if (vertical)
+        {
+            // HorizontalSlash.UpdateWidePosVertical
+            Entity& s = *d.mHorizontal;
+            SlashReset(s, x - Fx(10), y);
+            s.mV->mOffX = Fx(6);
+            Ecs_Play(s, "wide");
+            if (self.mFacing == FACE_UP)
+            {
+                s.mV->mHFlip = s.mV->mVFlip = true;
+                s.mT->mY -= Fx(4);
+                s.mV->mOffY = Fx(4);
+                s.mV->mOffX = Fx(5);
+            }
+            else
+            {
+                s.mT->mY += Fx(10);
+                s.mV->mOffY = Fx(6);
+            }
+        }
+        else
+        {
+            // VerticalSlash.UpdateWidePosHorizontal
+            Entity& s = *d.mVertical;
+            SlashReset(s, x, y - Fx(10));
+            s.mV->mOffY = Fx(6);
+            Ecs_Play(s, "wide");
+            if (self.mFacing == FACE_RIGHT)
+            {
+                s.mT->mX += Fx(11);
+            }
+            else
+            {
+                s.mV->mHFlip = true;
+                s.mT->mX -= Fx(5);
+                s.mV->mOffX = Fx(6);
+            }
+        }
+        SlasherPlayFacing(self, "attack");
+        timer.Add(0.4f, 0);
+        break;
+    case SLASHER_WIDE_ATTACK_DELAY:
+        timer.Add(0.3f, 0);
+        break;
+    default:
+        Game_PlaySfx("slasher_atk");
+        if (vertical)
+        {
+            // VerticalSlash.UpdateLongPosVertical
+            Entity& s = *d.mVertical;
+            SlashReset(s, x + Fx(3), y);
+            s.mV->mOffX = Fx(2);
+            Ecs_Play(s, "tall");
+            if (self.mFacing == FACE_UP)
+            {
+                s.mT->mY -= Fx(36);
+                s.mV->mOffY = Fx(10);
+                s.mV->mOffX = Fx(3);
+            }
+            else
+            {
+                s.mV->mVFlip = true;
+                s.mT->mY += Fx(16);
+                s.mV->mOffY = Fx(3);
+            }
+        }
+        else
+        {
+            // HorizontalSlash.UpdateLongPosHorizontal
+            Entity& s = *d.mHorizontal;
+            SlashReset(s, x, y + Fx(3));
+            s.mV->mOffY = Fx(4);
+            Ecs_Play(s, "tall");
+            if (self.mFacing == FACE_RIGHT)
+            {
+                s.mT->mX += Fx(16);
+                s.mV->mOffX = Fx(4);
+            }
+            else
+            {
+                s.mV->mHFlip = true;
+                s.mT->mX -= Fx(36);
+                s.mV->mOffX = Fx(11);
+                s.mV->mOffY = Fx(3);
+            }
+        }
+        SlasherPlayFacing(self, "attack");
+        timer.Add(0.8f, 0);
+        break;
+    }
+}
+
+void SlasherUpdate(Entity& self)
+{
+    SlasherData& d = self.Data<SlasherData>();
+    Ecs_BaseUpdate(self);
+    const uint8_t state = d.mState;
+    TimerState<1>& timer = d.mTimers[state];
+    timer.Tick(kDeltaTime);
+    while (timer.Pop() >= 0)
+    {
+        switch (state)
+        {
+        case SLASHER_MOVE:
+            SlasherEnter(self, SLASHER_WARNING);
+            break;
+        case SLASHER_WARNING:
+        {
+            const Entity& p = *World_Player();
+            const float dx = (Ecs_CenterX(self) - Ecs_VisualCenterX(p)).mV;
+            const float dy = (Ecs_CenterY(self) - Ecs_VisualCenterY(p)).mV;
+            const bool close = dx * dx + dy * dy < kSlasherWideAtkDistance * kSlasherWideAtkDistance;
+            SlasherEnter(self, close ? SLASHER_WIDE_ATTACK : SLASHER_LONG_ATTACK);
+            break;
+        }
+        case SLASHER_WIDE_ATTACK:
+            SlasherEnter(self, SLASHER_WIDE_ATTACK_DELAY);
+            break;
+        default:
+            SlasherEnter(self, SLASHER_MOVE);
+            break;
+        }
+    }
+    // The state that was updated runs its own Update after its timers, even when one of them changed the state.
+    if (state == SLASHER_MOVE || state == SLASHER_WARNING)
+    {
+        SlasherMove(self);
+        if (d.mOldFacing != self.mFacing)
+        {
+            SlasherPlayFacing(self, state == SLASHER_MOVE ? "float" : "warning");
+        }
+    }
+}
+
+void SlasherCollided(Entity& self, Entity&)
+{
+    SlasherData& d = self.Data<SlasherData>();
+    if (self.mV->mFlickering)
+    {
+        return;
+    }
+    d.mHealth--;
+    Ecs_Flicker(self, FxSec(0.5f));
+    if (d.mHealth <= 0)
+    {
+        Die(self, 1, true);
+        Spawn_Explosion(self);
+    }
+}
+
+const EntityClass kSlasher = {
+    "Slasher", SlasherUpdate, nullptr, SlasherCollided, nullptr, nullptr, nullptr, nullptr,
+    0,         GROUP_BROOM,   ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN | ECF_ENEMY,
+};
+
+void SlashUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimFinished(self))
+    {
+        self.mExists = false;
+    }
+}
+
+void SlashCollided(Entity& self, Entity& other)
+{
+    if (self.mV->mVisible && IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+}
+
+const EntityClass kHorizontalSlash = {
+    "HorizontalSlash", SlashUpdate, nullptr, SlashCollided, nullptr, nullptr, nullptr, nullptr,
+    0,                 GROUP_PLAYER, 0,
+};
+
+const EntityClass kVerticalSlash = {
+    "VerticalSlash", SlashUpdate, nullptr, SlashCollided, nullptr, nullptr, nullptr, nullptr,
+    0,               GROUP_PLAYER, 0,
+};
+
 // Dog.DogRegion: a 96x96 box round the dog that wakes it when the player is in it.
 void DogRegionUpdate(Entity& self)
 {
@@ -2311,6 +2682,73 @@ Entity* Spawn_DashTrap(const MapEntity& preset, Entity&)
             e->mT->mVelY = Fx(kDashVel);
         }
     }
+    return e;
+}
+
+Entity* Spawn_FourShooter(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFourShooter, preset, "f_four_shooter");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    Ecs_SetSolid(*e, true);
+    Ecs_Play(*e, "idle");
+    FourShooterData& d = e->Data<FourShooterData>();
+    d.mTimer = kFourShooterTime;
+    for (Entity*& b : d.mBullets)
+    {
+        b = Ecs_Create(kFourShooterBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            return nullptr;
+        }
+        Ecs_SetSolid(*b, true);
+        b->mB->mW = b->mB->mH = 4;
+        b->mB->mMapInteraction = false;
+        Ecs_SetSheet(*b, "f_four_shooter_bullet");
+        b->mV->mOffX = b->mV->mOffY = Fx(2);
+        b->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_KeepPooled(*b);
+    }
+    return e;
+}
+
+Entity* Spawn_Slasher(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSlasher, preset, "f_slasher", 24, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 16;
+    e->mB->mMapInteraction = false;
+    Ecs_CenterOffset(*e);
+    SlasherData& d = e->Data<SlasherData>();
+    d.mHealth = 3;
+    d.mVertical = Ecs_Create(kVerticalSlash, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+    d.mHorizontal = Ecs_Create(kHorizontalSlash, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+    if (!d.mVertical || !d.mHorizontal)
+    {
+        return nullptr;
+    }
+    Ecs_SetSheet(*d.mVertical, "f_slasher_long", 16, 48);
+    d.mVertical->mB->mW = 10;
+    d.mVertical->mB->mH = 36;
+    Ecs_SetSheet(*d.mHorizontal, "f_slasher_wide", 48, 16);
+    d.mHorizontal->mB->mW = 36;
+    d.mHorizontal->mB->mH = 10;
+    Entity* const slashes[2] = { d.mVertical, d.mHorizontal };
+    for (Entity* s : slashes)
+    {
+        Ecs_SetSolid(*s, false);
+        Ecs_KeepPooled(*s);
+    }
+    // SubEntities: _horizontal, then _vertical
+    Ecs_MoveAfter(*d.mHorizontal, *e);
+    e->mFacing = FACE_LEFT; // the C#'s default facing
+    SlasherEnter(*e, SLASHER_MOVE);
     return e;
 }
 

@@ -63,6 +63,10 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_Frog;
     case EPT_DashTrap:
         return Spawn_DashTrap;
+    case EPT_FourShooter:
+        return Spawn_FourShooter;
+    case EPT_Slasher:
+        return Spawn_Slasher;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:

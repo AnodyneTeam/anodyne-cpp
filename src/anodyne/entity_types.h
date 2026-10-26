@@ -59,6 +59,8 @@
     X(BurstPlant)               \
     X(Frog)                     \
     X(DashTrap)                 \
+    X(FourShooter)              \
+    X(Slasher)                  \
     X(Rotator)                  \
     X(Door)
 
