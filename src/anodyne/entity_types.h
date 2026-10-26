@@ -88,6 +88,10 @@
     X(Rail)                     \
     X(EasterEgg)                \
     X(SplitBoss)                \
+    X(Dustmaid)                \
+    X(SteamPipe)               \
+    X(EyebossPreview)          \
+    X(HotelGuy)                \
     X(Bunny)                    \
     X(BunnyRun)                 \
     X(Person)                   \

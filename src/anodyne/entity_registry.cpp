@@ -101,6 +101,14 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BioFilm;
     case EPT_WindmillConsole:
         return Spawn_WindmillConsole;
+    case EPT_Dustmaid:
+        return Spawn_Dustmaid;
+    case EPT_SteamPipe:
+        return Spawn_SteamPipe;
+    case EPT_EyebossPreview:
+        return Spawn_EyebossPreview;
+    case EPT_HotelGuy:
+        return Spawn_HotelGuy;
     case EPT_SplitBoss:
         return Spawn_SplitBoss;
     case EPT_Rat:

@@ -50,6 +50,7 @@ Entity* Spawn_DustAt(fx x, fx y);
 bool Dust_OnConveyor(Entity& dust);
 // Dust.IS_RAFT: the player rides it over water.
 void Dust_SetRaft(Entity& dust, bool raft);
+bool Dust_IsRaft(Entity& dust);
 // Moves Player.follower (and its dust) to the end of the update order.
 void Miao_MoveFollowerLast();
 // A CardTreasure for `card` spawned at (x, y) and given (GetTreasure).
@@ -101,6 +102,10 @@ Entity* Spawn_TeleGuy(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rail(const MapEntity& preset, Entity& player);
 Entity* Spawn_EasterEgg(const MapEntity& preset, Entity& player);
 Entity* Spawn_SplitBoss(const MapEntity& preset, Entity& player);
+Entity* Spawn_Dustmaid(const MapEntity& preset, Entity& player);
+Entity* Spawn_SteamPipe(const MapEntity& preset, Entity& player);
+Entity* Spawn_EyebossPreview(const MapEntity& preset, Entity& player);
+Entity* Spawn_HotelGuy(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbBlocker(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity& player);

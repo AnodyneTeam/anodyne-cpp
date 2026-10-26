@@ -83,6 +83,11 @@ void Player_EnterFall(bool smack);
 void Player_DontFall();
 // Player.additionalVel += (x, y) (a moving platform carrying the player).
 void Player_AddAdditionalVel(fx x, fx y);
+// Player.additionalVel.X / .Y alone (a SteamPipe blowing).
+void Player_SetAdditionalVelX(fx x);
+void Player_SetAdditionalVelY(fx y);
+// Broom.dust != null: the broom holds a dust (even one left on an old screen).
+bool Player_CarryingDust();
 // Player.additionalVel = (x, y) (a Mover pushing the player).
 void Player_SetAdditionalVel(fx x, fx y);
 // Player.raft: the dust ridden over water, or nullptr.

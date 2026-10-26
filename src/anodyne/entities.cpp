@@ -72,6 +72,7 @@ bool IsEnemyType(uint8_t type)
     case EPT_GasGuy:
     case EPT_TeleGuy:
     case EPT_SplitBoss:
+    case EPT_Dustmaid:
         return true;
     default:
         return false;

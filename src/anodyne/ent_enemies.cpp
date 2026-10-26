@@ -6024,6 +6024,304 @@ const EntityClass kSplitBoss = {
     "SplitBoss", SplitBossUpdate, SplitBossPostUpdate, SplitBossCollided, nullptr, nullptr, nullptr, nullptr,
     0,           GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
 };
+
+// ---- Hotel enemies (Hotel/*.cs) ----------------------------------------------------------------------------------
+// ---- Dustmaid: wakes up and chases the player once the broom holds a dust
+struct DustmaidData final
+{
+    uint8_t mStep;
+    int mHealth;
+    bool mChasing;
+};
+
+void DustmaidUpdate(Entity& self)
+{
+    DustmaidData& d = self.Data<DustmaidData>();
+    Ecs_BaseUpdate(self);
+    switch (d.mStep)
+    {
+    case 0:
+        if (!Player_CarryingDust())
+        {
+            return;
+        }
+        Ecs_Play(self, "turn_dark");
+        FlipIfLeft(self);
+        Game_PlaySfx("dustmaid_alert");
+        self.mV->mOpacity = kFxOne;
+        d.mChasing = true;
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!Ecs_AnimFinished(self))
+        {
+            return;
+        }
+        d.mStep = 2;
+        [[fallthrough]];
+    default:
+    {
+        if (!self.mExists)
+        {
+            return;
+        }
+        const Entity& p = *World_Player();
+        Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
+        PlayFacingFlip(self, "move");
+        Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(20));
+        return;
+    }
+    }
+}
+
+void DustmaidCollided(Entity& self, Entity& other)
+{
+    DustmaidData& d = self.Data<DustmaidData>();
+    if (IsPlayer(other))
+    {
+        Player_ReceiveDamage(1);
+    }
+    else if (IsBroom(other) && d.mChasing && !self.mV->mFlickering)
+    {
+        d.mHealth--;
+        Ecs_Flicker(self, kFxOne);
+        Game_PlaySfx("broom_hit");
+        if (d.mHealth <= 0)
+        {
+            Die(self, 0.7f);
+            Spawn_Explosion(self);
+        }
+    }
+}
+
+const EntityClass kDustmaid = {
+    "Dustmaid", DustmaidUpdate, nullptr, DustmaidCollided, nullptr, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY | ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+// ---- SteamPipe: blows the player along unless a dust plugs it
+constexpr int kSteamPuffs = 6;
+constexpr int kSteamEjectVel = 50;
+
+struct SteamPipeData final
+{
+    bool mDisabled;
+    bool mPlayerCollided;
+    Entity* mSteam[kSteamPuffs];
+};
+
+struct SteamData final
+{
+    float mTimer;
+    bool mDisabled;
+    fx mStartX;
+    fx mStartY;
+};
+
+void SteamSpawn(Entity& self)
+{
+    SteamData& d = self.Data<SteamData>();
+    d.mTimer = d.mDisabled ? Rng_Range(3, 6) / 60.0f : Rng_Range(30, 51) / 60.0f;
+    Transform& t = *self.mT;
+    t.mX = d.mStartX;
+    t.mY = d.mStartY;
+    switch (self.mFacing)
+    {
+    case FACE_DOWN:
+        t.mVelY = Fx(kSteamEjectVel + Rng_Range(0, 21));
+        t.mVelX = Fx(Rng_Range(-30, 31));
+        break;
+    case FACE_UP:
+        t.mVelY = Fx(-kSteamEjectVel + Rng_Range(-20, 1));
+        t.mVelX = Fx(Rng_Range(-30, 31));
+        break;
+    case FACE_LEFT:
+        t.mVelX = Fx(-kSteamEjectVel + Rng_Range(-20, 1));
+        t.mVelY = Fx(Rng_Range(-30, 31));
+        break;
+    default:
+        t.mVelX = Fx(kSteamEjectVel + Rng_Range(0, 21));
+        t.mVelY = Fx(Rng_Range(-30, 31));
+        break;
+    }
+    Game_PlaySfx("fireball");
+}
+
+void SteamUpdate(Entity& self)
+{
+    SteamData& d = self.Data<SteamData>();
+    Ecs_BaseUpdate(self);
+    d.mTimer -= kDeltaTime;
+    if (d.mTimer <= 0)
+    {
+        SteamSpawn(self);
+    }
+    d.mDisabled = false;
+}
+
+void SteamCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other) && self.mParent)
+    {
+        self.mParent->Data<SteamPipeData>().mPlayerCollided = true;
+    }
+}
+
+const EntityClass kSteam = {
+    "Steam", SteamUpdate, nullptr, SteamCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+void SteamPipeUpdate(Entity& self)
+{
+    SteamPipeData& d = self.Data<SteamPipeData>();
+    Ecs_BaseUpdate(self);
+    if (d.mPlayerCollided && !d.mDisabled)
+    {
+        switch (self.mFacing)
+        {
+        case FACE_DOWN:
+            Player_SetAdditionalVelY(Fx(kSteamEjectVel));
+            break;
+        case FACE_UP:
+            Player_SetAdditionalVelY(Fx(-kSteamEjectVel));
+            break;
+        case FACE_LEFT:
+            Player_SetAdditionalVelX(Fx(-kSteamEjectVel));
+            break;
+        default:
+            Player_SetAdditionalVelX(Fx(kSteamEjectVel));
+            break;
+        }
+    }
+    if (d.mDisabled)
+    {
+        for (Entity* s : d.mSteam)
+        {
+            s->Data<SteamData>().mDisabled = true;
+        }
+    }
+    d.mDisabled = false;
+    d.mPlayerCollided = false;
+}
+
+void SteamPipeCollided(Entity& self, Entity& other)
+{
+    SteamPipeData& d = self.Data<SteamPipeData>();
+    if (d.mDisabled)
+    {
+        return;
+    }
+    if (IsPlayer(other))
+    {
+        d.mPlayerCollided = true;
+    }
+    else if (!Dust_IsRaft(other))
+    {
+        d.mDisabled = true;
+    }
+}
+
+const EntityClass kSteamPipe = {
+    "SteamPipe", SteamPipeUpdate, nullptr, SteamPipeCollided, nullptr, nullptr, nullptr, nullptr,
+    0,           GROUP_PLAYER | GROUP_DUST, 0,
+};
+
+// ---- EyebossPreview (Npc/Hotel/EyebossPreview.cs): the eye boss peeks in, blinks and fades away
+// (its CompositeSpriteRenderer: the sclera is the entity, the pupil and the eyelids are "Entity" children)
+struct EyePreviewData final
+{
+    uint8_t mStep;
+    Entity* mPupil;
+    Entity* mEyelids;
+};
+
+const EntityClass kEyePart = {
+    "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// The pupil looks at the player: Eye_Center (7, 8) + 2 px towards them.
+void EyeLookAtPlayer(const Entity& eye, Entity& pupil)
+{
+    const Entity& p = *World_Player();
+    const float dx = (Ecs_VisualCenterX(p) - Ecs_VisualCenterX(eye)).mV;
+    const float dy = (Ecs_VisualCenterY(p) - Ecs_VisualCenterY(eye)).mV;
+    const float len = sqrtf(dx * dx + dy * dy);
+    const float nx = dx / len;
+    const float ny = dy / len;
+    pupil.mT->mX = eye.mT->mX - eye.mV->mOffX + fx(7 + nx * 2);
+    pupil.mT->mY = eye.mT->mY - eye.mV->mOffY + fx(8 + ny * 2);
+}
+
+void EyePreviewUpdate(Entity& self)
+{
+    EyePreviewData& d = self.Data<EyePreviewData>();
+    Ecs_BaseUpdate(self);
+    EyeLookAtPlayer(self, *d.mPupil);
+    Visual& v = *self.mV;
+    switch (d.mStep)
+    {
+    case 0:
+        if (v.mOpacity < kFxOne)
+        {
+            v.mOpacity = fx(v.mOpacity.mV + 0.48f * kDeltaTime);
+            break;
+        }
+        Ecs_Play(*d.mEyelids, "open");
+        d.mStep = 1;
+        [[fallthrough]];
+    case 1:
+        if (!Ecs_AnimFinished(*d.mEyelids))
+        {
+            break;
+        }
+        Ecs_Play(*d.mEyelids, "blink");
+        d.mStep = 2;
+        [[fallthrough]];
+    case 2:
+        if (!Ecs_AnimFinished(*d.mEyelids))
+        {
+            break;
+        }
+        d.mStep = 3;
+        [[fallthrough]];
+    default:
+        if (v.mOpacity > 0)
+        {
+            v.mOpacity = fx(v.mOpacity.mV - 3.0f * kDeltaTime);
+            break;
+        }
+        self.mExists = false;
+        break;
+    }
+    d.mPupil->mV->mOpacity = d.mEyelids->mV->mOpacity = v.mOpacity;
+    d.mPupil->mExists = d.mEyelids->mExists = self.mExists;
+}
+
+const EntityClass kEyePreview = {
+    "EyebossPreview", EyePreviewUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+// The sclera, pupil and eyelids of the eye boss and its preview.
+bool MakeEyeParts(Entity& eye, Entity*& pupil, Entity*& eyelids)
+{
+    Ecs_SetSheet(eye, "sclera", 24, 24);
+    eye.mB->mW = eye.mB->mH = 24;
+    pupil = Ecs_Create(kEyePart, eye.mT->mX, eye.mT->mY, PART_VISUAL, nullptr, &eye);
+    eyelids = Ecs_Create(kEyePart, eye.mT->mX, eye.mT->mY, PART_VISUAL, nullptr, &eye);
+    if (!pupil || !eyelids)
+    {
+        return false;
+    }
+    Ecs_SetSheet(*pupil, "pupil", 10, 8);
+    Ecs_SetSheet(*eyelids, "eyelids", 24, 24);
+    Ecs_SetSolid(*pupil, false);
+    Ecs_SetSolid(*eyelids, false);
+    pupil->mV->mLayerRef = &eye;
+    pupil->mV->mLayerOffset = 1;
+    eyelids->mV->mLayerRef = &eye;
+    eyelids->mV->mLayerOffset = 2;
+    return true;
+}
 } // namespace
 
 int Enemies_ProbeFields(const Entity& e, char* buf, int cap)
@@ -7306,5 +7604,136 @@ Entity* Spawn_SplitBoss(const MapEntity& preset, Entity&)
     d.mHealth = 13;
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     SplitStart(d, SB_INTRO);
+    return e;
+}
+
+Entity* Spawn_Dustmaid(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kDustmaid, preset, "dustmaid", 16, 24);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mV->mOpacity = FxF(0.7f);
+    e->mB->mW = 8;
+    e->mB->mH = 18;
+    Ecs_CenterOffset(*e);
+    e->mV->mOffX += Fx(1);
+    e->mV->mOffY += Fx(2);
+    DustmaidData& d = e->Data<DustmaidData>();
+    d = DustmaidData();
+    d.mHealth = 3;
+    return e;
+}
+
+Entity* Spawn_SteamPipe(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kSteamPipe, preset, "steam_pipe");
+    if (!e)
+    {
+        return nullptr;
+    }
+    const int frame = preset.mFrame;
+    Ecs_SetFrame(*e, frame);
+    int offX = 0;
+    int offY = 0;
+    int startX = 0;
+    int startY = 0;
+    switch (frame)
+    {
+    case 0:
+        e->mB->mW = 10;
+        offX = 3;
+        offY = 16;
+        startX = 2;
+        startY = 10;
+        e->mFacing = FACE_DOWN;
+        break;
+    case 1:
+        e->mB->mH = 10;
+        offX = 14;
+        offY = 5;
+        startX = 14;
+        startY = 5;
+        e->mFacing = FACE_RIGHT;
+        break;
+    case 2:
+        e->mB->mW = 10;
+        offX = 3;
+        offY = -4;
+        startX = 3;
+        startY = -2;
+        e->mFacing = FACE_UP;
+        break;
+    default:
+        e->mB->mH = 10;
+        offX = -6;
+        offY = 3;
+        startX = -6;
+        startY = 3;
+        e->mFacing = FACE_LEFT;
+        break;
+    }
+    const fx sx = e->mT->mX + Fx(startX);
+    const fx sy = e->mT->mY + Fx(startY);
+    e->mV->mOffX = Fx(offX);
+    e->mV->mOffY = Fx(offY);
+    e->mT->mX += Fx(offX);
+    e->mT->mY += Fx(offY);
+    SteamPipeData& d = e->Data<SteamPipeData>();
+    d = SteamPipeData();
+    for (Entity*& s : d.mSteam)
+    {
+        s = Ecs_Create(kSteam, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!s)
+        {
+            return nullptr;
+        }
+        Ecs_SetSheet(*s, "steam", 16, 16);
+        Ecs_Play(*s, "s");
+        s->mV->mLayer = LAYER_FG_SPRITES;
+        Ecs_SetSolid(*s, false);
+        const float scale = Rng_Range(8, 10) / 10.0f;
+        s->mV->mScale = fx(scale);
+        s->mB->mW = s->mB->mH = static_cast<int16_t>(16 * scale);
+        s->mFacing = e->mFacing;
+        SteamData& sd = s->Data<SteamData>();
+        sd = SteamData();
+        sd.mStartX = sx;
+        sd.mStartY = sy;
+    }
+    // _steam.Spawn(s => s.Spawn(), 6)
+    for (Entity* s : d.mSteam)
+    {
+        SteamSpawn(*s);
+    }
+    return e;
+}
+
+Entity* Spawn_EyebossPreview(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kEyePreview, Fx(preset.mX), Fx(preset.mY), PART_VISUAL | PART_BRAIN, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    EyePreviewData& d = e->Data<EyePreviewData>();
+    d = EyePreviewData();
+    if (!MakeEyeParts(*e, d.mPupil, d.mEyelids))
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    d.mPupil->mT->mX = e->mT->mX + Fx(7);
+    d.mPupil->mT->mY = e->mT->mY + Fx(8);
+    e->mV->mOpacity = d.mPupil->mV->mOpacity = d.mEyelids->mV->mOpacity = 0;
+    if (Game_BossDefeated("HOTEL") || (Event_Get("EyebossPreviewPlayed") > 0 && Rng_NextDouble() > 0.3))
+    {
+        e->mExists = d.mPupil->mExists = d.mEyelids->mExists = false;
+    }
+    else
+    {
+        Event_Inc("EyebossPreviewPlayed");
+    }
     return e;
 }

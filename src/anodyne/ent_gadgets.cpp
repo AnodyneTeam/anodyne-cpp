@@ -1799,6 +1799,11 @@ bool Dust_OnConveyor(Entity& dust)
     return dust.Data<DustData>().mOnConveyor;
 }
 
+bool Dust_IsRaft(Entity& dust)
+{
+    return dust.Data<DustData>().mIsRaft;
+}
+
 void Dust_SetRaft(Entity& dust, bool raft)
 {
     dust.Data<DustData>().mIsRaft = raft;

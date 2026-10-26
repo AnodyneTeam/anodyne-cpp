@@ -3405,3 +3405,32 @@ Entity* Spawn_EasterEgg(const MapEntity& preset, Entity&)
     e->mB->mImmovable = true;
     return e;
 }
+
+// ---- HotelGuy (Npc/Hotel/HotelGuy.cs) ------------------------------------------------------------------------------
+namespace
+{
+bool HotelGuyInteract(Entity& self, Facing playerFacing)
+{
+    FacePlayerTalking(self, playerFacing);
+    Ecs_PlayFacing(self, "idle");
+    Game_ShowDialogue("generic_npc", "one");
+    return true;
+}
+
+const EntityClass kHotelGuy = {
+    "HotelGuy", nullptr, nullptr, SeparateFromAny, HotelGuyInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER, ECF_INTERACTABLE,
+};
+} // namespace
+
+Entity* Spawn_HotelGuy(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kHotelGuy, preset, "hotel_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "idle_u");
+    e->mB->mImmovable = true;
+    return e;
+}

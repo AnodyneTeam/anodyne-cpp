@@ -1501,6 +1501,21 @@ void Player_LoseBroomDust()
     b.mCarrying = false;
 }
 
+bool Player_CarryingDust()
+{
+    return B().mCarrying;
+}
+
+void Player_SetAdditionalVelX(fx x)
+{
+    P().mAddVelX = x;
+}
+
+void Player_SetAdditionalVelY(fx y)
+{
+    P().mAddVelY = y;
+}
+
 void Player_SetAdditionalVel(fx x, fx y)
 {
     PlayerData& d = P();
