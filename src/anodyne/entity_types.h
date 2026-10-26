@@ -58,6 +58,7 @@
     X(Dog)                      \
     X(BurstPlant)               \
     X(Frog)                     \
+    X(DashTrap)                 \
     X(Rotator)                  \
     X(Door)
 

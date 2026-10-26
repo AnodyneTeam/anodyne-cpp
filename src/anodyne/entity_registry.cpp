@@ -61,6 +61,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_BurstPlant;
     case EPT_Frog:
         return Spawn_Frog;
+    case EPT_DashTrap:
+        return Spawn_DashTrap;
     case EPT_Dog:
         return Spawn_Dog;
     case EPT_Rotator:

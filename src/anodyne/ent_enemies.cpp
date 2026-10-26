@@ -1413,6 +1413,163 @@ const EntityClass kFrog = {
     0,      GROUP_PLAYER | GROUP_BROOM, ECF_ENEMY,
 };
 
+// ---- BounceDashTrap, OnSightDashTrap (Apartment/Dash_Trap.cs) ----------------------------------------------------
+constexpr int kDashVel = 80;
+
+enum DashTrapState : uint8_t
+{
+    DASH_IDLE,
+    DASH_CHARGING,
+    DASH_RETURNING,
+};
+
+struct DashTrapData final
+{
+    uint8_t mState; // OnSightDashTrap
+    fx mIdleX;
+    fx mIdleY;
+};
+
+void BounceDashTrapTouch(Entity& self)
+{
+    Ecs_Play(self, "bounce@2");
+    Game_PlaySfx("shieldy_ineffective");
+    self.mT->mVelX = -self.mT->mVelX;
+    self.mT->mVelY = -self.mT->mVelY;
+}
+
+// OnSightDashTrap's "bounce" event: only the Charging state handles it.
+void OnSightDashTrapTouch(Entity& self)
+{
+    DashTrapData& d = self.Data<DashTrapData>();
+    if (d.mState != DASH_CHARGING)
+    {
+        return;
+    }
+    Game_PlaySfx("shieldy_ineffective");
+    self.mT->mVelX = -self.mT->mVelX / 2;
+    self.mT->mVelY = -self.mT->mVelY / 2;
+    d.mState = DASH_RETURNING;
+}
+
+bool IsOnSightDashTrap(const Entity& e);
+
+void DashTrapTouch(Entity& self)
+{
+    if (IsOnSightDashTrap(self))
+    {
+        OnSightDashTrapTouch(self);
+    }
+    else
+    {
+        BounceDashTrapTouch(self);
+    }
+}
+
+void DashTrapCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        if (Player_State() != PS_AIR)
+        {
+            Player_ReceiveDamage(1);
+            if (IsOnSightDashTrap(self))
+            {
+                OnSightDashTrapTouch(self); // OnPlayer (the bounce trap ignores it)
+            }
+        }
+    }
+    else
+    {
+        DashTrapTouch(self);
+    }
+}
+
+void BounceDashTrapUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        DashTrapTouch(self);
+    }
+}
+
+void OnSightDashTrapUpdate(Entity& self)
+{
+    DashTrapData& d = self.Data<DashTrapData>();
+    Ecs_BaseUpdate(self);
+    if (self.mB->mTouching != TOUCH_NONE)
+    {
+        DashTrapTouch(self);
+    }
+    Transform& t = *self.mT;
+    if (d.mState == DASH_IDLE)
+    {
+        // SeePlayer: lined up with the player on either axis
+        const Rect p = Ecs_Hitbox(*World_Player());
+        const Rect h = Ecs_Hitbox(self);
+        const bool seeX = p.mX <= h.mX + h.mW && p.mX + p.mW >= h.mX;
+        const bool seeY = p.mY <= h.mY + h.mH && p.mY + p.mH >= h.mY;
+        if (seeX || seeY)
+        {
+            const Entity& pl = *World_Player();
+            Ecs_FaceTowards(self, Ecs_CenterX(pl), Ecs_CenterY(pl));
+            const Facing f = static_cast<Facing>(self.mFacing);
+            t.mVelX = Fx(kDashVel * FacingX(f));
+            t.mVelY = Fx(kDashVel * FacingY(f));
+            Game_PlaySfx("slasher_atk");
+            Ecs_Play(self, "dash@2");
+            d.mState = DASH_CHARGING;
+        }
+    }
+    else if (d.mState == DASH_RETURNING)
+    {
+        const float dx = (d.mIdleX - t.mX).mV;
+        const float dy = (d.mIdleY - t.mY).mV;
+        if (dx * dx + dy * dy < 4)
+        {
+            t.mVelX = t.mVelY = 0;
+            t.mX = d.mIdleX;
+            t.mY = d.mIdleY;
+            d.mState = DASH_IDLE;
+            Ecs_Play(self, "idle@2");
+        }
+    }
+}
+
+const EntityClass kBounceDashTrap = {
+    "BounceDashTrap",
+    BounceDashTrapUpdate,
+    nullptr,
+    DashTrapCollided,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    GROUP_DASH_TRAP,
+    GROUP_PLAYER | GROUP_DUST,
+    ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+const EntityClass kOnSightDashTrap = {
+    "OnSightDashTrap",
+    OnSightDashTrapUpdate,
+    nullptr,
+    DashTrapCollided,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    GROUP_DASH_TRAP,
+    GROUP_PLAYER | GROUP_DUST | GROUP_DASH_TRAP,
+    ECF_MAP_COLLISION | ECF_KEEP_ON_SCREEN,
+};
+
+bool IsOnSightDashTrap(const Entity& e)
+{
+    return e.mClass == &kOnSightDashTrap;
+}
+
 // Dog.DogRegion: a 96x96 box round the dog that wakes it when the player is in it.
 void DogRegionUpdate(Entity& self)
 {
@@ -2120,6 +2277,40 @@ Entity* Spawn_Frog(const MapEntity& preset, Entity&)
     }
     d.mState = FROG_INITIAL;
     d.mInitial.Add(0.8f, 0);
+    return e;
+}
+
+Entity* Spawn_DashTrap(const MapEntity& preset, Entity&)
+{
+    const bool onSight = preset.mFrame == 0;
+    Entity* e = Spawn_Basic(onSight ? kOnSightDashTrap : kBounceDashTrap, preset, "dash_trap");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 14;
+    Ecs_CenterOffset(*e);
+    e->mB->mMapInteraction = false;
+    e->mB->mHoleAsWall = true;
+    DashTrapData& d = e->Data<DashTrapData>();
+    d.mIdleX = e->mT->mX;
+    d.mIdleY = e->mT->mY;
+    if (onSight)
+    {
+        Ecs_Play(*e, "idle@2");
+    }
+    else
+    {
+        Ecs_Play(*e, "dash@2");
+        if (preset.mFrame == 1)
+        {
+            e->mT->mVelX = Fx(kDashVel);
+        }
+        else
+        {
+            e->mT->mVelY = Fx(kDashVel);
+        }
+    }
     return e;
 }
 

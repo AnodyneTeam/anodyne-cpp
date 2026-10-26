@@ -67,6 +67,7 @@ Entity* Spawn_Shieldy(const MapEntity& preset, Entity& player);
 Entity* Spawn_Dog(const MapEntity& preset, Entity& player);
 Entity* Spawn_BurstPlant(const MapEntity& preset, Entity& player);
 Entity* Spawn_Frog(const MapEntity& preset, Entity& player);
+Entity* Spawn_DashTrap(const MapEntity& preset, Entity& player);
 Entity* Spawn_Rotator(const MapEntity& preset, Entity& player);
 Entity* Spawn_Door(const MapEntity& preset, Entity& player);
 // Shieldy.ReceiveDamage (a laser hit).
