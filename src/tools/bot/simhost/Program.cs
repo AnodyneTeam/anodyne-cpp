@@ -154,10 +154,16 @@ sim.Kill();
 void Replay(string inputPath, string tracePath, int show)
 {
     var masks = new List<int> { 0 }; // (frame 0: none)
+    // "# checkpoint FRAME MAP X Y": the bot set its respawn point as the checkpoint (on the death screen) then
+    var checkpoints = new Dictionary<long, string[]>();
     foreach (var line in File.ReadLines(inputPath))
     {
         var w = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (w.Length == 2 && int.TryParse(w[0], out int n))
+        if (w.Length == 6 && w[1] == "checkpoint")
+        {
+            checkpoints[long.Parse(w[2])] = w[3..];
+        }
+        else if (w.Length == 2 && int.TryParse(w[0], out int n))
         {
             int m = Convert.ToInt32(w[1], 16);
             masks.AddRange(Enumerable.Repeat(m, n));
@@ -227,6 +233,10 @@ void Replay(string inputPath, string tracePath, int show)
         long f = long.Parse(cs[i][0]);
         if (i > start)
         {
+            if (checkpoints.TryGetValue(f, out var cp))
+            {
+                view.SetCheckpoint(cp[0], int.Parse(cp[1]), int.Parse(cp[2]));
+            }
             view.Hold(f < masks.Count ? masks[(int)f] : 0, 1);
         }
         string mine = Row(f), theirs = string.Join("\t", cs[i]);

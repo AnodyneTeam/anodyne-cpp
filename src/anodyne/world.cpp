@@ -1228,12 +1228,13 @@ void DeathUpdate()
     {
         return;
     }
-    if (key_hit(KEY_UP) && d.mNo)
+    // (either way, even onto what's already picked)
+    if (key_hit(KEY_UP))
     {
         d.mNo = false;
         PlaySfx("menu_move");
     }
-    else if (key_hit(KEY_DOWN) && !d.mNo)
+    else if (key_hit(KEY_DOWN))
     {
         d.mNo = true;
         PlaySfx("menu_move");

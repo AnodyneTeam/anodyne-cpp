@@ -10719,6 +10719,7 @@ Entity* Spawn_CircusFolks(const MapEntity& preset, Entity&)
         p->mB->mW = p->mB->mH = 16;
         Ecs_SetSheet(*p, sheet, 16, 16);
         Ecs_Play(*p, anim);
+        p->mKeep = true; // (pooled: in and out of existence for the whole fight)
         CircusPartData& pd = p->Data<CircusPartData>();
         pd = CircusPartData();
         pd.mHurts = true;

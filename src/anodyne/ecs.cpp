@@ -531,7 +531,7 @@ Entity* Ecs_Create(const EntityClass& cls, fx x, fx y, uint8_t parts, const MapE
     e->mSpawned = false;
     e->mKeep = false;
     e->mCutsceneOwned = false;
-    e->mFacing = FACE_DOWN;
+    e->mFacing = FACE_LEFT; // (the C# enum default)
     e->mT->mX = e->mT->mLastX = x;
     e->mT->mY = e->mT->mLastY = y;
     e->mB->mAllow = TOUCH_ANY;

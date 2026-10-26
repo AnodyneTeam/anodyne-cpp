@@ -219,6 +219,10 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
             GameProbe_SetRng(a);
             SendLine("ok");
         }
+        else if (!strcmp(cmd, "checkpoint") && sscanf(line.c_str(), "checkpoint %63s %u %u", arg, &a, &b) == 3)
+        {
+            SendLine(GameProbe_SetCheckpoint(arg, static_cast<int>(a), static_cast<int>(b)) ? "ok" : "error no such map");
+        }
         else if (!strcmp(cmd, "heal"))
         {
             GameProbe_Heal();

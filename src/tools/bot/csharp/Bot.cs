@@ -120,7 +120,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Frames the bot has produced (independent of tracing, so bot decisions never depend on whether a trace is written).</summary>
         public static long Frame => _botFrame;
         private static StreamWriter _gba;
-        private static int _gbaMask = -1, _gbaRun;
+        private static int _gbaMask = -1, _gbaRun, _gbaFrames;
 
         // GBA KEYINPUT bit order: A B Select Start Right Left Up Down R L
         private static int GbaBit(KeyFunctions f) => f switch
@@ -144,6 +144,7 @@ namespace AnodyneSharp.Recording
             {
                 return;
             }
+            _gbaFrames++;
             int mask = 0;
             foreach (var f in held)
             {
@@ -617,9 +618,11 @@ namespace AnodyneSharp.Recording
             if (InDeathMenu && !ExpectDeath && RecoverDeaths)
             {
                 // The "Continue?" menu: Up picks Yes, Accept confirms (it takes a few seconds to take keys).
-                if (RespawnPoint != null)
+                if (RespawnPoint != null && GlobalState.checkpoint != RespawnPoint)
                 {
                     GlobalState.checkpoint = RespawnPoint;
+                    // (a replay on the port sets the same checkpoint at this frame)
+                    _gba?.WriteLine($"# checkpoint {_gbaFrames + 1} {RespawnPoint.map} {(int)RespawnPoint.Position.X} {(int)RespawnPoint.Position.Y}");
                 }
                 NotStuck();
                 _deathMenuFrames++;
@@ -872,7 +875,9 @@ namespace AnodyneSharp.Recording
             {
                 // (the respawn after a death puts us back here, where the section's steps start from; set as the
                 // checkpoint only once dead, so the game plays as it would without the bot until then)
-                BotRunner.RespawnPoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position);
+                // (whole pixels, as the checkpoints' own: the port's checkpoints can't hold a fraction)
+                var p = BotRunner.Player.Position;
+                BotRunner.RespawnPoint = new GlobalState.CheckPoint(Gs.Map, new Vector2(MathF.Floor(p.X), MathF.Floor(p.Y)));
             }
             if (_inner == null && BotRunner.StopBefore == _name)
             {

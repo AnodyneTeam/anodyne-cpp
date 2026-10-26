@@ -53,6 +53,13 @@ namespace AnodyneSharp.Recording
             return _in.ReadLine() == "ok";
         }
 
+        /// <summary>Sets GlobalState.checkpoint (what the bot does on the death screen).</summary>
+        public bool SetCheckpoint(string map, int x, int y)
+        {
+            _out.WriteLine($"checkpoint {map} {x} {y}");
+            return _in.ReadLine() == "ok";
+        }
+
         /// <summary>Saves the current frame as a PNG.</summary>
         public bool Shot(string path)
         {

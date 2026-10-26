@@ -185,6 +185,19 @@ int GameProbe_Warp(const char* map, int x, int y)
     return 1;
 }
 
+int GameProbe_SetCheckpoint(const char* map, int x, int y)
+{
+    const int index = Game_MapIndex(map);
+    if (index < 0)
+    {
+        return 0;
+    }
+    gGame.mCheckpointMap = index;
+    gGame.mCheckpointX = x;
+    gGame.mCheckpointY = y;
+    return 1;
+}
+
 void GameProbe_Heal(void)
 {
     gGame.mCurHealth = gGame.mMaxHealth;
