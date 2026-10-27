@@ -16,7 +16,8 @@
 
 // The C#'s logic runs as it does there, floats and all (the bot's held Accept runs it at 8x, so its timing decides
 // the frame the title comes back on). Drawn here: the labels (BG0, the font's 7px glyphs, centred like the C#'s), the
-// "go" backdrop under its dim overlay (BG1), the cast's sprites and the save popup. Not yet: the screenies.
+// "go" backdrop under its dim overlay (BG1), the screenies (BG2/BG3, one per frame cross-fading into the next), the
+// cast's sprites and the save popup.
 namespace
 {
 constexpr int kMaxLabels = 28;
@@ -26,6 +27,14 @@ constexpr int kViewTop = 10;   // the 180px C# screen shows rows 10..170, as on 
 constexpr int kSbText = 31;
 constexpr int kSbGo = 28;  // 32x64: 28 and 29
 constexpr int kCbbGo = 2;
+// The screenies: 8bpp tiles from CBB1 on, after the text's (which end at tile 65 of CBB1). Slot 0 (BG2, the even
+// frames) fills the pool from the bottom, slot 1 (BG3, the odd ones) from the top, so neighbours never overlap.
+// Slot 1's map takes go's screenblock: go is hidden for good before frame 1.
+constexpr int kCbbShots = 1;
+constexpr int kShotBlank = 65;
+constexpr int kShotPoolFirst = 66;
+constexpr int kShotPoolEnd = (kSbGo * 0x800 - kCbbShots * 0x4000) / 64;
+constexpr int kSbShot[2] = { 30, kSbGo };
 constexpr int kCols = 20;      // 160px
 constexpr int kRingRows = 32;  // the BG's 256px wrap
 
@@ -154,6 +163,12 @@ struct Credits final
     int mBand[kRingRows]; // which 8px band of the content each ring row holds (INT32_MIN: none)
     CastSprite mLive[kLiveMax];
     bool mCastShown[kCastCount];
+    // Screenie
+    int mShotFrame = -1;
+    bool mShotDone = false;
+    float mShotOverlay = 0; // its own opaque dim overlay
+    float mShot1 = 0;       // the frame shown
+    float mShot2 = 0;       // the frame before, fading out over it
 } gC;
 ObjVramAllocator* gVram = nullptr;
 
@@ -226,6 +241,53 @@ void DrawCast(float dt)
             }
             break;
         }
+    }
+}
+
+// Screenie.ProgressFrame: the next frame into its slot, the last one fading out over it.
+void ProgressScreenie()
+{
+    gC.mShotFrame++;
+    gC.mShotDone = false;
+    const int f = gC.mShotFrame;
+    if (f >= ending::kScreenieCount)
+    {
+        return;
+    }
+    const ending::Screenie& shot = ending::kScreenies[f];
+    const int slot = f & 1;
+    const int firstTile = slot == 0 ? kShotPoolFirst : kShotPoolEnd - shot.mTileCount;
+    const int firstColour = ending::kGoFirstColour + ending::kGoColours + slot * ending::kScreenieColours;
+    // (pixels are 0-based: add the slot's first colour, four at a time)
+    uint32_t* tiles = reinterpret_cast<uint32_t*>(&tile8_mem[kCbbShots][firstTile]);
+    LZ77UnCompVram(shot.mTiles, tiles);
+    const uint32_t add = static_cast<uint32_t>(firstColour) * 0x01010101u;
+    for (int i = 0; i < shot.mTileCount * 16; i++)
+    {
+        tiles[i] += add;
+    }
+    memcpy16(&pal_bg_mem[firstColour], shot.mPalette, shot.mColours);
+    SCR_ENTRY* map = se_mem[kSbShot[slot]];
+    for (int i = 0; i < 32 * 32; i++)
+    {
+        map[i] = kShotBlank;
+    }
+    for (int r = 0; r < 20; r++)
+    {
+        for (int c = 0; c < 20; c++)
+        {
+            const uint16_t e = shot.mMap[r * 20 + c];
+            map[r * 32 + c] = static_cast<SCR_ENTRY>((e & 0xC00) | ((e & 0x3FF) + firstTile));
+        }
+    }
+    if (f == 0)
+    {
+        gC.mShot1 = 0;
+    }
+    else
+    {
+        gC.mShot1 = 1;
+        gC.mShot2 = 1;
     }
 }
 
@@ -373,12 +435,55 @@ void Draw()
     REG_BG0HOFS = static_cast<uint16_t>(-40);
     REG_BG0VOFS = static_cast<uint16_t>(first);
     // the backdrop, its top at C# y bgY, darkened by the overlay over it
-    if (!gC.mPopup)
+    if (gC.mPopup)
     {
-        REG_BG1HOFS = static_cast<uint16_t>(-40);
-        REG_BG1VOFS = static_cast<uint16_t>(kViewTop - static_cast<int>(gC.mBgY));
+        return;
+    }
+    REG_BG1HOFS = static_cast<uint16_t>(-40);
+    REG_BG1VOFS = static_cast<uint16_t>(kViewTop - static_cast<int>(gC.mBgY));
+    REG_BG2HOFS = REG_BG3HOFS = static_cast<uint16_t>(-40);
+    REG_BG2VOFS = REG_BG3VOFS = 0; // (the screenies sit at C# y 10)
+    auto weight = [](float v) { return static_cast<uint16_t>(static_cast<int>(v * 16 + 0.5f)); };
+    const int f = gC.mShotFrame;
+    if (f < 0)
+    {
         REG_BLDCNT = BLD_BG1 | BLD_BLACK;
-        REG_BLDY = static_cast<uint16_t>(static_cast<int>(gC.mDim * 16 + 0.5f));
+        REG_BLDY = weight(gC.mDim);
+        return;
+    }
+    if (f == 0)
+    {
+        // The first frame and its overlay fade in together over the dimmed backdrop, which is gone once they're done.
+        REG_BG2CNT = BG_CBB(kCbbShots) | BG_SBB(kSbShot[0]) | BG_8BPP | BG_REG_32x32 | BG_PRIO(2);
+        if (gC.mShotOverlay >= 1)
+        {
+            REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG1) | DCNT_BG2;
+            REG_BLDCNT = 0;
+            return;
+        }
+        REG_DISPCNT = REG_DISPCNT | DCNT_BG1 | DCNT_BG2;
+        REG_BLDCNT = BLD_BG2 | BLD_STD | (BLD_BG1 << 8);
+        REG_BLDALPHA = BLDA_BUILD(weight(gC.mShot1), weight((1 - gC.mDim) * (1 - gC.mShotOverlay) * (1 - gC.mShot1)));
+        return;
+    }
+    // The last frame (on top) fades out over this one.
+    const int upper = (f - 1) & 1;
+    const int lower = f & 1;
+    REG_BGCNT[2 + upper] = BG_CBB(kCbbShots) | BG_SBB(kSbShot[upper]) | BG_8BPP | BG_REG_32x32 | BG_PRIO(2);
+    REG_BGCNT[2 + lower] = BG_CBB(kCbbShots) | BG_SBB(kSbShot[lower]) | BG_8BPP | BG_REG_32x32 | BG_PRIO(3);
+    const uint16_t bgTop = static_cast<uint16_t>(DCNT_BG2 << upper);
+    const uint16_t bgBottom = static_cast<uint16_t>(DCNT_BG2 << lower);
+    REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG1) | bgBottom;
+    if (gC.mShot2 > 0)
+    {
+        REG_DISPCNT = REG_DISPCNT | bgTop;
+        REG_BLDCNT = (BLD_BG2 << upper) | BLD_STD | ((BLD_BG2 << lower) << 8);
+        REG_BLDALPHA = BLDA_BUILD(weight(gC.mShot2), weight(1 - gC.mShot2));
+    }
+    else
+    {
+        REG_DISPCNT = REG_DISPCNT & ~bgTop;
+        REG_BLDCNT = 0;
     }
 }
 
@@ -478,7 +583,8 @@ void Credits_Enter(ObjVramAllocator& vram)
             goMap[r * 32 + c] = ending::kGoMap[r * ending::kGoTilesW + c];
         }
     }
-    REG_BG1CNT = BG_CBB(kCbbGo) | BG_SBB(kSbGo) | BG_8BPP | BG_REG_32x64 | BG_PRIO(2);
+    REG_BG1CNT = BG_CBB(kCbbGo) | BG_SBB(kSbGo) | BG_8BPP | BG_REG_32x64 | BG_PRIO(3);
+    memset(&tile8_mem[kCbbShots][kShotBlank], 0, sizeof(TILE8));
     Draw();
     REG_DISPCNT = REG_DISPCNT | DCNT_BG0 | DCNT_BG1;
 }
@@ -525,6 +631,7 @@ bool Credits_Update()
             if (!(gC.mLabelY[gC.mIndex] > 180))
             {
                 gC.mIndex++;
+                ProgressScreenie();
             }
             break;
         }
@@ -552,13 +659,31 @@ bool Credits_Update()
         gC.mPopup = true;
         gC.mEndShown = true;
         InvalidateRing();
-        REG_DISPCNT = REG_DISPCNT & ~DCNT_BG1;
+        REG_DISPCNT = REG_DISPCNT & ~(DCNT_BG1 | DCNT_BG2 | DCNT_BG3);
         REG_BLDCNT = 0;
         ShowPopup();
         gC.mStep = 6;
         break;
     default:
         break;
+    }
+
+    // Screenie.Update
+    if (!gC.mShotDone)
+    {
+        if (gC.mShotFrame == 0)
+        {
+            if (MoveToScaled(gC.mShot1, 1, 0.54f, dt) || MoveToScaled(gC.mShotOverlay, 1, 0.54f, dt))
+            {
+                gC.mShot1 = 1;
+                gC.mShotOverlay = 1;
+                gC.mShotDone = true;
+            }
+        }
+        else if (MoveToScaled(gC.mShot2, 0, 0.54f, dt))
+        {
+            gC.mShotDone = true;
+        }
     }
 
     // SavePopup.Update
@@ -605,7 +730,8 @@ void Credits_Exit()
     }
     Dialog_HideLabels();
     Dialog_HidePanel();
-    REG_DISPCNT = REG_DISPCNT & ~(DCNT_BG0 | DCNT_BG1);
+    REG_DISPCNT = REG_DISPCNT & ~(DCNT_BG0 | DCNT_BG1 | DCNT_BG2 | DCNT_BG3);
     REG_BG0HOFS = REG_BG0VOFS = REG_BG1HOFS = REG_BG1VOFS = 0;
+    REG_BG2HOFS = REG_BG2VOFS = REG_BG3HOFS = REG_BG3VOFS = 0;
     REG_BLDCNT = 0;
 }
