@@ -169,7 +169,7 @@ struct Credits final
     float mShotOverlay = 0; // its own opaque dim overlay
     float mShot1 = 0;       // the frame shown
     float mShot2 = 0;       // the frame before, fading out over it
-} gC;
+} gC __attribute__((section(".sbss")));
 ObjVramAllocator* gVram = nullptr;
 
 void HideCast(CastSprite& c)

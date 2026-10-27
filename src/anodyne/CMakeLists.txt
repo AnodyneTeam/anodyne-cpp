@@ -44,6 +44,12 @@ target_compile_options(first_lib PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
 )
 
+# -DANODYNE_PERF=ON: the perf probe (PerfProbe in anodyne.cpp) that tools/perf's mGBA harness drives.
+option(ANODYNE_PERF "Build the ROM with the perf probe" OFF)
+if(ANODYNE_PERF)
+    target_compile_definitions(first_lib PRIVATE ANODYNE_PERF)
+endif()
+
 target_include_directories(first_lib PRIVATE
     "${CMAKE_BINARY_DIR}/tools" # content-compiler output (map_registry.h, sprite_registry.h, ...)
     "${LIBTONC_DIR}/include"

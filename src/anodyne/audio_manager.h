@@ -49,6 +49,8 @@ uint32_t AudioManager_GetBgmCount(void);
 // CPU cycles the audio VBlank ISR took (last call / max since reset). One
 // VBlank period is 280896 cycles; this needs to stay a small fraction of it.
 uint32_t AudioManager_GetIsrCyclesLast(void);
+// The free-running CPU cycle counter (timers 2+3).
+uint32_t AudioManager_Cycles(void);
 uint32_t AudioManager_GetIsrCyclesMax(void);
 void AudioManager_ResetIsrCyclesMax(void);
 uint32_t AudioManager_GetSfxCount(void);

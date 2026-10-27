@@ -49,7 +49,7 @@ struct EventSlot final
     char mName[kEventNameLen];
     int mValue;
 };
-EventSlot gEvents[kMaxEvents];
+EventSlot gEvents[kMaxEvents] __attribute__((section(".sbss")));
 int gEventCount = 0;
 
 EventSlot* FindEvent(const char* name, bool create)
@@ -395,7 +395,7 @@ void Game_ShowText(const char* text)
 {
     // Dialog_Open keeps the pointer: copy, so callers can build the text on the stack (two buffers: a second box can
     // open over the first).
-    static char sText[2][512];
+    static char sText[2][512] __attribute__((section(".sbss"))); // (EWRAM)
     static int sNext = 0;
     char* buf = sText[sNext];
     sNext ^= 1;

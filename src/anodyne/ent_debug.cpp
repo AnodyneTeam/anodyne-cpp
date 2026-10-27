@@ -108,7 +108,7 @@ struct BigDoorScene final
 };
 static_assert(kRandSquares <= kLockSquares && kRotSquares <= kLockSquares, "one array for the three kinds");
 
-BigDoorScene gScene;
+BigDoorScene gScene __attribute__((section(".sbss")));
 
 const EntityClass kUiSquare = {
     "Entity", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,

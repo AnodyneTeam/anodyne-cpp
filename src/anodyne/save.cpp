@@ -15,14 +15,16 @@ constexpr uint32_t kMagic = 0x444F4E41; // "ANOD"
 constexpr uint32_t kVersion = 1;
 constexpr int kSlotSize = 0x2800; // 10KB each: 3 fit in the 32KB
 constexpr int kHeaderSize = 16;   // magic, version, length, checksum
+constexpr int kBodySize = 0x1800; // the most a state may take (about 5KB now); the RAM buffers are this size
+static_assert(kBodySize <= kSlotSize - kHeaderSize, "a state must fit its SRAM slot");
 
 volatile uint8_t* const kSram = reinterpret_cast<volatile uint8_t*>(0x0E000000);
 
-uint8_t gBuf[kSlotSize] __attribute__((section(".sbss")));
+uint8_t gBuf[kBodySize] __attribute__((section(".sbss")));
 int gSlot = 0;
 
 // GlobalState.serialized_quicksave + quicksave_checkpoint: in RAM only, like the C#'s (gone with the power).
-uint8_t gQuick[kSlotSize] __attribute__((section(".sbss")));
+uint8_t gQuick[kBodySize] __attribute__((section(".sbss")));
 int gQuickLen = -1;
 int gQuickMap = 0;
 int gQuickX = 0;
@@ -30,7 +32,7 @@ int gQuickY = 0;
 
 int WriteState(uint8_t* buf)
 {
-    SaveWriter w = { buf, kSlotSize - kHeaderSize, 0, true };
+    SaveWriter w = { buf, kBodySize, 0, true };
     GameState_Save(w);
     Dialog_SaveState(w);
     const int deaths = World_Deaths();
@@ -100,7 +102,7 @@ int ReadSlot(int slot)
     uint8_t header[kHeaderSize];
     SramRead(slot * kSlotSize, header, kHeaderSize);
     const int len = static_cast<int>(Word(header + 8));
-    if (Word(header) != kMagic || Word(header + 4) != kVersion || len <= 0 || len > kSlotSize - kHeaderSize)
+    if (Word(header) != kMagic || Word(header + 4) != kVersion || len <= 0 || len > kBodySize)
     {
         return -1;
     }

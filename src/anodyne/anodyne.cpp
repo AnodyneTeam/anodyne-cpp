@@ -27,6 +27,7 @@
 
 #include "map_registry.h"
 #include "game_state.h"
+#include "game_probe.h"
 
 static_assert(kEntityPresetCount <= kMaxPresets, "more entity presets than game_state.h has room for");
 static_assert(kMapCount <= static_cast<uint32_t>(kMaxMaps), "more maps than game_state.h has room for");
@@ -337,12 +338,51 @@ static void GalleryUpdateAndDraw()
     }
 }
 
+#ifdef ANODYNE_PERF
+// The perf build's probe (tools/perf: an mGBA harness reads and writes it): each frame's CPU time, and warps on request.
+struct PerfProbe final
+{
+    uint32_t mMagic;      // 'PERF'
+    uint32_t mFrames;     // main loop frames
+    uint32_t mLastWork;   // cycles from the VBlank to the loop's end, last frame
+    uint32_t mMaxWork;    // the most since the harness last cleared it
+    uint32_t mLagFrames;  // frames over one display frame (280896 cycles) since then
+    uint32_t mMode;       // AppMode
+    uint32_t mCellsW;     // the current map's size in 16x16 cells
+    uint32_t mCellsH;
+    uint32_t mMapCount;
+    volatile uint32_t mCmdSeq; // the harness bumps it to warp to mCmdMap at (mCmdX, mCmdY)
+    volatile int32_t mCmdMap;
+    volatile int32_t mCmdX;
+    volatile int32_t mCmdY;
+    uint32_t mAckSeq;
+    int32_t mMap; // where the game is now (a kMaps index), to check warps land
+    uint32_t mEntities;
+};
+extern "C" PerfProbe gPerfProbe;
+PerfProbe gPerfProbe __attribute__((section(".sbss")));
+extern "C" uint32_t __IWRAM_END__[];
+
+// Fills the free user stack with a pattern, so the harness can find the deepest it ever got.
+__attribute__((noinline)) void PaintStack()
+{
+    uint32_t* const top = static_cast<uint32_t*>(__builtin_frame_address(0)) - 16;
+    for (uint32_t* p = __IWRAM_END__; p < top; p++)
+    {
+        *p = 0x5354434B; // 'STCK'
+    }
+}
+#endif
+
 int main()
 {
     // Standard cart ROM timing (3/1 waitstates + prefetch) instead of the
     // power-on 4/2 with no prefetch - everything still running from ROM
     // (Thumb code, const data, the audio blob) gets substantially faster.
     REG_WAITCNT = WS_STANDARD;
+#ifdef ANODYNE_PERF
+    PaintStack();
+#endif
     REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
     ScreenBlack(true);
 
@@ -404,6 +444,17 @@ int main()
         // BIOS's REG_IFBIOS flag, which tonc's irq_init/master dispatcher
         // already does) throttles this loop to once per real 60Hz frame.
         VBlankIntrWait();
+#ifdef ANODYNE_PERF
+        const uint32_t perfStart = AudioManager_Cycles();
+        if (mode == AppMode::MapViewer && gPerfProbe.mCmdSeq != gPerfProbe.mAckSeq)
+        {
+            gPerfProbe.mAckSeq = gPerfProbe.mCmdSeq;
+            gSettings.mInvincible = true;
+            GameProbe_Heal();
+            World_DropChildStates();
+            GameProbe_Warp(kMapNames[gPerfProbe.mCmdMap % kMapCount], gPerfProbe.mCmdX, gPerfProbe.mCmdY);
+        }
+#endif
         key_poll();
 #ifdef ANODYNE_SIM
         // Driven by the C# bot (SimHost): every frame a key is held is a fresh press, as the C# game sees the bot's keys.
@@ -745,5 +796,21 @@ int main()
         }
 
         AudioManager_Update();
+#ifdef ANODYNE_PERF
+        {
+            PerfProbe& p = gPerfProbe;
+            p.mMagic = 0x46524550;
+            p.mFrames++;
+            p.mLastWork = AudioManager_Cycles() - perfStart;
+            p.mMaxWork = p.mLastWork > p.mMaxWork ? p.mLastWork : p.mMaxWork;
+            p.mLagFrames += p.mLastWork > 280896 ? 1 : 0;
+            p.mMode = static_cast<uint32_t>(mode);
+            p.mCellsW = World_CellsW();
+            p.mCellsH = World_CellsH();
+            p.mMapCount = kMapCount;
+            p.mMap = gGame.mCurrentMap;
+            p.mEntities = static_cast<uint32_t>(Ecs_Count());
+        }
+#endif
     }
 }

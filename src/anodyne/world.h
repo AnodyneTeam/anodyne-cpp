@@ -52,6 +52,8 @@ const MapDoor* World_FindDoor(int presetX, int presetY);
 // DoorMapPair.Warp: GlobalState.WARP to the door's linked door.
 void World_TakeDoor(const MapDoor& d);
 // A warp that isn't a door (teleporting entities, the bot link's test warp): GlobalState.WARP, taken like a door's.
+// Test probes (the perf tour): ends any dialogue box or cutscene, so a warp can go through.
+void World_DropChildStates();
 void World_RequestWarp(int map, int x, int y, uint8_t facing);
 // CutsceneState.Warp(map, grid) / Return: a cutscene shows screen (gx, gy) of another map (an index into the table
 // World_SetMapTable gave), graphics only, with the play state frozen and hidden; Return puts the current map back.

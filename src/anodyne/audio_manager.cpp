@@ -108,6 +108,11 @@ static uint32_t ReadCycleCounter()
     return (hi << 16) | lo;
 }
 
+uint32_t AudioManager_Cycles(void)
+{
+    return ReadCycleCounter();
+}
+
 static void RearmFifoDma(volatile u32* dmaCnt, volatile u32* dmaSad, volatile u32* dmaDad, const int8_t* src,
                          volatile u32* fifo)
 {
@@ -276,7 +281,35 @@ int32_t AudioManager_FindAmbience(const char* name)
 {
     return FindTrack(kAmbienceTracks, kAmbienceTracksCount, name);
 }
-int32_t AudioManager_FindSfx(const char* name) { return FindTrack(kSfxClips, kSfxClipsCount, name); }
+int32_t AudioManager_FindSfx(const char* name)
+{
+    // Entities ask by name every time they play one (a strcmp down the whole list): remember the last few names
+    // that are ROM constants, whose text can't change under the same pointer.
+    constexpr int kCacheSize = 8;
+    static const char* sNames[kCacheSize];
+    static int32_t sIds[kCacheSize];
+    static int sNext = 0;
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(name);
+    const bool rom = addr >= 0x08000000u && addr < 0x0A000000u;
+    if (rom)
+    {
+        for (int i = 0; i < kCacheSize; i++)
+        {
+            if (sNames[i] == name)
+            {
+                return sIds[i];
+            }
+        }
+    }
+    const int32_t id = FindTrack(kSfxClips, kSfxClipsCount, name);
+    if (rom)
+    {
+        sNames[sNext] = name;
+        sIds[sNext] = id;
+        sNext = (sNext + 1) % kCacheSize;
+    }
+    return id;
+}
 
 void AudioManager_Update()
 {

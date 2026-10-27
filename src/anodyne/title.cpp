@@ -284,7 +284,7 @@ void CreditsStart(int set)
 }
 
 // ---- new-game intro dialogue ----
-char gLines[48][kTextCols + 1];
+char gLines[48][kTextCols + 1] __attribute__((section(".sbss")));
 int gLineCount = 0;
 int gPage = 0;
 int gBoxFirstLine = 0;

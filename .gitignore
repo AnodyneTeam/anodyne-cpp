@@ -20,6 +20,7 @@ build/
 src/build/
 src/build-sim/
 src/build-sim-fast/
+src/build-perf/
 !Mods/
 # Build results
 [Dd]ebug/

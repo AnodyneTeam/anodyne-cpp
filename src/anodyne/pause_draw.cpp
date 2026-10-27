@@ -19,18 +19,28 @@ namespace
 // ---- Minimap ------------------------------------------------------------------------------------------------------
 const menu::Minimap* CurrentMinimap()
 {
-    if (!gGame.mMapName)
+    // (the HUD asks every frame: look the map up again only when it changes)
+    static const char* sName = nullptr;
+    static const menu::Minimap* sMinimap = nullptr;
+    if (gGame.mMapName == sName)
+    {
+        return sMinimap;
+    }
+    sName = gGame.mMapName;
+    sMinimap = nullptr;
+    if (!sName)
     {
         return nullptr;
     }
     for (const menu::Minimap& m : menu::kMinimaps)
     {
-        if (strcmp(m.mMap, gGame.mMapName) == 0)
+        if (strcmp(m.mMap, sName) == 0)
         {
-            return &m;
+            sMinimap = &m;
+            break;
         }
     }
-    return nullptr;
+    return sMinimap;
 }
 
 // ---- The bitmap ---------------------------------------------------------------------------------------------------

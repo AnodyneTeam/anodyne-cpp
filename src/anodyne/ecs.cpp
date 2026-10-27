@@ -79,6 +79,21 @@ const SpriteAnimData* CurAnim(const Visual& v)
 }
 
 // Anim.Update: one step of the current animation.
+// 1 / fps for the usual frame rates (a soft float divide is slow), worked out by the compiler to the same bits.
+constexpr int kDelayCount = 64;
+struct Delays final
+{
+    float mV[kDelayCount];
+    constexpr Delays() : mV()
+    {
+        for (int i = 1; i < kDelayCount; i++)
+        {
+            mV[i] = 1.0f / static_cast<float>(i);
+        }
+    }
+};
+constexpr Delays kDelays;
+
 void AnimUpdate(Visual& v)
 {
     const SpriteAnimData* anim = CurAnim(v);
@@ -93,7 +108,7 @@ void AnimUpdate(Visual& v)
         return;
     }
     // (the C#'s float timer against a float delay, strictly past it: 4 frames of 1/60 are not past 1/15)
-    const float delay = 1.0f / static_cast<float>(fps);
+    const float delay = fps < kDelayCount ? kDelays.mV[fps] : 1.0f / static_cast<float>(fps);
     v.mTimer += kDeltaTime;
     while (v.mTimer > delay)
     {
@@ -285,11 +300,45 @@ Obj ObjOf(Entity& e)
     return o;
 }
 
+uint32_t Bits(fx v)
+{
+    uint32_t b;
+    memcpy(&b, &v.mV, sizeof(b));
+    return b;
+}
+
+// +0 (a zero velocity, acceleration or spin) or a finite drag >= 0, under which Drag() keeps a zero velocity +0.
+bool AtRest(const Transform& t)
+{
+    constexpr uint32_t kInf = 0x7F800000;
+    return (Bits(t.mVelX) | Bits(t.mVelY) | Bits(t.mAccX) | Bits(t.mAccY) | Bits(t.mAngVel) | Bits(t.mAngAcc)) == 0 &&
+           Bits(t.mDragX) < kInf && Bits(t.mDragY) < kInf;
+}
+
+// x + +0: the same, but for -0, which becomes +0.
+void AddZero(fx& v)
+{
+    if (Bits(v) == 0x80000000u)
+    {
+        v = kFxZero;
+    }
+}
+
 void Physics(Entity& e)
 {
     Transform& t = *e.mT;
     t.mLastX = t.mX;
     t.mLastY = t.mY;
+    if (AtRest(t))
+    {
+        // (the soft float below would only add zeros: most entities stand still, so skip it)
+        AddZero(t.mX);
+        AddZero(t.mY);
+        AddZero(t.mRot);
+        e.mB->mWasTouching = e.mB->mTouching;
+        e.mB->mTouching = TOUCH_NONE;
+        return;
+    }
     const fx oldVx = t.mVelX;
     const fx oldVy = t.mVelY;
     t.mVelX += FxStep(t.mAccX);
@@ -1026,13 +1075,12 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
     uint32_t seen = 0;
     auto note = [&](uint32_t bits)
     {
-        for (uint32_t b = 1; b != 0; b <<= 1)
+        // (the new bits, lowest first)
+        for (bits &= ~seen; bits != 0; bits &= bits - 1)
         {
-            if ((bits & b) && !(seen & b))
-            {
-                seen |= b;
-                order[groups++] = b;
-            }
+            const uint32_t b = bits & (0u - bits);
+            seen |= b;
+            order[groups++] = b;
         }
     };
     if (player)
@@ -1050,13 +1098,13 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
         const uint32_t group = order[g];
         for (Entity* c = gHead; c; c = c->mNext)
         {
-            if (!Updatable(*c) || (c->mClass->mCollidesWith & group) == 0 || !c->mClass->mCollided)
+            if ((c->mClass->mCollidesWith & group) == 0 || !c->mClass->mCollided || !Updatable(*c))
             {
                 continue;
             }
             for (Entity* t = gHead; t; t = t->mNext)
             {
-                if (t == c || !Updatable(*t) || (t->mClass->mGroups & group) == 0)
+                if ((t->mClass->mGroups & group) == 0 || t == c || !Updatable(*t))
                 {
                     continue;
                 }
@@ -1499,12 +1547,14 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         // Entity.Draw: Position - offset * scale; the C# scales about the frame centre.
         const int fw = sheet.mFrameWidth;
         const int fh = sheet.mFrameHeight;
-        const fx px = e.mT->mX - FxMul(v.mOffX, v.mScale);
-        const fx py = e.mT->mY - FxMul(v.mOffY, v.mScale) + v.mYPush;
+        // (x * 1 is x: most sprites aren't scaled, so skip those soft float multiplies)
+        const bool unscaled = Bits(v.mScale) == Bits(kFxOne);
+        const fx px = e.mT->mX - (unscaled ? v.mOffX : FxMul(v.mOffX, v.mScale));
+        const fx py = e.mT->mY - (unscaled ? v.mOffY : FxMul(v.mOffY, v.mScale)) + v.mYPush;
         const int sx = FxTrunc(px) - camX + viewX + shakeX;
         const int sy = FxTrunc(py) - camY + shakeY;
-        const int sw = FxTrunc(FxMul(Fx(fw), v.mScale));
-        const int sh = FxTrunc(FxMul(Fx(fh), v.mScale));
+        const int sw = unscaled ? fw : FxTrunc(FxMul(Fx(fw), v.mScale));
+        const int sh = unscaled ? fh : FxTrunc(FxMul(Fx(fh), v.mScale));
         // Off the playfield entirely: skip.
         if (v.mLayer != LAYER_UI && (sx + sw <= viewX || sx >= viewX + 160 || sy + sh <= 0 || sy >= 160))
         {

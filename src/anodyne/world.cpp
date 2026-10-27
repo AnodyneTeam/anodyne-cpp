@@ -2409,6 +2409,16 @@ bool World_WarpPending()
     return gWarp.mPending;
 }
 
+void World_DropChildStates()
+{
+    if (gDialogOpen)
+    {
+        Dialog_Close();
+        gDialogOpen = false;
+    }
+    gCutscene.mFn = nullptr;
+}
+
 void World_RequestWarp(int map, int x, int y, uint8_t facing)
 {
     gWarp.mPending = true;
