@@ -60,6 +60,9 @@ void World_SetMapTable(const MapEntry* maps, uint32_t count);
 void World_SetDarkTextures(const DarkTexture* textures);
 // Map.ReloadSettings(player): the settings for where the player is, after an event changed them.
 void World_ReloadSettings();
+// The current map's size in 16x16 cells.
+int World_CellsW();
+int World_CellsH();
 void World_CutsceneWarp(int map, int gx, int gy);
 void World_CutsceneReturn();
 // GlobalState.WARP: a warp is under way (asked for, or fading out and in).

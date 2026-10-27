@@ -271,7 +271,36 @@ static uint16_t ToScreenEntry(uint32_t packed)
 // The map is stored as up to three 16x16-tile layers (BG, BG2, FG; each BIOS-LZ77 packed little-endian u16 tile
 // indices, same indices as the AnodyneSharp CSVs) plus one table giving each 16x16 tile's four 8x8 screen entries.
 // The GBA builds BG screen entries from that table as the camera scrolls. Index 0 is "empty" in every layer.
-void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerName, const MapCompileResult& map)
+// The animated tiles: per tile its 16x16 tile index, four VRAM slots, frame count, fps and first frame (8 u16s), and
+// the frames' 8bpp pixels (four 8x8 tiles each).
+static void SaveTileAnimsGBA(FILE* f, const MapCompileResult& map, const std::vector<uint16_t>& palette)
+{
+    fprintf(f, "const unsigned int gTileAnimCount = %zu;\n", map.anims.size());
+    fprintf(f, "const unsigned short gTileAnims[%zu] = {", map.anims.empty() ? 1 : map.anims.size() * 8);
+    for (const TileAnimOut& a : map.anims)
+    {
+        fprintf(f, "\n    %u, %u, %u, %u, %u, %u, %d, %u,", a.tile, a.slots[0], a.slots[1], a.slots[2], a.slots[3],
+                a.frameCount, a.fps, a.firstFrame);
+    }
+    fprintf(f, "%s\n};\n", map.anims.empty() ? " 0" : "");
+    const size_t bytes = map.animFrameTiles.size() * 64;
+    fprintf(f, "alignas(4) const unsigned char gTileAnimFrames[%zu] = {", bytes ? bytes : 4);
+    size_t n = 0;
+    for (const RGBATile& tile : map.animFrameTiles)
+    {
+        for (uint32_t y = 0; y < 8; ++y)
+        {
+            for (uint32_t x = 0; x < 8; ++x)
+            {
+                fprintf(f, "%s0x%02X,", (n++ % 32 == 0) ? "\n    " : "", FindPaletteIndex8BPP(tile.mData.Get(x, y), palette));
+            }
+        }
+    }
+    fprintf(f, "%s\n};\n", bytes ? "" : " 0");
+}
+
+void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerName, const MapCompileResult& map,
+                      const std::vector<uint16_t>& palette)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
@@ -335,12 +364,13 @@ void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerNam
         }
         fprintf(f, "\n};\n");
     }
-    fprintf(f, "const unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
+    fprintf(f, "constexpr unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
             map.layers[2].Width());
-    fprintf(f, "const unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
+    fprintf(f, "constexpr unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
             map.layers[1].Height(), map.layers[2].Height());
-    fprintf(f, "const unsigned int gLayerUnpackedSize[3] = { %zu, %zu, %zu };\n", unpackedTotal[0], unpackedTotal[1],
+    fprintf(f, "constexpr unsigned int gLayerUnpackedSize[3] = { %zu, %zu, %zu };\n", unpackedTotal[0], unpackedTotal[1],
             unpackedTotal[2]);
+    SaveTileAnimsGBA(f, map, palette);
     fprintf(f, "}\n");
     fclose(f);
 
@@ -380,6 +410,56 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
         return;
     }
 
+    // TileData.GetAnimData: Maps/<MAP>/TileAnims/<texture>.dat, lines of "tile<TAB>fps<TAB>frame,frame,..."
+    std::vector<TileAnimSpec> anims;
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::path(contentPaths.GetMapTileDataPath(mapName)).parent_path() / "TileAnims";
+        std::vector<fs::path> files;
+        if (fs::is_directory(dir))
+        {
+            for (const auto& entry : fs::directory_iterator(dir))
+            {
+                if (entry.path().extension() == ".dat")
+                {
+                    files.push_back(entry.path());
+                }
+            }
+        }
+        std::sort(files.begin(), files.end());
+        for (const auto& file : files)
+        {
+            std::ifstream in(file);
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.size() >= 3 && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+                {
+                    line.erase(0, 3); // (StreamReader drops the BOM)
+                }
+                std::stringstream ss(line);
+                std::string tile;
+                std::string fps;
+                std::string frames;
+                if (!std::getline(ss, tile, '\t') || !std::getline(ss, fps, '\t') || !std::getline(ss, frames, '\t'))
+                {
+                    continue;
+                }
+                TileAnimSpec spec;
+                spec.tile = static_cast<uint32_t>(std::atoi(tile.c_str()));
+                spec.fps = std::atoi(fps.c_str());
+                std::stringstream fs2(frames);
+                std::string frame;
+                while (std::getline(fs2, frame, ','))
+                {
+                    spec.frames.push_back(std::atoi(frame.c_str()));
+                }
+                spec.texturePath = contentPaths.FindTexturePath(file.stem().string());
+                anims.push_back(spec);
+            }
+        }
+    }
+
     MapCompiler mc;
     const MapScrollSpec* scrollSpec = FindMapScrollSpec(mapName);
     const std::string scrollPath = scrollSpec ? contentPaths.FindTexturePath(scrollSpec->texture) : std::string();
@@ -388,20 +468,27 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
                        contentPaths.GetMapLayerCSVPath(mapName, "BG2"),
                        contentPaths.GetMapLayerCSVPath(mapName, "FG"),
                        mapTilesetPath,
-                       scrollPath);
+                       scrollPath,
+                       anims);
 
     if (!ret.success)
     {
         return;
     }
 
-    auto palette = ExtractPaletteFromTileSet(ret.tiles8x8);
+    // (the animated tiles' frames share the palette)
+    TileSet paletteTiles = ret.tiles8x8;
+    if (!ret.animFrameTiles.empty())
+    {
+        paletteTiles.AppendTilesToRow(ret.animFrameTiles);
+    }
+    auto palette = ExtractPaletteFromTileSet(paletteTiles);
     SavePaletteGBA(mapName, palHeader, palette);
 
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
     SaveTileSetGBA(mapName, tilesHeader, tiles);
 
-    SaveMapLayersGBA(mapName, mapHeader, ret);
+    SaveMapLayersGBA(mapName, mapHeader, ret, palette);
 
     printf("Map compilation complete: %s\n", mapName.c_str());
 }
@@ -643,7 +730,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     }
 
     // Registry array
-    fprintf(f, "static const MapEntry kMaps[] =\n{\n");
+    fprintf(f, "static constexpr MapEntry kMaps[] =\n{\n");
 
     for (const auto& name : mapNames)
     {
@@ -656,7 +743,8 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             "            { %s::gLayerWidth[1], %s::gLayerHeight[1], %s::gLayerUnpackedSize[1], %s::gLayer1Packed },\n"
             "            { %s::gLayerWidth[2], %s::gLayerHeight[2], %s::gLayerUnpackedSize[2], %s::gLayer2Packed } } },\n"
             "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked,\n"
-            "          %s::gColTileCount, %s::gColTiles }\n"
+            "          %s::gColTileCount, %s::gColTiles },\n"
+            "        { %s::gTileAnimCount, %s::gTileAnims, %s::gTileAnimFrames }\n"
             "    },\n",
             name.c_str(), name.c_str(),                                                            // palette (2)
             name.c_str(), name.c_str(),                                                            // tileset (2)
@@ -664,7 +752,8 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 1 (4)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 2 (4)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // collision (6)
-            name.c_str(), name.c_str()                                                             // tile collision (2)
+            name.c_str(), name.c_str(),                                                            // tile collision (2)
+            name.c_str(), name.c_str(), name.c_str()                                               // tile anims (3)
         );
     }
 
@@ -1212,7 +1301,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "4-scroll";
+        const std::string kMapFormatVersion = "9-constexpr";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))

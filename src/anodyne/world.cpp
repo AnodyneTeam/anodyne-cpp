@@ -115,6 +115,12 @@ uint16_t gReplaceFrom[kMaxReplacements];
 uint16_t gReplaceTo[kMaxReplacements];
 int gReplaceCount = 0;
 
+// Each 16x16 tile's animated tile (an index into the map's MapTileAnimData), if it has one.
+constexpr uint8_t kNoTileAnim = 0xFF;
+constexpr int kMaxTile16 = 1024;
+uint8_t gTileAnimOf[kMaxTile16] __attribute__((section(".sbss")));
+const MapTileAnimData* gTileAnimData = nullptr;
+
 uint16_t LayerEntry(int layer, int mx, int my)
 {
     const int cx = (mx >> 1) + gMapOffCells;
@@ -135,6 +141,10 @@ uint16_t LayerEntry(int layer, int mx, int my)
     if (tile == 0 || tile >= gTile16Count)
     {
         return 0;
+    }
+    if (layer == 0 && gTileAnimOf[tile] != kNoTileAnim)
+    {
+        return gTileAnimData->mAnims[gTileAnimOf[tile] * 8 + 1 + (mx & 1) + 2 * (my & 1)]; // (its own VRAM tiles)
     }
     return gTile16Entries[tile * 4 + (mx & 1) + 2 * (my & 1)];
 }
@@ -1362,6 +1372,74 @@ void ResetTileChanges()
     gTileChangeCount[1] = 0;
 }
 
+// The map's animated tiles (AnimatedTile: an Anim each, looped): their current frames go into their own VRAM tiles.
+constexpr int kMaxTileAnims = 32;
+struct TileAnimState final
+{
+    float mTimer;
+    uint8_t mIndex;
+    bool mDirty;
+};
+TileAnimState gTileAnimState[kMaxTileAnims] __attribute__((section(".sbss")));
+bool gTileAnimsHeld = false; // the mosaic borrowed the tiles: rewrite them all once it's done
+
+void WriteTileAnim(int i)
+{
+    const uint16_t* a = &gTileAnimData->mAnims[i * 8];
+    const uint8_t* frame = gTileAnimData->mFrames + (a[7] + gTileAnimState[i].mIndex) * 4 * 64;
+    for (int q = 0; q < 4; q++)
+    {
+        memcpy32(&tile8_mem[0][a[1 + q]], frame + q * 64, 64 / 4);
+    }
+    gTileAnimState[i].mDirty = false;
+}
+
+void LoadTileAnims(const MapTileAnimData& anims)
+{
+    gTileAnimData = &anims;
+    memset(gTileAnimOf, kNoTileAnim, sizeof(gTileAnimOf));
+    const int count = anims.mCount < kMaxTileAnims ? static_cast<int>(anims.mCount) : kMaxTileAnims;
+    for (int i = 0; i < count; i++)
+    {
+        const uint16_t tile = anims.mAnims[i * 8];
+        if (tile < kMaxTile16)
+        {
+            gTileAnimOf[tile] = static_cast<uint8_t>(i);
+        }
+        gTileAnimState[i] = TileAnimState();
+        WriteTileAnim(i);
+    }
+}
+
+// Map.Update: each Anim.Update.
+void UpdateTileAnims()
+{
+    if (!gTileAnimData)
+    {
+        return;
+    }
+    const int count = gTileAnimData->mCount < kMaxTileAnims ? static_cast<int>(gTileAnimData->mCount) : kMaxTileAnims;
+    const bool held = Mosaic_Active();
+    for (int i = 0; i < count; i++)
+    {
+        TileAnimState& s = gTileAnimState[i];
+        const uint16_t* a = &gTileAnimData->mAnims[i * 8];
+        const float delay = 1.0f / a[6];
+        s.mTimer += kDeltaTime;
+        while (s.mTimer > delay)
+        {
+            s.mTimer -= delay;
+            s.mIndex = static_cast<uint8_t>(s.mIndex + 1 == a[5] ? 0 : s.mIndex + 1);
+            s.mDirty = true;
+        }
+        if (!held && (s.mDirty || gTileAnimsHeld))
+        {
+            WriteTileAnim(i);
+        }
+    }
+    gTileAnimsHeld = held;
+}
+
 } // namespace
 
 void Game_PlaySong(const char* name, float volume)
@@ -1818,6 +1896,7 @@ static void LoadMapGraphics(const MapEntry& map)
         tilesetBytes = kMaxTilesetBytes;
     }
     memcpy16(tile_mem, map.mTileSetData.mTileSetData, tilesetBytes / 2);
+    LoadTileAnims(map.mTileAnims);
 
     // Layers, unpacked into EWRAM.
     ResetTileChanges();
@@ -1928,6 +2007,16 @@ uint32_t gMapTableCount = 0;
 void World_SetDarkTextures(const DarkTexture* textures)
 {
     gDarkTextures = textures;
+}
+
+int World_CellsW()
+{
+    return gCellsW;
+}
+
+int World_CellsH()
+{
+    return gCellsH;
 }
 
 void World_ReloadSettings()
@@ -2142,6 +2231,8 @@ void World_Update()
         }
     }
     gGame.mEnemiesKilled = Ecs_KilledEnemies();
+
+    UpdateTileAnims();
 
     // PlayState.Refreshes
     if (gGame.mEquippedBroomChanged)

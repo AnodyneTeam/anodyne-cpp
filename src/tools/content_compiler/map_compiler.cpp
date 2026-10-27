@@ -183,6 +183,17 @@ uint32_t TileSet::AppendTiles(const std::vector<RGBATile>& tiles)
     return firstIndex;
 }
 
+uint32_t TileSet::AppendTilesToRow(const std::vector<RGBATile>& tiles)
+{
+    const uint32_t firstIndex = mTiles.Width();
+    mTiles.Resize(firstIndex + static_cast<uint32_t>(tiles.size()), 1); // (one row: the existing tiles stay put)
+    for (size_t i = 0; i < tiles.size(); ++i)
+    {
+        mTiles.Get(firstIndex + static_cast<uint32_t>(i), 0) = tiles[i];
+    }
+    return firstIndex;
+}
+
 void TileSet::ClearTile(uint32_t index)
 {
     const uint32_t tx = index % mTiles.Width();
@@ -452,9 +463,188 @@ TileDedupResult TileSet::Deduplicate() const
 }
 
 
+namespace
+{
+// Map.DrawLayer draws the frame over the tile (SpriteBatch alpha blending).
+RGBA Over(const RGBA& base, const RGBA& top)
+{
+    if (top.a == 255 || base.a == 0)
+    {
+        return top.a ? top : base;
+    }
+    const int a = top.a;
+    RGBA out;
+    out.r = static_cast<uint8_t>((top.r * a + base.r * (255 - a)) / 255);
+    out.g = static_cast<uint8_t>((top.g * a + base.g * (255 - a)) / 255);
+    out.b = static_cast<uint8_t>((top.b * a + base.b * (255 - a)) / 255);
+    out.a = 255;
+    return out;
+}
+
+const RGBATile* Tile16(const TileSet& set, uint32_t index)
+{
+    const auto& tiles = set.GetTiles();
+    if (tiles.Width() == 0 || index >= tiles.Width() * tiles.Height())
+    {
+        return nullptr;
+    }
+    return &tiles.Get(index % tiles.Width(), index / tiles.Width());
+}
+
+// A 16x16 tile's quarter (0 TL, 1 TR, 2 BL, 3 BR) as an 8x8 one.
+RGBATile Quarter(const RGBATile& tile, int q)
+{
+    RGBATile out;
+    out.SetSize(8, 8);
+    const uint32_t ox = (q & 1) * 8;
+    const uint32_t oy = (q >> 1) * 8;
+    for (uint32_t y = 0; y < 8; ++y)
+    {
+        for (uint32_t x = 0; x < 8; ++x)
+        {
+            out.mData.Set(x, y, tile.mData.Get(ox + x, oy + y));
+        }
+    }
+    return out;
+}
+} // namespace
+
+// Each animated tile's frames (the tile with the texture frame over it), and VRAM slots for its four 8x8 tiles: the
+// unique tile a quarter already uses if nothing else does, else a new one (the slots' pixels get rewritten every frame).
+void MapCompiler::CompileTileAnims(const std::vector<TileAnimSpec>& anims, TileDedupResult& dedup,
+                                   MapCompileResult& ret)
+{
+    // The 8bpp tileset has to end below the screenblocks (0xE000): if the new slots don't fit, the animated tiles the BG
+    // layer doesn't use are left out.
+    constexpr uint32_t kMaxTiles = 0xE000 / 64;
+    if (!CompileTileAnims(anims, dedup, ret, false, kMaxTiles))
+    {
+        ret.anims.clear();
+        ret.animFrameTiles.clear();
+        CompileTileAnims(anims, dedup, ret, true, kMaxTiles);
+    }
+}
+
+bool MapCompiler::CompileTileAnims(const std::vector<TileAnimSpec>& anims, TileDedupResult& dedup,
+                                   MapCompileResult& ret, bool onlyUsed, uint32_t maxTiles)
+{
+    // used[layer][tile]: only the BG layer animates, so a tile that BG2 or FG use too needs new VRAM tiles.
+    std::vector<bool> used[3];
+    for (int layer = 0; layer < 3; ++layer)
+    {
+        used[layer].assign(ret.tile16Count, false);
+        for (uint32_t y = 0; y < ret.layers[layer].Height(); ++y)
+        {
+            for (uint32_t x = 0; x < ret.layers[layer].Width(); ++x)
+            {
+                const uint32_t t = ret.layers[layer].Get(x, y);
+                if (t < ret.tile16Count)
+                {
+                    used[layer][t] = true;
+                }
+            }
+        }
+    }
+    std::vector<uint32_t> uses(dedup.tilesUnique.GetTiles().Width(), 0);
+    for (uint32_t entry : ret.tile16Entries)
+    {
+        uses[entry & 0xFFFF]++;
+    }
+    for (uint32_t entry : ret.scrollPattern)
+    {
+        uses[entry & 0xFFFF]++;
+    }
+
+    std::vector<RGBATile> newSlots;
+    const uint32_t firstNew = dedup.tilesUnique.GetTiles().Width();
+    for (const TileAnimSpec& spec : anims)
+    {
+        const RGBATile* base = Tile16(mTileSet16, spec.tile);
+        TileSet texture(16, 16);
+        size_t colours = 0;
+        if (!base || spec.tile >= ret.tile16Count || spec.frames.empty() || spec.fps <= 0 ||
+            !texture.Load(spec.texturePath, colours))
+        {
+            printf("WARNING: tile anim %u (%s) skipped\n", spec.tile, spec.texturePath.c_str());
+            continue;
+        }
+        if (onlyUsed && !used[0][spec.tile])
+        {
+            continue;
+        }
+        // (to take it back if it doesn't fit)
+        const size_t frameTiles = ret.animFrameTiles.size();
+        const size_t slotCount = newSlots.size();
+        uint32_t oldUses[4];
+        for (int q = 0; q < 4; ++q)
+        {
+            oldUses[q] = uses[ret.tile16Entries[spec.tile * 4 + q] & 0xFFFF];
+        }
+        const bool upper = used[1][spec.tile] || used[2][spec.tile];
+        TileAnimOut out;
+        out.tile = spec.tile;
+        out.fps = spec.fps;
+        out.firstFrame = static_cast<uint32_t>(ret.animFrameTiles.size() / 4);
+        for (int frame : spec.frames)
+        {
+            RGBATile composite = *base;
+            if (const RGBATile* top = Tile16(texture, static_cast<uint32_t>(frame)))
+            {
+                for (uint32_t y = 0; y < 16; ++y)
+                {
+                    for (uint32_t x = 0; x < 16; ++x)
+                    {
+                        composite.mData.Set(x, y, Over(base->mData.Get(x, y), top->mData.Get(x, y)));
+                    }
+                }
+            }
+            for (int q = 0; q < 4; ++q)
+            {
+                ret.animFrameTiles.push_back(Quarter(composite, q));
+            }
+            out.frameCount++;
+        }
+        for (int q = 0; q < 4; ++q)
+        {
+            const uint32_t unique = ret.tile16Entries[spec.tile * 4 + q] & 0xFFFF;
+            if (uses[unique] == 1 && !upper)
+            {
+                out.slots[q] = unique;
+            }
+            else
+            {
+                uses[unique]--;
+                out.slots[q] = firstNew + static_cast<uint32_t>(newSlots.size());
+                newSlots.push_back(ret.animFrameTiles[out.firstFrame * 4 + q]);
+            }
+        }
+        if (firstNew + newSlots.size() > maxTiles)
+        {
+            if (!onlyUsed)
+            {
+                return false;
+            }
+            printf("WARNING: no room in VRAM for animated tile %u\n", spec.tile);
+            for (int q = 3; q >= 0; --q)
+            {
+                uses[ret.tile16Entries[spec.tile * 4 + q] & 0xFFFF] = oldUses[q];
+            }
+            ret.animFrameTiles.resize(frameTiles);
+            newSlots.resize(slotCount);
+            continue;
+        }
+        ret.anims.push_back(out);
+    }
+    if (!newSlots.empty())
+    {
+        dedup.tilesUnique.AppendTilesToRow(newSlots);
+    }
+    return true;
+}
+
 MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
                                    const std::string& fgCSVPath, const std::string& mapTilesetPath,
-                                   const std::string& scrollTexturePath)
+                                   const std::string& scrollTexturePath, const std::vector<TileAnimSpec>& anims)
 {
     MapCompileResult ret;
 
@@ -551,6 +741,8 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
             ret.scrollPattern.push_back((uint32_t(e.variant) << 16) | e.newIndex);
         }
     }
+
+    CompileTileAnims(anims, dedup, ret);
 
     ret.map8 = map8;
     ret.tiles8x8 = dedup.tilesUnique;

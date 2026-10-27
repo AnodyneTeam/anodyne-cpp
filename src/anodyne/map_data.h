@@ -50,12 +50,23 @@ struct MapCollisionData final
     const uint8_t* mTiles = nullptr; // its own (allow, event, direction), for ChangeTile
 };
 
+// The BG layer's animated tiles (Map's AnimatedTile): mAnims holds 8 u16s each (the 16x16 tile; the four 8x8 VRAM tiles
+// its frames go in and the BG layer draws it from, TL TR BL BR; the frame count; fps; the first frame), mFrames each
+// frame's four 8bpp tiles.
+struct MapTileAnimData final
+{
+    uint32_t mCount = 0;
+    const uint16_t* mAnims = nullptr;
+    const uint8_t* mFrames = nullptr;
+};
+
 struct MapEntry final
 {
     MapPalData mPalData;
     MapTileSetData mTileSetData;
     MapScreenBlockData mScreenBlockData;
     MapCollisionData mCollision;
+    MapTileAnimData mTileAnims;
 };
 
 // Map music/ambience (from the map's Settings.json). An area is a world-pixel rectangle that overrides the music
