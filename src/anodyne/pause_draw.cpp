@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "tex_dark.h"
 #include "tonc.h"
 
 #include "dialog.h"
@@ -403,6 +404,7 @@ int Minimap_Seen(int x, int y)
 
 void MenuDraw_Open()
 {
+    TexDark_Off(); // (the plain colours, to put back on closing)
     MenuDrawState& m = gMenu;
     if (m.mOpen)
     {

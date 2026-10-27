@@ -4821,8 +4821,9 @@ void HappyTriggerUpdate(Entity& self)
     }
     Player_SetDontMove(false);
     Event_Inc("HappyStarted");
-    // (the flash's callback, at once: Map.ReloadSettings picks up the HappyStarted settings. Of those only the music
-    // is carried over here: the hardlight darkness and the tile replacements are still to do)
+    // (the flash's callback, at once: Map.ReloadSettings picks up the HappyStarted settings: the hardlight darkness, the
+    // tile replacements and the music)
+    World_ReloadSettings();
     Screen_Flash(FxSec(1), FLASH_RED);
     Game_PlaySong("happy");
     d.mStep = 2;

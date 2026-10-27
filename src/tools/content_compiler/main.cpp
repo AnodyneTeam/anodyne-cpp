@@ -18,6 +18,7 @@
 #include "sprite_compiler.hpp"
 #include "collision_compiler.hpp"
 #include "door_compiler.hpp"
+#include "lodepng.h"
 #include "entity_compiler.hpp"
 #include "ending_compiler.hpp"
 #include "menu_compiler.hpp"
@@ -506,14 +507,25 @@ static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
 
 // ------------------------------------------------------------
 // MAP DARKNESS SETTINGS
-// The plain DarknessAlpha / PlayerLight settings from old/Content/Maps/<MAP>/Settings.json (alpha -1 = not set
-// there). Textured darkness (the *_overlay / *_hardlight maps) isn't carried over yet.
+// The darkness settings from old/Content/Maps/<MAP>/Settings.json: DarknessAlpha (alpha -1 = not set there),
+// PlayerLight, the Darkness texture ("" = not set; the all-clear ones, which only lights would show, are left out) and
+// ReplaceTiles (nullptr = not set), for the map, its areas and its events.
 // ------------------------------------------------------------
 struct MapDarkArea final
 {
     int x, y, w, h;
     float alpha;
     int playerLight; // -1 = not set
+    const char* texture = "";
+    const char* replace = nullptr;
+};
+
+struct MapDarkEvent final
+{
+    const char* event;
+    float alpha;
+    const char* texture;
+    const char* replace;
 };
 
 struct MapDarkSpec final
@@ -522,11 +534,14 @@ struct MapDarkSpec final
     float alpha;
     bool playerLight;
     std::vector<MapDarkArea> areas;
+    const char* texture = "";
+    std::vector<MapDarkEvent> events = {};
 };
 
 static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
 {
     static const std::vector<MapDarkSpec> kSpecs = {
+        { "BEACH", -1, false, {}, "beach_hardlight" },
         { "BEDROOM", 0, false, {
             { 320, 0, 160, 160, 0.2f, -1 },
             { 640, 0, 160, 320, 0.2f, -1 },
@@ -536,21 +551,79 @@ static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
             { 320, 640, 160, 160, 0.2f, -1 },
             { 160, 480, 160, 160, 0.8f, -1 },
         } },
+        { "BLUE", -1, false, {}, "blue_overlay" },
         { "CIRCUS", 0, false, { { 1280, 160, 160, 160, 0.8f, -1 } } },
+        { "CLIFF", -1, false, {}, "cliff_overlay" },
         { "DRAWER", 0, true, {
             { 0, 0, 320, 160, 1.0f, -1 },
             { 0, 160, 160, 640, 1.0f, -1 },
             { 0, 800, 960, 960, 1.0f, -1 },
         } },
-        { "HAPPY", 0, false, { { 320, 320, 480, 160, 0.0f, -1 } } },
+        { "GO", -1, false, { { 320, 0, 160, 160, -1, -1, "ending_hardlight" } }, "go_hardlight" },
+        { "HAPPY", -1, false, { { 320, 320, 480, 160, 0.0f, -1, "", "" } }, "",
+          { { "HappyStarted", -1, "happy_hardlight", "20-21;30-31" } } },
+        { "NEXUS", -1, false, {}, "nexus_overlay" },
+        { "REDCAVE", -1, false, {}, "redcave_overlay" },
+        { "REDSEA", -1, false, {}, "redsea_hardlight" },
+        { "SPACE", -1, false, {}, "space_overlay" },
         { "STREET", 0, false, { { 160, 320, 160, 160, 0.6f, -1 }, { 160, 960, 160, 160, 0.6f, -1 } } },
         { "SUBURB", 0, false, {
             { 0, 800, 320, 160, 0.91f, 1 },
             { 0, 1120, 320, 160, 0.91f, 1 },
             { 160, 960, 160, 160, 0.91f, 1 },
         } },
+        { "TERMINAL", -1, false, {}, "terminal_overlay" },
+        { "WINDMILL", -1, false, {}, "windmill_overlay" },
     };
     return kSpecs;
+}
+
+// Darkness.Render with a texture: each 8px band of the 160x160 playfield as one colour and alpha (the texture's
+// pixels averaged, weighted by their alpha), what the GBA swaps the palettes by down the screen.
+constexpr int kDarkBands = 20;
+
+static bool DarkTextureBands(const ContentPaths& contentPaths, const std::string& name, std::string& out)
+{
+    const std::string path = contentPaths.FindTexturePath(name);
+    std::vector<uint8_t> px;
+    unsigned w = 0;
+    unsigned h = 0;
+    if (path.empty() || lodepng::decode(px, w, h, path, LCT_RGBA, 8) || w != 160 || h < 160)
+    {
+        printf("ERROR: darkness texture %s not found/readable\n", name.c_str());
+        return false;
+    }
+    const bool hardLight = name.size() >= 9 && name.compare(name.size() - 9, 9, "hardlight") == 0;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "    { %d, {", hardLight ? 1 : 0);
+    out += buf;
+    for (int band = 0; band < kDarkBands; band++)
+    {
+        double sum[3] = { 0, 0, 0 };
+        double alpha = 0;
+        for (unsigned y = band * 8; y < band * 8 + 8u; y++)
+        {
+            for (unsigned x = 0; x < w; x++)
+            {
+                const uint8_t* p = &px[(y * w + x) * 4];
+                for (int c = 0; c < 3; c++)
+                {
+                    sum[c] += p[c] * (p[3] / 255.0);
+                }
+                alpha += p[3] / 255.0;
+            }
+        }
+        int rgba[4] = { 0, 0, 0, 0 };
+        for (int c = 0; c < 3 && alpha > 0; c++)
+        {
+            rgba[c] = static_cast<int>(sum[c] / alpha + 0.5);
+        }
+        rgba[3] = static_cast<int>(alpha * 255 / (w * 8) + 0.5);
+        snprintf(buf, sizeof(buf), " { %d, %d, %d, %d },", rgba[0], rgba[1], rgba[2], rgba[3]);
+        out += buf;
+    }
+    out += " } },\n";
+    return true;
 }
 
 void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
@@ -649,18 +722,50 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         }
     }
     fprintf(f, "};\n\n");
-    // Darkness: one MapDarkData per map (alpha in 1/256ths).
+    // Darkness: the textures, then one MapDarkData per map (alpha in 1/256ths, -1 = not set; texture -1 = not set).
+    std::vector<std::string> textures;
+    auto textureId = [&](const char* name) {
+        if (!name || !*name)
+        {
+            return -1;
+        }
+        for (size_t i = 0; i < textures.size(); i++)
+        {
+            if (textures[i] == name)
+            {
+                return static_cast<int>(i);
+            }
+        }
+        textures.push_back(name);
+        return static_cast<int>(textures.size() - 1);
+    };
+    auto alpha256 = [](float a) { return a < 0 ? -1 : static_cast<int>(a * 256 + 0.5f); };
+    auto quoted = [](const char* str) { return str ? "\"" + std::string(str) + "\"" : std::string("nullptr"); };
     for (const auto& name : mapNames)
     {
         for (const auto& spec : GetMapDarkSpecs())
         {
-            if (name == spec.map && !spec.areas.empty())
+            if (name != spec.map)
+            {
+                continue;
+            }
+            if (!spec.areas.empty())
             {
                 fprintf(f, "static const MapDarkArea kMapDarkAreas_%s[] = {\n", name.c_str());
                 for (const auto& area : spec.areas)
                 {
-                    fprintf(f, "    { %d, %d, %d, %d, %d, %d },\n", area.x, area.y, area.w, area.h,
-                            area.alpha < 0 ? -1 : static_cast<int>(area.alpha * 256 + 0.5f), area.playerLight);
+                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s },\n", area.x, area.y, area.w, area.h,
+                            alpha256(area.alpha), area.playerLight, textureId(area.texture), quoted(area.replace).c_str());
+                }
+                fprintf(f, "};\n");
+            }
+            if (!spec.events.empty())
+            {
+                fprintf(f, "static const MapDarkEvent kMapDarkEvents_%s[] = {\n", name.c_str());
+                for (const auto& ev : spec.events)
+                {
+                    fprintf(f, "    { \"%s\", %d, %d, %s },\n", ev.event, alpha256(ev.alpha), textureId(ev.texture),
+                            quoted(ev.replace).c_str());
                 }
                 fprintf(f, "};\n");
             }
@@ -679,15 +784,23 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         }
         if (spec)
         {
-            fprintf(f, "    { %d, %d, %zu, %s%s },\n", static_cast<int>(spec->alpha * 256 + 0.5f), spec->playerLight ? 1 : 0,
-                    spec->areas.size(), spec->areas.empty() ? "nullptr" : "kMapDarkAreas_", spec->areas.empty() ? "" : name.c_str());
+            const std::string areas = spec->areas.empty() ? "nullptr" : "kMapDarkAreas_" + name;
+            const std::string events = spec->events.empty() ? "nullptr" : "kMapDarkEvents_" + name;
+            fprintf(f, "    { %d, %d, %d, %zu, %s, %zu, %s },\n", alpha256(spec->alpha), spec->playerLight ? 1 : 0,
+                    textureId(spec->texture), spec->areas.size(), areas.c_str(), spec->events.size(), events.c_str());
         }
         else
         {
-            fprintf(f, "    { 0, 0, 0, nullptr },\n");
+            fprintf(f, "    { 0, 0, -1, 0, nullptr, 0, nullptr },\n");
         }
     }
     fprintf(f, "};\n\n");
+    std::string bands = "static const DarkTexture kDarkTextures[] =\n{\n";
+    for (const std::string& texture : textures)
+    {
+        DarkTextureBands(contentPaths, texture, bands);
+    }
+    fprintf(f, "%s};\n\n", bands.c_str());
     // Scrolling backgrounds, one entry per map (null pattern = none).
     fprintf(f, "static const MapScrollData kMapScroll[] =\n{\n");
     for (const auto& name : mapNames)

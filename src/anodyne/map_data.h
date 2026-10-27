@@ -77,8 +77,9 @@ struct MapAudioData final
     const MapAudioArea* mAreas;
 };
 
-// Map darkness (Settings.json DarknessAlpha / PlayerLight). Alphas are in 1/256ths; an area's -1 means it doesn't
-// set that value, so the map's own applies.
+// Map darkness (Settings.json DarknessAlpha / PlayerLight / Darkness / ReplaceTiles). Alphas are in 1/256ths and
+// textures index kDarkTextures; -1 (or a null mReplace) means not set there, so the next settings' value applies: the
+// areas the player is in first, then the events that are set, then the map's own.
 struct MapDarkArea final
 {
     int16_t mX;
@@ -87,14 +88,36 @@ struct MapDarkArea final
     int16_t mHeight;
     int16_t mAlpha;
     int8_t mPlayerLight;
+    int8_t mTexture;
+    const char* mReplace; // "a-b;c-d": BG tile a draws as b... ("": none)
+};
+
+struct MapDarkEvent final
+{
+    const char* mEvent;
+    int16_t mAlpha;
+    int8_t mTexture;
+    const char* mReplace;
 };
 
 struct MapDarkData final
 {
     int16_t mAlpha;
     bool mPlayerLight;
+    int8_t mTexture;
     uint32_t mAreaCount;
     const MapDarkArea* mAreas;
+    uint32_t mEventCount;
+    const MapDarkEvent* mEvents;
+};
+
+// A darkness texture (Darkness.SetTex): the 160x160 playfield's 8px bands, each one colour and alpha (RGBA8), blended
+// over the screen in the overlay or (mHardLight) hard light way.
+constexpr int kDarkBands = 20;
+struct DarkTexture final
+{
+    uint8_t mHardLight;
+    uint8_t mBands[kDarkBands][4];
 };
 
 // A background that scrolls at a fixed speed behind the map (or, with mOverlay, over everything: the windmill's

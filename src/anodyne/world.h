@@ -56,6 +56,10 @@ void World_RequestWarp(int map, int x, int y, uint8_t facing);
 // CutsceneState.Warp(map, grid) / Return: a cutscene shows screen (gx, gy) of another map (an index into the table
 // World_SetMapTable gave), graphics only, with the play state frozen and hidden; Return puts the current map back.
 void World_SetMapTable(const MapEntry* maps, uint32_t count);
+// The compiled darkness textures (MapDarkData's indices).
+void World_SetDarkTextures(const DarkTexture* textures);
+// Map.ReloadSettings(player): the settings for where the player is, after an event changed them.
+void World_ReloadSettings();
 void World_CutsceneWarp(int map, int gx, int gy);
 void World_CutsceneReturn();
 // GlobalState.WARP: a warp is under way (asked for, or fading out and in).

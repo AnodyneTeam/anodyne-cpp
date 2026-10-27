@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "tex_dark.h"
 #include "tonc.h"
 
 #include "screen_fx.hpp"
@@ -319,6 +320,7 @@ void Save()
     {
         gBgcnt[bg] = REG_BGCNT[bg] & ~BG_MOSAIC;
     }
+    TexDark_Off(); // (its plain colours: it stays off until the display is handed back)
     memcpy16(gSavedPal, pal_bg_mem, 256);
     memcpy16(gSavedTiles, TileDst(), kTileHalfwords);
     memcpy16(gSavedMap, MapDst(), kMapHalfwords);
@@ -468,6 +470,11 @@ void Mosaic_Apply(int pix, const MosaicBgOffsets& offsets)
         }
     }
     Compute(stride, offsets);
+}
+
+bool Mosaic_Active()
+{
+    return gSaved;
 }
 
 void Mosaic_End()

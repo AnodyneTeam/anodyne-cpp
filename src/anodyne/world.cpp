@@ -16,6 +16,8 @@
 #include "ecs.h"
 #include "game_state.h"
 #include "screen_fx.hpp"
+#include "soft_mosaic.hpp"
+#include "tex_dark.h"
 #include "tonc.h"
 
 namespace
@@ -106,6 +108,12 @@ int gScrollTY = 0;
 // ---- Background ---------------------------------------------------------------------------------------------
 // Screen entry for 8x8 tile (mx, my) of a layer: look up its 16x16 tile and pick the matching quarter. Outside the
 // layer (or index 0) is empty, like TileMap.GetTile.
+// Map.replacements (ReplaceTiles): BG tiles drawn as others (Map.GetTile; collisions read the real ones).
+constexpr int kMaxReplacements = 8;
+uint16_t gReplaceFrom[kMaxReplacements];
+uint16_t gReplaceTo[kMaxReplacements];
+int gReplaceCount = 0;
+
 uint16_t LayerEntry(int layer, int mx, int my)
 {
     const int cx = (mx >> 1) + gMapOffCells;
@@ -114,7 +122,15 @@ uint16_t LayerEntry(int layer, int mx, int my)
     {
         return 0;
     }
-    const uint32_t tile = gLayerTiles[layer][cy * gLayerW[layer] + cx];
+    uint32_t tile = gLayerTiles[layer][cy * gLayerW[layer] + cx];
+    for (int i = 0; layer == 0 && i < gReplaceCount; i++)
+    {
+        if (tile == gReplaceFrom[i])
+        {
+            tile = gReplaceTo[i];
+            break;
+        }
+    }
     if (tile == 0 || tile >= gTile16Count)
     {
         return 0;
@@ -324,6 +340,46 @@ void UpdateBackground(bool force)
     for (int layer = 0; layer < kLayerCount; layer++)
     {
         SetBgOffset(gHw[layer], (vx - gShake.mX) & 255, (vy - gShake.mY) & 255);
+    }
+}
+
+// TileReplacement: "a-b;c-d" (BG tile a draws as b, ...). A change redraws the BG.
+void SetTileReplacements(const char* rules)
+{
+    uint16_t from[kMaxReplacements];
+    uint16_t to[kMaxReplacements];
+    int count = 0;
+    for (const char* c = rules; *c && count < kMaxReplacements;)
+    {
+        from[count] = static_cast<uint16_t>(strtol(c, const_cast<char**>(&c), 10));
+        if (*c != '-')
+        {
+            break;
+        }
+        to[count++] = static_cast<uint16_t>(strtol(c + 1, const_cast<char**>(&c), 10));
+        if (*c == ';')
+        {
+            c++;
+        }
+    }
+    bool same = count == gReplaceCount;
+    for (int i = 0; same && i < count; i++)
+    {
+        same = from[i] == gReplaceFrom[i] && to[i] == gReplaceTo[i];
+    }
+    if (same)
+    {
+        return;
+    }
+    gReplaceCount = count;
+    for (int i = 0; i < count; i++)
+    {
+        gReplaceFrom[i] = from[i];
+        gReplaceTo[i] = to[i];
+    }
+    if (gMap)
+    {
+        UpdateBackground(true);
     }
 }
 
@@ -553,6 +609,9 @@ struct Darkness final
 };
 Darkness gDark = { 0, 0, FxF(0.8f) };
 const MapDarkData* gDarkData = nullptr;
+const DarkTexture* gDarkTextures = nullptr;
+const DarkTexture* gDarkTex = nullptr; // the darkness's texture (tex_dark.h); nullptr: it darkens plainly
+int gRedTint = 0;                      // this frame's red flash, when TexDark tints
 bool gDarkWritten = false; // the last frame's BLD came from the darkness
 Entity* gPlayerLight = nullptr;
 Entity* gMainLight = nullptr; // GlobalState.PlayerLight
@@ -585,42 +644,53 @@ void ApplyWindows()
 
 int DarkLevel()
 {
+    if (gDarkTex)
+    {
+        return 0; // (TexDark draws it)
+    }
     const int y = FxFloor(gDark.mAlpha * 16 + kFxOne / 2);
     return y < 0 ? 0 : (y > 16 ? 16 : y);
 }
 
-// Map.ReloadSettings: DarknessAlpha and PlayerLight for where the player is, forced on a map load and faded to on
-// a screen change.
+// Map.ReloadSettings: the darkness (DarknessAlpha, its texture), PlayerLight and ReplaceTiles for where the player is,
+// the darkness forced on a map load and faded to on a screen change.
 void UpdateDarkness(bool transition)
 {
-    fx target = 0;
-    bool playerLight = false;
+    int alpha = -1;
+    int light = -1;
+    int texture = -1;
+    const char* replace = nullptr;
+    auto take = [&](int a, int l, int t, const char* r) {
+        alpha = alpha < 0 ? a : alpha;
+        light = light < 0 ? l : light;
+        texture = texture < 0 ? t : texture;
+        replace = replace ? replace : r;
+    };
     if (gDarkData)
     {
-        target = gDarkData->mAlpha * (kFxOne / 256);
-        playerLight = gDarkData->mPlayerLight;
         const int px = FxTrunc(Player_Entity()->mT->mX);
         const int py = FxTrunc(Player_Entity()->mT->mY);
-        bool alphaSet = false;
-        bool lightSet = false;
         for (uint32_t i = 0; i < gDarkData->mAreaCount; i++)
         {
             const MapDarkArea& a = gDarkData->mAreas[i];
             if (px >= a.mX && px < a.mX + a.mWidth && py >= a.mY && py < a.mY + a.mHeight)
             {
-                if (!alphaSet && a.mAlpha >= 0)
-                {
-                    target = a.mAlpha * (kFxOne / 256);
-                    alphaSet = true;
-                }
-                if (!lightSet && a.mPlayerLight >= 0)
-                {
-                    playerLight = a.mPlayerLight != 0;
-                    lightSet = true;
-                }
+                take(a.mAlpha, a.mPlayerLight, a.mTexture, a.mReplace);
             }
         }
+        for (uint32_t i = 0; i < gDarkData->mEventCount; i++)
+        {
+            const MapDarkEvent& e = gDarkData->mEvents[i];
+            if (Event_Get(e.mEvent) != 0)
+            {
+                take(e.mAlpha, -1, e.mTexture, e.mReplace);
+            }
+        }
+        take(gDarkData->mAlpha, gDarkData->mPlayerLight ? 1 : 0, gDarkData->mTexture, "");
     }
+    gDarkTex = texture >= 0 && gDarkTextures ? &gDarkTextures[texture] : nullptr;
+    // (no DarknessAlpha: fully dark with a texture, none without)
+    const fx target = alpha >= 0 ? alpha * (kFxOne / 256) : (gDarkTex ? kFxOne : 0);
     if (transition)
     {
         Darkness_TargetAlpha(target);
@@ -631,9 +701,10 @@ void UpdateDarkness(bool transition)
     }
     if (gPlayerLight)
     {
-        gPlayerLight->mExists = playerLight;
+        gPlayerLight->mExists = light > 0;
         gPlayerLight->mV->mVisible = true; // the death state hid it
     }
+    SetTileReplacements(replace ? replace : "");
 }
 
 // PlayerLight: follows the player's centre, its scale flickering a little.
@@ -1811,6 +1882,16 @@ struct CutsceneView final
 const MapEntry* gMapTable = nullptr;
 uint32_t gMapTableCount = 0;
 
+void World_SetDarkTextures(const DarkTexture* textures)
+{
+    gDarkTextures = textures;
+}
+
+void World_ReloadSettings()
+{
+    UpdateDarkness(false);
+}
+
 void World_SetMapTable(const MapEntry* maps, uint32_t count)
 {
     gMapTable = maps;
@@ -2084,7 +2165,15 @@ void World_Update()
             if (gFlash.mRed)
             {
                 int level = FxFloor(gFlash.mAlpha * 32 + kFxOne / 2);
-                TintPalettes(level > 32 ? 32 : level);
+                level = level > 32 ? 32 : level;
+                if (gDarkTex && gDark.mAlpha > 0)
+                {
+                    gRedTint = level; // (TexDark tints its own colours)
+                }
+                else
+                {
+                    TintPalettes(level);
+                }
                 if (gDark.mAlpha > 0 || gDarkWritten)
                 {
                     World_ScreenDarken(0);
@@ -2116,6 +2205,19 @@ void World_Update()
 
     UpdateScroll(true, false);
     DrawWorld();
+    if (MenuDraw_IsOpen() || Mosaic_Active())
+    {
+        TexDark_Off();
+    }
+    else
+    {
+        if (gDarkTex && gDark.mAlpha > 0)
+        {
+            UntintPalettes(); // (from before the texture: TexDark takes the plain colours)
+        }
+        TexDark_Frame(gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2), gRedTint);
+    }
+    gRedTint = 0;
     if (MenuDraw_IsOpen())
     {
         // (the pause menu covers the playfield)

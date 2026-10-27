@@ -25,3 +25,5 @@ void Mosaic_OnVBlank();
 // Back to the plain screen: clears the mosaic and, if the software blocks were showing, restores the display, palette
 // and VRAM they borrowed. Safe to call when nothing is active.
 void Mosaic_End();
+// It holds the display (from its first frame to Mosaic_End).
+bool Mosaic_Active();

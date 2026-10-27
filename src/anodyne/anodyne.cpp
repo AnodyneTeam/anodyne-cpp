@@ -18,6 +18,7 @@
 #include "soft_mosaic.hpp"
 #include "sprite.h"
 #include "map_data.h"
+#include "tex_dark.h"
 #include "world.h"
 #include "entities.h"
 #include "pause.h"
@@ -346,6 +347,7 @@ int main()
     ScreenBlack(true);
 
     AudioManager_Init();
+    TexDark_Init(); // (after the IRQ setup)
     // (The world starts the map's music itself, see World_Load.)
 
     // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
@@ -374,6 +376,7 @@ int main()
     World_Init(objVram);
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
+    World_SetDarkTextures(kDarkTextures);
     Dialog_Init(objVram);
     Hud_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
@@ -551,6 +554,7 @@ int main()
                 Credits_Exit();
                 oam_init(oam_mem, 128);
                 mode = AppMode::Title;
+                TexDark_Off();
                 Title_Enter(objVram);
             }
         }
@@ -690,6 +694,7 @@ int main()
                 {
                     warpShown = false;
                     mode = AppMode::Credits;
+                    TexDark_Off();
                     Credits_Enter(objVram);
                 }
                 else if (World_TakeQuickLoad())
@@ -728,6 +733,7 @@ int main()
                     REG_BLDY = 0;
                     oam_init(oam_mem, 128);
                     mode = AppMode::Title;
+                    TexDark_Off();
                     Title_Enter(objVram);
                 }
             }
