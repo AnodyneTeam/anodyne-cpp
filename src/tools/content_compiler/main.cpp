@@ -20,6 +20,7 @@
 #include "door_compiler.hpp"
 #include "entity_compiler.hpp"
 #include "ending_compiler.hpp"
+#include "menu_compiler.hpp"
 #include "title_compiler.hpp"
 #include "lz77.hpp"
 
@@ -1127,6 +1128,7 @@ int main(int argc, char **argv)
         spriteCompiler.WriteHeaders(spriteCompiler.CompileAll(contentPaths));
         CompileTitle(contentPaths);
         CompileEnding(contentPaths);
+        CompileMenu(contentPaths);
     }
 
     if (!cliOptions.mapsOnly && !cliOptions.spritesOnly)

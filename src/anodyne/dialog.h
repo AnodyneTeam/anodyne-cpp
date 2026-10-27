@@ -19,6 +19,8 @@ void Dialog_SetArea(const char* mapName);
 // scene wants the box at the top of the screen. The area defaults to the one from Dialog_SetArea.
 const char* Dialog_Get(const char* npc, const char* scene, int id = -1, bool* top = nullptr);
 const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, int id = -1, bool* top = nullptr);
+// A line as it is, with no progress kept (the menus' labels); "" if there's none.
+const char* Dialog_Peek(const char* npc, const char* area, const char* scene, int id);
 // DialogueManager.IsSceneDirty (a line of it has been fetched) and SetSceneProgress, in the current area.
 bool Dialog_IsSceneDirty(const char* npc, const char* scene);
 // DialogueScene.Length in the current area, -1 if there's no such scene.

@@ -7,6 +7,7 @@
 
 #include "dialog.h"
 #include "entities.h"
+#include "pause_draw.h"
 #include "player.h"
 
 namespace
@@ -400,6 +401,7 @@ bool ChestInteract(Entity& self, Facing playerFacing)
         return false;
     }
     d.mOpened = true;
+    Minimap_AddInterest(gGame.mGridX, gGame.mGridY, -1);
     OpenTreasure(self);
     Ecs_SetFrame(self, Ecs_Frame(self) + 1);
     Preset_SetActivated(*self.mPreset, true);
@@ -1919,6 +1921,11 @@ Entity* Spawn_Treasure(const MapEntity& preset, Entity&)
     {
         frame++;
         e->Data<ChestData>().mOpened = true;
+    }
+    else
+    {
+        // (the screen it's on: gGame's grid is still the last one while this one loads)
+        Minimap_AddInterest(preset.mX / 160, preset.mY / 160, 1);
     }
     Ecs_SetFrame(*e, frame);
     return e;

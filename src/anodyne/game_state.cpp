@@ -10,6 +10,7 @@
 
 
 GameState gGame;
+uint8_t gMinimap[kMinimapCells] __attribute__((section(".sbss")));
 bool gFuckItMode = false;
 Settings gSettings;
 
@@ -80,6 +81,7 @@ int gFinishedAtOpen = 0; // Dialog_FinishedCount when the last line was set
 void GameState_Reset()
 {
     memset(&gGame, 0, sizeof(gGame));
+    memset(gMinimap, 0, sizeof(gMinimap));
     gGame.mMaxHealth = 6;
     gGame.mCurHealth = 6;
     gGame.mCheckpointMap = -1;
@@ -98,6 +100,7 @@ void GameState_Save(SaveWriter& w)
     g.mModeName = nullptr;
     g.mMapName = nullptr;
     w.Put(&g, sizeof(g));
+    w.Put(gMinimap, sizeof(gMinimap));
     w.Put(gDead, sizeof(gDead));
     w.Put(gActivated, sizeof(gActivated));
     w.Put(&gEventCount, sizeof(gEventCount));
@@ -108,6 +111,7 @@ void GameState_Load(SaveReader& r)
 {
     GameState g;
     r.Get(&g, sizeof(g));
+    r.Get(gMinimap, sizeof(gMinimap));
     // What the play state sets up afresh stays as it is.
     g.mModeName = gGame.mModeName;
     g.mMapName = gGame.mMapName;

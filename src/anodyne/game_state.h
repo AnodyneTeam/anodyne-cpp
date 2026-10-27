@@ -41,6 +41,8 @@ enum TradeState : uint8_t
 
 // Room for the content compiler's map list (anodyne.cpp checks it fits).
 constexpr int kMaxMaps = 32;
+// Room for every minimap's cells (pause_draw.cpp checks the compiled ones fit).
+constexpr int kMinimapCells = 1280;
 
 struct GameState final
 {
@@ -79,6 +81,7 @@ struct GameState final
     uint32_t mBossDefeated; // EventRegister.BossDefeated, by map index
     uint32_t mLeftAfterBoss; // EventRegister.LeftAfterBoss, by map index
     uint32_t mNexusPortals;  // EventRegister.ActivatedNexusPortals, by map index
+    uint32_t mPlayFrames;    // GlobalState.PlayTime, in frames
     uint8_t mGameMode;       // GlobalState.GameMode (the cheats': not saved)
     bool mAlwaysCellGraphics; // GlobalState.AlwaysCellGraphics (a cheat's: not saved)
 
@@ -90,6 +93,8 @@ struct GameState final
 };
 
 extern GameState gGame;
+// MinimapTracker.interest: 1 = seen, plus one per unopened chest there (saved with gGame; kept in EWRAM)
+extern uint8_t gMinimap[kMinimapCells];
 
 // GameMode
 enum GameModeKind : uint8_t

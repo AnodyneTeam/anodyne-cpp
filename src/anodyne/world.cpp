@@ -3,6 +3,7 @@
 #include "dialog.h"
 #include "entities.h"
 #include "pause.h"
+#include "pause_draw.h"
 #include "player.h"
 #include "save.h"
 
@@ -1703,6 +1704,20 @@ void World_QuickSave()
     Save_QuickWrite(gGame.mCurrentMap, FxTrunc(p.mT->mX), FxTrunc(p.mT->mY));
 }
 
+void World_ReloadTileset()
+{
+    if (!gMap)
+    {
+        return;
+    }
+    uint32_t tilesetBytes = gMap->mTileSetData.mTileSetSize;
+    if (tilesetBytes > kMaxTilesetBytes)
+    {
+        tilesetBytes = kMaxTilesetBytes;
+    }
+    memcpy16(tile_mem, gMap->mTileSetData.mTileSetData, tilesetBytes / 2);
+}
+
 void World_ForceTextureReload()
 {
     gForceTextureReload = true;
@@ -1923,6 +1938,7 @@ void SwitchBroom(bool next)
 // PlayState.Update.
 void World_Update()
 {
+    gGame.mPlayFrames++;
     gQuickSaveTimer -= kDeltaTime;
     Ecs_ReleaseSpawned();
     const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive || Pause_IsOpen();
@@ -2148,7 +2164,15 @@ void World_Update()
 
     UpdateScroll(true, false);
     DrawWorld();
-    UpdateWave();
+    if (MenuDraw_IsOpen())
+    {
+        // (the pause menu covers the playfield)
+        MenuDraw_Present();
+    }
+    else
+    {
+        UpdateWave();
+    }
 }
 
 void Game_StartCutscene(Entity& owner, CutsceneFn fn)

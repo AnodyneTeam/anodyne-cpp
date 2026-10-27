@@ -728,6 +728,17 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
     return line;
 }
 
+const char* Dialog_Peek(const char* npc, const char* area, const char* scene, int id)
+{
+    unsigned index = 0;
+    const DialogSceneData* s = FindScene(npc, area, scene, &index);
+    if (!s || id < 0 || id >= s->mLineCount)
+    {
+        return "";
+    }
+    return kDialogLines[s->mFirstLine + id];
+}
+
 int Dialog_SceneLength(const char* npc, const char* scene)
 {
     unsigned index = 0;

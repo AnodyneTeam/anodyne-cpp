@@ -2,6 +2,7 @@
 #include "dialog.h"
 
 #include "entity_classes.h"
+#include "pause_draw.h"
 #include "player.h"
 #include "sprite.h"
 
@@ -194,6 +195,7 @@ void Entities_LoadGrid(int gx, int gy, bool initial)
     }
     Ecs_SetBaseKilledEnemies(killed);
     gGame.mEnemiesKilled = killed;
+    Minimap_Visit(gx, gy); // (UpdateScreenBorders, before LoadGridEntities)
     for (uint32_t i = 0; i < gList.mCount; i++)
     {
         const MapEntity& p = gList.mEntities[i];
