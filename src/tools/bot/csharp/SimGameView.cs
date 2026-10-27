@@ -314,14 +314,18 @@ namespace AnodyneSharp.Recording
             {
                 return;
             }
-            object v = f.FieldType == typeof(float) ? raw / 65536f : f.FieldType == typeof(bool) ? raw != 0 : f.FieldType == typeof(int) ? raw : null;
+            object v = f.FieldType == typeof(AnodyneSharp.Utilities.Fix) ? AnodyneSharp.Utilities.Fix.FromRaw(raw) : f.FieldType == typeof(float) ? raw / 65536f : f.FieldType == typeof(bool) ? raw != 0 : f.FieldType == typeof(int) ? raw : null;
             if (v != null)
             {
                 f.SetValue(o, v);
             }
         }
 
-        private static void SetField(object o, string name, object value) => FindField(o.GetType(), name)?.SetValue(o, value);
+        private static void SetField(object o, string name, object value)
+        {
+            var f = FindField(o.GetType(), name);
+            f?.SetValue(o, BotFloatExtensions.ForField(f.FieldType, value));
+        }
 
         private static T Blank<T>() where T : Entity
         {
@@ -406,7 +410,7 @@ namespace AnodyneSharp.Recording
                 e.facing = (Facing)j.GetProperty("face").GetInt32();
                 // (a stand-in whose class keeps its preset, e.g. BigCardGate's card count: the map's preset at its spot)
                 var presetField = FindField(type, "_preset");
-                if (presetField != null && presetField.GetValue(e) == null && state.TryGetProperty("map", out var mapName))
+                if (presetField != null && presetField.GetValueF(e) == null && state.TryGetProperty("map", out var mapName))
                 {
                     presetField.SetValue(e, EntityManager.GetMapEntities(mapName.GetString()).FirstOrDefault(pr =>
                         (int)pr.Position.ToXna().X == (int)e.Position.ToXna().X && (int)pr.Position.ToXna().Y == (int)e.Position.ToXna().Y));

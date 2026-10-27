@@ -33,13 +33,13 @@ namespace AnodyneSharp.Recording
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
             var names = new List<string>();
-            object st = e.GetType().GetField("_state", F)?.GetValue(e);
+            object st = e.GetType().GetField("_state", F)?.GetValueF(e);
             for (int k = 0; st != null && abs != null && k < 4; k++)
             {
-                st = (abs.GetField("activeChildren", F)?.GetValue(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+                st = (abs.GetField("activeChildren", F)?.GetValueF(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
                 if (st != null)
                 {
-                    names.Add(st.GetType().GetProperty("Name")?.GetValue(st) as string ?? st.GetType().Name);
+                    names.Add(st.GetType().GetProperty("Name")?.GetValueF(st) as string ?? st.GetType().Name);
                 }
             }
             return string.Join("/", names);
@@ -100,7 +100,7 @@ namespace AnodyneSharp.Recording
 
         public Touching GetTileDirection(Point p)
         {
-            var tiles = TileObjectsField?.GetValue(Native) as Tile[];
+            var tiles = TileObjectsField?.GetValueF(Native) as Tile[];
             int id = Native.GetTile(Layer.BG, p);
             return tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
         }

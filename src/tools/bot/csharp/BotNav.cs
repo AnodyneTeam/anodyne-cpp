@@ -512,7 +512,7 @@ namespace AnodyneSharp.Recording
             var chasers = new HashSet<Point>(traps);
             foreach (var e in BotRunner.Entities())
             {
-                if (e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is true)
+                if (e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(e) is true)
                 {
                     var t = TileOf(new Vector2(e.Hitbox.Center.ToXna().X - HalfW, e.Hitbox.Center.ToXna().Y - HalfH));
                     for (int ox = -1; ox <= 1; ox++)

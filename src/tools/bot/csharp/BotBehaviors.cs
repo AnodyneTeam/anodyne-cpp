@@ -217,7 +217,7 @@ namespace AnodyneSharp.Recording
                         BotNav.HardAvoid = new HashSet<Point>();
                         foreach (var c in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser && e.velocity.ToXna() == Vector2.Zero))
                         {
-                            bool horiz = ChaserHorizField?.GetValue(c) is true;
+                            bool horiz = ChaserHorizField?.GetValueF(c) is true;
                             for (int k = 0; k < 10; k++)
                             {
                                 for (int j = 0; j < 10; j++)
@@ -662,7 +662,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '+' partly solid, '.' floor, 'o' still water, U/D/L/R water flowing that way, else the event's initial (h hole, s spike...)
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
-                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.NativeMap);
+                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValueF(BotNav.NativeMap);
                         for (int ty = a[1]; ty <= a[3]; ty++)
                         {
                             var row = new System.Text.StringBuilder($"FLOW {ty,3} ");
@@ -1587,7 +1587,7 @@ namespace AnodyneSharp.Recording
                 return list;
             }
             int left = st.Value.Item2;
-            int shots = LionShotsField?.GetValue(d) is int n ? n : 0;
+            int shots = LionShotsField?.GetValueF(d) is int n ? n : 0;
             int firstShot = st.Value.Item1 == "ShootState" ? left : left + 10;
             int lastShot = firstShot + (18 - shots - 1) * 10;
             var dir = Player.Position.ToXna() - d.Position.ToXna();
@@ -1642,15 +1642,15 @@ namespace AnodyneSharp.Recording
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
-            var root = d.GetType().GetField("_state", F)?.GetValue(d);
+            var root = d.GetType().GetField("_state", F)?.GetValueF(d);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top is not AnodyneSharp.FSM.TimerState || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top is not AnodyneSharp.FSM.TimerState || tt.GetField("current", F)?.GetValueF(top) is not float now || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
-            if (timers[0].GetType().GetField("current", FP)?.GetValue(timers[0]) is not float due)
+            if (timers[0].GetType().GetField("current", FP)?.GetValueF(timers[0]) is not float due)
             {
                 return null;
             }
@@ -1779,11 +1779,11 @@ namespace AnodyneSharp.Recording
             var r = e.Hitbox;
             var v = e.velocity.ToXna();
             int turnAt = int.MaxValue; // frame from which the heading is unknown
-            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall && SmallRollField?.GetValue(e) is float roll)
+            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall && SmallRollField?.GetValueF(e) is float roll)
             {
                 turnAt = Math.Max(0, (int)((0.8f - roll) * 60f));
             }
-            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort && v == Vector2.Zero && ContortDeathField?.GetValue(e) is float dt && dt > 0 && dt < 1)
+            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort && v == Vector2.Zero && ContortDeathField?.GetValueF(e) is float dt && dt > 0 && dt < 1)
             {
                 turnAt = (int)(dt * 60f); // bursts then: the pieces fly ~40px/s every way
                 v = Vector2.Zero;
@@ -1865,16 +1865,16 @@ namespace AnodyneSharp.Recording
             {
                 yield break;
             }
-            var pool = (PewPoolField.GetValue(em) as System.Collections.Generic.IEnumerable<Entity>)
-                ?? (PewPoolField.GetValue(em)?.GetType().GetProperty("Entities")?.GetValue(PewPoolField.GetValue(em)) as System.Collections.Generic.IEnumerable<Entity>);
+            var pool = (PewPoolField.GetValueF(em) as System.Collections.Generic.IEnumerable<Entity>)
+                ?? (PewPoolField.GetValueF(em)?.GetType().GetProperty("Entities")?.GetValueF(PewPoolField.GetValueF(em)) as System.Collections.Generic.IEnumerable<Entity>);
             var sample = pool?.FirstOrDefault();
             if (sample == null)
             {
                 yield break;
             }
-            bool fast = LaserFastField != null && LaserFastField.GetValue(sample) is bool b && b;
+            bool fast = LaserFastField != null && LaserFastField.GetValueF(sample) is bool b && b;
             float speed = fast ? 70f : 40f;
-            float timer = (float)PewTimerField.GetValue(em);
+            float timer = (float)PewTimerField.GetValueF(em);
             int first = (int)Math.Floor(Math.Max(timer, 0f) * 60f) + 1;
             var dir = em.facing switch { Facing.RIGHT => new Vector2(1, 0), Facing.LEFT => new Vector2(-1, 0), Facing.UP => new Vector2(0, -1), _ => new Vector2(0, 1) };
             var spawnOffset = em.facing switch
@@ -1925,7 +1925,7 @@ namespace AnodyneSharp.Recording
             {
                 yield break;
             }
-            float timer = (float)FourTimerField.GetValue(sh);
+            float timer = (float)FourTimerField.GetValueF(sh);
             var dirs = sh.Frame == 0
                 ? new[] { new Vector2(1, 0), new Vector2(-1, 0), new Vector2(0, 1), new Vector2(0, -1) }
                 : new[] { Vector2.Normalize(new Vector2(1, 1)), Vector2.Normalize(new Vector2(-1, -1)), Vector2.Normalize(new Vector2(-1, 1)), Vector2.Normalize(new Vector2(1, -1)) };
@@ -2112,11 +2112,11 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            var root = AnnStateField?.GetValue(an);
-            var top = (FsmActiveChildren?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-            if (top == null || top.GetType().Name != "ActiveState" || TimerNowField?.GetValue(top) is not float now
-                || TimerListField?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0
-                || timers[0].GetType().GetField("current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(timers[0]) is not float due)
+            var root = AnnStateField?.GetValueF(an);
+            var top = (FsmActiveChildren?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top == null || top.GetType().Name != "ActiveState" || TimerNowField?.GetValueF(top) is not float now
+                || TimerListField?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0
+                || timers[0].GetType().GetField("current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(timers[0]) is not float due)
             {
                 return null;
             }
@@ -2269,7 +2269,7 @@ namespace AnodyneSharp.Recording
                     if (d.velocity.ToXna() == Vector2.Zero)
                     {
                         // (only along its own axis: a horizontal one paces its row, a vertical one its column)
-                        bool horiz = ChaserHorizontalField?.GetValue(d) is true;
+                        bool horiz = ChaserHorizontalField?.GetValueF(d) is true;
                         foreach (var ct in PredictSightTrap(d, 15f).Where((t, i) => horiz ? i == 0 : i == 1)) // (it yields its row band, then its column band)
                         {
                             ct.Name = "Chaser";
@@ -2308,7 +2308,7 @@ namespace AnodyneSharp.Recording
                     result.Add(gt);
                     continue;
                 }
-                if (BotNav.IsSuburbKiller(d) && _killerMoving?.GetValue(d) is not true)
+                if (BotNav.IsSuburbKiller(d) && _killerMoving?.GetValueF(d) is not true)
                 {
                     // Asleep it wakes once we come within 36px (top-left to top-left) and then creeps after us at 30px/s, re-aiming every
                     // half second, for good: asleep, its whole wake berth is the danger (a dog fight beside two of them woke both). (Awake, the
@@ -2392,7 +2392,7 @@ namespace AnodyneSharp.Recording
             foreach (var e in BotRunner.Entities().Where(x => x.exists && x is AnodyneSharp.Entities.Enemy.Apartment.DashTrap))
             {
                 var r = e.Hitbox;
-                if (e is AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap && TrapIdle?.GetValue(e) is Vector2 idle)
+                if (e is AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap && TrapIdle?.GetValueF(e) is Vector2 idle)
                 {
                     r = new Rectangle((int)(idle.X + r.X - e.Position.ToXna().X), (int)(idle.Y + r.Y - e.Position.ToXna().Y), r.Width, r.Height);
                 }
@@ -3550,7 +3550,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Whether the screen has a shut gate that opens on enemies killed (frame 0-4, 10-14).</summary>
         private static bool KillGateShut() =>
             BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Gate && e.Solid
-                && GatePreset?.GetValue(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 < 5);
+                && GatePreset?.GetValueF(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 < 5);
 
         /// <summary>Whether the screen has buttons and a shut gate that opens on puzzles solved (frame 5-7) rather than kills.</summary>
         private static bool PuzzleGateShut()
@@ -3560,7 +3560,7 @@ namespace AnodyneSharp.Recording
                 return false;
             }
             return BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Gate && e.Solid
-                && GatePreset?.GetValue(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 >= 5);
+                && GatePreset?.GetValueF(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 >= 5);
         }
 
         /// <summary>
@@ -3935,8 +3935,8 @@ namespace AnodyneSharp.Recording
         /// <summary>A Crowd Rotator's fireball circles its post (out to 59px at 30px/s, 1.2 rad/s): exactly where it will be. Harmless to a jumper.</summary>
         private static Threat PredictRotatorBullet(Entity d)
         {
-            float r = (float)RotRadiusField.GetValue(d), a = (float)RotAngleField.GetValue(d);
-            var parent = (Entity)RotParentField.GetValue(d);
+            float r = (float)RotRadiusField.GetValueF(d), a = (float)RotAngleField.GetValueF(d);
+            var parent = (Entity)RotParentField.GetValueF(d);
             var c = parent.Center.ToXna();
             var th = new Threat { Name = "RotatorBullet", Margin = 2, Source = d };
             var hb = d.Hitbox;
@@ -3973,11 +3973,11 @@ namespace AnodyneSharp.Recording
             var v = e.velocity.ToXna();
             float fallLeft = roller.CollisionOn ? 0 : e.offset.ToXna().Y / 60f;
             float left = 112f;
-            if (RollerInitField?.GetValue(e) is Vector2 init)
+            if (RollerInitField?.GetValueF(e) is Vector2 init)
             {
                 left = Math.Max(0, 112f - (init - e.Position.ToXna()).Length());
             }
-            if (v == Vector2.Zero && !roller.CollisionOn && RollerVelField?.GetValue(e) is Vector2 vel)
+            if (v == Vector2.Zero && !roller.CollisionOn && RollerVelField?.GetValueF(e) is Vector2 vel)
             {
                 v = vel; // still falling: it rolls when it lands
             }
@@ -4020,10 +4020,10 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            var para = d.GetType().GetField("parabola", F)?.GetValue(d);
+            var para = d.GetType().GetField("parabola", F)?.GetValueF(d);
             var pt = typeof(AnodyneSharp.Entities.Parabola_Thing);
-            if (para == null || pt.GetField("t", F)?.GetValue(para) is not float t0 || pt.GetField("period", F)?.GetValue(para) is not float period
-                || pt.GetField("height", F)?.GetValue(para) is not float height || pt.GetField("start", F)?.GetValue(para) is not float start)
+            if (para == null || pt.GetField("t", F)?.GetValueF(para) is not float t0 || pt.GetField("period", F)?.GetValueF(para) is not float period
+                || pt.GetField("height", F)?.GetValueF(para) is not float height || pt.GetField("start", F)?.GetValueF(para) is not float start)
             {
                 return null;
             }
@@ -4054,13 +4054,13 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            var para = FrogParabolaField?.GetValue(d);
+            var para = FrogParabolaField?.GetValueF(d);
             if (para == null)
             {
                 return null;
             }
-            float t0 = (float)ParabolaTField.GetValue(para);
-            float period = (float)ParabolaPeriodField.GetValue(para);
+            float t0 = (float)ParabolaTField.GetValueF(para);
+            float period = (float)ParabolaPeriodField.GetValueF(para);
             var th = new Threat { Name = "FrogBullet", Margin = 2, Source = d };
             for (int f = 0; f <= Horizon; f++)
             {
@@ -4215,7 +4215,7 @@ namespace AnodyneSharp.Recording
             }
             foreach (var f in anim.GetType().GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
             {
-                if (f.GetValue(anim) is AnodyneSharp.Entities.Parabola_Thing pt && ParabolaTField?.GetValue(pt) is float t && ParabolaPeriodField?.GetValue(pt) is float period)
+                if (f.GetValueF(anim) is AnodyneSharp.Entities.Parabola_Thing pt && ParabolaTField?.GetValueF(pt) is float t && ParabolaPeriodField?.GetValueF(pt) is float period)
                 {
                     return Math.Max(0, (int)Math.Ceiling((period - t) * 60f));
                 }
@@ -5941,7 +5941,7 @@ namespace AnodyneSharp.Recording
 
         /// <summary>A button on the loaded screen that is pressed and counted (a permanent one stays so).</summary>
         private static bool ButtonDown(Point b) => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button
-            && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) == b && ButtonIncField?.GetValue(e) is true);
+            && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) == b && ButtonIncField?.GetValueF(e) is true);
 
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
         private static readonly HashSet<System.Guid> _failedChests = new();
@@ -6555,8 +6555,8 @@ namespace AnodyneSharp.Recording
             {
                 throw new InvalidOperationException($"bot: no elevator on screen {Grid} of {Map}");
             }
-            var menu = lift.GetType().GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(lift);
-            var preset = menu?.GetType().GetField("parent_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(menu) as AnodyneSharp.Entities.EntityPreset;
+            var menu = lift.GetType().GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(lift);
+            var preset = menu?.GetType().GetField("parent_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(menu) as AnodyneSharp.Entities.EntityPreset;
             if (preset == null)
             {
                 throw new InvalidOperationException("bot: cannot read the elevator's menu");
@@ -6768,7 +6768,7 @@ namespace AnodyneSharp.Recording
                 System.Console.Error.WriteLine("  go puzzle: no detector here (solved already)");
                 yield break;
             }
-            var checks = (List<Point>)typeof(AnodyneSharp.Entities.Gadget.GoDetector).GetField("checks", Priv).GetValue(det);
+            var checks = (List<Point>)typeof(AnodyneSharp.Entities.Gadget.GoDetector).GetField("checks", Priv).GetValueF(det);
             var origin = GlobalState.Map.ToMapLoc(det.Position.ToXna());
             int Tile(Point p) => GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, p);
             var was = GlobalState.inventory.EquippedBroom;
@@ -6819,7 +6819,7 @@ namespace AnodyneSharp.Recording
         /// <summary>The collision of BG tile id `id` (what a tile becomes when a swap brings that id to it).</summary>
         private static (Touching, AnodyneSharp.MapData.Tiles.CollisionEventType) ClassOfTileId(int id)
         {
-            var tiles = (System.Collections.IList)_mapTileObjects.GetValue(BotNav.NativeMap);
+            var tiles = (System.Collections.IList)_mapTileObjects.GetValueF(BotNav.NativeMap);
             var t = (AnodyneSharp.MapData.Tiles.Tile)tiles[id];
             return (t.allowCollisions, t.collisionEventType);
         }
@@ -6974,8 +6974,8 @@ namespace AnodyneSharp.Recording
         {
             static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
             var tf = Player.Native.transformer;
-            Entity Sel() => (Entity)_tfSelector.GetValue(tf);
-            Entity Marked() => (Entity)_tfSelected.GetValue(tf);
+            Entity Sel() => (Entity)_tfSelector.GetValueF(tf);
+            Entity Marked() => (Entity)_tfSelected.GetValueF(tf);
             Point TileAt(Entity e) => new Point((int)Math.Floor((e.Position.ToXna().X + 8) / 16f), (int)Math.Floor((e.Position.ToXna().Y + 8) / 16f));
             tf.Reset();
             // One frame's press to turn (a second walked a box centred in a dug shaft a pixel into the wall below it, and the game's
@@ -7157,10 +7157,10 @@ namespace AnodyneSharp.Recording
         private static AnodyneSharp.States.PauseState OpenPause()
         {
             var ps = GlobalState.SetSubstate?.Target as AnodyneSharp.States.PlayState;
-            return ps == null ? null : (ChildStatesField.GetValue(ps) as List<AnodyneSharp.States.State>)?.OfType<AnodyneSharp.States.PauseState>().FirstOrDefault();
+            return ps == null ? null : (ChildStatesField.GetValueF(ps) as List<AnodyneSharp.States.State>)?.OfType<AnodyneSharp.States.PauseState>().FirstOrDefault();
         }
 
-        private static bool InPausePage => OpenPause() is { } p && (bool)PauseInSubField.GetValue(p);
+        private static bool InPausePage => OpenPause() is { } p && (bool)PauseInSubField.GetValueF(p);
 
         /// <summary>Menu taps, n of them, a few frames apart (the menus act on a fresh press).</summary>
         private static IEnumerable<object> MenuTaps(KeyFunctions k, int n = 1, int gap = 6)
@@ -7178,8 +7178,8 @@ namespace AnodyneSharp.Recording
         {
             for (int i = 0; i < 60; i++)
             {
-                var sub = OpenPause() is { } p ? PauseSubField.GetValue(p) : null;
-                if (sub is not AnodyneSharp.States.MenuSubstates.DialogueSubstate ds || !(bool)InDialogueModeProp.GetValue(ds))
+                var sub = OpenPause() is { } p ? PauseSubField.GetValueF(p) : null;
+                if (sub is not AnodyneSharp.States.MenuSubstates.DialogueSubstate ds || !(bool)InDialogueModeProp.GetValueF(ds))
                 {
                     yield break;
                 }
@@ -7616,10 +7616,10 @@ namespace AnodyneSharp.Recording
                 var guns = new List<(Entity em, float timer, List<SimBolt> bolts, Vector2 spawn, Vector2 v, int w, int h)>();
                 foreach (var em in emitters)
                 {
-                    var pool = typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", flags).GetValue(em);
-                    var all = ((IEnumerable<Entity>)pool.GetType().GetProperty("Entities").GetValue(pool)).ToList();
-                    var off = (Vector2)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("spawn_offset", flags).GetValue(all[0]);
-                    bool fast = (bool)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", flags).GetValue(all[0]);
+                    var pool = typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", flags).GetValueF(em);
+                    var all = ((IEnumerable<Entity>)pool.GetType().GetProperty("Entities").GetValueF(pool)).ToList();
+                    var off = (Vector2)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("spawn_offset", flags).GetValueF(all[0]);
+                    bool fast = (bool)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", flags).GetValueF(all[0]);
                     var v = new Vector2(FacingStep(em.facing).X, FacingStep(em.facing).Y) * (fast ? 70f : 40f);
                     var bolts = all.Where(b => b.exists).Select(b => new SimBolt
                     {
@@ -7630,7 +7630,7 @@ namespace AnodyneSharp.Recording
                         age = 1f,
                         poofLeft = b.CurAnimName == "poof" ? Math.Max(0f, (8 - b.Frame) / 8f) : -1f
                     }).ToList();
-                    guns.Add((em, (float)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em), bolts, em.Position.ToXna() + off, v,
+                    guns.Add((em, (float)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValueF(em), bolts, em.Position.ToXna() + off, v,
                         all[0].Hitbox.Width, all[0].Hitbox.Height));
                 }
                 var me = Pos;
@@ -7741,7 +7741,7 @@ namespace AnodyneSharp.Recording
                 Simulate(best, true);
                 foreach (var em in emitters)
                 {
-                    System.Console.Error.WriteLine($"  gauntlet: emitter {em.Position.ToXna()} timer {typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em)} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox}{e.CurAnimName}{e.Frame}"))}");
+                    System.Console.Error.WriteLine($"  gauntlet: emitter {em.Position.ToXna()} timer {typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValueF(em)} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox}{e.CurAnimName}{e.Frame}"))}");
                 }
             }
             BotRunner.Status = $"gauntlet: wait {best} frames ({bestHits} hits)";
@@ -7893,7 +7893,7 @@ namespace AnodyneSharp.Recording
             }
         }
 
-        private static bool KillerAwake() => BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e) && _killerMoving?.GetValue(e) is true);
+        private static bool KillerAwake() => BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e) && _killerMoving?.GetValueF(e) is true);
 
         /// <summary>Runs `inner` (its nested steps flattened here, as the runner would) until `abort` holds before a frame.</summary>
         protected static IEnumerable<object> AbortWhen(IEnumerable<object> inner, Func<bool> abort)
@@ -9686,7 +9686,7 @@ namespace AnodyneSharp.Recording
             }
             foreach (var k in ks)
             {
-                if (_killerMoving?.GetValue(k) is true && _wokenKillers.Add(k))
+                if (_killerMoving?.GetValueF(k) is true && _wokenKillers.Add(k))
                 {
                     System.Console.Error.WriteLine($"  killer woke f{BotRunner.Frame} at {k.Position.ToXna()} us {Player.Position.ToXna()} hp {Gs.Health} doing [{BotRunner.Status}]");
                 }
@@ -9697,7 +9697,7 @@ namespace AnodyneSharp.Recording
             // the way we came; the wider berth with a plant's bullets about walled the plants off)
             float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && e.velocity.ToXna() != Vector2.Zero && !ProjectileName.IsMatch(e.GetType().Name)
                 && (e.Hitbox.Center.ToXna().ToVector2() - mc).Length() < 36f) ? 14f : 0f;
-            float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValue(k) is true
+            float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValueF(k) is true
                 ? (k.Hitbox.Center.ToXna().ToVector2() - (p + new Vector2(5, 6))).Length() - 18f - knock
                 : (k.Position.ToXna() - p).Length() - 36.3f - knock);
             Vector2 Step(IEnumerable<KeyFunctions> keys) => keys.Aggregate(Vector2.Zero, (a, k) => a + DirVector(k)) * 4f;
@@ -10115,7 +10115,7 @@ namespace AnodyneSharp.Recording
                     .Where(e => e.exists && e.Hitbox.Intersects(scr)).ToList();
                 var traps = live.Select(e =>
                 {
-                    var home = SightTrapHome?.GetValue(e) is Vector2 h ? h : e.Position.ToXna();
+                    var home = SightTrapHome?.GetValueF(e) is Vector2 h ? h : e.Position.ToXna();
                     float sp = e.velocity.ToXna().Length();
                     int mode = sp < 1f ? ((home - e.Position.ToXna()).Length() < 2f ? 0 : 2) : sp > 60f ? 1 : 2;
                     var v = e.velocity.ToXna();
@@ -10131,7 +10131,7 @@ namespace AnodyneSharp.Recording
                 Func<Rectangle, bool> trapFree = r => OnScreen(r) && WallFree(r) && !HoleUnder(r);
                 // Spring pads: landing a jump on one throws us down over the wall below
                 SightTrapPlanner.Springs = BotRunner.Entities().OfType<AnodyneSharp.Entities.Gadget.SpringPad>().Where(e => e.exists && e.Hitbox.Intersects(scr))
-                    .Select(e => (e.Hitbox, SpringDist?.GetValue(e) is int d ? d : 32, (int)Math.Round((SpringTime?.GetValue(e) is float tm ? tm : 0.3f) * 60f))).ToList();
+                    .Select(e => (e.Hitbox, SpringDist?.GetValueF(e) is int d ? d : 32, (int)Math.Round((SpringTime?.GetValueF(e) is float tm ? tm : 0.3f) * 60f))).ToList();
                 var springFrom = new Dictionary<Point, List<Point>>(); // landing tile -> the spring tiles that throw us onto it
                 foreach (var (box, d, _) in SightTrapPlanner.Springs)
                 {
@@ -10454,21 +10454,21 @@ namespace AnodyneSharp.Recording
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = (abs?.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = (abs?.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             if (top == null || top.GetType().Name != "AttackState")
             {
                 return null;
             }
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top.GetType().GetField("attackPositions", FP)?.GetValue(top) is not Vector2[] targets || top.GetType().GetField("attackPhase", FP)?.GetValue(top) is not int phase
-                || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top.GetType().GetField("attackPositions", FP)?.GetValueF(top) is not Vector2[] targets || top.GetType().GetField("attackPhase", FP)?.GetValueF(top) is not int phase
+                || tt.GetField("current", F)?.GetValueF(top) is not float now || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
             var first = timers[0];
-            if (first.GetType().GetField("current", FP)?.GetValue(first) is not float due)
+            if (first.GetType().GetField("current", FP)?.GetValueF(first) is not float due)
             {
                 return null;
             }
@@ -10479,17 +10479,17 @@ namespace AnodyneSharp.Recording
         private static int? DogAlertLeft(Entity dog)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top == null || top.GetType().Name == "AttackState" || tt.GetField("current", F)?.GetValue(top) is not float now
-                || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top == null || top.GetType().Name == "AttackState" || tt.GetField("current", F)?.GetValueF(top) is not float now
+                || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
             var first = timers[0];
-            if (first.GetType().GetField("name")?.GetValue(first) as string != "AlertTimer" || first.GetType().GetField("current")?.GetValue(first) is not float due)
+            if (first.GetType().GetField("name")?.GetValueF(first) as string != "AlertTimer" || first.GetType().GetField("current")?.GetValueF(first) is not float due)
             {
                 return null;
             }
@@ -10504,9 +10504,9 @@ namespace AnodyneSharp.Recording
                 return null;
             }
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var active = root == null || abs == null ? null : abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var active = root == null || abs == null ? null : abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable;
             var top = active?.Cast<object>().FirstOrDefault();
             return top == null ? null : top.GetType().Name == "AttackState";
         }
@@ -10515,13 +10515,13 @@ namespace AnodyneSharp.Recording
         private static float? SlimeShotIn(Entity slime)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = slime.GetType().GetField("state", F)?.GetValue(slime);
+            var root = slime.GetType().GetField("state", F)?.GetValueF(slime);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
             if (root == null || abs == null)
             {
                 return null;
             }
-            var active = abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var active = abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable;
             var move = active?.Cast<object>().FirstOrDefault() as AnodyneSharp.FSM.TimerState;
             long frame = BotRunner.Frame;
             if (move == null)
@@ -10539,13 +10539,13 @@ namespace AnodyneSharp.Recording
                 }
                 return Math.Max(0, Math.Max(c.due, c.hurt + 16) - frame) / 60f;
             }
-            var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValue(move);
-            foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValue(move))
+            var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValueF(move);
+            foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValueF(move))
             {
                 var tt = t.GetType();
-                if ((string)tt.GetField("name").GetValue(t) == "ShootTimer")
+                if ((string)tt.GetField("name").GetValueF(t) == "ShootTimer")
                 {
-                    float left = (float)tt.GetField("current").GetValue(t) - now;
+                    float left = (float)tt.GetField("current").GetValueF(t) - now;
                     if (_slimeClock.Count > 64)
                     {
                         _slimeClock.Clear();
@@ -10726,7 +10726,7 @@ namespace AnodyneSharp.Recording
         /// (fighting one only ever walked into it).
         /// </summary>
         private static bool DormantDustmaid(Entity e) =>
-            e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is false;
+            e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(e) is false;
 
         /// <summary>
         /// Two-button gate with a Mover: stand on one button, and make the Mover cross the other on its way to us. Lure the Mover to a spot
@@ -10996,14 +10996,14 @@ namespace AnodyneSharp.Recording
         private static List<Threat> SeerThreats(Entity seer, bool stage2, bool charge = false)
         {
             float minY = float.MinValue / 4, maxY = float.MaxValue / 4;
-            if (stage2 && SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset)
+            if (stage2 && SeerPresetField?.GetValueF(seer) is AnodyneSharp.Entities.EntityPreset preset)
             {
                 // Position.Y limits of the dive -> centre limits
                 float off = seer.Hitbox.Center.ToXna().Y - seer.Position.ToXna().Y;
                 minY = preset.Position.ToXna().Y - 32 + off;
                 maxY = preset.Position.ToXna().Y + 80 + off;
             }
-            if (SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset2)
+            if (SeerPresetField?.GetValueF(seer) is AnodyneSharp.Entities.EntityPreset preset2)
             {
                 float offX = seer.Hitbox.Center.ToXna().X - seer.Position.ToXna().X;
                 _seerMinX = preset2.Position.ToXna().X - 50 + offX;
@@ -11168,7 +11168,7 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                int hp = (int)healthField.GetValue(boss);
+                int hp = (int)healthField.GetValueF(boss);
                 if (hp == 0)
                 {
                     yield return K(); // its death throes and the dialogue after it
@@ -11398,8 +11398,8 @@ namespace AnodyneSharp.Recording
                     yield return K();
                     continue;
                 }
-                bool invincible = WallFaceInvincibleField?.GetValue(face) is bool b && b;
-                float timeout = WallFaceTimeoutField?.GetValue(face) is float f ? f : 0f;
+                bool invincible = WallFaceInvincibleField?.GetValueF(face) is bool b && b;
+                float timeout = WallFaceTimeoutField?.GetValueF(face) is float f ? f : 0f;
                 var bullets = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Face.Bullet>().Where(e => e.exists && e.CurAnimName == "move").ToList();
                 var laser = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Laser>().FirstOrDefault(e => e.exists);
                 var hands = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Hand>().Where(e => e.exists).ToList();
@@ -11807,11 +11807,11 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                string state = SplitStateField.GetValue(boss)?.GetType().Name ?? "";
+                string state = SplitStateField.GetValueF(boss)?.GetType().Name ?? "";
                 state = state.Length > 1 && state[0] == '<' ? state.Substring(1, state.IndexOf('>') - 1) : state;
-                int hp = (int)SplitHealthField.GetValue(boss);
-                bool vulnerable = (bool)SplitVulnField.GetValue(boss);
-                float invuln = (float)SplitInvulnField.GetValue(boss);
+                int hp = (int)SplitHealthField.GetValueF(boss);
+                bool vulnerable = (bool)SplitVulnField.GetValueF(boss);
+                float invuln = (float)SplitInvulnField.GetValueF(boss);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var bb = boss.Hitbox;
@@ -11825,7 +11825,7 @@ namespace AnodyneSharp.Recording
                 var threats = new List<Threat>();
                 foreach (var bu in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>().Where(e => e.exists && e.opacity > 0))
                 {
-                    if (!(SplitBulletActiveField.GetValue(bu) is bool on && on))
+                    if (!(SplitBulletActiveField.GetValueF(bu) is bool on && on))
                     {
                         continue; // a dropped ball before it is let go
                     }
@@ -11949,7 +11949,7 @@ namespace AnodyneSharp.Recording
                     {
                         goal = new Vector2(here.X, Math.Clamp(here.Y, tl.Y + 20, tl.Y + 50)); // it follows our row: keep room above and below
                         var sitting = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>()
-                            .Where(e => e.exists && e.opacity > 0 && !(SplitBulletActiveField.GetValue(e) is bool on && on)).Select(e => e.Hitbox.Center.ToXna().ToVector2()).ToList();
+                            .Where(e => e.exists && e.opacity > 0 && !(SplitBulletActiveField.GetValueF(e) is bool on && on)).Select(e => e.Hitbox.Center.ToXna().ToVector2()).ToList();
                         if (sitting.Count > 0 && !boss.visible || sitting.Count > 0 && bb.Right < tl.X)
                         {
                             // The dropped balls will fly at us all at once: the farther from them, the longer to sidestep each.
@@ -12510,12 +12510,12 @@ namespace AnodyneSharp.Recording
 
         /// <summary>A local variable of a running iterator (the compiler keeps it in a field named &lt;name&gt;5__N).</summary>
         private static object IterLocal(object it, string name) =>
-            it?.GetType().GetFields(AnyInst).FirstOrDefault(f => f.Name.StartsWith("<" + name + ">"))?.GetValue(it);
+            it?.GetType().GetFields(AnyInst).FirstOrDefault(f => f.Name.StartsWith("<" + name + ">"))?.GetValueF(it);
 
         private static readonly System.Reflection.FieldInfo FlickerTimerField = typeof(Entity).GetField("_flickerTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Frames until e stops blinking after a hit (0 if it is not blinking).</summary>
-        private static int FlickerLeft(Entity e) => e._flickering && FlickerTimerField?.GetValue(e) is float ft ? (int)Math.Ceiling(ft * 60f) : 0;
+        private static int FlickerLeft(Entity e) => e._flickering && FlickerTimerField?.GetValueF(e) is float ft ? (int)Math.Ceiling(ft * 60f) : 0;
 
         /// <summary>On screen, or blinking after a hit (a flickering sprite turns visible on and off every few frames; it is still there).</summary>
         private static bool Shown(Entity e) => e.visible || e._flickering;
@@ -12608,10 +12608,10 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                var it = CfStateField.GetValue(boss);
+                var it = CfStateField.GetValueF(boss);
                 string state = IterState(it);
-                int hp = (int)CfHealthField.GetValue(boss);
-                var tl = (Vector2)CfTopLeftField.GetValue(boss);
+                int hp = (int)CfHealthField.GetValueF(boss);
+                var tl = (Vector2)CfTopLeftField.GetValueF(boss);
                 var center = tl + new Vector2(64, 64);
                 if (ring == null)
                 {
@@ -12637,8 +12637,8 @@ namespace AnodyneSharp.Recording
                     // (screen y points down: their way round is the one of falling angle about the middle)
                     ring = ring.OrderByDescending(t => Math.Atan2(t.Y * 16 + 8 - center.Y, t.X * 16 + 8 - center.X)).ToList();
                 }
-                var arthur = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Arthur)CfArthurField.GetValue(boss);
-                var javiera = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Javiera)CfJavieraField.GetValue(boss);
+                var arthur = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Arthur)CfArthurField.GetValueF(boss);
+                var javiera = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Javiera)CfJavieraField.GetValueF(boss);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var wt0 = BotNav.TileOf(Pos);
@@ -13134,7 +13134,7 @@ namespace AnodyneSharp.Recording
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var targets = BotRunner.Entities().Where(e => e.exists &&
-                        (e is AnodyneSharp.Entities.Enemy.Circus.Contort c && ContortHealthField?.GetValue(c) is int h && h > 0 && big.Contains(c)
+                        (e is AnodyneSharp.Entities.Enemy.Circus.Contort c && ContortHealthField?.GetValueF(c) is int h && h > 0 && big.Contains(c)
                          || e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall))
                     .OrderBy(e => e._flickering ? 1 : 0).ThenBy(e => (e.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2()).Length()).ToList();
                 var threats = PredictThreats(null);
@@ -13343,9 +13343,9 @@ namespace AnodyneSharp.Recording
         /// <summary>A local of the Sage's running stage (its iterator keeps them as fields named &lt;name&gt;5__n), or null.</summary>
         private static object SageStageLocal(Entity sage, string name)
         {
-            var logic = SageLogicField?.GetValue(sage);
+            var logic = SageLogicField?.GetValueF(sage);
             var f = logic?.GetType().GetFields(Priv | System.Reflection.BindingFlags.Public).FirstOrDefault(x => x.Name.StartsWith("<" + name + ">"));
-            return f?.GetValue(logic);
+            return f?.GetValueF(logic);
         }
 
         /// <summary>
@@ -13361,7 +13361,7 @@ namespace AnodyneSharp.Recording
         {
             var tl = new Vector2(Grid.X * 160, Grid.Y * 160);
             float minX = tl.X + 48, maxX = tl.X + 112 - sage.width, minY = tl.Y + 16, maxY = tl.Y + 144 - sage.height;
-            bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+            bool canHurt = SageCanHurtField?.GetValueF(sage) is bool ch && ch;
             var threats = new List<Threat>();
             var sp = new Rectangle?[Horizon + 1];
             {
@@ -13383,7 +13383,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            int hpNow = SageHealthField?.GetValue(sage) is int hv ? hv : 0;
+            int hpNow = SageHealthField?.GetValueF(sage) is int hv ? hv : 0;
             if (canHurt || hpNow > 0)
             {
                 // (between stages it is harmless, but the next stage's orbs appear round it and its lasers along the hall's ends: keep off)
@@ -13458,7 +13458,7 @@ namespace AnodyneSharp.Recording
             }
             // Stage 1's next laser, from its clock (it appears at the hall's top: no time to see it coming otherwise)
             if (canHurt && SageStageLocal(sage, "bClock") is float clock && SageStageLocal(sage, "bDelay") is float[] delays
-                && SageHealthField?.GetValue(sage) is int hp && hp > 0)
+                && SageHealthField?.GetValueF(sage) is int hp && hp > 0)
             {
                 float delay = delays[Math.Clamp(3 - hp, 0, delays.Length - 1)];
                 var th = new Threat { Name = "Sage next laser", Margin = 1 };
@@ -13512,8 +13512,8 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck();
-                int hp = SageHealthField?.GetValue(sage) is int h ? h : -1;
-                bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+                int hp = SageHealthField?.GetValueF(sage) is int h ? h : -1;
+                bool canHurt = SageCanHurtField?.GetValueF(sage) is bool ch && ch;
                 var threats = SageThreats(sage);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
@@ -13863,7 +13863,7 @@ namespace AnodyneSharp.Recording
                 var here = new Vector2(pb.X, pb.Y);
                 if (fight == null)
                 {
-                    if (main.GetType().GetField("state", AnyInst)?.GetValue(main)?.ToString() == "Post")
+                    if (main.GetType().GetField("state", AnyInst)?.GetValueF(main)?.ToString() == "Post")
                     {
                         BotRunner.BossDamageBudget = 0;
                         yield break;
@@ -14570,7 +14570,7 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout; the boss's waves and dives keep us still for long stretches
-                int hp = healthField != null ? (int)healthField.GetValue(seer) : -1;
+                int hp = healthField != null ? (int)healthField.GetValueF(seer) : -1;
                 BotRunner.Status = $"Seer fight: boss hp {hp}";
                 if (Gs.Health < seerLastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
@@ -14655,7 +14655,7 @@ namespace AnodyneSharp.Recording
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         var st = threats.First(t => t.Source == seer);
-                        System.Console.Error.WriteLine($"  seer SWING f{i} P={pb} face={Player.facing} S={sb} v={(_seerVel.TryGetValue(seer, out var vv0) ? vv0 : Vector2.Zero)} pred@8={st.At[8]} @16={st.At[16]} @24={st.At[24]} limits={SeerPresetField?.GetValue(seer)}");
+                        System.Console.Error.WriteLine($"  seer SWING f{i} P={pb} face={Player.facing} S={sb} v={(_seerVel.TryGetValue(seer, out var vv0) ? vv0 : Vector2.Zero)} pred@8={st.At[8]} @16={st.At[16]} @24={st.At[24]} limits={SeerPresetField?.GetValueF(seer)}");
                     }
                     yield return K(KeyFunctions.Accept);
                     continue;
@@ -15287,10 +15287,10 @@ namespace AnodyneSharp.Recording
                 foreach (var sp in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
                 {
                     const System.Reflection.BindingFlags SF = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-                    var para = sp.GetType().GetField("parabola", SF)?.GetValue(sp);
+                    var para = sp.GetType().GetField("parabola", SF)?.GetValueF(sp);
                     var ptt = typeof(AnodyneSharp.Entities.Parabola_Thing);
-                    if (para == null || ptt.GetField("t", SF)?.GetValue(para) is not float st0 || ptt.GetField("period", SF)?.GetValue(para) is not float sper
-                        || ptt.GetField("height", SF)?.GetValue(para) is not float sh)
+                    if (para == null || ptt.GetField("t", SF)?.GetValueF(para) is not float st0 || ptt.GetField("period", SF)?.GetValueF(para) is not float sper
+                        || ptt.GetField("height", SF)?.GetValueF(para) is not float sh)
                     {
                         continue;
                     }
@@ -15692,22 +15692,22 @@ namespace AnodyneSharp.Recording
         private static float LobTime(Entity shot)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var par = shot.GetType().GetField("parabola", F)?.GetValue(shot);
-            return par?.GetType().GetField("t", F)?.GetValue(par) is float t ? t : 0f;
+            var par = shot.GetType().GetField("parabola", F)?.GetValueF(shot);
+            return par?.GetType().GetField("t", F)?.GetValueF(par) is float t ? t : 0f;
         }
 
         /// <summary>The point the land-phase eye is pacing towards (its LandLogic's Pace enumerator, by reflection), or null.</summary>
         private static Vector2? EyeLandPace(Entity boss)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
-            var st = boss.GetType().GetField("state", F)?.GetValue(boss);
+            var st = boss.GetType().GetField("state", F)?.GetValueF(boss);
             if (st == null)
             {
                 return null;
             }
             foreach (var f in st.GetType().GetFields(F))
             {
-                if (f.GetValue(st) is IEnumerator<Vector2> pace)
+                if (f.GetValueF(st) is IEnumerator<Vector2> pace)
                 {
                     return pace.Current;
                 }
@@ -15940,7 +15940,7 @@ namespace AnodyneSharp.Recording
             {
                 _frogLastStatus = BotRunner.Status;
                 var hf = frog.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                System.Console.Error.WriteLine($"  frogstat f{BotRunner.Frame} {BotRunner.Status} at {Player.Hitbox.X},{Player.Hitbox.Y} frog@{frog.Position.ToXna()} hp={hf?.GetValue(frog)}");
+                System.Console.Error.WriteLine($"  frogstat f{BotRunner.Frame} {BotRunner.Status} at {Player.Hitbox.X},{Player.Hitbox.Y} frog@{frog.Position.ToXna()} hp={hf?.GetValueF(frog)}");
             }
             return keys;
         }
@@ -15981,9 +15981,9 @@ namespace AnodyneSharp.Recording
                 foreach (var b in f.Subs().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
                 {
                     int left = 18;
-                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValueF(b) is object para)
                     {
-                        left += (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f);
+                        left += (int)Math.Ceiling(((float)ParabolaPeriodField.GetValueF(para) - (float)ParabolaTField.GetValueF(para)) * 60f);
                     }
                     fireAt = Math.Max(fireAt, left);
                 }
@@ -16654,9 +16654,9 @@ namespace AnodyneSharp.Recording
                 foreach (var b in bullets.Where(b => b.exists))
                 {
                     int left;
-                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValueF(b) is object para)
                     {
-                        left = (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f) + 18;
+                        left = (int)Math.Ceiling(((float)ParabolaPeriodField.GetValueF(para) - (float)ParabolaTField.GetValueF(para)) * 60f) + 18;
                     }
                     else
                     {
@@ -16689,13 +16689,13 @@ namespace AnodyneSharp.Recording
                     float maxPeriod = 0;
                     foreach (var b in bullets)
                     {
-                        if (FrogParabolaField?.GetValue(b) is not object para)
+                        if (FrogParabolaField?.GetValueF(b) is not object para)
                         {
                             continue;
                         }
-                        float period = (float)ParabolaPeriodField.GetValue(para);
+                        float period = (float)ParabolaPeriodField.GetValueF(para);
                         maxPeriod = Math.Max(maxPeriod, period);
-                        float v = 15f * (FrogMultiplierField?.GetValue(b) is int m ? m : 3);
+                        float v = 15f * (FrogMultiplierField?.GetValueF(b) is int m ? m : 3);
                         var hb = b.Hitbox;
                         for (int j = 0; j <= (int)Math.Ceiling(period * 60f) && fire + j <= len; j++)
                         {
@@ -17103,7 +17103,7 @@ namespace AnodyneSharp.Recording
             var att = DogAttackPlan(dog);
             // A super dog (the Hotel's) rolls nothing: each of its five dashes heads for a point just past wherever we are as it starts
             // (25px beyond us, on our side of it), faster each time. Taken as where we stand now.
-            bool super = dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is true;
+            bool super = dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(dog) is true;
             float[] superSpeeds = { 66f, 84f, 84f, 96f, 102f };
             var pos = start;
             var vel = dog.velocity.ToXna();
@@ -17170,7 +17170,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions[] DogSidestep(Entity dog, Func<int, Rectangle?> path, List<Threat> others = null)
         {
-            if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is not true || dog.velocity.ToXna().Length() < 30f)
+            if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(dog) is not true || dog.velocity.ToXna().Length() < 30f)
             {
                 return null;
             }
@@ -18234,7 +18234,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (i % 120 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={Gs.Health} enemies={enemies.Count}{(target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(target) is int th ? $" its hp={th}" : "")}");
+                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={Gs.Health} enemies={enemies.Count}{(target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(target) is int th ? $" its hp={th}" : "")}");
                 }
                 // Whatever the plan is, a patrolling Shieldy that is about to walk into where we stand comes first: clear of it, then carry on.
                 if (!(Player.broom != null && Player.broom.exists))
@@ -18750,7 +18750,7 @@ namespace AnodyneSharp.Recording
                     if (i % 15 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         var dhf0 = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        System.Console.Error.WriteLine($"  dogstate f{i} health={dhf0?.GetValue(target)} dashing={dogDashing} P={Player.Hitbox} dog={dg} v={target.velocity.ToXna()} status={BotRunner.Status}");
+                        System.Console.Error.WriteLine($"  dogstate f{i} health={dhf0?.GetValueF(target)} dashing={dogDashing} P={Player.Hitbox} dog={dg} v={target.velocity.ToXna()} status={BotRunner.Status}");
                     }
                     if (dspeed > 40f && !dogDashing)
                     {
@@ -18901,7 +18901,7 @@ namespace AnodyneSharp.Recording
                             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                             {
                                 var dhf = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                                System.Console.Error.WriteLine($"  dog SWING f{i} health={dhf?.GetValue(target)} gap={sgap} cross={cross:0} face={Player.facing}");
+                                System.Console.Error.WriteLine($"  dog SWING f{i} health={dhf?.GetValueF(target)} gap={sgap} cross={cross:0} face={Player.facing}");
                             }
                             yield return K(KeyFunctions.Accept);
                             continue;
@@ -20074,7 +20074,7 @@ namespace AnodyneSharp.Recording
             // not held: set off a few frames before it next comes back on, so it fires with Right down.
             int first = 0, every = 1;
             var onPad = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && e.Hitbox.Contains(new Point((int)(Pos.X + 5), (int)(Pos.Y + 6))));
-            if (onPad != null && typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(onPad) is float dis)
+            if (onPad != null && typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(onPad) is float dis)
             {
                 first = (int)Math.Ceiling((1f - dis) * 60f) - 3;
                 while (first < 0)
@@ -20132,7 +20132,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var c = new ChaserPlan { Idle = new Vector2(e.Hitbox.X, e.Hitbox.Y), Horiz = ChaserHorizField?.GetValue(e) is true };
+                var c = new ChaserPlan { Idle = new Vector2(e.Hitbox.X, e.Hitbox.Y), Horiz = ChaserHorizField?.GetValueF(e) is true };
                 if (e.velocity.ToXna() != Vector2.Zero)
                 {
                     c.Track = ChaserTrack(c.Idle, e.velocity.ToXna(), screen, frames);

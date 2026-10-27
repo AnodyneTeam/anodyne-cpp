@@ -976,7 +976,7 @@ namespace AnodyneSharp.Recording
 
         protected static IPlayerView Player => BotRunner.Player;
         /// <summary>A private field of the C# game's player (reflection); null on the simulator, which has no such object.</summary>
-        protected static object PlayerField(System.Reflection.FieldInfo f) => Player?.Native == null ? null : f?.GetValue(Player.Native);
+        protected static object PlayerField(System.Reflection.FieldInfo f) => Player?.Native == null ? null : f?.GetValueF(Player.Native);
         protected static string Map => Gs.Map;
         protected static Vector2 Pos => Player == null ? Vector2.Zero : Player.Position.ToXna();
         protected static bool Talking => !string.IsNullOrEmpty(Gs.Dialogue) || BotRunner.PlayBusy;
@@ -1717,7 +1717,7 @@ namespace AnodyneSharp.Recording
                 var dtField = typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 for (int w = 0; w < 600; w++)
                 {
-                    int armIn = padUnder.opacity >= 1f ? 0 : (int)((1f - (dtField?.GetValue(padUnder) is float dt ? dt : 0f)) * 60f);
+                    int armIn = padUnder.opacity >= 1f ? 0 : (int)((1f - (dtField?.GetValueF(padUnder) is float dt ? dt : 0f)) * 60f);
                     if (armIn <= 2 && Clear())
                     {
                         break;
@@ -3005,5 +3005,26 @@ namespace AnodyneSharp.Recording
     {
         public static Vector2 ToXna(this Vector2 v) => v;
         public static Point ToXna(this Point p) => p;
+
+        /// <summary>Reflection reads, with Fix fields as float and FixVector2 ones as Vector2 (as they were).</summary>
+        public static object GetValueF(this System.Reflection.FieldInfo f, object o) => Floatify(f.GetValue(o));
+        public static object GetValueF(this System.Reflection.PropertyInfo p, object o) => Floatify(p.GetValue(o));
+
+        /// <summary>A value for a reflected field: float into Fix, Vector2 into FixVector2 when the field is Fix.</summary>
+        public static object ForField(System.Type t, object v) => v switch
+        {
+            float x when t == typeof(AnodyneSharp.Utilities.Fix) => (AnodyneSharp.Utilities.Fix)x,
+            Vector2 x when t == typeof(AnodyneSharp.Utilities.FixVector2) => (AnodyneSharp.Utilities.FixVector2)x,
+            _ => v,
+        };
+
+        private static object Floatify(object v) => v switch
+        {
+            AnodyneSharp.Utilities.Fix x => (float)x,
+            AnodyneSharp.Utilities.FixVector2 x => x.ToXna(),
+            AnodyneSharp.Utilities.Fix[] a => System.Array.ConvertAll(a, x => (float)x),
+            AnodyneSharp.Utilities.FixVector2[] a => System.Array.ConvertAll(a, x => x.ToXna()),
+            _ => v,
+        };
     }
 }

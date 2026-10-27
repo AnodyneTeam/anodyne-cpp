@@ -193,7 +193,7 @@ namespace AnodyneSharp.Recording
         private static Entity PlatformAt(int tx, int ty) => BotRunner.Entities().Where(e => e.exists && e is Propelled)
             .OrderBy(e => (Mid(e) - new Vector2(tx * 16 + 8, ty * 16 + 8)).LengthSquared()).FirstOrDefault();
 
-        private static bool Active(Entity p) => ActiveField?.GetValue(p) is bool b && b;
+        private static bool Active(Entity p) => ActiveField?.GetValueF(p) is bool b && b;
 
         private static void Trace(string what)
         {
