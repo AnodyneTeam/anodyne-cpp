@@ -21,6 +21,34 @@ volatile uint8_t* const kSram = reinterpret_cast<volatile uint8_t*>(0x0E000000);
 uint8_t gBuf[kSlotSize] __attribute__((section(".sbss")));
 int gSlot = 0;
 
+// GlobalState.serialized_quicksave + quicksave_checkpoint: in RAM only, like the C#'s (gone with the power).
+uint8_t gQuick[kSlotSize] __attribute__((section(".sbss")));
+int gQuickLen = -1;
+int gQuickMap = 0;
+int gQuickX = 0;
+int gQuickY = 0;
+
+int WriteState(uint8_t* buf)
+{
+    SaveWriter w = { buf, kSlotSize - kHeaderSize, 0, true };
+    GameState_Save(w);
+    Dialog_SaveState(w);
+    const int deaths = World_Deaths();
+    w.Put(&deaths, sizeof(deaths));
+    return w.mOk ? w.mLen : -1;
+}
+
+bool ReadState(const uint8_t* buf, int len)
+{
+    SaveReader r = { buf, len, 0, true };
+    GameState_Load(r);
+    Dialog_LoadState(r);
+    int deaths = 0;
+    r.Get(&deaths, sizeof(deaths));
+    World_SetDeaths(deaths);
+    return r.mOk;
+}
+
 // SRAM sits on an 8-bit bus: byte accesses only.
 void SramWrite(int offset, const uint8_t* data, int size)
 {
@@ -120,23 +148,44 @@ bool Save_Write(int slot)
     {
         return false;
     }
-    SaveWriter w = { gBuf, kSlotSize - kHeaderSize, 0, true };
-    GameState_Save(w);
-    Dialog_SaveState(w);
-    const int deaths = World_Deaths();
-    w.Put(&deaths, sizeof(deaths));
-    if (!w.mOk)
+    const int len = WriteState(gBuf);
+    if (len < 0)
     {
         return false;
     }
     uint8_t header[kHeaderSize];
     PutWord(header, kMagic);
     PutWord(header + 4, kVersion);
-    PutWord(header + 8, static_cast<uint32_t>(w.mLen));
-    PutWord(header + 12, Checksum(gBuf, w.mLen));
-    SramWrite(slot * kSlotSize + kHeaderSize, gBuf, w.mLen);
+    PutWord(header + 8, static_cast<uint32_t>(len));
+    PutWord(header + 12, Checksum(gBuf, len));
+    SramWrite(slot * kSlotSize + kHeaderSize, gBuf, len);
     SramWrite(slot * kSlotSize, header, kHeaderSize); // (the header last: a save cut short stays invalid)
     return true;
+}
+
+void Save_QuickWrite(int map, int x, int y)
+{
+    gQuickLen = WriteState(gQuick);
+    gQuickMap = map;
+    gQuickX = x;
+    gQuickY = y;
+}
+
+bool Save_QuickExists()
+{
+    return gQuickLen >= 0;
+}
+
+bool Save_QuickRead(int& map, int& x, int& y)
+{
+    if (gQuickLen < 0)
+    {
+        return false;
+    }
+    map = gQuickMap;
+    x = gQuickX;
+    y = gQuickY;
+    return ReadState(gQuick, gQuickLen);
 }
 
 bool Save_Exists(int slot)
@@ -151,11 +200,5 @@ bool Save_Read(int slot)
     {
         return false;
     }
-    SaveReader r = { gBuf, len, 0, true };
-    GameState_Load(r);
-    Dialog_LoadState(r);
-    int deaths = 0;
-    r.Get(&deaths, sizeof(deaths));
-    World_SetDeaths(deaths);
-    return r.mOk;
+    return ReadState(gBuf, len);
 }

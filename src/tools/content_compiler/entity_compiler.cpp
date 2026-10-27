@@ -275,6 +275,7 @@ const NamedEntity kNamed[] = {
     { "Shadow_Briar", nullptr, "BEACH", {}, EPT_BeachBriar },
     { "Nonsolid", "Rail_CROWD", nullptr, {}, EPT_CrowdRail },
     { "Mitra", nullptr, "CLIFF", {}, EPT_MitraCliff },
+    { "NPC", "generic", nullptr, { 9 }, EPT_DeathPlace },
 };
 
 const char* const kTypeNames[] = {

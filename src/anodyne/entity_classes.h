@@ -174,6 +174,7 @@ bool WaterStep(WaterFlow& w, fx startX, fx startY);
 Entity* Spawn_GoHappyBlocker(const MapEntity& preset, Entity& player);
 Entity* Spawn_HappyNpc(const MapEntity& preset, Entity& player);
 Entity* Spawn_HappyEventTrigger(const MapEntity& preset, Entity& player);
+Entity* Spawn_DeathPlace(const MapEntity& preset, Entity& player);
 Entity* Spawn_BriarBoss(const MapEntity& preset, Entity& player);
 Entity* Spawn_SageSentinel(const MapEntity& preset, Entity& player);
 Entity* Spawn_SuburbKiller(const MapEntity& preset, Entity& player);

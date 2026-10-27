@@ -9,5 +9,7 @@ void Pause_Open();
 bool Pause_IsOpen();
 // PauseState.Update, once a frame while open. False once it has exited (PlayState drops it the same frame).
 bool Pause_Update();
+// Shuts the menu (its play state is going).
+void Pause_Close();
 // PauseState.Reset: the menu opens on the map page again (a new game or a loaded one).
 void Pause_Reset();

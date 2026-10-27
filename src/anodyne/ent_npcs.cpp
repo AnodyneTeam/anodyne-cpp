@@ -5552,6 +5552,40 @@ Entity* Spawn_HappyNpc(const MapEntity& preset, Entity&)
     return e;
 }
 
+// ---- DeathPlace (Npc/DeathPlace.cs, "NPC" generic 9): in the death room, walking down out of it goes to the title --
+namespace
+{
+struct DeathPlaceData final
+{
+    int mBottom; // the top of the screen below the one it was made on (MapUtilities.GetRoomUpperLeftPos)
+};
+
+void DeathPlacePostUpdate(Entity& self)
+{
+    if (Player_Entity()->mT->mY >= Fx(self.Data<DeathPlaceData>().mBottom - 14))
+    {
+        Game_RequestTitle();
+        self.mExists = false;
+    }
+}
+
+const EntityClass kDeathPlace = {
+    "DeathPlace", nullptr, DeathPlacePostUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_DeathPlace(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kDeathPlace, preset, nullptr);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->Data<DeathPlaceData>().mBottom = (gGame.mGridY + 1) * 160;
+    e->mExists = gGame.mInDeathRoom;
+    return e;
+}
+
 Entity* Spawn_HappyEventTrigger(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kHappyTrigger, preset, nullptr);

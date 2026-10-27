@@ -145,6 +145,7 @@
     X(BeachBriar)               \
     X(CrowdRail)                \
     X(MitraCliff)               \
+    X(DeathPlace)               \
     X(BunnyRun)                 \
     X(Person)                   \
     X(SpikeRoller)              \

@@ -10,6 +10,8 @@
 
 
 GameState gGame;
+bool gFuckItMode = false;
+Settings gSettings;
 
 namespace
 {
@@ -71,6 +73,7 @@ EventSlot* FindEvent(const char* name, bool create)
 
 bool gDialogueFinished = true;
 bool gCutsceneDialogue = false;
+bool gTitleRequest = false; // GameState.SetState<TitleState>
 int gFinishedAtOpen = 0; // Dialog_FinishedCount when the last line was set
 } // namespace
 
@@ -116,6 +119,8 @@ void GameState_Load(SaveReader& r)
     g.mDisableMenu = false;
     g.mInDeathRoom = false;
     g.mEquippedBroomChanged = true;
+    g.mGameMode = GAME_MODE_NORMAL;
+    g.mAlwaysCellGraphics = false;
     gGame = g;
     r.Get(gDead, sizeof(gDead));
     r.Get(gActivated, sizeof(gActivated));
@@ -424,4 +429,16 @@ void Game_PlaySfx(const char* name)
     {
         Game_PlaySfxOneOf(&name, 1);
     }
+}
+
+void Game_RequestTitle()
+{
+    gTitleRequest = true;
+}
+
+bool Game_TakeTitleRequest()
+{
+    const bool r = gTitleRequest;
+    gTitleRequest = false;
+    return r;
 }

@@ -35,3 +35,9 @@ bool Save_Write(int slot);
 bool Save_Exists(int slot);
 // GlobalState.LoadSave: reads the slot back into the state (false, and the state untouched, if it isn't valid).
 bool Save_Read(int slot);
+
+// The pause menu's quick save (GlobalState.serialized_quicksave): the progress and where the player stands, in RAM.
+void Save_QuickWrite(int map, int x, int y);
+bool Save_QuickExists();
+// Reads the quick save back into the state; map (a kMaps index) and x, y: where it was made.
+bool Save_QuickRead(int& map, int& x, int& y);

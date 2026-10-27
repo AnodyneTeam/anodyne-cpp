@@ -18,12 +18,25 @@ constexpr int kHitW = 10; // HITBOX_WIDTH / HEIGHT
 constexpr int kHitH = 12;
 constexpr int kDefaultYOffset = 4;
 constexpr fx kWalkSpeed = Fx(70);
+constexpr fx kFuckItWalkSpeed = Fx(200);
 constexpr fx kBumpVelocity = Fx(50);
 constexpr fx kConveyorVel = Fx(35);
 constexpr fx kCornerAssist = Fx(30);
 const fx kInvincibleMax = FxSec(0.8f);
 const fx kBumpTimerMax = FxSec(0.2f);
 const fx kFallTimerDefault = FxSec(0.016f * 8 + 0.001f);
+
+// Player.walkSpeed: the cheats' fuck-it mode runs at 200
+fx WalkSpeed()
+{
+    return gFuckItMode ? kFuckItWalkSpeed : kWalkSpeed;
+}
+
+// Player.FALL_TIMER_DEFAULT: twice as long with the extended coyote time setting
+fx FallTimerDefault()
+{
+    return gSettings.mExtendedCoyote ? kFallTimerDefault * 2 : kFallTimerDefault;
+}
 const fx kActionLatencyMax = FxSec(0.24f);
 const fx kJumpPeriod = FxSec(0.4f * 1.15f);
 const fx kStepTimerMax = FxSec(0.5f);
@@ -66,6 +79,7 @@ struct PlayerData final
     Entity* mRaft; // the dust ridden over water
     uint8_t mJumpStage; // 0: not started, 1: in the air, 2: landed (one more frame)
     fx mInvincibilityTime;
+    bool mFuckIt; // walkSpeed != 70
     fx mBumpTimer;
     fx mFallTimer;
     float mDashX; // dash_state: a dash pad's push, in walk speeds (0: none)
@@ -388,7 +402,7 @@ void SetInitVel(fx mul)
             }
         }
     }
-    const fx speed = FxMul(mul, kWalkSpeed);
+    const fx speed = FxMul(mul, WalkSpeed());
     t.mVelX = vx * speed;
     t.mVelY = vy * speed;
     if (vx != 0 && vy != 0)
@@ -413,7 +427,7 @@ void DashLogic()
     }
     else if (d.mDashX != 0)
     {
-        t.mVelX = fx(kWalkSpeed.mV * d.mDashX);
+        t.mVelX = fx(WalkSpeed().mV * d.mDashX);
     }
     if (d.mDashY > 0 && !key_is_down(KEY_DOWN))
     {
@@ -425,7 +439,7 @@ void DashLogic()
     }
     else if (d.mDashY != 0)
     {
-        t.mVelY = fx(kWalkSpeed.mV * d.mDashY);
+        t.mVelY = fx(WalkSpeed().mV * d.mDashY);
     }
 }
 
@@ -464,7 +478,7 @@ void SlippingLogic()
     }
     d.mFallTimer -= kFxTick;
     const bool dashing = d.mDashX != 0 || d.mDashY != 0;
-    if ((dashing && d.mFallTimer < kFallTimerDefault / 2) || d.mFallTimer < 0)
+    if ((dashing && d.mFallTimer < FallTimerDefault() / 2) || d.mFallTimer < 0)
     {
         Game_PlaySfx("fall_in_hole");
         d.mAnimState = ANIM_FALL;
@@ -682,11 +696,11 @@ void LadderLogic()
         PlayerPlay("climb");
         if (key_is_down(KEY_UP))
         {
-            t.mVelY = -FxMul(kWalkSpeed, FxF(0.7f));
+            t.mVelY = -FxMul(WalkSpeed(), FxF(0.7f));
         }
         else if (key_is_down(KEY_DOWN))
         {
-            t.mVelY = FxMul(kWalkSpeed, FxF(0.7f));
+            t.mVelY = FxMul(WalkSpeed(), FxF(0.7f));
         }
         else
         {
@@ -694,11 +708,11 @@ void LadderLogic()
         }
         if (key_is_down(KEY_LEFT))
         {
-            t.mVelX = -kWalkSpeed;
+            t.mVelX = -WalkSpeed();
         }
         else if (key_is_down(KEY_RIGHT))
         {
-            t.mVelX = kWalkSpeed;
+            t.mVelX = WalkSpeed();
         }
         d.mStepTimer -= kFxTick;
         if (d.mStepTimer < 0 && t.mVelY != 0)
@@ -849,10 +863,10 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
     switch (ev)
     {
     case MAPEV_FALL:
-        if (d.mState != PS_AIR && !d.mIsSlipping && !d.mHasFallen)
+        if (d.mState != PS_AIR && !d.mIsSlipping && !d.mHasFallen && !gFuckItMode)
         {
             d.mIsSlipping = true;
-            d.mFallTimer = d.mJustLanded ? -kFxOne : kFallTimerDefault;
+            d.mFallTimer = d.mJustLanded ? -kFxOne : FallTimerDefault();
         }
         d.mFallPointX = tileX;
         d.mFallPointY = tileY;
@@ -878,7 +892,7 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
         {
             d.mAddVelX = dir == TOUCH_RIGHT ? kConveyorVel : (dir == TOUCH_LEFT ? -kConveyorVel : 0);
             d.mAddVelY = dir == TOUCH_DOWN ? kConveyorVel : (dir == TOUCH_UP ? -kConveyorVel : 0);
-            if (!d.mRaft)
+            if (!d.mRaft && !gFuckItMode)
             {
                 d.mSlow = true;
                 d.mSlowMul = 0.5f;
@@ -909,6 +923,16 @@ void PlayerUpdate(Entity& self)
         {
             d.mInvincible = false;
         }
+    }
+    if (gFuckItMode)
+    {
+        Ecs_SetSolid(self, false);
+        d.mFuckIt = true;
+    }
+    else if (d.mFuckIt)
+    {
+        Ecs_SetSolid(self, true);
+        d.mFuckIt = false;
     }
     if (!Ecs_Solid(self) && d.mJustFell)
     {
@@ -1802,11 +1826,15 @@ Facing Player_Facing()
 void Player_ReceiveDamage(int amount, bool knockback, bool playSound)
 {
     PlayerData& d = P();
-    if (d.mInvincible || d.mHasFallen)
+    if (d.mInvincible || d.mHasFallen || gFuckItMode)
     {
         return;
     }
-    GameState_SetHealth(gGame.mCurHealth - amount);
+    if (!gSettings.mInvincible)
+    {
+        // (the setting only keeps the health)
+        GameState_SetHealth(gGame.mCurHealth - amount);
+    }
     if (playSound)
     {
         Game_PlaySfx("player_hit_1");

@@ -79,6 +79,8 @@ struct GameState final
     uint32_t mBossDefeated; // EventRegister.BossDefeated, by map index
     uint32_t mLeftAfterBoss; // EventRegister.LeftAfterBoss, by map index
     uint32_t mNexusPortals;  // EventRegister.ActivatedNexusPortals, by map index
+    uint8_t mGameMode;       // GlobalState.GameMode (the cheats': not saved)
+    bool mAlwaysCellGraphics; // GlobalState.AlwaysCellGraphics (a cheat's: not saved)
 
     const char* mModeName; // what anodyne.cpp's main loop is showing (for the probe)
     const char* mMapName;  // CURRENT_MAP_NAME
@@ -88,6 +90,38 @@ struct GameState final
 };
 
 extern GameState gGame;
+
+// GameMode
+enum GameModeKind : uint8_t
+{
+    GAME_MODE_NORMAL,
+    GAME_MODE_CHAOS,
+    GAME_MODE_EXTREME_CHAOS,
+};
+
+extern bool gFuckItMode; // GlobalState.FUCK_IT_MODE_ON: a cheat's, kept over a new game
+
+// GlobalState.settings (Settings.json in the C#): the config menu's values. Selector settings hold the option index.
+struct Settings final
+{
+    float mMusicVolume = 1.0f;
+    float mSfxVolume = 1.0f;
+    uint8_t mLanguage = 0; // the config menu's language list: en, es, it, pt-br, zh-cn
+    bool mAutosave = true;
+    bool mPauseOnUnfocus = true;
+    bool mFastText = false;
+    bool mInvincible = false;
+    bool mExtendedCoyote = false;
+    bool mGuaranteedHealth = false;
+    uint8_t mResolution = 0; // Windowed, Scaled, Stretch
+    uint8_t mScale = 1;      // 1x... SpriteDrawer.MaxScale (3x, or the most there is room for)
+    uint8_t mFps = 0;        // Fixed, VSync, Unlocked
+    float mFlashBrightness = 1.0f;
+    float mFlashEasing = 0.0f;
+    bool mScreenshake = true;
+};
+
+extern Settings gSettings;
 
 // The kMaps index of a map name (-1 if unknown); anodyne.cpp has the map list.
 int Game_MapIndex(const char* name);
@@ -186,3 +220,7 @@ const char* Game_CurrentSong();
 void Game_IgnoreMusicNextUpdate();
 float Game_SongVolume();
 void Game_SetSongVolume(float volume);
+
+// GlobalState.GameState.SetState<TitleState>(): out to the title at the end of the frame.
+void Game_RequestTitle();
+bool Game_TakeTitleRequest();

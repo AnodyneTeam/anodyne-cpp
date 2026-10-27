@@ -1,8 +1,10 @@
 #include "world.h"
+
 #include "dialog.h"
 #include "entities.h"
 #include "pause.h"
 #include "player.h"
+#include "save.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -264,6 +266,14 @@ struct Flash final
     bool mRed;
 };
 Flash gFlash = {};
+
+float gQuickSaveTimer = 5; // PlayState.QuickSaveTimer: no quick save for 5s after it starts
+bool gQuickLoad = false;   // PlayState.DoQuickLoad
+float gTexRandomTimer = 0; // PlayState._texRandomTimer
+bool gForceTextureReload = false;
+// ResourceManager._randomizeabletextureHandles.Count: the textures the C# had loaded by the cheats line, one RNG draw each
+// when chaos picks them new ones (the port's own sprites stay as they are).
+constexpr int kRandomizableTextures = 232;
 
 // The red flash tints the palettes towards red (all but the backdrop, which also fills the margins round the
 // playfield). An entry something else rewrites meanwhile becomes the new base, and at the end only the entries
@@ -971,7 +981,7 @@ void WarpExit()
     const float transitionOut = gMapName && strcmp(gMapName, "BLANK") == 0 ? 1.568f : 0.785f;
     const float alpha = gWarp.mAlpha + (1.0f / transitionOut) * kDeltaTime;
     gWarp.mAlpha = alpha > 1.0f ? 1.0f : alpha;
-    if (gWarp.mAlpha == 1.0f)
+    if (gWarp.mAlpha == 1.0f || gFuckItMode)
     {
         WarpNow();
         Player_SetInvincible(true);
@@ -985,6 +995,10 @@ void WarpExit()
 // PlayState S_MAP_ENTER: back from black; the player gets control when it is clear.
 void WarpEnter()
 {
+    if (gFuckItMode)
+    {
+        gWarp.mPixelation = 1.0f;
+    }
     gWarp.mPixelation = gWarp.mPixelation - 30.0f * kDeltaTime;
     gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
     const float alpha = gWarp.mAlpha + (-1.0f / 0.8f) * kDeltaTime;
@@ -1082,6 +1096,11 @@ void CheckForTransition()
 void StateTransition()
 {
     Player_SetInvincible(true);
+    // (UpdateCamera: fuck-it mode jumps straight there)
+    if (gFuckItMode)
+    {
+        MoveCameraToGrid();
+    }
     const bool doneX = MoveTo(gCamX, Fx(gGridX * kScreenPx), kScrollSpeed);
     const bool doneY = MoveTo(gCamY, Fx(gGridY * kScreenPx), kScrollSpeed);
     if (doneX && doneY)
@@ -1340,8 +1359,8 @@ void Game_SetSongVolume(float volume)
 
 void Screen_Shake(fx intensity, fx seconds, uint8_t dirs)
 {
-    // (ScreenShake.Shake: _shakeUpdate carries on)
-    gShake.mTime = seconds;
+    // (ScreenShake.Shake: _shakeUpdate carries on; no shaking with the setting off)
+    gShake.mTime = gSettings.mScreenshake ? seconds : 0;
     gShake.mIntensity = intensity;
     gShake.mDirs = dirs;
     gShake.mX = gShake.mY = 0;
@@ -1667,6 +1686,43 @@ void World_NewPlayState()
     // (the title starts a new PlayState, with a new Player and so a new PlayerLight)
     gPlayerLight->mV->mScale = Fx(2);
     gPlayerLight->Data<PlayerLightData>().mFlickerTimer = FxSec(6 / 30.0f);
+    gQuickSaveTimer = 5;
+    gQuickLoad = false;
+    gTexRandomTimer = 0;
+}
+
+void World_QuickSave()
+{
+    if (gQuickSaveTimer > 0)
+    {
+        Game_PlaySfx("noise_step_1");
+        return;
+    }
+    Game_PlaySfx("menu_select");
+    const Entity& p = *World_Player();
+    Save_QuickWrite(gGame.mCurrentMap, FxTrunc(p.mT->mX), FxTrunc(p.mT->mY));
+}
+
+void World_ForceTextureReload()
+{
+    gForceTextureReload = true;
+}
+
+void World_RequestQuickLoad()
+{
+    gQuickLoad = true;
+}
+
+bool World_TakeQuickLoad()
+{
+    // (PlayState.QuickLoad: nothing happens without a quick save)
+    const bool load = gQuickLoad && Save_QuickExists();
+    gQuickLoad = false;
+    if (load)
+    {
+        Game_PlaySfx("menu_select");
+    }
+    return load;
 }
 
 // The map's palette, tileset and layers (into VRAM / EWRAM): what the BG layers draw.
@@ -1867,6 +1923,7 @@ void SwitchBroom(bool next)
 // PlayState.Update.
 void World_Update()
 {
+    gQuickSaveTimer -= kDeltaTime;
     Ecs_ReleaseSpawned();
     const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive || Pause_IsOpen();
     bool updateEntities = !gDeath.mActive && !Pause_IsOpen() && !gView.mActive;
@@ -1999,6 +2056,27 @@ void World_Update()
     {
         gGame.mEquippedBroomChanged = false;
         Player_UpdateBroomType();
+    }
+    if (gGame.mGameMode == GAME_MODE_EXTREME_CHAOS)
+    {
+        gTexRandomTimer += kDeltaTime;
+        if (gTexRandomTimer >= 0.8f)
+        {
+            gForceTextureReload = true;
+            gTexRandomTimer = 0;
+        }
+    }
+    if (gForceTextureReload)
+    {
+        // ResourceManager.ReloadRandomizableTextures
+        gForceTextureReload = false;
+        if (gGame.mGameMode != GAME_MODE_NORMAL)
+        {
+            for (int i = 0; i < kRandomizableTextures; i++)
+            {
+                Rng_NextDouble();
+            }
+        }
     }
     // PlayState.UpdateHealth
     if (!gDialogOpen && !gCutscene.mFn && !gDeath.mActive && !Pause_IsOpen() && !gWarp.mPending && gGame.mCurHealth == 0)

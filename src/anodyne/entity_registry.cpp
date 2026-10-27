@@ -291,6 +291,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_CrowdRail;
     case EPT_MitraCliff:
         return Spawn_MitraCliff;
+    case EPT_DeathPlace:
+        return Spawn_DeathPlace;
     default:
         return nullptr;
     }

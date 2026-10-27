@@ -19,6 +19,7 @@
 #include "map_data.h"
 #include "world.h"
 #include "entities.h"
+#include "pause.h"
 #include "title.h"
 #include "pixelate_test.hpp"
 
@@ -688,6 +689,44 @@ int main()
                     warpShown = false;
                     mode = AppMode::Credits;
                     Credits_Enter(objVram);
+                }
+                else if (World_TakeQuickLoad())
+                {
+                    // PlayState.QuickLoad: the quick save's progress, a new play state where it was made
+                    int map = 0;
+                    int x = 0;
+                    int y = 0;
+                    Pause_Close();
+                    Dialog_Close();
+                    GameState_Reset();
+                    Dialog_ResetProgress();
+                    Save_QuickRead(map, x, y);
+                    World_NewPlayState();
+                    warpShown = false;
+                    Mosaic_End();
+                    ScreenBlack(true);
+                    blackFrames = 2;
+                    gCurrentMap = static_cast<uint32_t>(map);
+                    LoadWorldMap(true);
+                    World_PlaceAt(x, y, 0);
+                }
+                else if (Game_TakeTitleRequest())
+                {
+                    // GameState.SetState<TitleState>: every effect is deactivated
+                    Pause_Close();
+                    Dialog_Close();
+                    warpShown = false;
+                    Ecs_FlushRenderCaches();
+                    Mosaic_End();
+                    Screen_StopWave();
+                    Screen_EndEnding();
+                    Screen_SetFadeWhite(false);
+                    Screen_SetFade(0);
+                    REG_BLDCNT = 0;
+                    REG_BLDY = 0;
+                    oam_init(oam_mem, 128);
+                    mode = AppMode::Title;
+                    Title_Enter(objVram);
                 }
             }
         }

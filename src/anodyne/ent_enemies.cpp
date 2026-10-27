@@ -29,7 +29,7 @@ Entity* Die(Entity& self, float dropChance, bool big = false)
         Preset_SetAlive(*self.mPreset, false);
     }
     self.mExists = false;
-    if (Rng_NextDouble() < dropChance)
+    if (gSettings.mGuaranteedHealth || Rng_NextDouble() < dropChance)
     {
         // (the C#'s pickup is the dropper's sub-entity, just after it in the lists)
         if (Entity* drop = Spawn_HealthDrop(self.mT->mX, self.mT->mY, big))

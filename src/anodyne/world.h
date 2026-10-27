@@ -12,6 +12,13 @@
 bool World_Init(ObjVramAllocator& vram);
 // The title screen starts a new play state: what the C# makes afresh with it (the player's light).
 void World_NewPlayState();
+// The pause menu's quick save (PlayState.QuickSave: refused for 5s after a new play state), and its quick load,
+// done at the end of the frame (World_TakeQuickLoad: true when there is a quick save to go back to).
+void World_QuickSave();
+void World_RequestQuickLoad();
+bool World_TakeQuickLoad();
+// GlobalState.ForceTextureReload: the cheats' chaos modes put random textures on everything, at the end of the frame.
+void World_ForceTextureReload();
 
 // Loads the map's palette/tileset into VRAM and its collision into RAM, then puts the player on a free spot.
 // mapName (e.g. "FIELDS") selects the map's foot-overlay sprites; `audio` is its music/ambience settings and `scroll` its scrolling background (if any).

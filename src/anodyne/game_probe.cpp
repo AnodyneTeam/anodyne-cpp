@@ -10,6 +10,7 @@
 #include "entities.h"
 #include "entity_classes.h"
 #include "game_state.h"
+#include "pause.h"
 #include "player.h"
 #include "world.h"
 
@@ -69,7 +70,8 @@ extern "C" int GameProbe_Json(char* buf, int cap)
           Str(gGame.mMapName), p.mGridX, p.mGridY, p.mTransition ? "true" : "false", Dialog_IsOpen() ? "true" : "false");
     // GlobalState.Dialogue is set: a box that is not a cutscene's DialogueEvent
     o.Add("\"rng\":%u,", static_cast<unsigned>(Rng_Calls()));
-    o.Add("\"globalDialog\":%s,", Dialog_IsOpen() && !Game_DialogueIsCutscene() ? "true" : "false");
+    // (the pause menu's text box is its own, not GlobalState.Dialogue)
+    o.Add("\"globalDialog\":%s,", Dialog_IsOpen() && !Game_DialogueIsCutscene() && !Pause_IsOpen() ? "true" : "false");
     const Entity& pe = *Player_Entity();
     PlayerProbe pp;
     Player_GetProbe(pp);
@@ -215,9 +217,11 @@ extern "C" int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap)
     World_GetPlayerInfo(p);
     // (the C#'s credits still show the play state's last map and player)
     const bool play = gGame.mModeName && (!strcmp(gGame.mModeName, "play") || !strcmp(gGame.mModeName, "credits"));
+    // (the pause menu's text box is its own, not GlobalState.Dialogue)
+    const bool dialogue = Dialog_IsOpen() && !Game_DialogueIsCutscene() && !Pause_IsOpen();
     return snprintf(buf, static_cast<size_t>(cap), "%llu\t%s\t%d\t%d\t%d\t%d\tb%dk%dc%d", frame,
                     play ? Str(gGame.mMapName) : "", play ? p.mX : 0, play ? p.mY : 0, gGame.mCurHealth,
-                    Dialog_IsOpen() && !Game_DialogueIsCutscene() ? 1 : 0, gGame.mEquippedBroom != 0 ? 1 : 0, Inventory_MapKeys(),
+                    dialogue ? 1 : 0, gGame.mEquippedBroom != 0 ? 1 : 0, Inventory_MapKeys(),
                     Inventory_CardCount());
 }
 
