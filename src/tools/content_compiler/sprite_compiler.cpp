@@ -400,6 +400,46 @@ std::vector<CompiledSpriteSheet> SpriteCompiler::CompileAll(const ContentPaths& 
             path = "placeholder.png";
             lodepng::encode(path, px, 16, 16);
         }
+        else if (std::string(spec.mTexture).rfind("solid_", 0) == 0)
+        {
+            // SolidColorRenderer: one frame per colour (Color.Black, Yellow, Red, Green (0, 128, 0), Blue).
+            struct Colour
+            {
+                unsigned char mR, mG, mB;
+            };
+            const std::string name = spec.mTexture;
+            std::vector<Colour> colours;
+            if (name == "solid_square")
+            {
+                colours = { { 0, 0, 0 }, { 255, 255, 0 } };
+            }
+            else if (name == "solid_dot")
+            {
+                colours = { { 255, 0, 0 } };
+            }
+            else
+            {
+                colours = { { 0, 0, 0 }, { 255, 0, 0 }, { 0, 128, 0 }, { 0, 0, 255 } };
+            }
+            const unsigned fw = static_cast<unsigned>(spec.mFrameWidth);
+            const unsigned w = fw * static_cast<unsigned>(colours.size());
+            const unsigned h = static_cast<unsigned>(spec.mFrameHeight);
+            std::vector<unsigned char> px(w * h * 4);
+            for (unsigned y = 0; y < h; y++)
+            {
+                for (unsigned x = 0; x < w; x++)
+                {
+                    unsigned char* p = &px[(y * w + x) * 4];
+                    const Colour& c = colours[x / fw];
+                    p[0] = c.mR;
+                    p[1] = c.mG;
+                    p[2] = c.mB;
+                    p[3] = 255;
+                }
+            }
+            path = std::string(spec.mTexture) + ".png";
+            lodepng::encode(path, px, w, h);
+        }
         if (path.empty())
         {
             printf("ERROR: sprite texture %s.png not found\n", spec.mTexture);

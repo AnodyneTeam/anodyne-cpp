@@ -54,6 +54,13 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Sets GlobalState.checkpoint (what the bot does on the death screen).</summary>
+        /// <summary>The game's own frame count (RecordingManager.Now's), set first when `set` is given.</summary>
+        public long GameFrame(long? set = null)
+        {
+            _out.WriteLine(set.HasValue ? $"gameframe {set.Value}" : "gameframe");
+            return long.Parse(_in.ReadLine());
+        }
+
         public bool SetCheckpoint(string map, int x, int y)
         {
             _out.WriteLine($"checkpoint {map} {x} {y}");

@@ -13,6 +13,7 @@ set(ANODYNE_GAME_SOURCES
     ent_gadgets.cpp
     ent_enemies.cpp
     ent_npcs.cpp
+    ent_debug.cpp
     ecs.cpp
     game_state.cpp
     game_probe.cpp

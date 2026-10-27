@@ -247,6 +247,50 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_ShopKeep;
     case EPT_Door:
         return Spawn_Door;
+    case EPT_BigDoor:
+        return Spawn_BigDoor;
+    case EPT_BigTree:
+        return Spawn_BigTree;
+    case EPT_TestNpc:
+        return Spawn_TestNpc;
+    case EPT_DevEaster:
+        return Spawn_DevEaster;
+    case EPT_SoundTestConsole:
+        return Spawn_SoundTestConsole;
+    case EPT_BlackThing:
+        return Spawn_BlackThing;
+    case EPT_CliffQuest:
+        return Spawn_CliffQuest;
+    case EPT_BeachQuest:
+        return Spawn_BeachQuest;
+    case EPT_ForestQuest:
+        return Spawn_ForestQuest;
+    case EPT_FieldsQuest:
+        return Spawn_FieldsQuest;
+    case EPT_CellQuest:
+        return Spawn_CellQuest;
+    case EPT_SpaceQuest:
+        return Spawn_SpaceQuest;
+    case EPT_GoQuest:
+        return Spawn_GoQuest;
+    case EPT_CubeKing:
+        return Spawn_CubeKing;
+    case EPT_FieldsEaster:
+        return Spawn_FieldsEaster;
+    case EPT_Thorax:
+        return Spawn_Thorax;
+    case EPT_Mushroom:
+        return Spawn_Mushroom;
+    case EPT_Olive:
+        return Spawn_Olive;
+    case EPT_ForestBriar:
+        return Spawn_ForestBriar;
+    case EPT_BeachBriar:
+        return Spawn_BeachBriar;
+    case EPT_CrowdRail:
+        return Spawn_CrowdRail;
+    case EPT_MitraCliff:
+        return Spawn_MitraCliff;
     default:
         return nullptr;
     }

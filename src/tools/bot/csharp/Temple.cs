@@ -427,15 +427,16 @@ namespace AnodyneSharp.Recording
         public override IEnumerable<object> Run()
         {
             yield return Say("Extras: menus, cheats, the death screen");
-            yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
-            yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
-            yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
-            // Debug World, where the last card left us (a pocket ringed with pits: wade its channel north). The big door (step on its
+            // Debug World first, where the last card left us (a pocket ringed with pits: wade its channel north); the death screen
+            // and the title both come back at the Nexus checkpoint, with no way into Debug on foot. The big door (step on its
             // sill, off, on again: the card count lock, then it opens), the keys lying about, the sound test console (the music and
             // sound lists), the test NPC, and the black thing: jump in it 50 times. Out by the menu.
             yield return Section("extras debug world", () => Exec("O1 X1 a1 P720,440 a0 W10 >714,90 W5 G714,64 W400 D24 W30 U30 W400 P56,40 W5 P88,56 W5 P56,184 W5"
                 + " I32,192,d W30 A1 W10 R1 W8 R1 W8 A1 W60 C1 W10 D1 W8 A1 W10 R1 W8 A1 W30 C1 W10 C1 W10 C1 W10 C1 W30 I96,240,d W20 T W20 P872,232 W10"
                 + string.Concat(System.Linq.Enumerable.Repeat(" C1 W10", 52)) + " W30 n0 W120 `x_debug"));
+            yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
+            yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
+            yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
             // The Go quest: a word with each of its NPCs in turn (each one's talk moves it on: Cliff, Beach, Forest, Fields, Cell, Suburb,
             // Space), which opens Go's door 71 (walled in: dug to) up to the note rock. On the way: the Cliff dog, Mitra in Fields, the
             // Space cube kings.

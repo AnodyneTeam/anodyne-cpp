@@ -200,6 +200,12 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
         {
             SendLine(Peek(a, b));
         }
+        else if (!strcmp(cmd, "gameframe"))
+        {
+            // "gameframe": the game's own frame count (RecordingManager.Now's); "gameframe N" sets it
+            const bool set = sscanf(line.c_str(), "gameframe %u", &a) == 1;
+            SendLine(std::to_string(GameProbe_GameFrame(set, a)));
+        }
         else if (!strcmp(cmd, "state"))
         {
             SendLine(StateLine(frame));

@@ -1130,6 +1130,9 @@ struct MitraData final
     bool mFacePlayer;
     bool mOnBike;
     bool mFields; // MitraFields (else MitraOverworld)
+    bool mCliff;  // MitraCliff: rides in to give the jump shoes
+    bool mPlayerJumped;
+    bool mExiting;
     bool mInitial;
     bool mGivenQuestHint;
     bool mGivenInitialHint; // only give the dungeon/windmill hint once
@@ -1321,13 +1324,178 @@ bool MitraExit(Entity& self)
     }
 }
 
+// ---- FadeSwitchSong (Events/FadeSwitchSong.cs): fades the song out, switches to `next` and fades that in (its
+// VolumeEvent(0, 1.6f), whose target it sets to 1 when it goes)
+struct FadeSwitchSongData final
+{
+    const char* mNext;
+    float mTarget;
+    bool mReached;
+    bool mSwitched;
+};
+
+void FadeSwitchSongUpdate(Entity& self)
+{
+    FadeSwitchSongData& d = self.Data<FadeSwitchSongData>();
+    if (!d.mSwitched && d.mReached)
+    {
+        Game_PlaySong(d.mNext, 0);
+        d.mTarget = 1;
+        d.mReached = false;
+        d.mSwitched = true;
+    }
+    if (!d.mReached)
+    {
+        fx volume = FxF(Game_SongVolume());
+        d.mReached = MoveTo(volume, FxF(d.mTarget), FxF(1.6f));
+        Game_SetSongVolume(volume.mV);
+    }
+    else
+    {
+        self.mExists = false;
+    }
+}
+
+const EntityClass kFadeSwitchSong = {
+    "FadeSwitchSong", FadeSwitchSongUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+void SpawnFadeSwitchSong(const char* next)
+{
+    Entity* e = Ecs_Create(kFadeSwitchSong, 0, 0, PART_BRAIN);
+    if (!e)
+    {
+        return;
+    }
+    Ecs_SetSolid(*e, false);
+    Ecs_MarkSpawned(*e);
+    FadeSwitchSongData& d = e->Data<FadeSwitchSongData>();
+    d = FadeSwitchSongData();
+    d.mNext = next;
+}
+
+// MitraCliff.Entrance: rides in from the right to the player, gets off and hands over the shoes.
+bool MitraCliffEntrance(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    Transform& t = *self.mT;
+    const Entity& p = *World_Player();
+    switch (d.mStep)
+    {
+    case 0:
+        SpawnFadeSwitchSong("mitra");
+        Game_ShowCutsceneDialogueFor("misc", "any", "mitra", 0);
+        d.mStep++;
+        return false;
+    case 1:
+        t.mVelX = -Fx(37);
+        d.mStep++;
+        [[fallthrough]];
+    case 2:
+        if (t.mX > p.mT->mX)
+        {
+            return false;
+        }
+        t.mVelX = t.mVelY = 0;
+        MitraOnBike(self, false);
+        if (d.mBike)
+        {
+            d.mBike->mT->mX = t.mX - kFxOne;
+            d.mBike->mT->mY = t.mY - kFxOne;
+            d.mBike->mExists = true;
+        }
+        if (gGame.mTradeState == TRADE_SHOES)
+        {
+            Game_ShowCutsceneDialogueFor("misc", "any", "mitra", 1);
+            gGame.mTradeState = TRADE_NONE;
+        }
+        else
+        {
+            Game_ShowCutsceneDialogueFor("misc", "any", "mitra", 2);
+        }
+        d.mStep++;
+        return false;
+    default:
+        gGame.mCanJump = true;
+        return true;
+    }
+}
+
+// MitraCliff.Exit: back on the bike and off the screen to the right.
+bool MitraCliffExit(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    Transform& t = *self.mT;
+    switch (d.mStep)
+    {
+    case 0:
+        Game_ShowCutsceneDialogueFor("misc", "any", "mitra", 3);
+        d.mStep++;
+        return false;
+    case 1:
+        if (d.mBike)
+        {
+            d.mBike->mExists = false;
+        }
+        MitraOnBike(self, true);
+        t.mVelX = Fx(37);
+        Ecs_SetSolid(self, false); // (no pushing the player off the screen)
+        d.mStep++;
+        [[fallthrough]];
+    case 2:
+        // until it wraps round, off the screen (MapUtilities.GetInGridPosition)
+        if (t.mX - Fx(FxFloor(t.mX / 160) * 160) > Fx(10))
+        {
+            return false;
+        }
+        Preset_SetAlive(*self.mPreset, false);
+        self.mExists = false;
+        SpawnFadeSwitchSong("cliff");
+        return true;
+    default:
+        return true;
+    }
+}
+
+void MitraCliffUpdate(Entity& self)
+{
+    MitraData& d = self.Data<MitraData>();
+    const Entity& p = *World_Player();
+    if (Player_State() == PS_AIR)
+    {
+        d.mPlayerJumped = true;
+    }
+    const fx gx = p.mT->mX - Fx(gGame.mGridX * 160);
+    const fx gy = p.mT->mY - Fx(gGame.mGridY * 160);
+    if (!self.mV->mVisible && gy > Fx(50))
+    {
+        self.mT->mX = Fx(gGame.mGridX * 160 + 180);
+        self.mT->mY = Fx(gGame.mGridY * 160 + 80);
+        self.mT->mLastX = self.mT->mX;
+        self.mT->mLastY = self.mT->mY;
+        self.mV->mVisible = true;
+        d.mStep = 0;
+        Game_StartCutscene(self, MitraCliffEntrance);
+    }
+    else if (!d.mExiting && self.mV->mVisible && (gx > Fx(135) || gy < Fx(49)))
+    {
+        d.mExiting = true;
+        d.mStep = 0;
+        Game_StartCutscene(self, MitraCliffExit);
+    }
+}
+
 void MitraUpdate(Entity& self)
 {
     MitraData& d = self.Data<MitraData>();
-    if (d.mFields)
+    if (d.mFields || d.mCliff)
     {
         Ecs_BaseUpdate(self);
         MitraFacePlayerPose(self);
+        if (d.mCliff)
+        {
+            MitraCliffUpdate(self);
+        }
         return;
     }
     const Entity& p = *World_Player();
@@ -1467,6 +1635,11 @@ bool MitraInteract(Entity& self, Facing)
     if (d.mFields)
     {
         MitraFieldsTalk(d);
+        return true;
+    }
+    if (d.mCliff)
+    {
+        Game_ShowDialogueFor("misc", "any", "mitra", d.mPlayerJumped ? 5 : 4);
         return true;
     }
     if (Event_Get("mitra.wares") == 0)
@@ -2591,6 +2764,42 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
     return e;
 }
 
+Entity* Spawn_MitraCliff(const MapEntity& preset, Entity&)
+{
+    if (gGame.mCanJump)
+    {
+        Preset_SetAlive(preset, false);
+        return nullptr;
+    }
+    Entity* e = Spawn_Basic(kMitra, preset, "mitra");
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mImmovable = true;
+    e->mV->mVisible = false;
+    MitraData& d = e->Data<MitraData>();
+    d.mCliff = true;
+    d.mFacePlayer = true;
+    d.mVolReached = true;
+    MitraOnBike(*e, true);
+    d.mBike = Ecs_Create(kBike, e->mT->mX, e->mT->mY, PART_VISUAL, &preset, e);
+    if (d.mBike)
+    {
+        Entity& b = *d.mBike;
+        Ecs_SetSheet(b, "bike", 20, 20);
+        b.mB->mW = 16;
+        b.mB->mH = 10;
+        b.mV->mOffX = Fx(2);
+        b.mV->mOffY = Fx(11);
+        b.mB->mImmovable = true;
+        Ecs_Play(b, "r");
+        b.mExists = false;
+    }
+    Ecs_PlayFacing(*e, "idle");
+    return e;
+}
+
 Entity* Spawn_MitraFields(const MapEntity& preset, Entity&)
 {
     Entity* e = Spawn_Basic(kMitra, preset, "mitra");
@@ -3311,6 +3520,341 @@ const EntityClass kSuburbQuest = {
     "SuburbQuest", Ecs_BaseUpdate, nullptr, SeparateFromAny, SuburbQuestInteract, nullptr, nullptr, nullptr,
     0,             GROUP_PLAYER,   ECF_INTERACTABLE,
 };
+
+// ---- The other Go quest NPCs (QuestNPCs/*.cs): each one's quest_event line moves GoQuestProgress on from its step
+// (`step`: it also says it once at step + 1, if not said yet); otherwise quest_normal, or second (`helper`: the
+// QuestNPCHelper name, nullptr for the ones without a second line).
+struct QuestData final
+{
+    bool mPlayedQuest;
+};
+
+void QuestTalk(Entity& self, int step, const char* helper)
+{
+    QuestData& d = self.Data<QuestData>();
+    const int progress = Event_Get("GoQuestProgress");
+    if ((progress == step || progress == step + 1) && !d.mPlayedQuest)
+    {
+        d.mPlayedQuest = true;
+        Game_ShowDialogue("generic_npc", "quest_event");
+        if (progress == step)
+        {
+            Event_Inc("GoQuestProgress");
+        }
+    }
+    else if (helper && NeedsSecond(helper, "quest_normal", "second"))
+    {
+        Game_ShowDialogue("generic_npc", "second");
+    }
+    else
+    {
+        Game_ShowDialogue("generic_npc", "quest_normal");
+    }
+}
+
+bool CliffQuestInteract(Entity& self, Facing)
+{
+    // (the move anim plays for the normal lines only)
+    QuestData& d = self.Data<QuestData>();
+    const int progress = Event_Get("GoQuestProgress");
+    if (!((progress == 0 || progress == 1) && !d.mPlayedQuest))
+    {
+        Ecs_Play(self, "move");
+    }
+    QuestTalk(self, 0, "cliff");
+    return true;
+}
+
+bool BeachQuestInteract(Entity& self, Facing)
+{
+    QuestTalk(self, 1, "beach");
+    Ecs_Play(self, "turn");
+    return true;
+}
+
+bool ForestQuestInteract(Entity& self, Facing)
+{
+    QuestTalk(self, 2, "forest");
+    return true;
+}
+
+bool FieldsQuestInteract(Entity& self, Facing)
+{
+    QuestTalk(self, 3, nullptr);
+    return true;
+}
+
+bool CellQuestInteract(Entity& self, Facing playerFacing)
+{
+    self.mFacing = FlipFacing(playerFacing);
+    Ecs_PlayFacing(self, "idle");
+    QuestTalk(self, 4, nullptr);
+    return true;
+}
+
+bool SpaceQuestInteract(Entity& self, Facing)
+{
+    QuestTalk(self, 6, nullptr);
+    return true;
+}
+
+bool GoQuestInteract(Entity& self, Facing)
+{
+    QuestData& d = self.Data<QuestData>();
+    if (Event_Get("GoQuestProgress") == 7 && !d.mPlayedQuest)
+    {
+        d.mPlayedQuest = true;
+        Game_ShowDialogue("generic_npc", "quest_event");
+    }
+    else
+    {
+        Game_ShowDialogue("generic_npc", "quest_normal");
+    }
+    return true;
+}
+
+#define QUEST_CLASS(var, name, interact)                                                                              \
+    const EntityClass var = {                                                                                          \
+        name, Ecs_BaseUpdate, nullptr, SeparateFromAny, interact, nullptr, nullptr, nullptr, 0, GROUP_PLAYER,          \
+        ECF_INTERACTABLE,                                                                                              \
+    }
+QUEST_CLASS(kCliffQuest, "CliffQuest", CliffQuestInteract);
+QUEST_CLASS(kBeachQuest, "BeachQuest", BeachQuestInteract);
+QUEST_CLASS(kForestQuest, "ForestQuest", ForestQuestInteract);
+QUEST_CLASS(kFieldsQuest, "FieldsQuest", FieldsQuestInteract);
+QUEST_CLASS(kCellQuest, "CellQuest", CellQuestInteract);
+QUEST_CLASS(kSpaceQuest, "SpaceQuest", SpaceQuestInteract);
+QUEST_CLASS(kGoQuest, "GoQuest", GoQuestInteract);
+#undef QUEST_CLASS
+
+// FieldsQuest.Bush: the broom on it gets a line.
+void QuestBushCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        Ecs_Separate(self, other);
+    }
+    else if (!Dialog_IsOpen())
+    {
+        Game_ShowDialogue("generic_npc", "bush");
+    }
+}
+
+const EntityClass kQuestBush = {
+    "Bush", Ecs_BaseUpdate, nullptr, QuestBushCollided, nullptr, nullptr, nullptr, nullptr,
+    0,      GROUP_PLAYER | GROUP_BROOM, 0,
+};
+
+// ---- CubeKing (Npc/Space/CubeKing.cs), FieldsEaster (Npc/Fields/FieldsEaster.cs), Thorax (Npc/Forest/Thorax.cs) -------
+bool CubeKingInteract(Entity& self, Facing)
+{
+    Game_ShowDialogue("cube_king", self.mPreset->mFrame == 10 ? "gray" : "color");
+    return true;
+}
+
+const EntityClass kCubeKing = {
+    "CubeKing", Ecs_BaseUpdate, nullptr, SeparateFromAny, CubeKingInteract, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+
+bool FieldsEasterInteract(Entity& self, Facing)
+{
+    // (the area given: Marvin, frame 16, was moved to the Beach)
+    static const char* const kScenes[4] = { "hamster", "chikapu", "electric", "marvin" };
+    const int i = self.mPreset->mFrame - 13;
+    Game_ShowDialogueFor("generic_npc", "FIELDS", i >= 0 && i < 4 ? kScenes[i] : "ERROR");
+    return true;
+}
+
+const EntityClass kFieldsEaster = {
+    "FieldsEaster", Ecs_BaseUpdate, nullptr, SeparateFromAny, FieldsEasterInteract, nullptr, nullptr, nullptr,
+    0,              GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+
+bool ThoraxInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("forest_npc", "thorax");
+    return true;
+}
+
+const EntityClass kThorax = {
+    "Thorax", Ecs_BaseUpdate, nullptr, SeparateFromAny, ThoraxInteract, nullptr, nullptr, nullptr,
+    0,        GROUP_PLAYER,   ECF_INTERACTABLE,
+};
+
+// ---- Mushroom (Npc/Forest/Mushroom.cs): wobbles and plays a note when the broom hits it
+void MushroomUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Ecs_AnimIs(self, "move") && Ecs_AnimFinished(self))
+    {
+        Ecs_Play(self, "idle@2");
+    }
+}
+
+void MushroomCollided(Entity& self, Entity& other)
+{
+    if (IsPlayer(other))
+    {
+        Ecs_Separate(self, other);
+    }
+    else if (!Ecs_AnimIs(self, "move"))
+    {
+        Ecs_Play(self, "move");
+        static const char* const kSfx[3] = { "cross2", "cross3", "cross4" };
+        Game_PlaySfxOneOf(kSfx, 3);
+    }
+}
+
+const EntityClass kMushroom = {
+    "Mushroom", MushroomUpdate, nullptr, MushroomCollided, nullptr, nullptr, nullptr, nullptr,
+    0,          GROUP_PLAYER | GROUP_BROOM, 0,
+};
+
+// ---- Olive (Npc/Fields/Olive.cs): hops right and back again
+struct OliveData final
+{
+    uint8_t mStep;
+    float mT;
+};
+
+void OliveUpdate(Entity& self)
+{
+    OliveData& d = self.Data<OliveData>();
+    Transform& t = *self.mT;
+    Ecs_BaseUpdate(self);
+    for (;;)
+    {
+        switch (d.mStep)
+        {
+        case 0:
+            d.mT = 0;
+            t.mVelX = t.mVelY = 0;
+            Ecs_Play(self, "idle");
+            self.mV->mHFlip = false;
+            d.mStep = 1;
+            [[fallthrough]];
+        case 1:
+            if (d.mT < 1.4f)
+            {
+                d.mT += kDeltaTime;
+                return;
+            }
+            Ecs_Play(self, "hop");
+            t.mVelX = Fx(25);
+            d.mStep = 2;
+            [[fallthrough]];
+        case 2:
+            if (!Ecs_AnimFinished(self))
+            {
+                return;
+            }
+            t.mVelX = t.mVelY = 0;
+            Ecs_Play(self, "idle");
+            d.mT = 0;
+            d.mStep = 3;
+            [[fallthrough]];
+        case 3:
+            if (d.mT < 1.6f)
+            {
+                d.mT += kDeltaTime;
+                return;
+            }
+            self.mV->mHFlip = true;
+            t.mVelX = -Fx(25);
+            Ecs_Play(self, "hop");
+            d.mStep = 4;
+            [[fallthrough]];
+        default:
+            if (!Ecs_AnimFinished(self))
+            {
+                return;
+            }
+            d.mStep = 0;
+            break;
+        }
+    }
+}
+
+bool OliveInteract(Entity&, Facing)
+{
+    Game_ShowDialogue("generic_npc", "easter_egg");
+    return true;
+}
+
+const EntityClass kOlive = {
+    "Olive", OliveUpdate,  nullptr, SeparateFromAny, OliveInteract, nullptr, nullptr, nullptr,
+    0,       GROUP_PLAYER, ECF_MAP_COLLISION | ECF_INTERACTABLE,
+};
+
+// ---- ForestBriar, BeachBriar (Npc/Forest/ForestBriar.cs, Npc/Beach/BeachBriar.cs): the Briar's shadow, walking off
+void ForestBriarUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    MoveTo(self.mV->mOpacity, kFxOne, FxF(0.3f));
+    const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+    if (!Ecs_Intersects(screen, Ecs_Hitbox(self)))
+    {
+        self.mExists = false;
+        Preset_SetAlive(*self.mPreset, false);
+    }
+}
+
+void BeachBriarUpdate(Entity& self)
+{
+    Ecs_BaseUpdate(self);
+    if (Preset_Alive(*self.mPreset))
+    {
+        if (MoveTo(self.mV->mOpacity, kFxOne, FxF(0.42f)))
+        {
+            self.mT->mVelY = 0;
+            Ecs_Play(self, "idle_d");
+        }
+    }
+    else if (MoveTo(self.mV->mOpacity, 0, FxF(0.6f)))
+    {
+        self.mExists = false;
+    }
+}
+
+void BeachBriarCollided(Entity& self, Entity&)
+{
+    if (self.mT->mVelY == 0)
+    {
+        self.mT->mVelY = Fx(15);
+        Preset_SetAlive(*self.mPreset, false);
+        Ecs_Play(self, "walk_d@2");
+    }
+}
+
+const EntityClass kForestBriar = {
+    "ForestBriar", ForestBriarUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+const EntityClass kBeachBriar = {
+    "BeachBriar", BeachBriarUpdate, nullptr, BeachBriarCollided, nullptr, nullptr, nullptr, nullptr, 0, GROUP_PLAYER, 0,
+};
+
+const EntityClass kCrowdRail = {
+    "CrowdRail", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+Entity* SpawnQuest(const EntityClass& cls, const MapEntity& preset, const char* sheet, const char* anim,
+                   int frameW = 16, int frameH = 16)
+{
+    Entity* e = Spawn_Basic(cls, preset, sheet, frameW, frameH);
+    if (!e)
+    {
+        return nullptr;
+    }
+    if (anim)
+    {
+        Ecs_Play(*e, anim);
+    }
+    e->mB->mImmovable = true;
+    e->Data<QuestData>() = QuestData();
+    return e;
+}
 } // namespace
 
 Entity* Spawn_SuburbWalker(const MapEntity& preset, Entity&)
@@ -3440,6 +3984,158 @@ Entity* Spawn_SuburbIndoors(const MapEntity& preset, Entity&)
             d.mScene = "festive";
             break;
         }
+    }
+    return e;
+}
+
+Entity* Spawn_CliffQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kCliffQuest, preset, "cliffs_npcs", "a");
+}
+
+Entity* Spawn_BeachQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kBeachQuest, preset, "beach_npcs", "a");
+}
+
+Entity* Spawn_ForestQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kForestQuest, preset, "forest_npcs", "a");
+}
+
+Entity* Spawn_FieldsQuest(const MapEntity& preset, Entity&)
+{
+    Entity* e = SpawnQuest(kFieldsQuest, preset, "fields_npcs", "a", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = e->mB->mH = 16;
+    e->mT->mY += Fx(16);
+    e->mT->mLastY = e->mT->mY;
+    e->mV->mOffY = Fx(16);
+    Entity* bush = Ecs_Create(kQuestBush, e->mT->mX + Fx(16), e->mT->mY, PART_VISUAL);
+    if (bush)
+    {
+        bush->mB->mW = bush->mB->mH = 16;
+        bush->mB->mImmovable = true;
+        Ecs_SetSheet(*bush, "fields_npcs", 16, 16);
+        Ecs_SetFrame(*bush, 30);
+        bush->mV->mLayer = LAYER_BG_ENTITIES;
+    }
+    return e;
+}
+
+Entity* Spawn_CellQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kCellQuest, preset, "cell_bodies", "idle_d");
+}
+
+Entity* Spawn_SpaceQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kSpaceQuest, preset, "space_npcs", "a@3");
+}
+
+Entity* Spawn_GoQuest(const MapEntity& preset, Entity&)
+{
+    return SpawnQuest(kGoQuest, preset, "note_rock", nullptr);
+}
+
+Entity* Spawn_CubeKing(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kCubeKing, preset, "space_npcs", 32, 32);
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, preset.mFrame);
+    Ecs_Play(*e, "a");
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_FieldsEaster(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kFieldsEaster, preset, "fields_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_SetFrameBase(*e, preset.mFrame * 2 + 80 - 26);
+    Ecs_Play(*e, "a@2");
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_Thorax(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kThorax, preset, "forest_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "move@2");
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_Mushroom(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kMushroom, preset, "forest_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "idle@2");
+    e->mB->mImmovable = true;
+    return e;
+}
+
+Entity* Spawn_Olive(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kOlive, preset, "forest_npcs");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, "idle");
+    e->mB->mImmovable = true;
+    e->Data<OliveData>() = OliveData();
+    return e;
+}
+
+namespace
+{
+Entity* SpawnShadowBriar(const MapEntity& preset, bool beach)
+{
+    Entity* e = Spawn_Basic(beach ? kBeachBriar : kForestBriar, preset, "briar");
+    if (!e)
+    {
+        return nullptr;
+    }
+    Ecs_Play(*e, beach ? "walk_d@2" : "walk_u@2");
+    e->mV->mOpacity = 0;
+    e->mT->mVelY = beach ? Fx(20) : -Fx(20);
+    return e;
+}
+} // namespace
+
+Entity* Spawn_ForestBriar(const MapEntity& preset, Entity&)
+{
+    return SpawnShadowBriar(preset, false);
+}
+
+Entity* Spawn_BeachBriar(const MapEntity& preset, Entity&)
+{
+    return SpawnShadowBriar(preset, true);
+}
+
+Entity* Spawn_CrowdRail(const MapEntity& preset, Entity&)
+{
+    Entity* e = Spawn_Basic(kCrowdRail, preset, "rail_CROWD", 16, 22, PART_VISUAL);
+    if (e)
+    {
+        Ecs_SetSolid(*e, false);
     }
     return e;
 }

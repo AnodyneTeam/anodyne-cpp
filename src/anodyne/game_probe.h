@@ -29,6 +29,8 @@ void GameProbe_Heal(void);
 // Parity replays: GlobalState.RNG as the C#'s is after `draws` numbers (reseeded with the deterministic seed). The
 // screen shake starts over too, unless `keepShake`.
 void GameProbe_SetRng(unsigned draws, bool keepShake);
+// Parity replays: the game's own frame count (RecordingManager.Now's), set to `frame` first if `set`.
+unsigned GameProbe_GameFrame(bool set, unsigned frame);
 
 #ifdef __cplusplus
 }

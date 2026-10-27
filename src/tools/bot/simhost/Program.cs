@@ -178,6 +178,7 @@ void Replay(string inputPath, string tracePath, int show)
         view.Hold(0, 11);
     }
     Console.WriteLine($"port in {view.Map} at its f{view.Frame}; the C# game at f{csFrame}");
+    long frameLead = view.GameFrame() - csFrame; // (the port's RecordingManager.Now frames, against the C#'s)
     // (the title screens draw random numbers differently: start play from the C#'s RNG position)
     var csEnts = new Dictionary<long, string[]>();
     string entsPath = Environment.GetEnvironmentVariable("SIMHOST_ENTS");
@@ -255,6 +256,7 @@ void Replay(string inputPath, string tracePath, int show)
             {
                 view.SetRng(long.Parse(re[1]), keepShake: true);
             }
+            view.GameFrame(f + frameLead);
         }
         else if (i > start)
         {

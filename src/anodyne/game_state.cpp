@@ -358,6 +358,12 @@ void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id)
     gCutsceneDialogue = true;
 }
 
+void Game_ShowCutsceneDialogueFor(const char* npc, const char* area, const char* scene, int id)
+{
+    Game_ShowDialogueFor(npc, area, scene, id);
+    gCutsceneDialogue = true;
+}
+
 bool Game_DialogueIsCutscene()
 {
     return gCutsceneDialogue;

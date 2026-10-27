@@ -429,6 +429,11 @@ uint32_t Game_Frame()
     return gGameFrame;
 }
 
+void Game_SetFrame(uint32_t frame)
+{
+    gGameFrame = frame;
+}
+
 float Game_SecondsSince(uint32_t thenFrame)
 {
     return static_cast<float>(static_cast<double>(FrameTicks(gGameFrame) - FrameTicks(thenFrame)) / 10000000.0);

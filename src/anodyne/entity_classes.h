@@ -42,6 +42,31 @@ Entity* Spawn_JumpTrigger(const MapEntity& preset, Entity& player);
 Entity* Spawn_DungeonEntrance(const MapEntity& preset, Entity& player);
 Entity* Spawn_DungeonEntranceRef(const MapEntity& preset, Entity& player);
 Entity* Spawn_BossKeyReset(const MapEntity& preset, Entity& player);
+// The Debug World (ent_debug.cpp).
+Entity* Spawn_BigDoor(const MapEntity& preset, Entity& player);
+Entity* Spawn_BigTree(const MapEntity& preset, Entity& player);
+Entity* Spawn_TestNpc(const MapEntity& preset, Entity& player);
+Entity* Spawn_DevEaster(const MapEntity& preset, Entity& player);
+Entity* Spawn_SoundTestConsole(const MapEntity& preset, Entity& player);
+Entity* Spawn_BlackThing(const MapEntity& preset, Entity& player);
+// The Go quest's NPCs (ent_npcs.cpp).
+Entity* Spawn_CliffQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_BeachQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_ForestQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_FieldsQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_CellQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_SpaceQuest(const MapEntity& preset, Entity& player);
+Entity* Spawn_GoQuest(const MapEntity& preset, Entity& player);
+// The other NPCs met on the way (ent_npcs.cpp).
+Entity* Spawn_CubeKing(const MapEntity& preset, Entity& player);
+Entity* Spawn_FieldsEaster(const MapEntity& preset, Entity& player);
+Entity* Spawn_Thorax(const MapEntity& preset, Entity& player);
+Entity* Spawn_Mushroom(const MapEntity& preset, Entity& player);
+Entity* Spawn_Olive(const MapEntity& preset, Entity& player);
+Entity* Spawn_ForestBriar(const MapEntity& preset, Entity& player);
+Entity* Spawn_BeachBriar(const MapEntity& preset, Entity& player);
+Entity* Spawn_CrowdRail(const MapEntity& preset, Entity& player);
+Entity* Spawn_MitraCliff(const MapEntity& preset, Entity& player);
 
 // Run-time entities other classes create.
 // A dust put down by the broom after its own entity went with an old screen.

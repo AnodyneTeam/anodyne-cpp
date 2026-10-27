@@ -198,6 +198,8 @@ int Rng_Range(int lo, int hi);
 // RecordingManager's frame count: one a game frame (the main loop's), whatever is showing.
 void Game_CountFrame();
 uint32_t Game_Frame();
+// Parity replays: the frame count picks up from `frame` (after the title, whose frames the two games count differently).
+void Game_SetFrame(uint32_t frame);
 // RecordingManager.Now - then, in seconds, for `then` a Game_Frame() (the C#'s TimeSpan of frame ticks at 60 a second).
 float Game_SecondsSince(uint32_t thenFrame);
 

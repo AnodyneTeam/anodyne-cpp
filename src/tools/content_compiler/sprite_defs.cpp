@@ -361,6 +361,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "closed", { 31 }, 1.0f, true },
         { "open", { 32 }, 1.0f, true },
         { "a", { 50, 51 }, 4.0f, true },
+        { "a@2", { 0, 1 }, 4.0f, true },  // variant-relative
     } },
     { "fields_npcs", 32, 32, {
         { "a", { 15, 15, 15, 15, 15, 15, 15, 15, 16, 17, 17, 18, 18 }, 18.0f, true },
@@ -744,6 +745,14 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "Hurt@cell", { 4, 6, 4, 6 }, 15.0f, false },
         { "Dying@cell", { 4, 6, 4, 6 }, 12.0f, false },
     } },
+    // SolidColorRenderer squares (made by the content compiler): black and yellow 20x20, a red dot, and black, red,
+    // green and blue 32x32.
+    { "solid_square", 20, 20, {
+    } },
+    { "solid_dot", 2, 2, {
+    } },
+    { "solid_32", 32, 32, {
+    } },
     { "slime_bullet", 8, 8, {
         { "move", { 0, 1 }, 10.0f, true },
     } },
@@ -759,6 +768,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "space_npcs", 16, 16, {
         { "a", { 20, 21 }, 6.0f, true },
         { "a@2", { 22, 23 }, 6.0f, true },
+        { "a@3", { 0, 10, 1, 11 }, 10.0f, true },
         { "walk_d", { 0, 1 }, 4.0f, true },  // variant-relative
         { "walk_r", { 2, 3 }, 4.0f, true },  // variant-relative
         { "walk_u", { 4, 5 }, 4.0f, true },  // variant-relative

@@ -221,6 +221,15 @@ extern "C" int GameProbe_TraceRow(unsigned long long frame, char* buf, int cap)
                     Inventory_CardCount());
 }
 
+extern "C" unsigned GameProbe_GameFrame(bool set, unsigned frame)
+{
+    if (set)
+    {
+        Game_SetFrame(frame);
+    }
+    return Game_Frame();
+}
+
 extern "C" void GameProbe_SetRng(unsigned draws, bool keepShake)
 {
     Rng_Seed(1234);

@@ -123,6 +123,28 @@
     X(BriarBoss)               \
     X(SageSentinel)            \
     X(Bunny)                    \
+    X(BigDoor)                  \
+    X(BigTree)                  \
+    X(TestNpc)                  \
+    X(DevEaster)                \
+    X(SoundTestConsole)         \
+    X(BlackThing)               \
+    X(CliffQuest)               \
+    X(BeachQuest)               \
+    X(ForestQuest)              \
+    X(FieldsQuest)              \
+    X(CellQuest)                \
+    X(SpaceQuest)               \
+    X(GoQuest)                  \
+    X(CubeKing)                 \
+    X(FieldsEaster)             \
+    X(Thorax)                   \
+    X(Mushroom)                 \
+    X(Olive)                    \
+    X(ForestBriar)              \
+    X(BeachBriar)               \
+    X(CrowdRail)                \
+    X(MitraCliff)               \
     X(BunnyRun)                 \
     X(Person)                   \
     X(SpikeRoller)              \
