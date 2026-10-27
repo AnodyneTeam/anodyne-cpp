@@ -19,10 +19,10 @@ index 6fdd594..30177ea 100644
              if (KeyInput.JustPressedKey(Keys.F12))
              {
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-index 42086cf..5dc3915 100644
+index 42086cf..d227252 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
 +++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneSharp.Shared.projitems
-@@ -326,6 +326,9 @@
+@@ -326,7 +326,11 @@
      <Compile Include="$(MSBuildThisFileDirectory)Utilities\AssemblyReaderUtil.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Utilities\MapUtilities.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Utilities\MathUtilities.cs" />
@@ -30,9 +30,11 @@ index 42086cf..5dc3915 100644
 +    <Compile Include="$(MSBuildThisFileDirectory)Utilities\FixSin.cs" />
 +    <Compile Include="$(MSBuildThisFileDirectory)Utilities\FixVector2.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)FSM\TimerState.cs" />
++    <Compile Include="$(MSBuildThisFileDirectory)FSM\UiTimerState.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Utilities\TextUtilities.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Beach.cs" />
-@@ -338,13 +341,13 @@
+     <Compile Include="$(MSBuildThisFileDirectory)Recording\BlueForest.cs" />
+@@ -338,13 +342,13 @@
      <Compile Include="$(MSBuildThisFileDirectory)Recording\Fields.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\GameView.cs" />
      <Compile Include="$(MSBuildThisFileDirectory)Recording\IGameView.cs" />
@@ -5330,9 +5332,18 @@ index f4baf0b..ad41dc3 100644
          IEnumerator<CutsceneEvent> _state;
  
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/DialogueState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/DialogueState.cs
-index 5ecf5f0..cdddc7f 100644
+index 5ecf5f0..7d20f8b 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/States/DialogueState.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/States/DialogueState.cs
+@@ -15,7 +15,7 @@ namespace AnodyneSharp.States
+     public class DialogueState : State
+     {
+ 
+-        private class BumpState : TimerState
++        private class BumpState : UiTimerState
+         {
+             public int halfBumps = 0;
+             public int linesBumped = 0;
 @@ -165,7 +165,7 @@ namespace AnodyneSharp.States
  
              _tb.Update();
@@ -5343,9 +5354,18 @@ index 5ecf5f0..cdddc7f 100644
  
          public override void DrawUI()
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/IntroState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/IntroState.cs
-index aaf4f86..21a7c47 100644
+index aaf4f86..f4c36ad 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/States/IntroState.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/States/IntroState.cs
+@@ -12,7 +12,7 @@ namespace AnodyneSharp.States
+ {
+     public class IntroState : State
+     {
+-        class WaitTimer : TimerState
++        class WaitTimer : UiTimerState
+         {
+             public WaitTimer()
+             {
 @@ -65,7 +65,7 @@ namespace AnodyneSharp.States
  
          public override void Update()
@@ -5356,9 +5376,36 @@ index aaf4f86..21a7c47 100644
  
          public override void DrawUI()
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
-index 96691fd..bdcccd8 100644
+index 96691fd..f9bf4c4 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
+@@ -48,7 +48,7 @@ namespace AnodyneSharp.States.MainMenu
+ 
+         private bool _secondNames;
+ 
+-        class TextDrawTimer : TimerState
++        class TextDrawTimer : UiTimerState
+         {
+             public TextDrawTimer()
+             {
+@@ -56,7 +56,7 @@ namespace AnodyneSharp.States.MainMenu
+             }
+         }
+ 
+-        class TextFadeTimer : TimerState
++        class TextFadeTimer : UiTimerState
+         {
+             public TextFadeTimer()
+             {
+@@ -64,7 +64,7 @@ namespace AnodyneSharp.States.MainMenu
+             }
+         }
+ 
+-        class PressEnterTimer : TimerState
++        class PressEnterTimer : UiTimerState
+         {
+             public PressEnterTimer()
+             {
 @@ -214,9 +214,9 @@ namespace AnodyneSharp.States.MainMenu
                          nexusImage.Position.Y = 180 - nexusImage.height;
                          nexusImage.velocity.Y = 0;

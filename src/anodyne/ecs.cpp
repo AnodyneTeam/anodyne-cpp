@@ -1,4 +1,18 @@
 #include "ecs.h"
+#include <execinfo.h> // RNGDBG
+#include <stdio.h>    // RNGDBG
+#include <stdlib.h>   // RNGDBG
+static void RngDbg() // RNGDBG
+{ // RNGDBG
+    static int from = getenv("RNGDBG_FROM") ? atoi(getenv("RNGDBG_FROM")) : -1; // RNGDBG
+    static int to = getenv("RNGDBG_TO") ? atoi(getenv("RNGDBG_TO")) : -1; // RNGDBG
+    const int f = static_cast<int>(Game_Frame()) - 340; // RNGDBG
+    if (f < from || f > to) { return; } // RNGDBG
+    void* bt[8]; // RNGDBG
+    const int n = backtrace(bt, 8); // RNGDBG
+    fprintf(stderr, "RNGDBG %d\n", f); // RNGDBG
+    backtrace_symbols_fd(bt + 1, n - 1, 2); // RNGDBG
+} // RNGDBG
 
 #include <math.h>
 #include <stdint.h>
@@ -517,6 +531,7 @@ int Rng_Next()
 {
     constexpr int kMbig = 0x7FFFFFFF;
     gRng.mCalls++;
+    RngDbg(); // RNGDBG
     if (++gRng.mNext >= 56)
     {
         gRng.mNext = 1;
