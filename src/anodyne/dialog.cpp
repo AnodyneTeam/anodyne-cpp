@@ -409,7 +409,7 @@ void WriterUpdate()
     {
         return;
     }
-    gW.mStep += kDeltaTime * static_cast<float>(gW.mSpeed);
+    gW.mStep += kUiDeltaTime * static_cast<float>(gW.mSpeed);
     while (gW.mStep >= 1.0f)
     {
         gW.mStep -= 1.0f;
@@ -1121,7 +1121,7 @@ bool UpdateBox()
     }
     else if (gBase == Base::Bump)
     {
-        gBumpCurrent += kDeltaTime;
+        gBumpCurrent += kUiDeltaTime;
         while (gBumpNext <= gBumpCurrent)
         {
             gBumpNext = gBumpCurrent + 0.1f;

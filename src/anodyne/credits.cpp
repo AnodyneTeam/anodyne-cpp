@@ -595,7 +595,7 @@ bool Credits_Update()
     if (!gC.mStopScroll)
     {
         timeScale = key_is_down(KEY_A) ? 8.0f : 1.0f;
-        const float speed = 15 * (kDeltaTime * timeScale);
+        const float speed = 15 * (kUiDeltaTime * timeScale);
         for (int i = 0; i < kMaxLabels; i++)
         {
             gC.mLabelY[i] = gC.mLabelY[i] + -speed;
@@ -606,7 +606,7 @@ bool Credits_Update()
             }
         }
     }
-    const float dt = kDeltaTime * timeScale;
+    const float dt = kUiDeltaTime * timeScale;
     DrawCast(dt);
 
     // StateLogic

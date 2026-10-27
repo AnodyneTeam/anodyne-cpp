@@ -198,7 +198,7 @@ void MapGetControl(Page& p)
 void MapUpdate(Page& p)
 {
     p.mLastState = p.mState;
-    p.mTimer += kDeltaTime;
+    p.mTimer += kUiDeltaTime;
     if (p.mTimer > 2 * kPlayerBlink)
     {
         p.mTimer -= 2 * kPlayerBlink;

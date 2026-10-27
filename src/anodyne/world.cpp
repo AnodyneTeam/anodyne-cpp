@@ -83,7 +83,7 @@ const char* gMapName = "";
 const MapAudioData* gAudio = nullptr;
 const char* gMusicPlaying = nullptr;
 bool gIgnoreMusic = false; // Map.ignore_music
-float gSongVolume = 1.0f;
+fx gSongVolume = kFxOne;
 
 fx gCamX = 0; // top-left of the current screen being shown, Fx
 fx gCamY = 0;
@@ -606,7 +606,7 @@ void UpdateMusic(bool screenTransition = false)
     }
 
     // (PlaySong sets the area's MusicVolume even when the song carries on: not compiled yet, so 1)
-    Game_SetSongVolume(1.0f);
+    Game_SetSongVolume(kFxOne);
     if (gMusicPlaying != nullptr && strcmp(music, gMusicPlaying) == 0)
     {
         return;
@@ -1028,10 +1028,10 @@ void WarpExit()
     Player_SetInvincible(true);
     Player_SetDontMove(true);
     Player_SetActionsDisabled(true);
-    gWarp.mPixelation = gWarp.mPixelation + 30.0f * kDeltaTime;
+    gWarp.mPixelation = gWarp.mPixelation + 30.0f * kUiDeltaTime;
     gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
     const float transitionOut = gMapName && strcmp(gMapName, "BLANK") == 0 ? 1.568f : 0.785f;
-    const float alpha = gWarp.mAlpha + (1.0f / transitionOut) * kDeltaTime;
+    const float alpha = gWarp.mAlpha + (1.0f / transitionOut) * kUiDeltaTime;
     gWarp.mAlpha = alpha > 1.0f ? 1.0f : alpha;
     if (gWarp.mAlpha == 1.0f || gFuckItMode)
     {
@@ -1051,9 +1051,9 @@ void WarpEnter()
     {
         gWarp.mPixelation = 1.0f;
     }
-    gWarp.mPixelation = gWarp.mPixelation - 30.0f * kDeltaTime;
+    gWarp.mPixelation = gWarp.mPixelation - 30.0f * kUiDeltaTime;
     gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
-    const float alpha = gWarp.mAlpha + (-1.0f / 0.8f) * kDeltaTime;
+    const float alpha = gWarp.mAlpha + (-1.0f / 0.8f) * kUiDeltaTime;
     gWarp.mAlpha = alpha < 0.0f ? 0.0f : alpha;
     if (gWarp.mAlpha == 0.0f)
     {
@@ -1425,7 +1425,7 @@ void UpdateTileAnims()
         TileAnimState& s = gTileAnimState[i];
         const uint16_t* a = &gTileAnimData->mAnims[i * 8];
         const float delay = 1.0f / a[6];
-        s.mTimer += kDeltaTime;
+        s.mTimer += kUiDeltaTime;
         while (s.mTimer > delay)
         {
             s.mTimer -= delay;
@@ -1442,7 +1442,7 @@ void UpdateTileAnims()
 
 } // namespace
 
-void Game_PlaySong(const char* name, float volume)
+void Game_PlaySong(const char* name, fx volume)
 {
     Game_SetSongVolume(volume);
     gMusicPlaying = name;
@@ -1467,14 +1467,14 @@ void Game_IgnoreMusicNextUpdate()
     gIgnoreMusic = true;
 }
 
-float Game_SongVolume()
+fx Game_SongVolume()
 {
     return gSongVolume;
 }
 
-void Game_SetSongVolume(float volume)
+void Game_SetSongVolume(fx volume)
 {
-    gSongVolume = volume < 0 ? 0 : (volume > 1 ? 1 : volume);
+    gSongVolume = volume < 0 ? 0 : (volume > kFxOne ? kFxOne : volume);
 }
 
 void Screen_Shake(fx intensity, fx seconds, uint8_t dirs)
@@ -1658,7 +1658,7 @@ float gWaveTimer = 0;
 // Wave.Update (every frame, on or not), then the table for what was just drawn.
 void UpdateWave()
 {
-    gWaveTimer += kDeltaTime * 0.5f;
+    gWaveTimer += kUiDeltaTime * 0.5f;
     if (gWaveTimer > 1)
     {
         gWaveTimer -= 1;
@@ -2105,7 +2105,7 @@ void SwitchBroom(bool next)
 void World_Update()
 {
     gGame.mPlayFrames++;
-    gQuickSaveTimer -= kDeltaTime;
+    gQuickSaveTimer -= kUiDeltaTime;
     Ecs_ReleaseSpawned();
     const bool child = gDialogOpen || gCutscene.mFn || gDeath.mActive || Pause_IsOpen();
     bool updateEntities = !gDeath.mActive && !Pause_IsOpen() && !gView.mActive;
@@ -2247,7 +2247,7 @@ void World_Update()
     }
     if (gGame.mGameMode == GAME_MODE_EXTREME_CHAOS)
     {
-        gTexRandomTimer += kDeltaTime;
+        gTexRandomTimer += kUiDeltaTime;
         if (gTexRandomTimer >= 0.8f)
         {
             gForceTextureReload = true;

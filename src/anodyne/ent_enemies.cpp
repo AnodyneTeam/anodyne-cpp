@@ -22,14 +22,14 @@ bool IsBroom(const Entity& e)
 }
 
 // HealthDropper.Die: the preset stays dead, and maybe a heart drops where it was (returned).
-Entity* Die(Entity& self, float dropChance, bool big = false)
+Entity* Die(Entity& self, fx dropChance, bool big = false)
 {
     if (self.mPreset)
     {
         Preset_SetAlive(*self.mPreset, false);
     }
     self.mExists = false;
-    if (gSettings.mGuaranteedHealth || Rng_NextDouble() < dropChance)
+    if (gSettings.mGuaranteedHealth || Rng_Unit() < dropChance)
     {
         // (the C#'s pickup is the dropper's sub-entity, just after it in the lists)
         if (Entity* drop = Spawn_HealthDrop(self.mT->mX, self.mT->mY, big))
@@ -269,7 +269,7 @@ void SlimeEnterMove(Entity& self)
     d.mMove.Advance(Game_SecondsSince(d.mExitFrame));
     if (d.mBullet)
     {
-        d.mMove.Add(1.8f, SLIME_SHOOT_TIMER);
+        d.mMove.Add(FxSec(1.8f), SLIME_SHOOT_TIMER);
     }
 }
 
@@ -279,7 +279,7 @@ void SlimeUpdate(Entity& self)
     switch (d.mState)
     {
     case SLIME_MOVE:
-        d.mMove.Tick(kDeltaTime);
+        d.mMove.Tick();
         for (int id = d.mMove.Pop(); id >= 0; id = d.mMove.Pop())
         {
             if (id == SLIME_MOVE_TIMER)
@@ -316,7 +316,7 @@ void SlimeUpdate(Entity& self)
         if (Ecs_AnimFinished(self))
         {
             Spawn_Explosion(self);
-            Die(self, 0.5f);
+            Die(self, FxF(0.5f));
         }
         break;
     }
@@ -441,7 +441,7 @@ void AnnoyerExplosionUpdate(Entity& self)
 {
     if (Ecs_AnimFinished(self))
     {
-        Die(self, 0.5f);
+        Die(self, FxF(0.5f));
     }
     Ecs_BaseUpdate(self);
 }
@@ -493,7 +493,7 @@ void AnnoyerChangeActive(Entity& self, uint8_t state)
     if (state == ANNOYER_WAIT)
     {
         d.mWait.Reset();
-        d.mWait.Add(0.25f, ANNOYER_APPROACH_CHECK);
+        d.mWait.Add(FxSec(0.25f), ANNOYER_APPROACH_CHECK);
     }
     else if (state == ANNOYER_CIRCLE)
     {
@@ -523,7 +523,7 @@ void AnnoyerUpdate(Entity& self)
     Transform& t = *self.mT;
     if (d.mState == ANNOYER_HIT)
     {
-        d.mHit.Tick(kDeltaTime);
+        d.mHit.Tick();
         for (int id = d.mHit.Pop(); id >= 0; id = d.mHit.Pop())
         {
             if (id == ANNOYER_END_KNOCKBACK)
@@ -556,7 +556,7 @@ void AnnoyerUpdate(Entity& self)
         return;
     }
     // ActiveState: its Fire timer, then the child state
-    d.mActive.Tick(kDeltaTime);
+    d.mActive.Tick();
     while (d.mActive.Pop() >= 0)
     {
         AnnoyerFire(self);
@@ -564,7 +564,7 @@ void AnnoyerUpdate(Entity& self)
     switch (d.mState)
     {
     case ANNOYER_WAIT:
-        d.mWait.Tick(kDeltaTime);
+        d.mWait.Tick();
         for (int id = d.mWait.Pop(); id >= 0; id = d.mWait.Pop())
         {
             const Entity& p = *World_Player();
@@ -592,7 +592,7 @@ void AnnoyerUpdate(Entity& self)
     {
         // CirclingState.Update: the angle, its Swoop timer, then (even when that left the state) the position
         d.mAngle += FxStep(FxF(8.4f));
-        d.mCircle.Tick(kDeltaTime);
+        d.mCircle.Tick();
         while (d.mCircle.Pop() >= 0)
         {
             AnnoyerChangeActive(self, ANNOYER_SWOOP);
@@ -649,11 +649,11 @@ void AnnoyerCollided(Entity& self, Entity& other)
         if (--d.mHealth <= 0)
         {
             Ecs_SetSolid(self, true);
-            d.mHit.Add(0.25f, ANNOYER_DIE);
+            d.mHit.Add(FxSec(0.25f), ANNOYER_DIE);
         }
         else
         {
-            d.mHit.Add(0.4f, ANNOYER_END_KNOCKBACK);
+            d.mHit.Add(FxSec(0.4f), ANNOYER_END_KNOCKBACK);
         }
     }
 }
@@ -820,7 +820,7 @@ void ShieldyUpdate(Entity& self)
     if (d.mHealth <= 0)
     {
         Spawn_Explosion(self);
-        Die(self, 0.5f);
+        Die(self, FxF(0.5f));
     }
     if (self.mB->mTouching != TOUCH_NONE)
     {
@@ -924,13 +924,13 @@ void DogEnter(Entity& self, uint8_t state)
     if (state == DOG_PACE)
     {
         d.mPace.Reset();
-        d.mPace.Add(1.0f, 0);
+        d.mPace.Add(FxSec(1.0f), 0);
         t.mVelX = t.mVelY = 0;
     }
     else if (state == DOG_ALERT)
     {
         d.mAlert.Reset();
-        d.mAlert.Add(1.0f, 0);
+        d.mAlert.Add(FxSec(1.0f), 0);
         t.mVelX = t.mVelY = 0;
         Ecs_Play(self, "alert");
         Game_PlaySfx("dog_bark");
@@ -963,7 +963,7 @@ void DogUpdate(Entity& self)
     switch (d.mState)
     {
     case DOG_PACE:
-        d.mPace.Tick(kDeltaTime);
+        d.mPace.Tick();
         while (d.mPace.Pop() >= 0)
         {
             if (Rng_NextDouble() > 0.33)
@@ -986,14 +986,14 @@ void DogUpdate(Entity& self)
         }
         break;
     case DOG_ALERT:
-        d.mAlert.Tick(kDeltaTime);
+        d.mAlert.Tick();
         while (d.mAlert.Pop() >= 0)
         {
             DogEnter(self, DOG_ATTACK);
         }
         break;
     default:
-        d.mAttack.Tick(kDeltaTime);
+        d.mAttack.Tick();
         while (d.mAttack.Pop() >= 0)
         {
             d.mPhase++;
@@ -1052,7 +1052,7 @@ void DogCollided(Entity& self, Entity& other)
         Game_PlaySfx("broom_hit");
         if (d.mHealth == 0)
         {
-            Die(self, 1.0f);
+            Die(self, FxF(1.0f));
             Spawn_Explosion(self);
         }
     }
@@ -1129,14 +1129,14 @@ const EntityClass kBurstBullet = {
 
 // EntityPool.Spawn: the bullet's Move state from the plant (Parabola_Thing from offset 0). `period` < 0: a random
 // one, drawn after the height.
-void BurstBulletStart(Entity& b, const Entity& plant, float period)
+void BurstBulletStart(Entity& b, const Entity& plant, fx period)
 {
     BurstBulletData& d = b.Data<BurstBulletData>();
     b.mExists = true;
     b.mT->mX = plant.mT->mX + Fx(5);
     b.mT->mY = plant.mT->mY + Fx(5);
     d.mHeight = Rng_Range(24, 34);
-    d.mPeriod = fx(period >= 0 ? period : 0.7f + static_cast<float>(Rng_NextDouble()));
+    d.mPeriod = period >= 0 ? period : FxF(0.7f) + Rng_Unit();
     d.mT = 0;
     d.mSplash = false;
     b.mV->mOffY = 0;
@@ -1152,7 +1152,7 @@ void BurstEnter(Entity& self, uint8_t state)
     {
         Ecs_Play(self, "idle");
         d.mIdle.Reset();
-        d.mIdle.Add(0.4f + static_cast<float>(Rng_NextDouble()), 0);
+        d.mIdle.Add(FxF(0.4f) + Rng_Unit(), 0);
     }
     else if (state == BURST_CHARGING)
     {
@@ -1164,7 +1164,7 @@ void BurstFire(Entity& self)
 {
     BurstPlantData& d = self.Data<BurstPlantData>();
     const int sign = Rng_Range(0, 2) == 0 ? -1 : 1; // MathUtilities.OneRandomOf(-1, 1)
-    const float maxVel = 10 + 30 * static_cast<float>(Rng_NextDouble());
+    const fx maxVel = Fx(10) + 30 * Rng_Unit();
     const Entity& p = *World_Player();
     int spawned = 0;
     for (Entity* b : d.mBullets)
@@ -1176,15 +1176,15 @@ void BurstFire(Entity& self)
         if (spawned == 0)
         {
             // one straight to the player
-            BurstBulletStart(*b, self, 1.5f);
-            Ecs_MoveTowards(*b, Ecs_CenterX(p), Ecs_CenterY(p), fx(maxVel * 2.5f));
+            BurstBulletStart(*b, self, FxF(1.5f));
+            Ecs_MoveTowards(*b, Ecs_CenterX(p), Ecs_CenterY(p), FxMul(maxVel, FxF(2.5f)));
         }
         else
         {
-            BurstBulletStart(*b, self, -1);
-            const float vx = -maxVel + 2 * maxVel * static_cast<float>(Rng_NextDouble());
-            b->mT->mVelX = fx(vx);
-            b->mT->mVelY = fx(sign * sqrtf(maxVel * maxVel - vx * vx));
+            BurstBulletStart(*b, self, -kFxOne);
+            const fx vx = -maxVel + FxMul(2 * maxVel, Rng_Unit());
+            b->mT->mVelX = vx;
+            b->mT->mVelY = sign * FxSqrt(FxMul(maxVel, maxVel) - FxMul(vx, vx));
         }
         if (++spawned == 8)
         {
@@ -1203,21 +1203,21 @@ void BurstPlantUpdate(Entity& self)
     switch (d.mState)
     {
     case BURST_INITIAL:
-        d.mInitial.Tick(kDeltaTime);
+        d.mInitial.Tick();
         while (d.mInitial.Pop() >= 0)
         {
             BurstEnter(self, BURST_IDLE);
         }
         break;
     case BURST_IDLE:
-        d.mIdle.Tick(kDeltaTime);
+        d.mIdle.Tick();
         while (d.mIdle.Pop() >= 0)
         {
             BurstEnter(self, BURST_CHARGING);
         }
         break;
     case BURST_CHARGING:
-        d.mCharging.Tick(kDeltaTime);
+        d.mCharging.Tick();
         while (d.mCharging.Pop() >= 0)
         {
             BurstFire(self);
@@ -1252,7 +1252,7 @@ void BurstPlantCollided(Entity& self, Entity&)
     if (d.mHealth <= 0)
     {
         Spawn_Explosion(self);
-        Die(self, 0.7f);
+        Die(self, FxF(0.7f));
         for (Entity* b : d.mBullets)
         {
             if (b)
@@ -1335,7 +1335,7 @@ void FrogUpdate(Entity& self)
     switch (d.mState)
     {
     case FROG_INITIAL:
-        d.mInitial.Tick(kDeltaTime);
+        d.mInitial.Tick();
         while (d.mInitial.Pop() >= 0)
         {
             d.mState = FROG_IDLE;
@@ -1345,9 +1345,9 @@ void FrogUpdate(Entity& self)
     case FROG_IDLE:
     {
         const Entity& p = *World_Player();
-        const float dx = (Ecs_CenterX(self) - Ecs_CenterX(p)).mV;
-        const float dy = (Ecs_CenterY(self) - Ecs_CenterY(p)).mV;
-        if (dx * dx + dy * dy < 64 * 64)
+        const fx dx = Ecs_CenterX(self) - Ecs_CenterX(p);
+        const fx dy = Ecs_CenterY(self) - Ecs_CenterY(p);
+        if (FxLengthSq(dx, dy) < Fx(64 * 64))
         {
             // EntityPool.Spawn(b => b.Spawn(this, _player), 3)
             for (Entity* b : d.mBullets)
@@ -1406,7 +1406,7 @@ void FrogCollided(Entity& self, Entity& other)
             if (d.mHealth <= 0)
             {
                 Spawn_Explosion(self);
-                Die(self, 0.7f);
+                Die(self, FxF(0.7f));
             }
         }
     }
@@ -1532,9 +1532,9 @@ void OnSightDashTrapUpdate(Entity& self)
     }
     else if (d.mState == DASH_RETURNING)
     {
-        const float dx = (d.mIdleX - t.mX).mV;
-        const float dy = (d.mIdleY - t.mY).mV;
-        if (dx * dx + dy * dy < 4)
+        const fx dx = d.mIdleX - t.mX;
+        const fx dy = d.mIdleY - t.mY;
+        if (FxLengthSq(dx, dy) < Fx(4))
         {
             t.mVelX = t.mVelY = 0;
             t.mX = d.mIdleX;
@@ -1580,11 +1580,11 @@ bool IsOnSightDashTrap(const Entity& e)
 
 // ---- Four_Shooter (Redcave/Four_Shooter.cs) ----------------------------------------------------------------------
 constexpr int kFourShooterBullets = 12;
-constexpr float kFourShooterTime = 1.5f;
+constexpr fx kFourShooterTime = FxF(1.5f);
 
 struct FourShooterData final
 {
-    float mTimer;
+    fx mTimer;
     Entity* mBullets[kFourShooterBullets]; // its EntityPool, made with it
 };
 
@@ -1624,7 +1624,7 @@ const EntityClass kFourShooterBullet = {
 };
 
 // EntityPool.Spawn(b => b.Spawn(Center, dir))
-void FourShooterFire(FourShooterData& d, float cx, float cy, float dx, float dy)
+void FourShooterFire(FourShooterData& d, fx cx, fx cy, fx dx, fx dy)
 {
     for (Entity* b : d.mBullets)
     {
@@ -1632,14 +1632,12 @@ void FourShooterFire(FourShooterData& d, float cx, float cy, float dx, float dy)
         {
             continue;
         }
-        const float len = sqrtf(dx * dx + dy * dy);
-        dx /= len;
-        dy /= len;
+        FxNormalize(dx, dy);
         b->mExists = true;
-        b->mT->mX = fx(cx + dx * 8 - 2);
-        b->mT->mY = fx(cy + dy * 8 - 2);
-        b->mT->mVelX = fx(dx * 50);
-        b->mT->mVelY = fx(dy * 50);
+        b->mT->mX = cx + dx * 8 - Fx(2);
+        b->mT->mY = cy + dy * 8 - Fx(2);
+        b->mT->mVelX = dx * 50;
+        b->mT->mVelY = dy * 50;
         Ecs_Play(*b, "move");
         return;
     }
@@ -1649,28 +1647,28 @@ void FourShooterUpdate(Entity& self)
 {
     FourShooterData& d = self.Data<FourShooterData>();
     Ecs_BaseUpdate(self);
-    d.mTimer -= kDeltaTime;
+    d.mTimer -= kFxTick;
     if (d.mTimer <= 0)
     {
         d.mTimer = kFourShooterTime;
         Game_PlaySfx("4sht_shoot");
-        const float cx = Ecs_CenterX(self).mV;
-        const float cy = Ecs_CenterY(self).mV;
+        const fx cx = Ecs_CenterX(self);
+        const fx cy = Ecs_CenterY(self);
         if (Ecs_Frame(self) == 0)
         {
             Ecs_Play(self, "axis_to_diag");
-            FourShooterFire(d, cx, cy, 1, 0);
-            FourShooterFire(d, cx, cy, -1, 0);
-            FourShooterFire(d, cx, cy, 0, 1);
-            FourShooterFire(d, cx, cy, 0, -1);
+            FourShooterFire(d, cx, cy, Fx(1), Fx(0));
+            FourShooterFire(d, cx, cy, Fx(-1), Fx(0));
+            FourShooterFire(d, cx, cy, Fx(0), Fx(1));
+            FourShooterFire(d, cx, cy, Fx(0), Fx(-1));
         }
         else
         {
             Ecs_Play(self, "diag_to_axis");
-            FourShooterFire(d, cx, cy, 1, 1);
-            FourShooterFire(d, cx, cy, -1, -1);
-            FourShooterFire(d, cx, cy, -1, 1);
-            FourShooterFire(d, cx, cy, 1, -1);
+            FourShooterFire(d, cx, cy, Fx(1), Fx(1));
+            FourShooterFire(d, cx, cy, Fx(-1), Fx(-1));
+            FourShooterFire(d, cx, cy, Fx(-1), Fx(1));
+            FourShooterFire(d, cx, cy, Fx(1), Fx(-1));
         }
     }
 }
@@ -1718,7 +1716,7 @@ void MoverUpdate(Entity& self)
     Ecs_BaseUpdate(self);
     if (d.mState == MOVER_FOOM)
     {
-        d.mMove.Tick(kDeltaTime);
+        d.mMove.Tick();
         while (d.mMove.Pop() >= 0)
         {
             Game_PlaySfx("mover_move");
@@ -1726,12 +1724,12 @@ void MoverUpdate(Entity& self)
             const Entity& p = *World_Player();
             const fx dx = p.mT->mX - self.mT->mX;
             const fx dy = p.mT->mY - self.mT->mY;
-            const float len = FxLength(dx, dy).mV;
-            const float normal = fminf(3.0f, 100.0f / len);
-            const float rx = static_cast<float>(Rng_Range(-5, 0));
-            const float ry = static_cast<float>(Rng_Range(-5, 0));
-            self.mT->mVelX = fx(dx.mV * normal + rx);
-            self.mT->mVelY = fx(dy.mV * normal + ry);
+            const fx len = FxLength(dx, dy);
+            const fx normal = FxMin(Fx(3), FxDiv(Fx(100), len));
+            const fx rx = Fx(Rng_Range(-5, 0));
+            const fx ry = Fx(Rng_Range(-5, 0));
+            self.mT->mVelX = FxMul(dx, normal) + rx;
+            self.mT->mVelY = FxMul(dy, normal) + ry;
         }
     }
     else if (Ecs_AnimFinished(self))
@@ -1795,7 +1793,7 @@ void OnOffEnter(Entity& self, uint8_t state)
     case ONOFF_IDLE:
         d.mIdle.Reset();
         OnOffPlay(self, "shooter_closed");
-        d.mIdle.Add(2.0f, 0);
+        d.mIdle.Add(FxSec(2.0f), 0);
         break;
     case ONOFF_EMERGING:
         OnOffPlay(self, "shooter_open");
@@ -1807,7 +1805,7 @@ void OnOffEnter(Entity& self, uint8_t state)
     case ONOFF_HURTING:
         d.mHurting.Reset();
         Ecs_Play(laser, "steam_is_harmful");
-        d.mHurting.Add(2.0f, 0);
+        d.mHurting.Add(FxSec(2.0f), 0);
         break;
     default:
         Ecs_Play(laser, "recede");
@@ -1823,7 +1821,7 @@ void OnOffLaserUpdate(Entity& self)
     switch (d.mState)
     {
     case ONOFF_IDLE:
-        d.mIdle.Tick(kDeltaTime);
+        d.mIdle.Tick();
         while (d.mIdle.Pop() >= 0)
         {
             OnOffEnter(self, ONOFF_EMERGING);
@@ -1836,7 +1834,7 @@ void OnOffLaserUpdate(Entity& self)
         }
         break;
     case ONOFF_HURTING:
-        d.mHurting.Tick(kDeltaTime);
+        d.mHurting.Tick();
         while (d.mHurting.Pop() >= 0)
         {
             OnOffEnter(self, ONOFF_RECEDING);
@@ -1948,11 +1946,11 @@ void SlasherEnter(Entity& self, uint8_t state)
     {
     case SLASHER_MOVE:
         SlasherPlayFacing(self, "float");
-        timer.Add(1.4f, 0);
+        timer.Add(FxSec(1.4f), 0);
         break;
     case SLASHER_WARNING:
         SlasherPlayFacing(self, "warning");
-        timer.Add(0.5f, 0);
+        timer.Add(FxSec(0.5f), 0);
         break;
     case SLASHER_WIDE_ATTACK:
         Game_PlaySfx("slasher_atk");
@@ -1995,10 +1993,10 @@ void SlasherEnter(Entity& self, uint8_t state)
             }
         }
         SlasherPlayFacing(self, "attack");
-        timer.Add(0.4f, 0);
+        timer.Add(FxSec(0.4f), 0);
         break;
     case SLASHER_WIDE_ATTACK_DELAY:
-        timer.Add(0.3f, 0);
+        timer.Add(FxSec(0.3f), 0);
         break;
     default:
         Game_PlaySfx("slasher_atk");
@@ -2043,7 +2041,7 @@ void SlasherEnter(Entity& self, uint8_t state)
             }
         }
         SlasherPlayFacing(self, "attack");
-        timer.Add(0.8f, 0);
+        timer.Add(FxSec(0.8f), 0);
         break;
     }
 }
@@ -2054,7 +2052,7 @@ void SlasherUpdate(Entity& self)
     Ecs_BaseUpdate(self);
     const uint8_t state = d.mState;
     TimerState<1>& timer = d.mTimers[state];
-    timer.Tick(kDeltaTime);
+    timer.Tick();
     while (timer.Pop() >= 0)
     {
         switch (state)
@@ -2065,9 +2063,9 @@ void SlasherUpdate(Entity& self)
         case SLASHER_WARNING:
         {
             const Entity& p = *World_Player();
-            const float dx = (Ecs_CenterX(self) - Ecs_VisualCenterX(p)).mV;
-            const float dy = (Ecs_CenterY(self) - Ecs_VisualCenterY(p)).mV;
-            const bool close = dx * dx + dy * dy < kSlasherWideAtkDistance * kSlasherWideAtkDistance;
+            const fx dx = Ecs_CenterX(self) - Ecs_VisualCenterX(p);
+            const fx dy = Ecs_CenterY(self) - Ecs_VisualCenterY(p);
+            const bool close = FxLengthSq(dx, dy) < Fx(kSlasherWideAtkDistance * kSlasherWideAtkDistance);
             SlasherEnter(self, close ? SLASHER_WIDE_ATTACK : SLASHER_LONG_ATTACK);
             break;
         }
@@ -2101,7 +2099,7 @@ void SlasherCollided(Entity& self, Entity&)
     Ecs_Flicker(self, FxSec(0.5f));
     if (d.mHealth <= 0)
     {
-        Die(self, 1, true);
+        Die(self, kFxOne, true);
         Spawn_Explosion(self);
     }
 }
@@ -2707,7 +2705,7 @@ const EntityClass kSeer = {
 // The boss and its sub-entities, in the C#'s SubEntities order: Ripple, SmallWave, BigWave, the four SplashBullets
 // (each with its Shadow), the four ProximitySensors and the four Tentacles (each with its tentacle Entity).
 constexpr int kRedBossPool = 4;
-constexpr float kRedBossPushTick = 0.15f;
+constexpr fx kRedBossPushTick = FxF(0.15f);
 
 enum RedBossState : uint8_t
 {
@@ -2748,11 +2746,11 @@ struct RedBossData final
     bool mBossRush;
     bool mLoopSfx;
     bool mVolume; // its VolumeEvent(0, 3) is fading the song out
-    float mInvincible;
-    float mAmp;
-    float mPushdown;
-    float mPushTimer;
-    float mFinalTimer;
+    fx mInvincible;
+    fx mAmp;
+    fx mPushdown;
+    fx mPushTimer;
+    fx mFinalTimer;
     fx mTargetX; // StunStateLogic's target
     fx mTargetY;
     TimerState<2> mSplash; // Splash and Tentacles, every 3 s
@@ -2784,8 +2782,8 @@ struct TentacleData final
 {
     uint8_t mIndex;
     uint8_t mState;
-    float mDropTimer;
-    float mEndTimer;
+    fx mDropTimer;
+    fx mEndTimer;
     Entity* mTentacle; // the tentacle itself: just visual flair
 };
 
@@ -2824,7 +2822,7 @@ fx RoomTop()
 // MapUtilities.GetInGridPosition (each axis against its own room).
 fx InGrid(fx v)
 {
-    return fx(v.mV - static_cast<float>(static_cast<int>(v.mV / 160) * 160));
+    return v - Fx(FxTrunc(v / 160) * 160);
 }
 
 void BubbleSfx()
@@ -2836,7 +2834,7 @@ void BubbleSfx()
 // Shadow.UpdateShadow (ShadowType.Normal): jumpHeight 0..1.
 void UpdateEntityShadow(Entity& shadow, fx jumpHeight)
 {
-    const int frame = static_cast<int>(ceilf((jumpHeight * 4).mV)) - 1;
+    const int frame = FxCeil(jumpHeight * 4) - 1;
     if (frame < 0)
     {
         shadow.mV->mVisible = false;
@@ -3117,13 +3115,13 @@ void TentacleUpdate(Entity& self)
         }
         BubbleSfx();
         flair.mExists = true;
-        d.mDropTimer = 1.0f;
+        d.mDropTimer = FxF(1.0f);
         d.mState = TENT_DROP;
         [[fallthrough]];
     case TENT_DROP:
         if (!MoveTo(flair.mV->mYPush, 0, Fx(120)))
         {
-            d.mDropTimer -= kDeltaTime;
+            d.mDropTimer -= kFxTick;
             break;
         }
         d.mState = TENT_HOLD;
@@ -3131,16 +3129,16 @@ void TentacleUpdate(Entity& self)
     case TENT_HOLD:
         if (d.mDropTimer > 0)
         {
-            d.mDropTimer -= kDeltaTime;
+            d.mDropTimer -= kFxTick;
             break;
         }
-        d.mEndTimer = 0.3f;
+        d.mEndTimer = FxF(0.3f);
         d.mState = TENT_RAISE;
         [[fallthrough]];
     case TENT_RAISE:
         if (!MoveTo(flair.mV->mYPush, Fx(64), Fx(180)))
         {
-            d.mEndTimer -= kDeltaTime;
+            d.mEndTimer -= kFxTick;
             break;
         }
         d.mState = TENT_END;
@@ -3148,7 +3146,7 @@ void TentacleUpdate(Entity& self)
     case TENT_END:
         if (d.mEndTimer > 0)
         {
-            d.mEndTimer -= kDeltaTime;
+            d.mEndTimer -= kFxTick;
             break;
         }
         self.mExists = false;
@@ -3245,7 +3243,7 @@ void RedBossChangeState(Entity& self, uint8_t state)
     switch (state)
     {
     case RBF_SPLASH:
-        d.mAmp = 5;
+        d.mAmp = Fx(5);
         break;
     case RBF_DASH:
         d.mAmp = 0;
@@ -3301,7 +3299,7 @@ bool RedBossStunStep(Entity& self)
     {
     case 0:
         Ecs_Play(self, "warn");
-        d.mAmp = 5;
+        d.mAmp = Fx(5);
         d.mTargetX = RoomLeft() + Fx(6 * 16);
         d.mTargetY = RoomTop() + Fx(4 * 16);
         SmallWaveRise(*d.mSmallWave);
@@ -3325,11 +3323,11 @@ bool RedBossStunStep(Entity& self)
             return true;
         }
         d.mLoopSfx = true;
-        d.mAmp = 13;
+        d.mAmp = Fx(13);
         d.mStun = 3;
         [[fallthrough]];
     case 3:
-        if (yPush < FxF(d.mAmp))
+        if (yPush < d.mAmp)
         {
             return true;
         }
@@ -3341,7 +3339,7 @@ bool RedBossStunStep(Entity& self)
         {
             return true;
         }
-        d.mAmp = 20;
+        d.mAmp = Fx(20);
         d.mStun = 5;
         [[fallthrough]];
     case 5:
@@ -3365,7 +3363,7 @@ bool RedBossStunStep(Entity& self)
         {
             return true;
         }
-        d.mAmp = 5;
+        d.mAmp = Fx(5);
         d.mStun = 8;
         [[fallthrough]];
     case 8:
@@ -3402,7 +3400,7 @@ void RedBossFsmUpdate(Entity& self)
     {
     case RBF_SPLASH:
     {
-        d.mSplash.Tick(kDeltaTime);
+        d.mSplash.Tick();
         int ev;
         while ((ev = d.mSplash.Pop()) >= 0)
         {
@@ -3422,7 +3420,7 @@ void RedBossFsmUpdate(Entity& self)
     }
     case RBF_DASH:
     {
-        d.mDash.Tick(kDeltaTime);
+        d.mDash.Tick();
         int ev;
         while ((ev = d.mDash.Pop()) >= 0)
         {
@@ -3454,7 +3452,7 @@ void RedBossFsmUpdate(Entity& self)
 void RedBossPushTick(Entity& self)
 {
     RedBossData& d = self.Data<RedBossData>();
-    d.mPushTimer += kDeltaTime;
+    d.mPushTimer += kFxTick;
     if (d.mPushTimer >= kRedBossPushTick)
     {
         d.mPushTimer = 0;
@@ -3520,8 +3518,8 @@ void RedBossStep(Entity& self)
         if (d.mHealth > 0)
         {
             RedBossFsmUpdate(self);
-            d.mPushdown += kDeltaTime * 3;
-            v.mYPush = Fx(static_cast<int>(d.mAmp + FxSin(fx(d.mPushdown)).mV * d.mAmp));
+            d.mPushdown += kFxTick * 3;
+            v.mYPush = Fx(FxTrunc(d.mAmp + FxMul(FxSin(d.mPushdown), d.mAmp)));
             break;
         }
         self.mT->mVelX = self.mT->mVelY = 0;
@@ -3553,7 +3551,7 @@ void RedBossStep(Entity& self)
         if (v.mYPush < Fx(Ecs_SpriteHeight(self)))
         {
             MoveTo(d.mRipple->mV->mOpacity, 0, FxF(0.3f));
-            d.mPushTimer += kDeltaTime;
+            d.mPushTimer += kFxTick;
             if (d.mPushTimer >= kRedBossPushTick)
             {
                 d.mPushTimer = 0;
@@ -3561,13 +3559,13 @@ void RedBossStep(Entity& self)
             }
             break;
         }
-        d.mFinalTimer = 2.0f;
+        d.mFinalTimer = FxF(2.0f);
         d.mState = RB_FINAL;
         [[fallthrough]];
     case RB_FINAL:
         if (d.mFinalTimer > 0)
         {
-            d.mFinalTimer -= kDeltaTime;
+            d.mFinalTimer -= kFxTick;
             break;
         }
         if (self.mPreset)
@@ -3599,11 +3597,11 @@ void RedBossUpdate(Entity& self)
     // (its VolumeEvent: spawned on the first update, so it starts on the next)
     if (d.mVolume && d.mState != RB_START)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         d.mVolume = !MoveTo(volume, 0, Fx(3));
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
-    d.mInvincible -= kDeltaTime;
+    d.mInvincible -= kFxTick;
     RedBossStep(self);
     d.mProximity = TOUCH_NONE;
     if (d.mLoopSfx)
@@ -3626,7 +3624,7 @@ void RedBossCollided(Entity& self, Entity& other)
     else if (IsBroom(other) && d.mInvincible < 0)
     {
         Ecs_Flicker(self, FxSec(0.5f));
-        d.mInvincible = 1.3f;
+        d.mInvincible = FxF(1.3f);
         d.mHealth--;
         Game_PlaySfx("redboss_moan");
     }
@@ -3647,29 +3645,29 @@ constexpr int kWallBossPool = 8;
 // Parabola_Thing: arcs the entity's offset.Y; the shadow (if any) follows the height.
 struct Parabola final
 {
-    float mT;
-    float mHeight;
-    float mPeriod;
-    float mStart;
+    fx mT;
+    fx mHeight;
+    fx mPeriod;
+    fx mStart;
 };
 
-void ParabolaInit(Parabola& p, const Entity& e, float height, float period)
+void ParabolaInit(Parabola& p, const Entity& e, fx height, fx period)
 {
     p.mT = 0;
     p.mHeight = height;
     p.mPeriod = period;
-    p.mStart = e.mV->mOffY.mV;
+    p.mStart = e.mV->mOffY;
 }
 
-float ParabolaProgress(const Parabola& p)
+fx ParabolaProgress(const Parabola& p)
 {
-    return fminf(p.mT / p.mPeriod, 1.0f);
+    return FxMin(FxDiv(p.mT, p.mPeriod), kFxOne);
 }
 
 // Shadow.UpdateShadow, for a shadow sheet with frames 0..maxFrame.
-void UpdateShadowFrames(Entity& shadow, float jumpHeight, int maxFrame)
+void UpdateShadowFrames(Entity& shadow, fx jumpHeight, int maxFrame)
 {
-    const int frame = static_cast<int>(ceilf(jumpHeight * static_cast<float>(maxFrame + 1))) - 1;
+    const int frame = FxCeil(jumpHeight * (maxFrame + 1)) - 1;
     if (frame == -1)
     {
         shadow.mV->mVisible = false;
@@ -3683,21 +3681,21 @@ void UpdateShadowFrames(Entity& shadow, float jumpHeight, int maxFrame)
 
 bool ParabolaTick(Parabola& p, Entity& e, Entity* shadow, int maxFrame)
 {
-    p.mT += kDeltaTime;
+    p.mT += kFxTick;
     if (p.mT > p.mPeriod)
     {
-        e.mV->mOffY = fx(p.mStart);
+        e.mV->mOffY = p.mStart;
         if (shadow)
         {
             UpdateShadowFrames(*shadow, 0, maxFrame);
         }
         return true;
     }
-    const float half = p.mPeriod / 2;
-    e.mV->mOffY = fx(p.mStart + p.mT * (p.mPeriod - p.mT) / (half * half) * p.mHeight);
+    const fx half = p.mPeriod / 2;
+    e.mV->mOffY = p.mStart + FxMul(FxDiv(FxMul(p.mT, p.mPeriod - p.mT), FxMul(half, half)), p.mHeight);
     if (shadow)
     {
-        UpdateShadowFrames(*shadow, fabsf(0.5f - ParabolaProgress(p)) * 2, maxFrame);
+        UpdateShadowFrames(*shadow, FxAbs(FxF(0.5f) - ParabolaProgress(p)) * 2, maxFrame);
     }
     return false;
 }
@@ -3792,7 +3790,7 @@ void WallBulletStart(Entity& b, const Entity& face)
     b.mT->mX = face.mT->mX + Fx(32);
     b.mT->mY = face.mT->mY + Fx(16);
     const int height = Rng_Range(16, 24);
-    ParabolaInit(d.mArc, b, static_cast<float>(height), 1.0f + static_cast<float>(Rng_NextDouble()) / 2);
+    ParabolaInit(d.mArc, b, Fx(height), FxF(1.0f) + Rng_Unit() / 2);
     Ecs_Play(b, "move");
     b.mT->mVelX = Fx(Rng_Range(-30, 30));
     b.mT->mVelY = Fx(30);
@@ -3804,7 +3802,7 @@ struct FaceData final
     uint8_t mStep;
     bool mInvincible;
     fx mHitTimeout;
-    float mCharge;
+    fx mCharge;
 };
 
 // The face's StateLogic
@@ -3822,9 +3820,9 @@ void FaceStep(Entity& self)
             d.mStep = 1;
             [[fallthrough]];
         case 1:
-            if (d.mCharge < 3.0f)
+            if (d.mCharge < FxF(3.0f))
             {
-                d.mCharge += kDeltaTime;
+                d.mCharge += kFxTick;
                 if (d.mHitTimeout == 0)
                 {
                     Ecs_Play(self, "normal");
@@ -3836,9 +3834,9 @@ void FaceStep(Entity& self)
             d.mStep = 2;
             [[fallthrough]];
         case 2:
-            if (d.mCharge < 4.0f)
+            if (d.mCharge < FxF(4.0f))
             {
-                d.mCharge += kDeltaTime;
+                d.mCharge += kFxTick;
                 return;
             }
             Ecs_Play(self, "shoot");
@@ -4010,7 +4008,7 @@ struct HandData final
     int8_t mStomps;   // LHand.Stomp's nr_stomps
     uint8_t mCracked; // LHand's tiles
     uint8_t mHole;
-    float mT; // Float's t, Stomp's wait_time
+    fx mT; // Float's t, Stomp's wait_time
     fx mSpeed;
     fx mInitX;
     fx mInitY;
@@ -4083,7 +4081,7 @@ bool LHandStompStep(Entity& h)
             d.mStep = 2;
             [[fallthrough]];
         case 2:
-            if (ParabolaProgress(d.mStomp) < 0.5f)
+            if (ParabolaProgress(d.mStomp) < FxF(0.5f))
             {
                 const Entity& p = *World_Player();
                 MoveTo(h.mT->mX, p.mT->mX, Fx(60));
@@ -4096,9 +4094,9 @@ bool LHandStompStep(Entity& h)
             d.mStep = 3;
             [[fallthrough]];
         case 3:
-            if (d.mT < 0.7f)
+            if (d.mT < FxF(0.7f))
             {
-                d.mT += kDeltaTime;
+                d.mT += kFxTick;
                 return true;
             }
             d.mStep = 4;
@@ -4170,8 +4168,8 @@ bool HandStep(Entity& h)
             d.mT = 0;
             d.mStep = 1;
         }
-        d.mT += kDeltaTime;
-        t.mY = fx(d.mInitY.mV + 4 + static_cast<float>(d.mRight ? -1 : 1) * sinf(d.mT * kFxTau.mV) * 8);
+        d.mT += kFxTick;
+        t.mY = d.mInitY + Fx(4) + (d.mRight ? -1 : 1) * FxSin(FxMul(d.mT, kFxTau)) * 8;
         return true;
     case HAND_PUSH:
         if (d.mStep == 0)
@@ -4293,7 +4291,7 @@ struct WallBossData final
     int8_t mPushes;      // num_pushes
     bool mBossRush;
     bool mVolume; // its VolumeEvent(0, 0.3) is fading the song out
-    float mT;     // FightLogic's t, the explosion timer, post_death_timer
+    fx mT;     // FightLogic's t, the explosion timer, post_death_timer
     Entity* mWall;
     Entity* mFace;
     Entity* mLHand;
@@ -4489,14 +4487,14 @@ void WallBossFightStep(WallBossData& d)
         case 0:
             HandStart(*d.mLHand, HAND_FLOAT);
             HandStart(*d.mRHand, HAND_FLOAT);
-            d.mT = 2.0f;
+            d.mT = FxF(2.0f);
             d.mFight = 1;
             [[fallthrough]];
         case 1:
         {
             if (d.mT > 0)
             {
-                d.mT -= kDeltaTime;
+                d.mT -= kFxTick;
                 return;
             }
             const double r = Rng_NextDouble();
@@ -4610,8 +4608,8 @@ void WallBossStep(Entity& self)
         {
             WallBossSyncOpacity(d);
             Screen_Shake(FxF(0.02f), FxF(0.1f));
-            d.mT += kDeltaTime;
-            if (d.mT > 0.15f)
+            d.mT += kFxTick;
+            if (d.mT > FxF(0.15f))
             {
                 d.mT = 0;
                 bool spawned = false;
@@ -4629,13 +4627,13 @@ void WallBossStep(Entity& self)
             }
             break;
         }
-        d.mT = 1.0f;
+        d.mT = FxF(1.0f);
         d.mState = WB_POST;
         [[fallthrough]];
     case WB_POST:
         if (d.mT > 0)
         {
-            d.mT -= kDeltaTime;
+            d.mT -= kFxTick;
             break;
         }
         if (!d.mBossRush)
@@ -4673,9 +4671,9 @@ void WallBossUpdate(Entity& self)
     // (its VolumeEvent: spawned on the first update, so it starts on the next)
     if (d.mVolume && d.mState != WB_START)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         MoveTo(volume, 0, FxF(0.3f));
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
     WallBossStep(self);
 }
@@ -4751,7 +4749,7 @@ void RatCollided(Entity& self, Entity& other)
     else
     {
         Spawn_Explosion(self);
-        Die(self, 0.5f);
+        Die(self, FxF(0.5f));
     }
 }
 
@@ -4791,7 +4789,7 @@ enum SilverfishStep : uint8_t
 struct SilverfishData final
 {
     uint8_t mStep;
-    float mTurnTimer;
+    fx mTurnTimer;
 };
 
 bool SilverfishSeesPlayer(const Entity& self)
@@ -4863,8 +4861,8 @@ void SilverfishStepLogic(Entity& self)
                 d.mStep = SF_RUN_START;
                 break;
             }
-            d.mTurnTimer += kDeltaTime;
-            if (d.mTurnTimer > 0.8f)
+            d.mTurnTimer += kFxTick;
+            if (d.mTurnTimer > FxF(0.8f))
             {
                 d.mTurnTimer = 0;
                 switch (self.mFacing)
@@ -4897,7 +4895,7 @@ void SilverfishUpdate(Entity& self)
 
 void SilverfishGetHit(Entity& self)
 {
-    Die(self, 0.5f);
+    Die(self, FxF(0.5f));
     Spawn_Explosion(self);
 }
 
@@ -4934,8 +4932,8 @@ struct GasGuyData final
     int mHealth;
     bool mInDelay;
     bool mDidFirstShot;
-    float mSoundDelay;
-    float mSoundDelayMax;
+    fx mSoundDelay;
+    fx mSoundDelayMax;
     TimerState<1> mLatency; // each FSM state's own clock
     TimerState<1> mNormal;
     TimerState<1> mShoot;
@@ -4954,17 +4952,17 @@ void GasGuyEnter(Entity& self, uint8_t state)
     {
     case GG_LATENCY:
         d.mLatency.Reset();
-        d.mLatency.Add(1.5f, 0);
+        d.mLatency.Add(FxSec(1.5f), 0);
         d.mInDelay = true;
         break;
     case GG_NORMAL:
         d.mNormal.Reset();
-        d.mNormal.Add(d.mDidFirstShot ? 5.0f : 1.0f, 0);
+        d.mNormal.Add(d.mDidFirstShot ? FxF(5.0f) : FxF(1.0f), 0);
         Ecs_Play(self, "float");
         break;
     default:
         d.mShoot.Reset();
-        d.mShoot.Add(1.2f, 0);
+        d.mShoot.Add(FxSec(1.2f), 0);
         break;
     }
 }
@@ -4977,14 +4975,14 @@ void GasGuyUpdate(Entity& self)
     switch (d.mState)
     {
     case GG_LATENCY:
-        d.mLatency.Tick(kDeltaTime);
+        d.mLatency.Tick();
         while (d.mLatency.Pop() >= 0)
         {
             GasGuyEnter(self, GG_NORMAL);
         }
         break;
     case GG_NORMAL:
-        d.mNormal.Tick(kDeltaTime);
+        d.mNormal.Tick();
         while (d.mNormal.Pop() >= 0)
         {
             Ecs_Play(self, "release_gas");
@@ -4993,7 +4991,7 @@ void GasGuyUpdate(Entity& self)
         }
         break;
     default:
-        d.mShoot.Tick(kDeltaTime);
+        d.mShoot.Tick();
         while (d.mShoot.Pop() >= 0)
         {
             Ecs_Play(self, "float");
@@ -5014,7 +5012,7 @@ void GasGuyUpdate(Entity& self)
         }
         break;
     }
-    d.mSoundDelay += kDeltaTime;
+    d.mSoundDelay += kFxTick;
     if (d.mSoundDelay > d.mSoundDelayMax)
     {
         d.mSoundDelay = 0;
@@ -5046,7 +5044,7 @@ void GasGuyCollided(Entity& self, Entity& other)
         if (d.mHealth == 0)
         {
             // (its pickup is after the gas clouds in the lists)
-            if (Entity* drop = Die(self, 0.6f, true))
+            if (Entity* drop = Die(self, FxF(0.6f), true))
             {
                 Ecs_MoveAfter(*drop, *d.mGas[kGasClouds - 1]);
             }
@@ -5063,7 +5061,7 @@ const EntityClass kGasGuy = {
 void GasUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
-    self.mV->mOpacity = fx(self.mV->mOpacity.mV - 0.06f * kDeltaTime);
+    self.mV->mOpacity = self.mV->mOpacity - FxMul(FxF(0.06f), kFxTick);
     if (self.mV->mOpacity <= 0)
     {
         self.mExists = false;
@@ -5079,7 +5077,7 @@ void GasCollided(Entity& self, Entity& other)
     }
     else if (IsBroom(other))
     {
-        self.mV->mOpacity = fx(self.mV->mOpacity.mV - 0.025f);
+        self.mV->mOpacity = self.mV->mOpacity - FxF(0.025f);
     }
     else if (other.mClass == &kSilverfish)
     {
@@ -5127,16 +5125,16 @@ void TeleGuyEnter(Entity& self, uint8_t state)
         Game_PlaySfx("teleguy_up");
         Ecs_Play(self, "poof");
         FlipIfLeft(self);
-        d.mTeleporting.Add(0.5f, 0);
+        d.mTeleporting.Add(FxSec(0.5f), 0);
         break;
     case TG_PRE_ATTACK:
         d.mPreAttack.Reset();
         Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
-        d.mPreAttack.Add(0.5f, 0);
+        d.mPreAttack.Add(FxSec(0.5f), 0);
         break;
     case TG_ATTACKING:
         d.mAttacking.Reset();
-        d.mAttacking.Add(1.5f, 0);
+        d.mAttacking.Add(FxSec(1.5f), 0);
         Ecs_MoveTowards(self, d.mAtkX, d.mAtkY, Fx(60));
         break;
     default:
@@ -5188,7 +5186,7 @@ void TeleGuyUpdate(Entity& self)
         break;
     }
     case TG_TELEPORTING:
-        d.mTeleporting.Tick(kDeltaTime);
+        d.mTeleporting.Tick();
         while (d.mTeleporting.Pop() >= 0)
         {
             Game_PlaySfx("teleguy_down");
@@ -5201,7 +5199,7 @@ void TeleGuyUpdate(Entity& self)
         }
         break;
     case TG_PRE_ATTACK:
-        d.mPreAttack.Tick(kDeltaTime);
+        d.mPreAttack.Tick();
         while (d.mPreAttack.Pop() >= 0)
         {
             PlayFacingFlip(self, "idle");
@@ -5209,7 +5207,7 @@ void TeleGuyUpdate(Entity& self)
         }
         break;
     default:
-        d.mAttacking.Tick(kDeltaTime);
+        d.mAttacking.Tick();
         while (d.mAttacking.Pop() >= 0)
         {
             TeleGuyEnter(self, TG_IDLE);
@@ -5244,7 +5242,7 @@ void TeleGuyCollided(Entity& self, Entity& other)
         }
         else
         {
-            Die(self, 0.7f);
+            Die(self, FxF(0.7f));
             Spawn_Explosion(self);
         }
     }
@@ -5342,14 +5340,14 @@ void SplitBulletSpawn(Entity& b, fx x, fx y, bool hurts)
 }
 
 // ---- FadeOutGameScreenFade: takes the white fade away after the fight
-float gSplitFade = 0; // GlobalState.gameScreenFade.alpha, while white
+fx gSplitFade = 0; // GlobalState.gameScreenFade.alpha, while white
 
 void SplitFadeOutUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
-    gSplitFade = gSplitFade - 3 * kDeltaTime;
-    gSplitFade = gSplitFade < 0 ? 0 : (gSplitFade > 1 ? 1 : gSplitFade);
-    Screen_SetFade(fx(gSplitFade));
+    gSplitFade = gSplitFade - 3 * kFxTick;
+    gSplitFade = gSplitFade < 0 ? 0 : (gSplitFade > Fx(1) ? Fx(1) : gSplitFade);
+    Screen_SetFade(gSplitFade);
 }
 
 void SplitFadeOutEvent(Entity&, int gameEvent)
@@ -5399,8 +5397,8 @@ struct SplitBossData final
     int mRound;
     int mNumRounds;
     int mPerRound;
-    float mWait;
-    float mT;
+    fx mWait;
+    fx mT;
     fx mNextDrop;
     fx mSplitVel;
     int mSpawnedCount;
@@ -5581,13 +5579,13 @@ bool SplitDieStep(Entity& self, SplitBossData& d)
         d.mStep = 2;
         [[fallthrough]];
     case 2:
-        if (d.mT < 5.0f)
+        if (d.mT < FxF(5.0f))
         {
-            d.mT += kDeltaTime;
-            Game_SetSongVolume(Game_SongVolume() - kDeltaTime * 0.3f);
-            gSplitFade = d.mT / 5.0f;
-            Screen_SetFade(fx(gSplitFade));
-            const int r = static_cast<int>(65 * d.mT / 5.0f);
+            d.mT += kFxTick;
+            Game_SetSongVolume(Game_SongVolume() - FxMul(kFxTick, FxF(0.3f)));
+            gSplitFade = d.mT / 5;
+            Screen_SetFade(gSplitFade);
+            const int r = FxTrunc((65 * d.mT) / 5);
             const int rx = Rng_Range(-r, r);
             const int ry = Rng_Range(-r, r);
             self.mT->mX = d.mTlX + Fx(40) + Fx(rx);
@@ -5639,7 +5637,7 @@ bool SplitDashStep(Entity& self, SplitBossData& d)
             d.mNumDashes = SplitPhase(d) + 2;
             d.mNumDrops = SplitPhase(d) + 2;
             d.mSpawnedCount = 0;
-            if (static_cast<int>(t.mX.mV / 160) != gGame.mGridX || static_cast<int>(t.mY.mV / 160) != gGame.mGridY)
+            if (FxTrunc(t.mX / 160) != gGame.mGridX || FxTrunc(t.mY / 160) != gGame.mGridY)
             {
                 v.mOpacity = 0; // straight after another dash: start appearing on the left at once
             }
@@ -5669,14 +5667,14 @@ bool SplitDashStep(Entity& self, SplitBossData& d)
                 t.mY = p.mT->mY;
                 return true;
             }
-            d.mT = 0.5f;
+            d.mT = FxF(0.5f);
             d.mStep = 4;
             [[fallthrough]];
         case 4:
             if (d.mT > 0)
             {
                 t.mY = p.mT->mY;
-                d.mT -= kDeltaTime;
+                d.mT -= kFxTick;
                 return true;
             }
             SplitPlay(self, "dash_r");
@@ -5720,13 +5718,13 @@ bool SplitDashStep(Entity& self, SplitBossData& d)
             {
                 Ecs_Flicker(*d.mBullets[d.mSpawned[i]], 0);
             }
-            d.mT = 0.5f;
+            d.mT = FxF(0.5f);
             d.mStep = 7;
             [[fallthrough]];
         case 7:
             if (d.mT > 0)
             {
-                d.mT -= kDeltaTime;
+                d.mT -= kFxTick;
                 return true;
             }
             Game_PlaySfx("sb_split");
@@ -5735,13 +5733,13 @@ bool SplitDashStep(Entity& self, SplitBossData& d)
                 Entity& b = *d.mBullets[d.mSpawned[i]];
                 const int ox = Rng_Range(-10, 10);
                 const int oy = Rng_Range(-10, 10);
-                const float dx = (p.mT->mX + Fx(ox) - b.mT->mX).mV;
-                const float dy = (p.mT->mY + Fx(oy) - b.mT->mY).mV;
-                const float len = sqrtf(dx * dx + dy * dy);
-                const float speed = static_cast<float>(80 + SplitPhase(d) * 20);
+                fx dx = p.mT->mX + Fx(ox) - b.mT->mX;
+                fx dy = p.mT->mY + Fx(oy) - b.mT->mY;
+                FxNormalize(dx, dy);
+                const int speed = 80 + SplitPhase(d) * 20;
                 b.Data<SplitBulletData>().mActive = true;
-                b.mT->mVelX = fx(speed * (dx / len));
-                b.mT->mVelY = fx(speed * (dy / len));
+                b.mT->mVelX = speed * dx;
+                b.mT->mVelY = speed * dy;
                 b.mV->mOpacity = FxF(0.99f);
             }
             d.mStep = 8;
@@ -5762,7 +5760,7 @@ bool SplitShootStep(Entity& self, SplitBossData& d)
 {
     static const int kRounds[3] = { 4, 10, 7 };
     static const int kPerRound[3] = { 2, 1, 4 };
-    static const float kWait[3] = { 0.7f, 0.2f, 0.8f };
+    static const fx kWait[3] = { FxF(0.7f), FxF(0.2f), FxF(0.8f) };
     for (;;)
     {
         switch (d.mStep)
@@ -5809,7 +5807,7 @@ bool SplitShootStep(Entity& self, SplitBossData& d)
         case 2:
             if (d.mT < d.mWait)
             {
-                d.mT += kDeltaTime;
+                d.mT += kFxTick;
                 return true;
             }
             for (int i = 0; i < d.mSpawnedCount; i++)
@@ -5881,9 +5879,9 @@ bool SplitSplitStep(Entity& self, SplitBossData& d)
         d.mStep = 3;
         [[fallthrough]];
     case 3:
-        if (d.mT < 1.0f)
+        if (d.mT < FxF(1.0f))
         {
-            d.mT += kDeltaTime;
+            d.mT += kFxTick;
             SplitPlaceOverPlayer(self);
             c0.mT->mX = p.mT->mX + Fx(25);
             c0.mT->mY = p.mT->mY;
@@ -5958,9 +5956,9 @@ void SplitBossUpdate(Entity& self)
     // (its VolumeEvent: spawned on the first update, so it starts on the next)
     if (d.mVolume && !(d.mCo == SB_INTRO && d.mStep == 0))
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         MoveTo(volume, 0, FxF(0.3f));
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
     const uint8_t gen = d.mGen;
     bool running = true;
@@ -6094,7 +6092,7 @@ void DustmaidCollided(Entity& self, Entity& other)
         Game_PlaySfx("broom_hit");
         if (d.mHealth <= 0)
         {
-            Die(self, 0.7f);
+            Die(self, FxF(0.7f));
             Spawn_Explosion(self);
         }
     }
@@ -6118,7 +6116,7 @@ struct SteamPipeData final
 
 struct SteamData final
 {
-    float mTimer;
+    fx mTimer;
     bool mDisabled;
     fx mStartX;
     fx mStartY;
@@ -6127,7 +6125,7 @@ struct SteamData final
 void SteamSpawn(Entity& self)
 {
     SteamData& d = self.Data<SteamData>();
-    d.mTimer = d.mDisabled ? Rng_Range(3, 6) / 60.0f : Rng_Range(30, 51) / 60.0f;
+    d.mTimer = d.mDisabled ? Fx(Rng_Range(3, 6)) / 60 : Fx(Rng_Range(30, 51)) / 60;
     Transform& t = *self.mT;
     t.mX = d.mStartX;
     t.mY = d.mStartY;
@@ -6157,7 +6155,7 @@ void SteamUpdate(Entity& self)
 {
     SteamData& d = self.Data<SteamData>();
     Ecs_BaseUpdate(self);
-    d.mTimer -= kDeltaTime;
+    d.mTimer -= kFxTick;
     if (d.mTimer <= 0)
     {
         SteamSpawn(self);
@@ -6235,15 +6233,15 @@ const EntityClass kSteamPipe = {
 // ---- SpaceFace (Etc/SpaceFace.cs): drifts towards the player now and then
 struct SpaceFaceData final
 {
-    float mWait;
-    float mWaitMax;
+    fx mWait;
+    fx mWaitMax;
 };
 
 void SpaceFaceUpdate(Entity& self)
 {
     SpaceFaceData& d = self.Data<SpaceFaceData>();
     Ecs_BaseUpdate(self);
-    d.mWait += kDeltaTime;
+    d.mWait += kFxTick;
     if (d.mWait >= d.mWaitMax)
     {
         d.mWait = 0;
@@ -6261,7 +6259,7 @@ const EntityClass kSpaceFace = {
 struct ChaserData final
 {
     bool mHorizontal;
-    float mTargetVel;
+    fx mTargetVel;
 };
 
 void ChaserCheckStartMove(Entity& self, ChaserData& d)
@@ -6316,8 +6314,8 @@ void ChaserUpdate(Entity& self)
     if (d.mTargetVel != 0)
     {
         fx& v = d.mHorizontal ? t.mVelX : t.mVelY;
-        const float sign = v.mV > 0 ? 1.0f : (v.mV < 0 ? -1.0f : 0.0f);
-        if (MoveTo(v, fx(d.mTargetVel * sign), fx(d.mTargetVel * (0.6f / 1.6f) / 0.3f)))
+        const int sign = v > 0 ? 1 : (v < 0 ? -1 : 0);
+        if (MoveTo(v, d.mTargetVel * sign, FxDiv(FxMul(d.mTargetVel, FxF(0.6f / 1.6f)), FxF(0.3f))))
         {
             d.mTargetVel = 0;
         }
@@ -6340,12 +6338,12 @@ void ChaserEvent(Entity& self, int gameEvent)
     }
     ChaserData& d = self.Data<ChaserData>();
     Game_PlaySfx("mover_move");
-    const float vx = self.mT->mVelX.mV;
-    const float vy = self.mT->mVelY.mV;
-    d.mTargetVel = sqrtf(vx * vx + vy * vy) * 1.6f;
-    if (d.mTargetVel > 100)
+    const fx vx = self.mT->mVelX;
+    const fx vy = self.mT->mVelY;
+    d.mTargetVel = FxMul(FxLength(vx, vy), FxF(1.6f));
+    if (d.mTargetVel > Fx(100))
     {
-        d.mTargetVel = 100;
+        d.mTargetVel = Fx(100);
     }
 }
 
@@ -6399,7 +6397,7 @@ void FirePillarUpdate(Entity& self)
     FirePillarData& d = self.Data<FirePillarData>();
     Ecs_BaseUpdate(self);
     TimerState<1>& timers = d.mTimers[d.mState];
-    timers.Tick(kDeltaTime);
+    timers.Tick();
     const uint8_t from = d.mState;
     while (timers.Pop() >= 0)
     {
@@ -6434,19 +6432,19 @@ const EntityClass kPillarBase = {
 
 // ---- Contort (Circus/Contort.cs): bounces around the room; three hits and it splits into three smalls that hop out
 // and roll about (ContortSmall, a HealthDropper)
-constexpr float kContortVel = 35;
+constexpr fx kContortVel = Fx(35);
 constexpr int kContortSmalls = 3;
 
 struct ContortData final
 {
-    float mDeathTimer;
+    fx mDeathTimer;
     int mHealth;
     Entity* mSmalls[kContortSmalls];
 };
 
 struct ContortSmallData final
 {
-    float mRollTimer;
+    fx mRollTimer;
     Parabola mArc;
     Entity* mShadow;
 };
@@ -6465,10 +6463,10 @@ void ContortBounce(Entity& self)
     }
 }
 
-float ContortRandomVel()
+fx ContortRandomVel()
 {
-    const float sign = Rng_NextDouble() > 0.5 ? 1.0f : -1.0f;
-    return kContortVel * sign + static_cast<float>(Rng_Range(-5, 5));
+    const int sign = Rng_NextDouble() > 0.5 ? 1 : -1;
+    return kContortVel * sign + Fx(Rng_Range(-5, 5));
 }
 
 void ContortUpdate(Entity& self)
@@ -6480,7 +6478,7 @@ void ContortUpdate(Entity& self)
         ContortBounce(self);
         if (d.mHealth == 0)
         {
-            d.mDeathTimer -= kDeltaTime;
+            d.mDeathTimer -= kFxTick;
             if (d.mDeathTimer <= 0)
             {
                 Ecs_Flicker(self, 0);
@@ -6549,8 +6547,8 @@ void ContortSmallUpdate(Entity& self)
     if (ParabolaTick(d.mArc, self, d.mShadow, 3))
     {
         d.mShadow->mV->mVisible = false;
-        d.mRollTimer += kDeltaTime;
-        if (d.mRollTimer >= 0.8f)
+        d.mRollTimer += kFxTick;
+        if (d.mRollTimer >= FxF(0.8f))
         {
             d.mRollTimer = 0;
             self.mT->mVelX = fx(ContortRandomVel());
@@ -6564,7 +6562,7 @@ void ContortSmallCollided(Entity& self, Entity& other)
 {
     if (IsBroom(other) && !self.mV->mFlickering)
     {
-        Die(self, 0.4f);
+        Die(self, FxF(0.4f));
         self.Data<ContortSmallData>().mShadow->mExists = false;
         Spawn_Explosion(self);
     }
@@ -6599,12 +6597,12 @@ enum LionState : uint8_t
 constexpr int kLionMaxShots = 18;
 constexpr int kLionFireballs = 10;
 // Each state's TimerState (one timer each; Dying has none): due at mAt on a clock that only runs while it's active.
-constexpr float kLionTimerMax[LION_DYING] = { 0.8f, 0.8f, 0.165f, 1.4f, 0.6f, 0.6f };
+constexpr fx kLionTimerMax[LION_DYING] = { FxF(0.8f), FxF(0.8f), FxF(0.165f), FxF(1.4f), FxF(0.6f), FxF(0.6f) };
 
 struct LionData final
 {
-    float mClock[LION_DYING];
-    float mAt[LION_DYING];
+    fx mClock[LION_DYING];
+    fx mAt[LION_DYING];
     Parabola mArc;
     Entity* mShadowV;
     Entity* mShadowH;
@@ -6662,39 +6660,39 @@ void LionFireballSpawn(Entity& b, const Entity& lion)
     Transform& t = *b.mT;
     const fx px = lion.mT->mX;
     const fx py = lion.mT->mY;
-    float vx = 0;
-    float vy = 0;
+    fx vx = 0;
+    fx vy = 0;
     switch (lion.mFacing)
     {
     case FACE_UP:
         t.mX = px + Fx(8);
         t.mY = py - Fx(2);
-        vx = static_cast<float>(Rng_Range(-16, 17));
-        vy = -32;
+        vx = Fx(Rng_Range(-16, 17));
+        vy = Fx(-32);
         break;
     case FACE_DOWN:
         t.mX = px + Fx(8);
         t.mY = py + Fx(lion.mB->mH) + Fx(2);
-        vx = static_cast<float>(Rng_Range(-16, 17));
-        vy = 32;
+        vx = Fx(Rng_Range(-16, 17));
+        vy = Fx(32);
         break;
     case FACE_RIGHT:
         t.mX = px + Fx(30);
         t.mY = py + Fx(2);
-        vx = 32;
-        vy = static_cast<float>(Rng_Range(-26, 27));
+        vx = Fx(32);
+        vy = Fx(Rng_Range(-26, 27));
         break;
     default:
         t.mX = px;
         t.mY = py + Fx(2);
-        vx = -32;
-        vy = static_cast<float>(Rng_Range(-26, 27));
+        vx = Fx(-32);
+        vy = Fx(Rng_Range(-26, 27));
         break;
     }
-    // Vector2.Normalize (x and y times 1 / length), then * 88
-    const float inv = 1.0f / sqrtf(vx * vx + vy * vy);
-    t.mVelX = fx(vx * inv * 88.0f);
-    t.mVelY = fx(vy * inv * 88.0f);
+    // Vector2.Normalize, then * 88
+    FxNormalize(vx, vy);
+    t.mVelX = FxMul(vx, Fx(88));
+    t.mVelY = FxMul(vy, Fx(88));
     LionFireballData& d = b.Data<LionFireballData>();
     d.mStartX = t.mX;
     d.mStartY = t.mY;
@@ -6844,7 +6842,7 @@ void LionUpdate(Entity& self)
     if (state != LION_DYING)
     {
         // TimerState.Update: fire what's due, then the state's own Update
-        d.mClock[state] += kDeltaTime;
+        d.mClock[state] += kFxTick;
         if (d.mAt[state] <= d.mClock[state])
         {
             d.mAt[state] = d.mClock[state] + kLionTimerMax[state];
@@ -6962,8 +6960,8 @@ enum FolksStep : uint8_t
 
 struct FolksData final
 {
-    float mHurtTimer;
-    float mWaitTimer;
+    fx mHurtTimer;
+    fx mWaitTimer;
     fx mInitX;
     fx mInitY;
     Parabola mArc;
@@ -7020,8 +7018,8 @@ void ArthurUpdate(Entity& self)
     case FOLKS_WOBBLE:
         if (!(d.mCollided && v.mOffX < FxF(0.5f)))
         {
-            d.mHurtTimer += kDeltaTime;
-            v.mOffX = fx(-3 * static_cast<float>(sin(static_cast<double>(d.mHurtTimer / 1.3f) * 6.28)));
+            d.mHurtTimer += kFxTick;
+            v.mOffX = -3 * FxSin(FxMul(FxDiv(d.mHurtTimer, FxF(1.3f)), FxF(6.28f)));
             d.mShadow->mV->mOffX = v.mOffX;
             break;
         }
@@ -7033,10 +7031,10 @@ void ArthurUpdate(Entity& self)
     case FOLKS_FALL:
         if (v.mOffY > 0)
         {
-            const float y = v.mOffY.mV;
-            v.mOffY = fx(y - kDeltaTime * 30 * (1 + 3 * ((80 - y) / 80)));
-            const float h = v.mOffY.mV / 80;
-            const int frame = static_cast<int>(ceilf(h * 4)) - 1;
+            const fx y = v.mOffY;
+            v.mOffY = y - FxMul(kFxTick * 30, kFxOne + 3 * ((Fx(80) - y) / 80));
+            const fx h = v.mOffY / 80;
+            const int frame = FxCeil(h * 4) - 1;
             if (frame < 0)
             {
                 d.mShadow->mV->mVisible = false;
@@ -7056,9 +7054,9 @@ void ArthurUpdate(Entity& self)
         d.mStep = FOLKS_WAIT;
         [[fallthrough]];
     case FOLKS_WAIT:
-        if (d.mWaitTimer < 1)
+        if (d.mWaitTimer < Fx(1))
         {
-            d.mWaitTimer += kDeltaTime;
+            d.mWaitTimer += kFxTick;
             break;
         }
         Game_ShowDialogue("arthur", "alone", 1);
@@ -7142,9 +7140,9 @@ void JavieraUpdate(Entity& self)
         d.mStep = FOLKS_WAIT;
         [[fallthrough]];
     case FOLKS_WAIT:
-        if (d.mWaitTimer < 1)
+        if (d.mWaitTimer < Fx(1))
         {
-            d.mWaitTimer += kDeltaTime;
+            d.mWaitTimer += kFxTick;
             break;
         }
         Game_ShowDialogue("javiera", "alone", 1);
@@ -7232,7 +7230,7 @@ struct CircusFolksData final
     fx mTopLeftX;
     fx mTopLeftY;
     fx mEntranceY;
-    float mTimer; // walkTimer / fallTimer
+    fx mTimer; // walkTimer / fallTimer
     Parabola mArc;
     fx mTargetX;
     fx mTargetY;
@@ -7272,7 +7270,7 @@ extern const EntityClass kCircusArthur;
 extern const EntityClass kShockWave;
 
 // WalkAroundEntity.WalkAboutParameter: round the room's edge, turning at the walls.
-void WalkAboutParameter(Entity& self, float speed, bool playAnim = true)
+void WalkAboutParameter(Entity& self, fx speed, bool playAnim = true)
 {
     const fx cx = GridLeft() + Fx(80);
     const fx cy = GridTop() + Fx(80);
@@ -7296,8 +7294,8 @@ void WalkAboutParameter(Entity& self, float speed, bool playAnim = true)
         FolksPlay(self, kWalks[self.mFacing & 3]);
     }
     const Facing f = static_cast<Facing>(self.mFacing);
-    self.mT->mVelX = fx(static_cast<float>(FacingX(f)) * speed);
-    self.mT->mVelY = fx(static_cast<float>(FacingY(f)) * speed);
+    self.mT->mVelX = FacingX(f) * speed;
+    self.mT->mVelY = FacingY(f) * speed;
 }
 
 template <typename F>
@@ -7351,13 +7349,13 @@ Facing CircusMovementDirection(const CircusFolksData& d, fx x, fx y)
 }
 
 // Vector2.Normalize(target - from) * speed
-void VelocityTowards(Entity& e, fx tx, fx ty, float speed)
+void VelocityTowards(Entity& e, fx tx, fx ty, fx speed)
 {
-    const float dx = (tx - e.mT->mX).mV;
-    const float dy = (ty - e.mT->mY).mV;
-    const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
-    e.mT->mVelX = fx(dx * inv * speed);
-    e.mT->mVelY = fx(dy * inv * speed);
+    fx dx = tx - e.mT->mX;
+    fx dy = ty - e.mT->mY;
+    FxNormalize(dx, dy);
+    e.mT->mVelX = FxMul(dx, speed);
+    e.mT->mVelY = FxMul(dy, speed);
 }
 
 void CircusFolksStep(Entity& self)
@@ -7414,10 +7412,10 @@ void CircusFolksStep(Entity& self)
         d.mStep = CF_WALK;
         [[fallthrough]];
     case CF_WALK:
-        if (d.mTimer <= 3.0f)
+        if (d.mTimer <= FxF(3.0f))
         {
-            d.mTimer += kDeltaTime;
-            WalkAboutParameter(self, 90);
+            d.mTimer += kFxTick;
+            WalkAboutParameter(self, Fx(90));
             break;
         }
         d.mStep = Rng_NextDouble() > 0.6 ? CF_JUMP_START : CF_THROW_START;
@@ -7426,14 +7424,14 @@ void CircusFolksStep(Entity& self)
     {
         d.mTargetX = d.mTopLeftX + Fx(p.mT->mX > d.mTopLeftX + Fx(60) ? 0 : 112);
         d.mTargetY = d.mTopLeftY + Fx(p.mT->mY > d.mTopLeftY + Fx(60) ? 0 : 112);
-        const float dx = (d.mTargetX - t.mX).mV;
-        const float dy = (d.mTargetY - t.mY).mV;
-        const float distance = sqrtf(dx * dx + dy * dy);
+        const fx dx = d.mTargetX - t.mX;
+        const fx dy = d.mTargetY - t.mY;
+        const fx distance = FxLength(dx, dy);
         // (target - Position) / distance * jumpVel: Vector2 / float multiplies by 1 / distance
-        const float inv = 1 / distance;
-        t.mVelX = fx(dx * inv * 100);
-        t.mVelY = fx(dy * inv * 100);
-        ParabolaInit(d.mArc, self, 48, distance / 100);
+        const fx inv = FxDiv(kFxOne, distance);
+        t.mVelX = FxMul(dx, inv) * 100;
+        t.mVelY = FxMul(dy, inv) * 100;
+        ParabolaInit(d.mArc, self, Fx(48), distance / 100);
         d.mShadow->mV->mVisible = true;
         Game_PlaySfx("player_jump_up");
         d.mStep = CF_JUMP;
@@ -7605,25 +7603,25 @@ void CircusFolksStep(Entity& self)
         arthur.mT->mY = t.mY;
         javiera.mT->mX = t.mX;
         javiera.mT->mY = t.mY - Fx(16);
-        ParabolaInit(ad.mArc, arthur, 24, 1.0f);
-        ParabolaInit(jd.mArc, javiera, 18, 0.8f);
+        ParabolaInit(ad.mArc, arthur, Fx(24), FxF(1.0f));
+        ParabolaInit(jd.mArc, javiera, Fx(18), FxF(0.8f));
         FolksPlay(arthur, "pre-fall");
         FolksPlay(javiera, "pre-fall");
         d.mTimer = 0;
         d.mStep = CF_DYING_WOBBLE;
         [[fallthrough]];
     case CF_DYING_WOBBLE:
-        if (d.mTimer <= 2)
+        if (d.mTimer <= Fx(2))
         {
-            d.mTimer += kDeltaTime;
-            const float n = static_cast<float>(sin(static_cast<double>(d.mTimer) * 6.28));
-            arthur.mV->mOffX = fx(-3 * n);
-            javiera.mV->mOffX = fx(3 * n);
+            d.mTimer += kFxTick;
+            const fx n = FxSin(FxMul(d.mTimer, FxF(6.28f)));
+            arthur.mV->mOffX = -3 * n;
+            javiera.mV->mOffX = 3 * n;
             break;
         }
         Game_PlaySfx("floor_crack");
-        VelocityTowards(arthur, d.mTopLeftX + Fx(64), d.mTopLeftY + Fx(40), 40);
-        VelocityTowards(javiera, d.mTopLeftX + Fx(36), d.mTopLeftY + Fx(50), 70);
+        VelocityTowards(arthur, d.mTopLeftX + Fx(64), d.mTopLeftY + Fx(40), Fx(40));
+        VelocityTowards(javiera, d.mTopLeftX + Fx(36), d.mTopLeftY + Fx(50), Fx(70));
         d.mStep = CF_DYING_FALL;
         [[fallthrough]];
     case CF_DYING_FALL:
@@ -7694,12 +7692,12 @@ void CircusFolksUpdate(Entity& self)
     // its VolumeEvent's Update, after the boss's
     if (d.mVolume == CFV_RUNNING)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         if (MoveTo(volume, 0, FxF(0.6f)))
         {
             d.mVolume = CFV_REACHED;
         }
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
     else if (d.mVolume == CFV_SPAWNED)
     {
@@ -7746,20 +7744,20 @@ void CircusArthurUpdate(Entity& self)
         const fx fromY = t.mY;
         d.mTargetX = p.mT->mX;
         d.mTargetY = p.mT->mY;
-        const float dx = (d.mTargetX - fromX).mV;
-        const float dy = (d.mTargetY - fromY).mV;
-        const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
-        t.mVelX = fx(dx * inv * 120);
-        t.mVelY = fx(dy * inv * 120);
+        fx dx = d.mTargetX - fromX;
+        fx dy = d.mTargetY - fromY;
+        FxNormalize(dx, dy);
+        t.mVelX = dx * 120;
+        t.mVelY = dy * 120;
         self.mB->mImmovable = true;
         d.mStep = CP_THROWN_FLY;
         [[fallthrough]];
     }
     case CP_THROWN_FLY:
     {
-        const float dx = (t.mX - d.mTargetX).mV;
-        const float dy = (t.mY - d.mTargetY).mV;
-        if (dx * dx + dy * dy > 16 * 16)
+        const fx dx = t.mX - d.mTargetX;
+        const fx dy = t.mY - d.mTargetY;
+        if (FxLengthSq(dx, dy) > Fx(16 * 16))
         {
             break;
         }
@@ -7821,7 +7819,7 @@ void CircusJavieraUpdate(Entity& self)
     case CP_RUN:
         if (!d.mTouchedArthur)
         {
-            WalkAboutParameter(self, 90 * 1.3f);
+            WalkAboutParameter(self, 90 * FxF(1.3f));
             break;
         }
         self.mT->mVelX = self.mT->mVelY = 0;
@@ -7869,7 +7867,7 @@ void ShockWaveUpdate(Entity& self)
     }
     else
     {
-        WalkAboutParameter(self, 70, false);
+        WalkAboutParameter(self, Fx(70), false);
     }
 }
 
@@ -7954,8 +7952,8 @@ struct SageBossData final
 {
     fx mTopLeftX;
     fx mTopLeftY;
-    float mTimer; // bClock / timer
-    float mFlickerLength;
+    fx mTimer; // bClock / timer
+    fx mFlickerLength;
     Entity* mLong[kSageBullets];  // _lBullets
     Entity* mShort[kSageBullets]; // _sBullets
     int mHealth;
@@ -8035,7 +8033,7 @@ void SageSpawnOrbit(SageBossData& d)
 }
 
 // SetBulletsPosition: the first four short ones round the sage.
-void SageSetBulletsPosition(Entity& self, SageBossData& d, float offset)
+void SageSetBulletsPosition(Entity& self, SageBossData& d, fx offset)
 {
     const Transform& t = *self.mT;
     for (int i = 0; i < 4; i++)
@@ -8069,7 +8067,7 @@ void SageSetBulletsPosition(Entity& self, SageBossData& d, float offset)
 }
 
 // SageBoss.Movement: bounce off the walls.
-void SageMovement(Entity& self, float xSpeed, float ySpeed)
+void SageMovement(Entity& self, fx xSpeed, fx ySpeed)
 {
     Transform& t = *self.mT;
     const uint8_t touching = self.mB->mTouching;
@@ -8175,9 +8173,9 @@ void SageBossStep(Entity& self)
         [[fallthrough]];
     case SGB_INTRO_WAIT_PLAYER:
     {
-        const float dx = (t.mX - p.mT->mX).mV;
-        const float dy = (t.mY - p.mT->mY).mV;
-        if (sqrtf(dx * dx + dy * dy) >= 32 || Player_State() != PS_GROUND)
+        const fx dx = t.mX - p.mT->mX;
+        const fx dy = t.mY - p.mT->mY;
+        if (FxLength(dx, dy) >= Fx(32) || Player_State() != PS_GROUND)
         {
             break;
         }
@@ -8264,7 +8262,7 @@ void SageBossStep(Entity& self)
     case SGB_STAGE1_START:
         d.mHealth = 3;
         d.mCanHurt = true;
-        d.mFlickerLength = 1;
+        d.mFlickerLength = Fx(1);
         d.mTimer = 0;
         d.mStep = SGB_STAGE1;
         [[fallthrough]];
@@ -8272,8 +8270,8 @@ void SageBossStep(Entity& self)
     {
         if (d.mHealth > 0)
         {
-            static const float kDelay[3] = { 1.6f, 1.4f, 1.2f };
-            d.mTimer += kDeltaTime;
+            static const fx kDelay[3] = { FxF(1.6f), FxF(1.4f), FxF(1.2f) };
+            d.mTimer += kFxTick;
             if (d.mTimer > kDelay[SageSpeedIndex(3, d.mHealth)])
             {
                 d.mTimer = 0;
@@ -8303,7 +8301,7 @@ void SageBossStep(Entity& self)
     case SGB_STAGE2_START:
         d.mHealth = 3;
         d.mCanHurt = false;
-        d.mFlickerLength = 1;
+        d.mFlickerLength = Fx(1);
         self.mB->mImmovable = false;
         d.mMovedRight = false;
         d.mStep = SGB_STAGE2_WAIT_FLICKER;
@@ -8332,7 +8330,7 @@ void SageBossStep(Entity& self)
     {
         if (d.mHealth > 0)
         {
-            static const float kSpeed[3] = { 50, 70, 90 };
+            static const fx kSpeed[3] = { Fx(50), Fx(70), Fx(90) };
             d.mSpeedIndex = SageSpeedIndex(3, d.mHealth);
             SageSetBulletsPosition(self, d, 0);
             if (!d.mMovedRight && (self.mB->mTouching & TOUCH_RIGHT))
@@ -8352,7 +8350,7 @@ void SageBossStep(Entity& self)
     }
     case SGB_STAGE2_TURNED:
     {
-        static const float kSpeed[3] = { 50, 70, 90 };
+        static const fx kSpeed[3] = { Fx(50), Fx(70), Fx(90) };
         SageMovement(self, kSpeed[d.mSpeedIndex], kSpeed[d.mSpeedIndex]);
         d.mStep = SGB_STAGE2;
         break;
@@ -8360,7 +8358,7 @@ void SageBossStep(Entity& self)
     case SGB_STAGE3_START:
         d.mHealth = 4;
         d.mCanHurt = false;
-        d.mFlickerLength = 1;
+        d.mFlickerLength = Fx(1);
         self.mB->mImmovable = false;
         d.mTimer = 0;
         t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
@@ -8368,9 +8366,9 @@ void SageBossStep(Entity& self)
         d.mStep = SGB_STAGE3_WAIT;
         [[fallthrough]];
     case SGB_STAGE3_WAIT:
-        if (d.mTimer <= 1)
+        if (d.mTimer <= Fx(1))
         {
-            d.mTimer += kDeltaTime;
+            d.mTimer += kFxTick;
             break;
         }
         d.mTimer = 0;
@@ -8384,8 +8382,8 @@ void SageBossStep(Entity& self)
     case SGB_STAGE3_BULLETS:
         if (d.mBulletsMade < 4)
         {
-            d.mTimer += kDeltaTime;
-            if (static_cast<double>(d.mTimer) > 0.8)
+            d.mTimer += kFxTick;
+            if (d.mTimer > FxF(0.8f))
             {
                 SageSpawnOrbit(d);
                 SageSetBulletsPosition(self, d, 0);
@@ -8403,16 +8401,16 @@ void SageBossStep(Entity& self)
     {
         if (d.mHealth > 0)
         {
-            static const float kSpeed[4] = { 80, 90, 100, 115 };
+            static const fx kSpeed[4] = { Fx(80), Fx(90), Fx(100), Fx(115) };
             const int i = SageSpeedIndex(4, d.mHealth);
-            d.mTimer += kDeltaTime;
-            if (d.mTimer > 2)
+            d.mTimer += kFxTick;
+            if (d.mTimer > Fx(2))
             {
                 d.mTimer = 0;
             }
-            const float r = d.mTimer < 1 ? d.mTimer : 2 - d.mTimer;
+            const fx r = d.mTimer < Fx(1) ? d.mTimer : Fx(2) - d.mTimer;
             SageSetBulletsPosition(self, d, r * 34);
-            SageMovement(self, 20, kSpeed[i]);
+            SageMovement(self, Fx(20), kSpeed[i]);
             break;
         }
         d.mCanHurt = false;
@@ -8423,7 +8421,7 @@ void SageBossStep(Entity& self)
     case SGB_STAGE4_START:
         d.mHealth = 3;
         d.mCanHurt = false;
-        d.mFlickerLength = 2.5f;
+        d.mFlickerLength = FxF(2.5f);
         self.mB->mImmovable = false;
         d.mTimer = 0;
         t.mX = d.mTopLeftX + Fx(80 - self.mB->mW / 2);
@@ -8440,10 +8438,10 @@ void SageBossStep(Entity& self)
     case SGB_STAGE4:
         if (d.mHealth > 0)
         {
-            static const float kSpeed[3] = { 50, 60, 70 };
+            static const fx kSpeed[3] = { Fx(50), Fx(60), Fx(70) };
             const int i = SageSpeedIndex(3, d.mHealth);
-            d.mTimer += kDeltaTime;
-            if (d.mTimer > 0.55f)
+            d.mTimer += kFxTick;
+            if (d.mTimer > FxF(0.55f))
             {
                 d.mTimer = 0;
                 const fx x = d.mTopLeftX + Fx(4 + 48 + 16 * Rng_Range(0, 4));
@@ -8481,12 +8479,12 @@ void SageBossUpdate(Entity& self)
     // its VolumeEvent's Update, after the boss's
     if (d.mVolume == CFV_RUNNING)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         if (MoveTo(volume, 0, FxF(0.6f)))
         {
             d.mVolume = CFV_REACHED;
         }
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
     else if (d.mVolume == CFV_SPAWNED)
     {
@@ -8507,7 +8505,7 @@ void SageBossCollided(Entity& self, Entity& other)
     }
     else if (!self.mV->mFlickering && IsBroom(other))
     {
-        Ecs_Flicker(self, FxSec(d.mFlickerLength));
+        Ecs_Flicker(self, d.mFlickerLength);
         d.mHealth--;
         Game_PlaySfx("broom_hit");
         // (flash.Flash(0.4f, Color.Black): the sprite's own flash isn't drawn)
@@ -8575,16 +8573,16 @@ Entity* BriarPoolSpawn(const Entity& owner, const EntityClass& cls)
 // A rectangle's own random point: Position + (RNG.NextSingle() * width, RNG.NextSingle() * height).
 void BriarRandomPos(const Entity& target, fx& x, fx& y)
 {
-    const float rx = Rng_Unit().mV;
-    const float ry = Rng_Unit().mV;
-    x = target.mT->mX + fx(rx * static_cast<float>(target.mB->mW));
-    y = target.mT->mY + fx(ry * static_cast<float>(target.mB->mH));
+    const fx rx = Rng_Unit();
+    const fx ry = Rng_Unit();
+    x = target.mT->mX + rx * target.mB->mW;
+    y = target.mT->mY + ry * target.mB->mH;
 }
 
 // The C#'s `float t = 0; while (!MoveTo(ref t, tm, 1)) yield return null;`, one call per MoveNext.
-bool BriarWait(fx& t, float seconds)
+bool BriarWait(fx& t, fx seconds)
 {
-    return MoveTo(t, FxF(seconds), kFxOne);
+    return MoveTo(t, seconds, kFxOne);
 }
 
 // ---- BriarBossBody: drops bullets and raises thorns under the player ----------------------------------------------
@@ -8660,7 +8658,7 @@ bool BriarBodyThorns(Entity& body, BriarBodyData& d)
         return false;
     }
     const int i = d.mThorn;
-    int row = static_cast<int>((World_Player()->mT->mY - body.mT->mY).mV) / 16;
+    int row = FxTrunc(World_Player()->mT->mY - body.mT->mY) / 16;
     const int lo = (i > 1 && i < 6) ? 4 : 5;
     row = row < lo ? lo : (row > 8 ? 8 : row);
     if (Entity* t = BriarPoolSpawn(body, kBriarThorn))
@@ -8676,7 +8674,7 @@ bool BriarBodyThorns(Entity& body, BriarBodyData& d)
 // Attack(phase)'s MoveNext.
 bool BriarBodyAttack(Entity& body, BriarBodyData& d)
 {
-    static const float kTimes[] = { 0.18f, 0.16f, 0.14f, 0.13f, 0.11f, 0.09f };
+    static const fx kTimes[] = { FxF(0.18f), FxF(0.16f), FxF(0.14f), FxF(0.13f), FxF(0.11f), FxF(0.09f) };
     static const int kAttacks[] = { 2, 2, 2, 3, 3, 4 };
     // thorn_attack.MoveNext()
     bool more = false;
@@ -8728,7 +8726,7 @@ bool BriarBodyAttack(Entity& body, BriarBodyData& d)
     // bullet_attack.MoveNext(): OnceEvery(Bullets(phase), 1.4f - 0.2f * phase / 2)
     if (d.mBulletWaiting)
     {
-        const float tm = 1.4f - 0.2f * static_cast<float>(d.mPhase) / 2.0f;
+        const fx tm = FxF(1.4f) - FxF(0.2f) * d.mPhase / 2;
         if (!BriarWait(d.mBulletT, tm))
         {
             return true;
@@ -8845,8 +8843,8 @@ struct IceCrystalData final
     Entity* mThorn; // its HappyThorn
     fx mTargetX;
     fx mTargetY;
-    float mBaseVel;
-    float mVelMul;
+    fx mBaseVel;
+    fx mVelMul;
     int mCount; // n
     int mI;
     uint8_t mStep;
@@ -8954,7 +8952,7 @@ void FireEyeUpdate(Entity& self)
         if (d.mExplosions < 4 || Ecs_CountChildren(self, kBriarDustExplosion) != 0)
         {
             // OnceEvery(fire at the player, 0.4f)
-            if (BriarWait(d.mShotT, 0.4f))
+            if (BriarWait(d.mShotT, FxF(0.4f)))
             {
                 if (Entity* b = BriarPoolSpawn(self, kBriarFireball))
                 {
@@ -8964,7 +8962,7 @@ void FireEyeUpdate(Entity& self)
                     Ecs_MoveTowards(*b, p.mT->mX, p.mT->mY, Fx(45));
                 }
                 d.mShotT = 0;
-                BriarWait(d.mShotT, 0.4f);
+                BriarWait(d.mShotT, FxF(0.4f));
             }
             return;
         }
@@ -8994,7 +8992,7 @@ void FireEyeUpdate(Entity& self)
             Ecs_Play(self, "ungrow");
             d.mEndT = 0;
         }
-        if (!BriarWait(d.mEndT, 1.3f))
+        if (!BriarWait(d.mEndT, FxF(1.3f)))
         {
             return;
         }
@@ -9117,7 +9115,7 @@ bool IceCrystalStep(Entity& self)
             }
             explode();
             Game_PlaySfx("teleguy_down");
-            d.mVelMul = 1;
+            d.mVelMul = Fx(1);
             d.mI = 0;
             d.mStep = 2;
             [[fallthrough]];
@@ -9127,7 +9125,7 @@ bool IceCrystalStep(Entity& self)
                 d.mStep = 6;
                 continue;
             }
-            Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, fx(d.mBaseVel * d.mVelMul));
+            Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, FxMul(d.mBaseVel, d.mVelMul));
             d.mStep = 3;
             [[fallthrough]];
         case 3:
@@ -9151,23 +9149,23 @@ bool IceCrystalStep(Entity& self)
             if (d.mHitBroom)
             {
                 Game_PlaySfx("broom_hit");
-                d.mVelMul += 0.15f;
-                Ecs_MoveTowards(self, d.mTargetX, d.mTargetY, fx(d.mBaseVel * d.mVelMul));
+                d.mVelMul += FxF(0.15f);
+                Ecs_MoveTowards(self, d.mTargetX, d.mTargetY, FxMul(d.mBaseVel, d.mVelMul));
             }
             d.mStep = 4;
             [[fallthrough]];
         case 4:
         {
-            const float dx = (t.mX - d.mTargetX).mV;
-            const float dy = (t.mY - d.mTargetY).mV;
-            if (dx * dx + dy * dy > 25)
+            const fx dx = t.mX - d.mTargetX;
+            const fx dy = t.mY - d.mTargetY;
+            if (FxLengthSq(dx, dy) > Fx(25))
             {
                 return true;
             }
             Screen_Shake(FxF(0.01f), FxSec(0.2f));
             explode();
             Game_PlaySfx("sb_ball_appear");
-            d.mVelMul += 0.15f;
+            d.mVelMul += FxF(0.15f);
             d.mI++;
             d.mStep = 2;
             continue;
@@ -9227,7 +9225,7 @@ bool BigThornAttacked(Entity& self, BigThornData& d)
             d.mStep = 1;
             [[fallthrough]];
         case 1:
-            if (!BriarWait(d.mTimer, 1.5f))
+            if (!BriarWait(d.mTimer, FxF(1.5f)))
             {
                 return true;
             }
@@ -9256,7 +9254,7 @@ bool BigThornAttacked(Entity& self, BigThornData& d)
         crystal.mT->mY = d.mAttacker->mT->mY + Fx(52);
         IceCrystalData& c = crystal.Data<IceCrystalData>();
         c.mCount = 2 + phase;
-        c.mBaseVel = static_cast<float>(50 + phase * 20);
+        c.mBaseVel = Fx(50 + phase * 20);
         c.mStep = 0;
         c.mWaiting = false;
         c.mActive = true;
@@ -9401,7 +9399,7 @@ void BriarFightStep(Entity& self)
             d.mStep = 10;
             continue;
         case 10:
-            if (!BriarWait(d.mTimer, 1))
+            if (!BriarWait(d.mTimer, Fx(1)))
             {
                 return;
             }
@@ -9548,7 +9546,7 @@ bool BriarDie(Entity& self)
         d.mDieStep = 2;
         [[fallthrough]];
     case 2:
-        if (!BriarWait(d.mTimer, 0.2f))
+        if (!BriarWait(d.mTimer, FxF(0.2f)))
         {
             return false;
         }
@@ -9576,7 +9574,7 @@ bool BriarDie(Entity& self)
         d.mDieStep = 4;
         [[fallthrough]];
     case 4:
-        if (!BriarWait(d.mTimer, 0.2f))
+        if (!BriarWait(d.mTimer, FxF(0.2f)))
         {
             return false;
         }
@@ -9600,7 +9598,7 @@ bool BriarDie(Entity& self)
         d.mDieStep = 5;
         [[fallthrough]];
     case 5:
-        if (!BriarWait(d.mTimer, 1.5f))
+        if (!BriarWait(d.mTimer, FxF(1.5f)))
         {
             return false;
         }
@@ -9612,7 +9610,7 @@ bool BriarDie(Entity& self)
         d.mDieStep = 7;
         [[fallthrough]];
     case 7:
-        if (!BriarWait(d.mTimer, 0.15f))
+        if (!BriarWait(d.mTimer, FxF(0.15f)))
         {
             return false;
         }
@@ -9759,7 +9757,7 @@ bool BriarIntro(Entity& self)
         // OnceEvery(DoWaterAnim(tile), 0.2f), shaking the screen while it runs
         if (d.mWaterWaiting)
         {
-            if (!BriarWait(d.mWaterT, 0.2f))
+            if (!BriarWait(d.mWaterT, FxF(0.2f)))
             {
                 Screen_Shake(FxF(0.01f), FxSec(0.1f));
                 return false;
@@ -9784,7 +9782,7 @@ bool BriarIntro(Entity& self)
         d.mStep = 3;
         [[fallthrough]];
     case 3:
-        if (!BriarWait(d.mTimer, 0.5f))
+        if (!BriarWait(d.mTimer, FxF(0.5f)))
         {
             return false;
         }
@@ -9821,7 +9819,7 @@ bool BriarEnd(Entity& self)
         d.mStep = 1;
         [[fallthrough]];
     case 1:
-        if (!BriarWait(d.mTimer, 1.5f))
+        if (!BriarWait(d.mTimer, FxF(1.5f)))
         {
             return false;
         }
@@ -9837,7 +9835,7 @@ bool BriarEnd(Entity& self)
         d.mStep = 3;
         [[fallthrough]];
     case 3:
-        if (!BriarWait(d.mTimer, 1))
+        if (!BriarWait(d.mTimer, Fx(1)))
         {
             return false;
         }
@@ -9904,12 +9902,12 @@ void BriarMainUpdate(Entity& self)
     // its VolumeEvent(0, 0.6f), after the gate
     if (d.mVolume)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         if (MoveTo(volume, 0, FxF(0.6f)))
         {
             d.mVolume = false;
         }
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
 }
 
@@ -10140,13 +10138,11 @@ const EntityClass kEyePart = {
 void EyeLookAtPlayer(const Entity& eye, Entity& pupil)
 {
     const Entity& p = *World_Player();
-    const float dx = (Ecs_VisualCenterX(p) - Ecs_VisualCenterX(eye)).mV;
-    const float dy = (Ecs_VisualCenterY(p) - Ecs_VisualCenterY(eye)).mV;
-    const float len = sqrtf(dx * dx + dy * dy);
-    const float nx = dx / len;
-    const float ny = dy / len;
-    pupil.mT->mX = eye.mT->mX - eye.mV->mOffX + fx(7 + nx * 2);
-    pupil.mT->mY = eye.mT->mY - eye.mV->mOffY + fx(8 + ny * 2);
+    fx nx = Ecs_VisualCenterX(p) - Ecs_VisualCenterX(eye);
+    fx ny = Ecs_VisualCenterY(p) - Ecs_VisualCenterY(eye);
+    FxNormalize(nx, ny);
+    pupil.mT->mX = eye.mT->mX - eye.mV->mOffX + (Fx(7) + nx * 2);
+    pupil.mT->mY = eye.mT->mY - eye.mV->mOffY + (Fx(8) + ny * 2);
 }
 
 void EyePreviewUpdate(Entity& self)
@@ -10160,7 +10156,7 @@ void EyePreviewUpdate(Entity& self)
     case 0:
         if (v.mOpacity < kFxOne)
         {
-            v.mOpacity = fx(v.mOpacity.mV + 0.48f * kDeltaTime);
+            v.mOpacity = v.mOpacity + FxMul(FxF(0.48f), kFxTick);
             break;
         }
         Ecs_Play(*d.mEyelids, "open");
@@ -10184,7 +10180,7 @@ void EyePreviewUpdate(Entity& self)
     default:
         if (v.mOpacity > 0)
         {
-            v.mOpacity = fx(v.mOpacity.mV - 3.0f * kDeltaTime);
+            v.mOpacity = v.mOpacity - FxMul(FxF(3.0f), kFxTick);
             break;
         }
         self.mExists = false;
@@ -10332,7 +10328,7 @@ struct WaterPhaseData final
     bool mPlayerHit;
     bool mVolume; // its VolumeEvent(0, 0.42), quiet, is fading the song out
     bool mVolumeLive;
-    float mT; // SpeedUpOnHit's tm, WaitingOnHit's t
+    fx mT; // SpeedUpOnHit's tm, WaitingOnHit's t
     fx mTlX;  // the pool's top left
     fx mTlY;
     Entity* mPupil;
@@ -10383,16 +10379,16 @@ bool EyeWaterShoot(const Entity& self)
 // FightLogic: SpeedUpOnHit then WaitingOnHit, round and round, each running on into the next in the same frame.
 void EyeFightStep(Entity& self, WaterPhaseData& d)
 {
-    static const float kShootTimes[7] = { 0, 0.65f, 0.7f, 0.8f, 0.9f, 0.95f, 1.1f };
+    static const fx kShootTimes[7] = { 0, FxF(0.65f), FxF(0.7f), FxF(0.8f), FxF(0.9f), FxF(0.95f), FxF(1.1f) };
     Transform& t = *self.mT;
     for (;;)
     {
         if (d.mSpeedUp)
         {
             // SpeedUpOnHit: each hit speeds the eye up, until 0.8 s pass without one
-            if (static_cast<double>(d.mT) < 0.8)
+            if (d.mT < FxF(0.8f))
             {
-                d.mT += kDeltaTime;
+                d.mT += kFxTick;
                 if (d.mPlayerHit)
                 {
                     Player_ReceiveDamage(1);
@@ -10400,20 +10396,20 @@ void EyeFightStep(Entity& self, WaterPhaseData& d)
                 if (d.mBroomHit)
                 {
                     d.mT = 0;
-                    t.mVelX = fx(t.mVelX.mV * 1.5f);
-                    t.mVelY = fx(t.mVelY.mV * 1.5f);
+                    t.mVelX = FxMul(t.mVelX, FxF(1.5f));
+                    t.mVelY = FxMul(t.mVelY, FxF(1.5f));
                 }
                 return;
             }
             Ecs_Play(*d.mEyelids, "blink");
-            t.mVelX = t.mVelY = fx(static_cast<float>(6 - d.mHealth) * 15);
+            t.mVelX = t.mVelY = Fx(6 - d.mHealth) * 15;
             d.mSpeedUp = false;
             d.mT = 0;
         }
         // WaitingOnHit: shoots until the broom hits it, then it's knocked away
         if (!d.mBroomHit)
         {
-            d.mT += kDeltaTime;
+            d.mT += kFxTick;
             if (d.mT >= kShootTimes[d.mHealth])
             {
                 d.mT = 0;
@@ -10425,8 +10421,8 @@ void EyeFightStep(Entity& self, WaterPhaseData& d)
             return;
         }
         Ecs_Play(*d.mEyelids, "closed");
-        float vx = fminf(20, static_cast<float>(Rng_Range(0, 100)));
-        float vy = sqrtf(100 * 100 - vx * vx);
+        fx vx = FxMin(Fx(20), Fx(Rng_Range(0, 100)));
+        fx vy = FxSqrt(Fx(100 * 100) - FxMul(vx, vx));
         if (Player_Facing() == FACE_UP)
         {
             vy = -vy;
@@ -10435,8 +10431,8 @@ void EyeFightStep(Entity& self, WaterPhaseData& d)
         {
             vx = -vx;
         }
-        t.mVelX = fx(vx);
-        t.mVelY = fx(vy);
+        t.mVelX = vx;
+        t.mVelY = vy;
         d.mSpeedUp = true;
         d.mT = 0;
     }
@@ -10515,7 +10511,7 @@ void WaterPhaseStep(Entity& self, WaterPhaseData& d)
     case WP_FADE:
         if (!MoveTo(v.mOpacity, 0, Fx(3)))
         {
-            v.mYPush = fx(v.mYPush.mV + kDeltaTime * 60);
+            v.mYPush = v.mYPush + kFxTick * 60;
             return;
         }
         gGame.mPuzzlesSolved++;
@@ -10542,9 +10538,9 @@ void WaterPhaseUpdate(Entity& self)
     {
         if (d.mVolumeLive)
         {
-            fx volume = FxF(Game_SongVolume());
+            fx volume = Game_SongVolume();
             MoveTo(volume, 0, FxF(0.007f * 60));
-            Game_SetSongVolume(volume.mV);
+            Game_SetSongVolume(volume);
         }
         d.mVolumeLive = true;
     }
@@ -10615,7 +10611,7 @@ void EyeSplashCollided(Entity& self, Entity&)
 {
     if (self.mV->mOffY < Fx(9) && !Player_Invincible())
     {
-        Player_SetSlowFor(100, 0.3f);
+        Player_SetSlowFor(100, FxF(0.3f));
         BubbleSfx();
     }
 }
@@ -10633,14 +10629,14 @@ void EyeSplashSpawn(Entity& s, fx x, fx y)
     s.mT->mY = y;
     Ecs_Play(s, "move");
     d.mArc.mT = 0;
-    const float vx = static_cast<float>(Rng_Range(-20, 21));
-    float vy = sqrtf(20 * 20 - vx * vx);
+    const fx vx = Fx(Rng_Range(-20, 21));
+    fx vy = FxSqrt(Fx(20 * 20) - FxMul(vx, vx));
     if (Rng_Unit() < FxF(0.5f))
     {
         vy = -vy;
     }
-    s.mT->mVelX = fx(vx);
-    s.mT->mVelY = fx(vy);
+    s.mT->mVelX = vx;
+    s.mT->mVelY = vy;
 }
 
 enum LandCoroutine : uint8_t
@@ -10664,7 +10660,7 @@ struct LandPhaseData final
     bool mBlinkWaiting; // Blink: inside its wait
     fx mT;              // Die's t
     fx mPaceT;
-    float mBlinkT;
+    fx mBlinkT;
     fx mPaceX; // Pace's pos
     fx mPaceY;
     fx mBaseX; // LandLogic's base_pt
@@ -10750,12 +10746,14 @@ void LandShoot(const Entity& self, int amount)
         Ecs_Play(*b, "move");
         b->mT->mX = x;
         b->mT->mY = y;
-        const float vx = (p.mT->mX - x).mV / 1.5f;
-        const float vy = (p.mT->mY - y).mV / 1.5f;
-        const float rx = Rng_Unit().mV * 5;
-        const float ry = Rng_Unit().mV * 5;
-        b->mT->mVelX = fx(vx + rx);
-        b->mT->mVelY = fx(vy + ry);
+        // (Vector2 / duration: times 1 / duration)
+        const fx inv = FxDiv(kFxOne, FxF(1.5f));
+        const fx vx = FxMul(p.mT->mX - x, inv);
+        const fx vy = FxMul(p.mT->mY - y, inv);
+        const fx rx = Rng_Unit() * 5;
+        const fx ry = Rng_Unit() * 5;
+        b->mT->mVelX = vx + rx;
+        b->mT->mVelY = vy + ry;
         d.mArc.mT = 0;
     }
 }
@@ -10869,7 +10867,7 @@ void LandPaceNext(LandPhaseData& d)
 // Blink's MoveNext: blinks and shoots, quicker as it gets hurt.
 void LandBlinkNext(Entity& self, LandPhaseData& d)
 {
-    static const float kTimes[6] = { 1, 1, 0.9f, 0.8f, 0.7f, 0.65f };
+    static const fx kTimes[6] = { kFxOne, kFxOne, FxF(0.9f), FxF(0.8f), FxF(0.7f), FxF(0.65f) };
     for (;;)
     {
         if (!d.mBlinkWaiting)
@@ -10879,7 +10877,7 @@ void LandBlinkNext(Entity& self, LandPhaseData& d)
         }
         if (d.mBlinkT < kTimes[6 - d.mHealth])
         {
-            d.mBlinkT += kDeltaTime;
+            d.mBlinkT += kFxTick;
             if (Ecs_AnimIs(self, "blink_land") && Ecs_AnimFinished(self))
             {
                 Ecs_Play(self, "walk");
@@ -10932,7 +10930,7 @@ bool LandLogicStep(Entity& self, LandPhaseData& d)
             d.mShadow->mV->mVisible = true;
             d.mShadow->mV->mOffX = Fx(4);
             d.mShadow->mV->mOffY = Fx(10);
-            ParabolaInit(d.mJump, self, 16, 0.6f);
+            ParabolaInit(d.mJump, self, Fx(16), FxF(0.6f));
             t.mVelX = -Fx(20);
             d.mStep = 2;
             [[fallthrough]];
@@ -11214,7 +11212,7 @@ Entity* Spawn_Slime(const MapEntity& preset, Entity&)
             rate = static_cast<uint8_t>(Rng_Range(5, 10));
         }
     }
-    d.mMove.Add(0.5f, SLIME_MOVE_TIMER);
+    d.mMove.Add(FxSec(0.5f), SLIME_MOVE_TIMER);
     d.mExitFrame = Game_Frame();
     SlimeEnterMove(*e);
     return e;
@@ -11243,9 +11241,9 @@ Entity* Spawn_BurstPlant(const MapEntity& preset, Entity&)
         b->mV->mLayer = LAYER_FG_SPRITES;
         Ecs_KeepPooled(*b);
     }
-    d.mCharging.Add(0.5f, 0);
+    d.mCharging.Add(FxSec(0.5f), 0);
     d.mState = BURST_INITIAL;
-    d.mInitial.Add(0.4f, 0);
+    d.mInitial.Add(FxSec(0.4f), 0);
     return e;
 }
 
@@ -11274,10 +11272,10 @@ Entity* Spawn_Frog(const MapEntity& preset, Entity&)
         Ecs_KeepPooled(*b);
         FrogBulletData& bd = b->Data<FrogBulletData>();
         bd.mMultiplier = i + 1;
-        bd.mPeriod = fx(static_cast<float>(0.8 + Rng_NextDouble()));
+        bd.mPeriod = fx(Fx(0.8 + Rng_NextDouble()));
     }
     d.mState = FROG_INITIAL;
-    d.mInitial.Add(0.8f, 0);
+    d.mInitial.Add(FxSec(0.8f), 0);
     return e;
 }
 
@@ -11397,8 +11395,8 @@ Entity* Spawn_Annoyer(const MapEntity& preset, Entity&)
     e->mV->mOffY = Fx(2);
     AnnoyerData& d = e->Data<AnnoyerData>();
     d.mHealth = preset.mFrame == kAnnoyerSuper ? 2 : 1;
-    d.mActive.Add(2.3f, ANNOYER_FIRE);
-    d.mCircle.Add(3.0f, ANNOYER_SWOOP_TIMER);
+    d.mActive.Add(FxSec(2.3f), ANNOYER_FIRE);
+    d.mCircle.Add(FxSec(3.0f), ANNOYER_SWOOP_TIMER);
     AnnoyerEnterActive(*e);
     Ecs_Play(*e, Game_IsCell() ? "flap@cell" : (preset.mFrame == kAnnoyerSuper ? "flap_super" : "flap"));
     return e;
@@ -11470,7 +11468,7 @@ Entity* Spawn_Dog(const MapEntity& preset, Entity&)
     DogData& d = e->Data<DogData>();
     d.mHealth = 3;
     d.mSuper = Preset_TypeValue(preset)[0] == '1';
-    d.mAttack.Add(1.0f, 0);
+    d.mAttack.Add(FxSec(1.0f), 0);
     Ecs_Play(*e, "stop");
     // (at the origin until its first Update moves it round the dog)
     Entity* region = Ecs_Create(kDogRegion, 0, 0, 0, nullptr, e);
@@ -11589,7 +11587,7 @@ Entity* Spawn_Mover(const MapEntity& preset, Entity&)
     e->mT->mDragX = e->mT->mDragY = Fx(100);
     MoverData& d = e->Data<MoverData>();
     d = MoverData();
-    d.mMove.Add(1.0f, 0);
+    d.mMove.Add(FxSec(1.0f), 0);
     return e;
 }
 
@@ -11680,10 +11678,10 @@ Entity* Spawn_RedBoss(const MapEntity& preset, Entity&)
     d = RedBossData();
     d.mHealth = 12;
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
-    d.mSplash.Add(3.0f, RBT_SPLASH);
-    d.mSplash.Add(3.0f, RBT_TENTACLES);
-    d.mDash.Add(1.5f, RBT_TENTACLES);
-    d.mDash.Add(5.0f, RBT_END_DASH);
+    d.mSplash.Add(FxSec(3.0f), RBT_SPLASH);
+    d.mSplash.Add(FxSec(3.0f), RBT_TENTACLES);
+    d.mDash.Add(FxSec(1.5f), RBT_TENTACLES);
+    d.mDash.Add(FxSec(5.0f), RBT_END_DASH);
 
     // (a sub-entity of the boss: made now, kept while it doesn't exist)
     auto make = [e](const EntityClass& cls, const char* sheet, int w, int h, uint8_t layer, uint8_t parts) -> Entity* {
@@ -11902,7 +11900,7 @@ Entity* Spawn_WallBoss(const MapEntity& preset, Entity&)
         hd.mInitY = hy;
         hd.mCracked = d.mBossRush ? 78 : 71;
         hd.mHole = d.mBossRush ? 91 : 81;
-        ParabolaInit(hd.mStomp, *h, right ? 32.0f : 64.0f, right ? 1.0f : 2.0f);
+        ParabolaInit(hd.mStomp, *h, right ? FxF(32.0f) : FxF(64.0f), right ? FxF(1.0f) : FxF(2.0f));
         hd.mShadow = shadow;
         hd.mExplosion = explosion;
         hands[right] = h;
@@ -11948,9 +11946,9 @@ constexpr int kPersonSpeed = 10;
 
 struct PersonData final
 {
-    float mSwitchDirMax;
-    float mSwitchDir;
-    float mTalk;
+    fx mSwitchDirMax;
+    fx mSwitchDir;
+    fx mTalk;
 };
 
 void PersonSetFlip(Entity& self)
@@ -11971,16 +11969,16 @@ void PersonUpdate(Entity& self)
 {
     PersonData& d = self.Data<PersonData>();
     Ecs_BaseUpdate(self);
-    d.mSwitchDir -= kDeltaTime;
+    d.mSwitchDir -= kFxTick;
     if (d.mSwitchDir < 0)
     {
         d.mSwitchDir = d.mSwitchDirMax;
         PersonFace(self, static_cast<Facing>(Rng_Range(0, 4)));
     }
-    d.mTalk -= kDeltaTime;
+    d.mTalk -= kFxTick;
     if (d.mTalk < 0)
     {
-        d.mTalk = static_cast<float>(0.5 + Rng_NextDouble());
+        d.mTalk = Fx(0.5 + Rng_NextDouble());
         static const char* const kTalk[] = { "talk_1", "talk_1", "talk_2", "talk_3", "talk_3" };
         Game_PlaySfxOneOf(kTalk, 5);
     }
@@ -12015,9 +12013,9 @@ Entity* Spawn_Person(const MapEntity& preset, Entity&)
     e->mT->mLastY = e->mT->mY;
     e->mV->mOffY += Fx(4);
     PersonData& d = e->Data<PersonData>();
-    d.mSwitchDirMax = 1.3f;
-    d.mSwitchDir = 2.0f;
-    d.mTalk = static_cast<float>(0.5 + Rng_NextDouble());
+    d.mSwitchDirMax = FxF(1.3f);
+    d.mSwitchDir = FxF(2.0f);
+    d.mTalk = Fx(0.5 + Rng_NextDouble());
     switch (preset.mFrame)
     {
     case 0:
@@ -12038,7 +12036,7 @@ Entity* Spawn_Person(const MapEntity& preset, Entity&)
         const fx v = Fx(Rng_Range(-kPersonSpeed, kPersonSpeed));
         e->mT->mVelX = e->mT->mVelY = v;
         Ecs_Play(*e, v > 0 ? "walk_r" : "walk_l");
-        d.mSwitchDirMax = 0.5f;
+        d.mSwitchDirMax = FxF(0.5f);
         PersonSetFlip(*e);
         break;
     }
@@ -12321,7 +12319,7 @@ Entity* Spawn_GasGuy(const MapEntity& preset, Entity&)
     GasGuyData& d = e->Data<GasGuyData>();
     d = GasGuyData();
     d.mHealth = 3;
-    d.mSoundDelayMax = static_cast<float>(1.5 + Rng_NextDouble());
+    d.mSoundDelayMax = Fx(1.5 + Rng_NextDouble());
     for (Entity*& g : d.mGas)
     {
         g = Ecs_Create(kGas, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
@@ -12502,9 +12500,9 @@ Entity* Spawn_SteamPipe(const MapEntity& preset, Entity&)
         Ecs_Play(*s, "s");
         s->mV->mLayer = LAYER_FG_SPRITES;
         Ecs_SetSolid(*s, false);
-        const float scale = Rng_Range(8, 10) / 10.0f;
-        s->mV->mScale = fx(scale);
-        s->mB->mW = s->mB->mH = static_cast<int16_t>(16 * scale);
+        const fx scale = Fx(Rng_Range(8, 10)) / 10;
+        s->mV->mScale = scale;
+        s->mB->mW = s->mB->mH = static_cast<int16_t>(FxTrunc(16 * scale));
         s->mFacing = e->mFacing;
         SteamData& sd = s->Data<SteamData>();
         sd = SteamData();
@@ -12675,7 +12673,7 @@ Entity* Spawn_EyeBossLand(const MapEntity& preset, Entity&)
             return nullptr;
         }
         Ecs_CenterOffset(*b);
-        ParabolaInit(b->Data<EyeArcData>().mArc, *b, 45, 1.5f);
+        ParabolaInit(b->Data<EyeArcData>().mArc, *b, Fx(45), FxF(1.5f));
     }
     for (Entity*& s : d.mSplashes)
     {
@@ -12683,7 +12681,7 @@ Entity* Spawn_EyeBossLand(const MapEntity& preset, Entity&)
         {
             return nullptr;
         }
-        ParabolaInit(s->Data<EyeArcData>().mArc, *s, 36, 1 + 0.4f * Rng_Unit().mV);
+        ParabolaInit(s->Data<EyeArcData>().mArc, *s, Fx(36), kFxOne + FxMul(FxF(0.4f), Rng_Unit()));
     }
     d.mHealth = 6;
     if (Preset_Activated(preset))
@@ -12713,7 +12711,7 @@ Entity* Spawn_SpaceFace(const MapEntity& preset, Entity&)
     Ecs_Play(*e, preset.mFrame == 0 ? "a@2" : "a");
     SpaceFaceData& d = e->Data<SpaceFaceData>();
     d = SpaceFaceData();
-    d.mWaitMax = static_cast<float>(0.5 + 1.5 * Rng_NextDouble());
+    d.mWaitMax = Fx(0.5 + 1.5 * Rng_NextDouble());
     return e;
 }
 
@@ -12757,10 +12755,10 @@ Entity* Spawn_FirePillar(const MapEntity& preset, Entity&)
     e->mT->mY += Fx(16);
     FirePillarData& d = e->Data<FirePillarData>();
     d = FirePillarData();
-    d.mTimers[PILLAR_IDLE].Add(0.74f, 0);
-    d.mTimers[PILLAR_EMERGE].Add(0.3f, 0);
-    d.mTimers[PILLAR_FLAME].Add(1.0f, 0);
-    d.mTimers[PILLAR_RECEDE].Add(0.3f, 0);
+    d.mTimers[PILLAR_IDLE].Add(FxSec(0.74f), 0);
+    d.mTimers[PILLAR_EMERGE].Add(FxSec(0.3f), 0);
+    d.mTimers[PILLAR_FLAME].Add(FxSec(1.0f), 0);
+    d.mTimers[PILLAR_RECEDE].Add(FxSec(0.3f), 0);
     PillarEnter(*e, PILLAR_IDLE);
     return e;
 }
@@ -12778,7 +12776,7 @@ Entity* Spawn_Contort(const MapEntity& preset, Entity&)
     Ecs_Play(*e, "move");
     ContortData& d = e->Data<ContortData>();
     d = ContortData();
-    d.mDeathTimer = 1;
+    d.mDeathTimer = Fx(1);
     d.mHealth = 3;
     e->mT->mVelX = Fx(Rng_NextDouble() > 0.5 ? 35 : -35);
     e->mT->mVelY = Fx(Rng_NextDouble() > 0.5 ? 35 : -35);
@@ -12801,7 +12799,7 @@ Entity* Spawn_Contort(const MapEntity& preset, Entity&)
         Ecs_SetSolid(*shadow, false);
         ContortSmallData& sd = s->Data<ContortSmallData>();
         sd = ContortSmallData();
-        ParabolaInit(sd.mArc, *s, static_cast<float>(16 + 8 * kHeights[i]), 1.2f);
+        ParabolaInit(sd.mArc, *s, Fx(16 + 8 * kHeights[i]), FxF(1.2f));
         sd.mShadow = shadow;
         s->mT->mVelX = fx(ContortRandomVel());
         s->mT->mVelY = fx(ContortRandomVel());
@@ -12828,7 +12826,7 @@ Entity* Spawn_Lion(const MapEntity& preset, Entity&)
     {
         d.mAt[i] = kLionTimerMax[i];
     }
-    ParabolaInit(d.mArc, *e, 12, 1);
+    ParabolaInit(d.mArc, *e, Fx(12), kFxOne);
     for (int i = 0; i < kLionFireballs; i++)
     {
         Entity* b = Ecs_Create(kLionFireball, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
@@ -12873,7 +12871,7 @@ Entity* Spawn_ArthurDanger(const MapEntity& preset, Entity&)
     Ecs_Play(*e, "wobble");
     FolksData& d = e->Data<FolksData>();
     d = FolksData();
-    ParabolaInit(d.mArc, *e, 32, 1);
+    ParabolaInit(d.mArc, *e, Fx(32), kFxOne);
     d.mShadow = Ecs_Create(kEntityShadow, 0, 0, PART_VISUAL, nullptr, e);
     if (!d.mShadow)
     {
@@ -12972,7 +12970,7 @@ Entity* Spawn_CircusFolks(const MapEntity& preset, Entity&)
         return nullptr;
     }
     e->mV->mVisible = false;
-    ParabolaInit(d.mArc, *e, 48, 1);
+    ParabolaInit(d.mArc, *e, Fx(48), kFxOne);
     d.mShadow = Ecs_Create(kEntityShadow, e->mT->mX + Fx(4), e->mT->mY + Fx(8), PART_VISUAL, nullptr, e);
     if (!d.mShadow)
     {

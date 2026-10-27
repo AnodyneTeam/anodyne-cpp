@@ -7,6 +7,7 @@
 
 #include "tonc.h"
 
+#include "fix16_sin.h"
 #include "obj_vram_allocator.hpp"
 #include "sprite.h"
 
@@ -84,16 +85,16 @@ const SpriteAnimData* CurAnim(const Visual& v)
 }
 
 // Anim.Update: one step of the current animation.
-// 1 / fps for the usual frame rates (a soft float divide is slow), worked out by the compiler to the same bits.
+// 1 / fps (FxDiv(1, fps): 65536 / fps raw) for the usual frame rates, so the frame doesn't pay for a divide.
 constexpr int kDelayCount = 64;
 struct Delays final
 {
-    float mV[kDelayCount];
+    fx mV[kDelayCount];
     constexpr Delays() : mV()
     {
         for (int i = 1; i < kDelayCount; i++)
         {
-            mV[i] = 1.0f / static_cast<float>(i);
+            mV[i] = FxDiv(kFxOne, Fx(i));
         }
     }
 };
@@ -112,9 +113,9 @@ void AnimUpdate(Visual& v)
         v.mFinished = true; // delay 0: always "finished"
         return;
     }
-    // (the C#'s float timer against a float delay, strictly past it: 4 frames of 1/60 are not past 1/15)
-    const float delay = fps < kDelayCount ? kDelays.mV[fps] : 1.0f / static_cast<float>(fps);
-    v.mTimer += kDeltaTime;
+    // (strictly past it: 4 ticks (4368 raw) are not past 1/15 (4369), as 4 frames of 1/60 weren't in the C#'s floats)
+    const fx delay = fps < kDelayCount ? kDelays.mV[fps] : FxDiv(kFxOne, Fx(fps));
+    v.mTimer += kFxTick;
     while (v.mTimer > delay)
     {
         v.mTimer -= delay;
@@ -305,28 +306,11 @@ Obj ObjOf(Entity& e)
     return o;
 }
 
-uint32_t Bits(fx v)
-{
-    uint32_t b;
-    memcpy(&b, &v.mV, sizeof(b));
-    return b;
-}
-
-// +0 (a zero velocity, acceleration or spin) or a finite drag >= 0, under which Drag() keeps a zero velocity +0.
+// No velocity, acceleration or spin, and a drag >= 0 (which keeps a zero velocity zero): nothing would move.
 bool AtRest(const Transform& t)
 {
-    constexpr uint32_t kInf = 0x7F800000;
-    return (Bits(t.mVelX) | Bits(t.mVelY) | Bits(t.mAccX) | Bits(t.mAccY) | Bits(t.mAngVel) | Bits(t.mAngAcc)) == 0 &&
-           Bits(t.mDragX) < kInf && Bits(t.mDragY) < kInf;
-}
-
-// x + +0: the same, but for -0, which becomes +0.
-void AddZero(fx& v)
-{
-    if (Bits(v) == 0x80000000u)
-    {
-        v = kFxZero;
-    }
+    return (t.mVelX.mRaw | t.mVelY.mRaw | t.mAccX.mRaw | t.mAccY.mRaw | t.mAngVel.mRaw | t.mAngAcc.mRaw) == 0 &&
+           t.mDragX >= 0 && t.mDragY >= 0;
 }
 
 void Physics(Entity& e)
@@ -336,10 +320,7 @@ void Physics(Entity& e)
     t.mLastY = t.mY;
     if (AtRest(t))
     {
-        // (the soft float below would only add zeros: most entities stand still, so skip it)
-        AddZero(t.mX);
-        AddZero(t.mY);
-        AddZero(t.mRot);
+        // (the maths below would only add zeros: most entities stand still, so skip it)
         e.mB->mWasTouching = e.mB->mTouching;
         e.mB->mTouching = TOUCH_NONE;
         return;
@@ -367,29 +348,68 @@ bool Updatable(const Entity& e)
 } // namespace
 
 // ---- Math ----------------------------------------------------------------------------------------------------
-int FxFloor(fx v)
+namespace
 {
-    return static_cast<int>(floorf(v.mV));
+// floor(sqrt(v)) of a 64-bit value, bit by bit.
+uint32_t ISqrt64(uint64_t v)
+{
+    uint64_t root = 0;
+    uint64_t bit = static_cast<uint64_t>(1) << 62;
+    while (bit > v)
+    {
+        bit >>= 2;
+    }
+    while (bit != 0)
+    {
+        if (v >= root + bit)
+        {
+            v -= root + bit;
+            root = (root >> 1) + bit;
+        }
+        else
+        {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return static_cast<uint32_t>(root);
 }
+
+// The angle in 1/4096 turns, rounded: raw * 2^32 / (2 pi 65536), 2^32 / (32 pi) = 42722830.
+int SinIndex(fx radians)
+{
+    return static_cast<int>((static_cast<int64_t>(radians.mRaw) * 42722830 + (static_cast<int64_t>(1) << 31)) >> 32);
+}
+
+fx SinAt(int i)
+{
+    i &= 4095;
+    const int j = i & 1023;
+    const int32_t v = (i & 1024) ? kFix16Sin[1024 - j] : kFix16Sin[j];
+    return fx::Raw(i >= 2048 ? -v : v);
+}
+} // namespace
 
 fx FxSqrt(fx v)
 {
-    return v.mV <= 0.0f ? kFxZero : fx(sqrtf(v.mV));
+    return v.mRaw <= 0 ? kFxZero : fx::Raw(static_cast<int32_t>(ISqrt64(static_cast<uint64_t>(v.mRaw) << 16)));
 }
 
 fx FxLength(fx x, fx y)
 {
-    return fx(sqrtf(x.mV * x.mV + y.mV * y.mV));
+    const uint64_t sq = static_cast<uint64_t>(static_cast<int64_t>(x.mRaw) * x.mRaw) +
+                        static_cast<uint64_t>(static_cast<int64_t>(y.mRaw) * y.mRaw);
+    return fx::Raw(static_cast<int32_t>(ISqrt64(sq)));
 }
 
 fx FxSin(fx radians)
 {
-    return fx(sinf(radians.mV));
+    return SinAt(SinIndex(radians));
 }
 
 fx FxCos(fx radians)
 {
-    return fx(cosf(radians.mV));
+    return SinAt(SinIndex(radians) + 1024);
 }
 
 bool MoveTo(fx& value, fx target, fx speedPerSecond)
@@ -488,9 +508,9 @@ void Game_SetFrame(uint32_t frame)
     gGameFrame = frame;
 }
 
-float Game_SecondsSince(uint32_t thenFrame)
+fx Game_SecondsSince(uint32_t thenFrame)
 {
-    return static_cast<float>(static_cast<double>(FrameTicks(gGameFrame) - FrameTicks(thenFrame)) / 10000000.0);
+    return fx::Raw(static_cast<int32_t>((FrameTicks(gGameFrame) - FrameTicks(thenFrame)) * 65536 / 10000000));
 }
 
 int Rng_Next()
@@ -525,7 +545,7 @@ double Rng_NextDouble()
 
 fx Rng_Unit()
 {
-    return fx(static_cast<float>(Rng_NextDouble()));
+    return fx::Raw(static_cast<int32_t>((static_cast<int64_t>(Rng_Next()) << 16) / 0x7FFFFFFF));
 }
 
 int Rng_Range(int lo, int hi)
@@ -971,9 +991,9 @@ void Ecs_MoveTowards(Entity& e, fx tx, fx ty, fx speed)
         return;
     }
     // Vector2.Normalize (x and y times 1 / length), then * speed
-    const float inv = 1.0f / len.mV;
-    e.mT->mVelX = fx(dx.mV * inv * speed.mV);
-    e.mT->mVelY = fx(dy.mV * inv * speed.mV);
+    const fx inv = FxDiv(kFxOne, len);
+    e.mT->mVelX = FxMul(FxMul(dx, inv), speed);
+    e.mT->mVelY = FxMul(FxMul(dy, inv), speed);
 }
 
 void Ecs_FaceTowards(Entity& e, fx tx, fx ty)
@@ -1615,7 +1635,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         const int fw = sheet.mFrameWidth;
         const int fh = sheet.mFrameHeight;
         // (x * 1 is x: most sprites aren't scaled, so skip those soft float multiplies)
-        const bool unscaled = Bits(v.mScale) == Bits(kFxOne);
+        const bool unscaled = v.mScale == kFxOne;
         const fx px = e.mT->mX - (unscaled ? v.mOffX : FxMul(v.mOffX, v.mScale));
         const fx py = e.mT->mY - (unscaled ? v.mOffY : FxMul(v.mOffY, v.mScale)) + v.mYPush;
         const int sx = FxTrunc(px) - camX + viewX + shakeX;
@@ -1649,8 +1669,8 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             const fx c = FxCos(e.mT->mRot);
             const fx s = FxSin(e.mT->mRot);
             const fx inv = FxDiv(kFxOne, v.mScale);
-            const int cs = static_cast<int>(FxMul(c, inv).mV * 256); // 8.8
-            const int sn = static_cast<int>(FxMul(s, inv).mV * 256);
+            const int cs = FxMul(c, inv).mRaw / 256; // 8.8
+            const int sn = FxMul(s, inv).mRaw / 256;
             int pa = cs;
             int pb = sn;
             int pc = -sn;

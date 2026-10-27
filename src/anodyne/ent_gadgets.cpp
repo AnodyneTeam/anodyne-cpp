@@ -605,7 +605,7 @@ struct PillarData final
 {
     int mDefaultFrame;
     int mCurrent;
-    float mHitTimer; // PillarSwitch.hit_tm
+    fx mHitTimer; // PillarSwitch.hit_tm
 };
 
 int PillarTarget(const PillarData& d)
@@ -653,7 +653,7 @@ void PillarSwitchUpdate(Entity& self)
     Ecs_BaseUpdate(self);
     if (d.mHitTimer > 0)
     {
-        d.mHitTimer -= kDeltaTime;
+        d.mHitTimer -= kFxTick;
         if (d.mHitTimer <= 0)
         {
             Ecs_Play(self, gGame.mPillarSwitchOn == 0 ? "up" : "down");
@@ -668,7 +668,7 @@ void PillarSwitchCollided(Entity& self, Entity& other)
     if ((other.mClass->mGroups & GROUP_BROOM) && d.mHitTimer <= 0)
     {
         Ecs_Play(self, "hit");
-        d.mHitTimer = 1.0f;
+        d.mHitTimer = FxF(1.0f);
         Game_PlaySfx("broom_hit");
         gGame.mPillarSwitchOn = 1 - gGame.mPillarSwitchOn;
     }
@@ -1418,7 +1418,7 @@ enum PillarStep : uint8_t
 struct RedPillarData final
 {
     uint8_t mStep;
-    float mTime;
+    fx mTime;
     Entity* mChain;
     Entity* mRipple;
     Entity* mDoor; // the cutscene's own
@@ -1537,7 +1537,7 @@ bool RedPillarCutscene(Entity& self)
         d.mStep = PILLAR_RISE;
         if (d.mDoor && d.mDoor->mV->mYPush > 0)
         {
-            d.mTime = 0.02f;
+            d.mTime = FxF(0.02f);
             Screen_Shake(FxF(0.05f), FxF(0.5f));
         }
         else
@@ -1550,7 +1550,7 @@ bool RedPillarCutscene(Entity& self)
         {
             if (d.mTime > 0)
             {
-                d.mTime -= kDeltaTime;
+                d.mTime -= kFxTick;
                 return false;
             }
             if (!d.mDoor || d.mDoor->mV->mYPush <= 0)
@@ -1562,16 +1562,16 @@ bool RedPillarCutscene(Entity& self)
             {
                 break;
             }
-            d.mTime = 0.02f;
+            d.mTime = FxF(0.02f);
             Screen_Shake(FxF(0.05f), FxF(0.5f));
         }
         d.mStep = PILLAR_WAIT;
-        d.mTime = 1.5f;
+        d.mTime = FxF(1.5f);
         [[fallthrough]];
     default:
         if (d.mTime > 0)
         {
-            d.mTime -= kDeltaTime;
+            d.mTime -= kFxTick;
             return false;
         }
         RedPillarEnd(self);
@@ -2408,7 +2408,7 @@ void PropelledPotentialStop(Entity& self, fx x, fx y)
     }
     const fx dx = t.mX - self.mV->mOffX - x;
     const fx dy = t.mY - self.mV->mOffY - y;
-    if (dx.mV * dx.mV + dy.mV * dy.mV < 4) // (Vector2.LengthSquared)
+    if (FxLengthSq(dx, dy) < Fx(4)) // (Vector2.LengthSquared)
     {
         t.mVelX = t.mVelY = 0;
         t.mX = x + self.mV->mOffX;
@@ -2830,15 +2830,15 @@ namespace
 {
 struct DashPadData final
 {
-    float mDisabled;
+    fx mDisabled;
 };
 
 void DashPadUpdate(Entity& self)
 {
     DashPadData& d = self.Data<DashPadData>();
     Ecs_BaseUpdate(self);
-    d.mDisabled += kDeltaTime;
-    if (d.mDisabled > 1)
+    d.mDisabled += kFxTick;
+    if (d.mDisabled > kFxOne)
     {
         self.mV->mOpacity = kFxOne;
         d.mDisabled = 0;

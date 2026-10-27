@@ -202,7 +202,7 @@ uint8_t DustFrame()
         h.mDustAnim = DUST_FULL;
         h.mDustTime = 0;
     }
-    h.mDustTime += kDeltaTime;
+    h.mDustTime += kUiDeltaTime;
     if (h.mDustAnim == DUST_DEFAULT)
     {
         return 4;
@@ -224,7 +224,7 @@ HudState CurrentState(bool healthHidden)
     s.mMaxHealth = static_cast<uint8_t>(gGame.mMaxHealth > kMaxHealth ? kMaxHealth : gGame.mMaxHealth);
     s.mCurHealth = static_cast<uint8_t>(gGame.mCurHealth);
     // HealthBarPiece "flash" (0 2 at 7fps) on the last heart
-    h.mFlashTime = gGame.mCurHealth == 1 ? h.mFlashTime + kDeltaTime : 0;
+    h.mFlashTime = gGame.mCurHealth == 1 ? h.mFlashTime + kUiDeltaTime : 0;
     s.mFlash = static_cast<uint8_t>(static_cast<int>(h.mFlashTime * 7) & 1);
     int w = 0;
     int ht = 0;

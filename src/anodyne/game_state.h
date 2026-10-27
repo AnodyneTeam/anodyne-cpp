@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include "ecs.h"
 #include "map_data.h"
 
 // GlobalState / EntityManager.State / InventoryManager / EventRegister: the game's progress, ported from
@@ -218,14 +219,14 @@ void Game_PlaySfx(const char* name);
 void Game_PlaySfxOneOf(const char* const* names, int count);
 // SoundManager.PlaySong / StopSong (""): until the next screen or map with other music.
 // (also SetSongVolume(volume), even when the song is already playing)
-void Game_PlaySong(const char* name, float volume = 1.0f);
+void Game_PlaySong(const char* name, fx volume = kFxOne);
 // SoundManager.GetVolume / SetSongVolume: the song's volume, 0 to 1.
 // SoundManager.CurrentSongName ("" when stopped).
 const char* Game_CurrentSong();
 // Map.IgnoreMusicNextUpdate: the next screen transition keeps the music playing.
 void Game_IgnoreMusicNextUpdate();
-float Game_SongVolume();
-void Game_SetSongVolume(float volume);
+fx Game_SongVolume();
+void Game_SetSongVolume(fx volume);
 
 // GlobalState.GameState.SetState<TitleState>(): out to the title at the end of the frame.
 void Game_RequestTitle();

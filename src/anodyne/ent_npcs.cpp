@@ -1019,21 +1019,19 @@ void BigKeyUpdate(Entity& self)
 void BigKeyOrbit(Entity& self, fx angularSpeed)
 {
     const Entity& p = *World_Player();
-    const float cx = Ecs_CenterX(p).mV;
-    const float cy = Ecs_CenterY(p).mV;
-    float dx = self.mT->mX.mV - cx;
-    float dy = self.mT->mY.mV - cy;
-    const float inv = 1.0f / sqrtf(dx * dx + dy * dy);
-    dx *= inv;
-    dy *= inv;
-    const double angle = static_cast<double>(FxStep(angularSpeed).mV);
-    const float c = static_cast<float>(cos(angle));
-    const float sn = static_cast<float>(sin(angle));
-    const float rx = dx * c + dy * -sn;
-    const float ry = dx * sn + dy * c;
-    const float r = self.Data<BigKeyData>().mRadius.mV;
-    self.mT->mX = fx(cx + rx * r);
-    self.mT->mY = fx(cy + ry * r);
+    const fx cx = Ecs_CenterX(p);
+    const fx cy = Ecs_CenterY(p);
+    fx dx = self.mT->mX - cx;
+    fx dy = self.mT->mY - cy;
+    FxNormalize(dx, dy);
+    const fx angle = FxStep(angularSpeed);
+    const fx c = FxCos(angle);
+    const fx sn = FxSin(angle);
+    const fx rx = FxMul(dx, c) + FxMul(dy, -sn);
+    const fx ry = FxMul(dx, sn) + FxMul(dy, c);
+    const fx r = self.Data<BigKeyData>().mRadius;
+    self.mT->mX = cx + FxMul(rx, r);
+    self.mT->mY = cy + FxMul(ry, r);
 }
 
 // Big_Key.States: each step runs on into the next in the same frame, as the C# loop does until its next yield.
@@ -1142,7 +1140,7 @@ struct MitraData final
     bool mGivenInitialHint; // only give the dungeon/windmill hint once
     Entity* mBike;
     // its VolumeEvent: fades the song to mVolTarget at 0.4 a second
-    float mVolTarget;
+    fx mVolTarget;
     bool mVolReached;
 };
 
@@ -1311,7 +1309,7 @@ bool MitraExit(Entity& self)
         {
             return false;
         }
-        d.mVolTarget = 0.2f;
+        d.mVolTarget = FxF(0.2f);
         d.mVolReached = false;
         d.mStep++;
         [[fallthrough]];
@@ -1333,7 +1331,7 @@ bool MitraExit(Entity& self)
 struct FadeSwitchSongData final
 {
     const char* mNext;
-    float mTarget;
+    fx mTarget;
     bool mReached;
     bool mSwitched;
 };
@@ -1344,15 +1342,15 @@ void FadeSwitchSongUpdate(Entity& self)
     if (!d.mSwitched && d.mReached)
     {
         Game_PlaySong(d.mNext, 0);
-        d.mTarget = 1;
+        d.mTarget = Fx(1);
         d.mReached = false;
         d.mSwitched = true;
     }
     if (!d.mReached)
     {
-        fx volume = FxF(Game_SongVolume());
-        d.mReached = MoveTo(volume, FxF(d.mTarget), FxF(1.6f));
-        Game_SetSongVolume(volume.mV);
+        fx volume = Game_SongVolume();
+        d.mReached = MoveTo(volume, d.mTarget, FxF(1.6f));
+        Game_SetSongVolume(volume);
     }
     else
     {
@@ -1524,9 +1522,9 @@ void MitraUpdate(Entity& self)
     // (VolumeEvent.Update, the sub-entity after it)
     if (!d.mVolReached)
     {
-        fx volume = FxF(Game_SongVolume());
-        d.mVolReached = MoveTo(volume, FxF(d.mVolTarget), FxF(0.4f));
-        Game_SetSongVolume(volume.mV);
+        fx volume = Game_SongVolume();
+        d.mVolReached = MoveTo(volume, d.mVolTarget, FxF(0.4f));
+        Game_SetSongVolume(volume);
     }
 }
 
@@ -1707,13 +1705,13 @@ const MiaoScreen kMiaoScreens[] = {
     { 2, 1, "nexus", nullptr, 2 },
 };
 
-constexpr float kMiaoScreenTimeout = 1.8f;
-constexpr float kMiaoHintTimeout = 70.0f;
+constexpr fx kMiaoScreenTimeout = FxF(1.8f);
+constexpr fx kMiaoHintTimeout = FxF(70.0f);
 
 struct MiaoData final
 {
     Entity* mFollower; // MiaoXiao: its follower; the follower: its dust
-    float mTimer;
+    fx mTimer;
     int mDiag;              // kMiaoScreens index of currentDiag, -1 for none
     const char* mWaitEvent; // wait_on_event
     bool mOnConveyor;
@@ -1776,16 +1774,13 @@ void MiaoFollowerUpdate(Entity& self)
     Ecs_BaseUpdate(self);
     const Entity& p = *World_Player();
     Transform& t = *self.mT;
-    float ox = (Ecs_CenterX(p) - Ecs_CenterX(self)).mV;
-    float oy = (Ecs_CenterY(p) - Ecs_CenterY(self)).mV;
-    if (ox * ox + oy * oy > 16 * 16)
+    fx ox = Ecs_CenterX(p) - Ecs_CenterX(self);
+    fx oy = Ecs_CenterY(p) - Ecs_CenterY(self);
+    if (FxLengthSq(ox, oy) > Fx(16 * 16))
     {
-        // Vector2.Normalize
-        const float inv = 1.0f / sqrtf(ox * ox + oy * oy);
-        ox *= inv;
-        oy *= inv;
-        t.mVelX = fx(ox * 70);
-        t.mVelY = fx(oy * 70);
+        FxNormalize(ox, oy);
+        t.mVelX = ox * 70;
+        t.mVelY = oy * 70;
     }
     else
     {
@@ -1812,7 +1807,7 @@ void MiaoFollowerUpdate(Entity& self)
         d.mWaitEvent = nullptr;
     }
 
-    d.mTimer -= kDeltaTime;
+    d.mTimer -= kFxTick;
     if (d.mTimer < 0 && !World_InTransition() && Game_DialogueFinished())
     {
         int id = d.mDiag >= 0 ? kMiaoScreens[d.mDiag].mDiagId : -1;
@@ -1962,9 +1957,9 @@ struct TradeData final
 };
 
 // MapUtilities.GetInGridPosition
-float InGrid(fx v)
+fx InGrid(fx v)
 {
-    return v.mV - static_cast<float>(static_cast<int>(v.mV / 160) * 160);
+    return v - Fx(FxTrunc(v / 160) * 160);
 }
 
 void TradeCollided(Entity& self, Entity& other)
@@ -1990,7 +1985,7 @@ bool OutsideMonsterCutscene(Entity& self)
         d.mStep = 2;
         [[fallthrough]];
     case 2:
-        if (InGrid(t.mY) > 6 * 16)
+        if (InGrid(t.mY) > Fx(6 * 16))
         {
             return false;
         }
@@ -2000,7 +1995,7 @@ bool OutsideMonsterCutscene(Entity& self)
         d.mStep = 3;
         [[fallthrough]];
     default:
-        if (InGrid(t.mX) > 10) // wraps around when on next screen
+        if (InGrid(t.mX) > Fx(10)) // wraps around when on next screen
         {
             return false;
         }
@@ -2038,7 +2033,7 @@ bool BoxIckyCutscene(Entity& self)
         d.mStep = 1;
         [[fallthrough]];
     case 1:
-        if (InGrid(t.mX) < 85)
+        if (InGrid(t.mX) < Fx(85))
         {
             return false;
         }
@@ -2109,7 +2104,7 @@ void BoxIckyUpdate(Entity& self)
             t.mVelX = Fx(20);
             Ecs_Play(self, "walk_r");
         }
-        if (InGrid(t.mX) >= 6 * 16)
+        if (InGrid(t.mX) >= Fx(6 * 16))
         {
             t.mVelX = 0;
             Ecs_Play(self, "walk_d");
@@ -2142,7 +2137,7 @@ void InsideMonsterUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
     Transform& t = *self.mT;
-    if (Preset_Activated(*self.mPreset) && t.mVelX != 0 && t.mX.mV >= static_cast<float>(self.mPreset->mX) + 31.5f)
+    if (Preset_Activated(*self.mPreset) && t.mVelX != 0 && t.mX >= Fx(self.mPreset->mX) + FxF(31.5f))
     {
         t.mVelX = 0;
         Ecs_Play(self, "walk_d@3");
@@ -2750,7 +2745,7 @@ Entity* Spawn_MitraOverworld(const MapEntity& preset, Entity&)
     e->mV->mVisible = false;
     MitraData& d = e->Data<MitraData>();
     d.mFacePlayer = true;
-    d.mVolTarget = 0.3f;
+    d.mVolTarget = FxF(0.3f);
     MitraOnBike(*e, true);
     d.mBike = Ecs_Create(kBike, e->mT->mX, e->mT->mY, PART_VISUAL, &preset, e);
     if (d.mBike)
@@ -3221,9 +3216,9 @@ bool WindmillCutscene(Entity& self)
     const bool done = WindmillCutsceneStep(self);
     if (!d.mVolumeDone)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         d.mVolumeDone = MoveTo(volume, d.mVolumeTarget, d.mVolumeSpeed);
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
     Screen_SetFadeWhite(false); // (fadeColor = Black before its fade, which was 0 until then)
     Screen_SetFade(d.mFade);
@@ -3287,8 +3282,8 @@ void SeparateFromAny(Entity& self, Entity& other)
 // ---- SuburbWalker: walks round in squares until the broom finds it
 struct SuburbWalkerData final
 {
-    float mWalkMax;
-    float mWalk;
+    fx mWalkMax;
+    fx mWalk;
     Entity* mBlood;
 };
 
@@ -3313,14 +3308,14 @@ void SuburbWalkerUpdate(Entity& self)
         {
             d.mWalk = 0;
         }
-        const float gx = InGrid(t.mX);
-        const float gy = InGrid(t.mY);
-        if ((gx < 5 && t.mVelX < 0) || (gx + static_cast<float>(self.mB->mW) > 155 && t.mVelX > 0) ||
-            (gy < 5 && t.mVelY < 0) || (gy + static_cast<float>(self.mB->mH) > 155 && t.mVelY > 0))
+        const fx gx = InGrid(t.mX);
+        const fx gy = InGrid(t.mY);
+        if ((gx < Fx(5) && t.mVelX < 0) || (gx + Fx(self.mB->mW) > Fx(155) && t.mVelX > 0) ||
+            (gy < Fx(5) && t.mVelY < 0) || (gy + Fx(self.mB->mH) > Fx(155) && t.mVelY > 0))
         {
             d.mWalk = 0;
         }
-        d.mWalk -= kDeltaTime;
+        d.mWalk -= kFxTick;
         if (d.mWalk <= 0)
         {
             const fx vx = t.mVelX;
@@ -3383,7 +3378,7 @@ const EntityClass kSuburbPart = {
 struct SuburbKillerData final
 {
     bool mMoving;
-    float mMoveTimer;
+    fx mMoveTimer;
 };
 
 void SuburbKillerUpdate(Entity& self)
@@ -3400,8 +3395,8 @@ void SuburbKillerUpdate(Entity& self)
     else
     {
         Ecs_PlayFacing(self, "walk");
-        d.mMoveTimer += kDeltaTime;
-        if (d.mMoveTimer > 0.5f)
+        d.mMoveTimer += kFxTick;
+        if (d.mMoveTimer > FxF(0.5f))
         {
             d.mMoveTimer = 0;
             Ecs_MoveTowards(self, p.mT->mX, p.mT->mY, Fx(30));
@@ -3721,7 +3716,7 @@ const EntityClass kMushroom = {
 struct OliveData final
 {
     uint8_t mStep;
-    float mT;
+    fx mT;
 };
 
 void OliveUpdate(Entity& self)
@@ -3741,9 +3736,9 @@ void OliveUpdate(Entity& self)
             d.mStep = 1;
             [[fallthrough]];
         case 1:
-            if (d.mT < 1.4f)
+            if (d.mT < FxF(1.4f))
             {
-                d.mT += kDeltaTime;
+                d.mT += kFxTick;
                 return;
             }
             Ecs_Play(self, "hop");
@@ -3761,9 +3756,9 @@ void OliveUpdate(Entity& self)
             d.mStep = 3;
             [[fallthrough]];
         case 3:
-            if (d.mT < 1.6f)
+            if (d.mT < FxF(1.6f))
             {
-                d.mT += kDeltaTime;
+                d.mT += kFxTick;
                 return;
             }
             self.mV->mHFlip = true;
@@ -3875,7 +3870,7 @@ Entity* Spawn_SuburbWalker(const MapEntity& preset, Entity&)
     e->mT->mVelY = Fx(20);
     SuburbWalkerData& d = e->Data<SuburbWalkerData>();
     d = SuburbWalkerData();
-    d.mWalkMax = 1.0f + static_cast<float>(Rng_NextDouble());
+    d.mWalkMax = FxF(1.0f) + Rng_Unit();
     d.mWalk = d.mWalkMax;
     d.mBlood = Ecs_Create(kSuburbPart, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
     if (!d.mBlood)
@@ -4321,15 +4316,15 @@ namespace
 {
 struct CliffDogData final
 {
-    float mTimer;
+    fx mTimer;
 };
 
 void CliffDogUpdate(Entity& self)
 {
     CliffDogData& d = self.Data<CliffDogData>();
     Transform& t = *self.mT;
-    d.mTimer += kDeltaTime;
-    if (d.mTimer > 1)
+    d.mTimer += kFxTick;
+    if (d.mTimer > Fx(1))
     {
         if (strcmp(Ecs_AnimName(self), "walk") == 0)
         {
@@ -4506,7 +4501,7 @@ namespace
 // ---- Snowman (Npc/Blue/Snowman.cs): says its line (when spoken to, or by itself after 3 s), then melts --------------
 struct SnowmanData final
 {
-    float mIdleTimer;
+    fx mIdleTimer;
     int mDialogue;
     bool mTalked;
 };
@@ -4524,7 +4519,7 @@ void SnowmanUpdate(Entity& self)
     }
     else if (Preset_Alive(*self.mPreset))
     {
-        d.mIdleTimer -= kDeltaTime;
+        d.mIdleTimer -= kFxTick;
         if (d.mIdleTimer <= 0)
         {
             Game_ShowDialogue("generic_npc", "one", d.mDialogue + 1);
@@ -4574,7 +4569,7 @@ Entity* Spawn_Snowman(const MapEntity& preset, Entity&)
     SnowmanData& d = e->Data<SnowmanData>();
     d = SnowmanData();
     d.mDialogue = 2 * preset.mFrame;
-    d.mIdleTimer = 3;
+    d.mIdleTimer = Fx(3);
     Ecs_Play(*e, Preset_Alive(preset) ? "normal" : "melted");
     e->mB->mImmovable = true;
     return e;
@@ -4596,18 +4591,18 @@ namespace
 // A VolumeEvent a cutscene owns (CutsceneState's EntityEvent): it ticks after each step of the cutscene.
 struct CutsceneVolume final
 {
-    float mTarget;
-    float mSpeed;
+    fx mTarget;
+    fx mSpeed;
     bool mActive;
     bool mReached;
 
-    void Start(float target, float speed)
+    void Start(fx target, fx speed)
     {
         mActive = true;
         mSpeed = speed;
         SetTarget(target);
     }
-    void SetTarget(float target)
+    void SetTarget(fx target)
     {
         mTarget = target;
         mReached = false;
@@ -4616,9 +4611,9 @@ struct CutsceneVolume final
     {
         if (mActive && !mReached)
         {
-            fx volume = FxF(Game_SongVolume());
-            mReached = MoveTo(volume, FxF(mTarget), FxF(mSpeed));
-            Game_SetSongVolume(volume.mV);
+            fx volume = Game_SongVolume();
+            mReached = MoveTo(volume, mTarget, mSpeed);
+            Game_SetSongVolume(volume);
         }
     }
 };
@@ -4779,11 +4774,11 @@ const EntityClass kHappyNpc = {
 // ---- HappyEventTrigger (Npc/Happy/HappyEventTrigger.cs, "NPC" generic 1): the Briar's voice as HAPPY turns ---------
 struct HappyTriggerData final
 {
-    float mSoundTime; // red_cave_rise's play time, in game time (the C#'s deterministic runs)
+    fx mSoundTime; // red_cave_rise's play time, in game time (the C#'s deterministic runs)
     uint8_t mStep;
 };
 
-constexpr float kRedCaveRiseSeconds = 3.475f;
+constexpr fx kRedCaveRiseSeconds = FxF(3.475f);
 
 // The flash's callback, once it's full: Map.ReloadSettings picks up the HappyStarted settings (the hardlight darkness,
 // the tile replacements and the music), and the darkness is forced on.
@@ -4807,12 +4802,12 @@ void HappyTriggerUpdate(Entity& self)
     switch (d.mStep)
     {
     case 0:
-        if (InGrid(p.mT->mX) > 80)
+        if (InGrid(p.mT->mX) > Fx(80))
         {
             // its VolumeEvent(0, 0.9f)
-            fx volume = FxF(Game_SongVolume());
+            fx volume = Game_SongVolume();
             MoveTo(volume, 0, FxF(0.9f));
-            Game_SetSongVolume(volume.mV);
+            Game_SetSongVolume(volume);
             return;
         }
         Game_PlaySong("");
@@ -4822,7 +4817,7 @@ void HappyTriggerUpdate(Entity& self)
         d.mStep = 1;
         break;
     case 1:
-        d.mSoundTime += 1.0f / kFps;
+        d.mSoundTime += FxF(1.0f) / kFps;
         break;
     case 2:
         HappyTriggerFlashed(d);
@@ -4883,7 +4878,7 @@ bool BlueMitraEvent(Entity& mitra)
     {
     case 0:
         mitra.mV->mVisible = true;
-        d.mVolume.Start(0, 2.4f);
+        d.mVolume.Start(0, FxF(2.4f));
         d.mMitraStep = 1;
         break;
     case 1:
@@ -4899,13 +4894,13 @@ bool BlueMitraEvent(Entity& mitra)
         {
             break;
         }
-        Game_PlaySong("mitra", 0.5f);
+        Game_PlaySong("mitra", FxF(0.5f));
         Game_ShowCutsceneDialogue("mitra", "one");
         d.mMitraStep = 3;
         break;
     case 3:
-        d.mVolume.mSpeed = 0.6f;
-        d.mVolume.SetTarget(1);
+        d.mVolume.mSpeed = FxF(0.6f);
+        d.mVolume.SetTarget(kFxOne);
         t.mVelX = -Fx(70);
         d.mMitraStep = 4;
         [[fallthrough]];
@@ -4951,11 +4946,11 @@ bool BlueBriarEntrance(Entity& self)
     Transform& t = *self.mT;
     Visual& v = *self.mV;
     bool done = false;
-    constexpr float kAppearanceVel = 0.24f;
+    constexpr fx kAppearanceVel = FxF(0.24f);
     switch (d.mCutStep)
     {
     case 0:
-        d.mVolume.Start(0, 0.6f);
+        d.mVolume.Start(0, FxF(0.6f));
         d.mCutStep = 1;
         break;
     case 1:
@@ -4970,13 +4965,13 @@ bool BlueBriarEntrance(Entity& self)
         d.mCutStep = 2;
         [[fallthrough]];
     case 2:
-        if (!MoveTo(v.mOpacity, FxF(0.4f), FxF(kAppearanceVel)))
+        if (!MoveTo(v.mOpacity, FxF(0.4f), kAppearanceVel))
         {
             break;
         }
         t.mVelY = Fx(20);
-        Game_PlaySong("go", 0.4f);
-        d.mVolume.SetTarget(1);
+        Game_PlaySong("go", FxF(0.4f));
+        d.mVolume.SetTarget(kFxOne);
         d.mVolume.mSpeed = kAppearanceVel;
         // water_anim = OnceEvery(DoWaterAnim(Position), 0.3f): it runs in the Briar's update
         d.mWater = WaterFlow();
@@ -4987,9 +4982,9 @@ bool BlueBriarEntrance(Entity& self)
         d.mCutStep = 3;
         [[fallthrough]];
     case 3:
-        if (InGrid(t.mY) < 44)
+        if (InGrid(t.mY) < Fx(44))
         {
-            MoveTo(v.mOpacity, kFxOne, FxF(kAppearanceVel));
+            MoveTo(v.mOpacity, kFxOne, kAppearanceVel);
             break;
         }
         v.mOpacity = kFxOne;
@@ -5000,7 +4995,7 @@ bool BlueBriarEntrance(Entity& self)
         [[fallthrough]];
     default:
         // (wraps around when off screen)
-        if (d.mHappy ? InGrid(t.mX) > 20 : InGrid(t.mX) >= (d.mTopLeftX - Fx(16)).mV)
+        if (d.mHappy ? InGrid(t.mX) > Fx(20) : InGrid(t.mX) >= d.mTopLeftX - Fx(16))
         {
             break;
         }
@@ -5773,8 +5768,8 @@ struct SageSentinelData final
     fx mTopLeftX;
     fx mTopLeftY;
     fx mTimer;
-    float mWhite; // gameScreenFade.alpha
-    float mBlack; // black_overlay.alpha
+    fx mWhite; // gameScreenFade.alpha
+    fx mBlack; // black_overlay.alpha
     uint8_t mStep;
     bool mStarted;
     bool mVolumeReached; // the VolumeEvent's ReachedTarget
@@ -5785,9 +5780,9 @@ void EndingVolumeStep(SageSentinelData& d)
 {
     if (!d.mVolumeReached)
     {
-        fx volume = FxF(Game_SongVolume());
+        fx volume = Game_SongVolume();
         d.mVolumeReached = MoveTo(volume, 0, FxF(0.18f));
-        Game_SetSongVolume(volume.mV);
+        Game_SetSongVolume(volume);
     }
 }
 
@@ -5843,9 +5838,9 @@ bool EndingCutscene(Entity& self)
     case 3:
     {
         const Transform& st = *d.mStandin->mT;
-        const float dx = (briar.mT->mX - st.mX).mV;
-        const float dy = (briar.mT->mY - st.mY).mV;
-        if (sqrtf(dx * dx + dy * dy) > 7)
+        const fx dx = briar.mT->mX - st.mX;
+        const fx dy = briar.mT->mY - st.mY;
+        if (FxLength(dx, dy) > Fx(7))
         {
             MoveTo(briar.mT->mX, st.mX, Fx(10));
             return false;
@@ -5961,11 +5956,11 @@ bool EndingCutscene(Entity& self)
         d.mStep = 15;
         [[fallthrough]];
     case 15:
-        if (d.mWhite < 1)
+        if (d.mWhite < Fx(1))
         {
             // FadeEffect.ChangeAlpha(0.12f)
-            d.mWhite = d.mWhite + 0.12f * kDeltaTime;
-            d.mWhite = d.mWhite < 0 ? 0 : (d.mWhite > 1 ? 1 : d.mWhite);
+            d.mWhite = d.mWhite + 0.12f * kFxTick;
+            d.mWhite = d.mWhite < 0 ? 0 : (d.mWhite > Fx(1) ? Fx(1) : d.mWhite);
             Screen_SetFade(fx(d.mWhite));
             return false;
         }
@@ -5975,10 +5970,10 @@ bool EndingCutscene(Entity& self)
         d.mStep = 16;
         [[fallthrough]];
     case 16:
-        if (d.mBlack < 1)
+        if (d.mBlack < Fx(1))
         {
-            d.mBlack = d.mBlack + 0.3f * kDeltaTime;
-            d.mBlack = d.mBlack < 0 ? 0 : (d.mBlack > 1 ? 1 : d.mBlack);
+            d.mBlack = d.mBlack + 0.3f * kFxTick;
+            d.mBlack = d.mBlack < 0 ? 0 : (d.mBlack > Fx(1) ? Fx(1) : d.mBlack);
             Screen_SetEndingBlack(fx(d.mBlack));
             return false;
         }

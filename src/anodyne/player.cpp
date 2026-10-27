@@ -72,9 +72,9 @@ struct PlayerData final
     bool mOnConveyor;
     bool mSinking;
     bool mSlow; // slowMul != 1
-    float mSlowMul; // slowMul while mSlow
+    fx mSlowMul; // slowMul while mSlow
     bool mReversed; // a GasGuy's gas: the d-pad is backwards for a while
-    float mRevTimer;
+    fx mRevTimer;
     int mSlowTicks;
     Entity* mRaft; // the dust ridden over water
     uint8_t mJumpStage; // 0: not started, 1: in the air, 2: landed (one more frame)
@@ -82,8 +82,8 @@ struct PlayerData final
     bool mFuckIt; // walkSpeed != 70
     fx mBumpTimer;
     fx mFallTimer;
-    float mDashX; // dash_state: a dash pad's push, in walk speeds (0: none)
-    float mDashY;
+    fx mDashX; // dash_state: a dash pad's push, in walk speeds (0: none)
+    fx mDashY;
     fx mFallPointX;
     fx mFallPointY;
     fx mGridEntranceX;
@@ -222,7 +222,7 @@ void UpdateShadow(fx jumpHeight)
     constexpr int kMaxFrame = 3;
     // (int)ceil(h * (maxFrame + 1)) - 1
     const fx scaled = jumpHeight * (kMaxFrame + 1);
-    const int frame = static_cast<int>(ceilf(scaled.mV)) - 1;
+    const int frame = FxCeil(scaled) - 1;
     if (frame < 0)
     {
         gShadow->mV->mVisible = false;
@@ -316,10 +316,10 @@ void SetInitVel(fx mul)
     const uint8_t touching = gPlayer->mB->mTouching;
     const fx x = t.mX;
     const fx y = t.mY;
-    // (float %, as the C#'s Position.X % 16: 57.6 % 16 is 9.6, past the > 9 a whole pixel's 57 % 16 isn't)
-    const float px = x.mV;
-    const float py = y.mV;
-    auto mod16 = [](float v) { return fmodf(v, 16.0f); };
+    // (Fix %, as the C#'s Position.X % 16: 57.6 % 16 is 9.6, past the > 9 a whole pixel's 57 % 16 isn't)
+    const fx px = x;
+    const fx py = y;
+    auto mod16 = [](fx v) { return FxMod(v, Fx(16)); };
     int vx = 0;
     int vy = 0;
     if (DirDown(KEY_UP))
@@ -332,11 +332,11 @@ void SetInitVel(fx mul)
             if (!tl && !tr)
             {
             }
-            else if (mod16(px + kHitW) < 6 && !tl)
+            else if (mod16(px + Fx(kHitW)) < Fx(6) && !tl)
             {
                 d.mAddVelX -= kCornerAssist;
             }
-            else if (mod16(px) > 9 && !tr)
+            else if (mod16(px) > Fx(9) && !tr)
             {
                 d.mAddVelX += kCornerAssist;
             }
@@ -352,11 +352,11 @@ void SetInitVel(fx mul)
             if (!bl && !br)
             {
             }
-            else if (mod16(px + kHitW) < 6 && !bl)
+            else if (mod16(px + Fx(kHitW)) < Fx(6) && !bl)
             {
                 d.mAddVelX -= kCornerAssist;
             }
-            else if (mod16(px) > 9 && !br)
+            else if (mod16(px) > Fx(9) && !br)
             {
                 d.mAddVelX += kCornerAssist;
             }
@@ -372,11 +372,11 @@ void SetInitVel(fx mul)
             if (!tl && !bl)
             {
             }
-            else if (mod16(py + kHitH) < 6 && !tl)
+            else if (mod16(py + Fx(kHitH)) < Fx(6) && !tl)
             {
                 d.mAddVelY -= kCornerAssist;
             }
-            else if (mod16(py) > 9 && !bl)
+            else if (mod16(py) > Fx(9) && !bl)
             {
                 d.mAddVelY += kCornerAssist;
             }
@@ -392,11 +392,11 @@ void SetInitVel(fx mul)
             if (!tr && !br)
             {
             }
-            else if (mod16(py + kHitH) < 6 && !tr)
+            else if (mod16(py + Fx(kHitH)) < Fx(6) && !tr)
             {
                 d.mAddVelY -= kCornerAssist;
             }
-            else if (mod16(py) > 9 && !br)
+            else if (mod16(py) > Fx(9) && !br)
             {
                 d.mAddVelY += kCornerAssist;
             }
@@ -427,7 +427,7 @@ void DashLogic()
     }
     else if (d.mDashX != 0)
     {
-        t.mVelX = fx(WalkSpeed().mV * d.mDashX);
+        t.mVelX = FxMul(WalkSpeed(), d.mDashX);
     }
     if (d.mDashY > 0 && !key_is_down(KEY_DOWN))
     {
@@ -439,7 +439,7 @@ void DashLogic()
     }
     else if (d.mDashY != 0)
     {
-        t.mVelY = fx(WalkSpeed().mV * d.mDashY);
+        t.mVelY = FxMul(WalkSpeed(), d.mDashY);
     }
 }
 
@@ -462,8 +462,8 @@ void GroundMovement()
     t.mVelY += d.mAddVelY;
     if (d.mSlow)
     {
-        t.mVelX = fx(t.mVelX.mV * d.mSlowMul);
-        t.mVelY = fx(t.mVelY.mV * d.mSlowMul);
+        t.mVelX = FxMul(t.mVelX, d.mSlowMul);
+        t.mVelY = FxMul(t.mVelY, d.mSlowMul);
     }
     DashLogic();
 }
@@ -779,12 +779,12 @@ void Movement()
                 else if ((t.mVelX != 0 || t.mVelY != 0) && !d.mIsSlipping && !d.mHasFallen)
                 {
                     // stepping off: the raft is pushed back 3 px
-                    const float vx = t.mVelX.mV;
-                    const float vy = t.mVelY.mV;
-                    const float len = sqrtf(vx * vx + vy * vy);
+                    fx vx = t.mVelX;
+                    fx vy = t.mVelY;
+                    FxNormalize(vx, vy);
                     Transform& r = *d.mRaft->mT;
-                    r.mX -= fx(vx / len * 3);
-                    r.mY -= fx(vy / len * 3);
+                    r.mX -= vx * 3;
+                    r.mY -= vy * 3;
                     Dust_SetRaft(*d.mRaft, false);
                     d.mRaft = nullptr;
                 }
@@ -874,7 +874,7 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
         break;
     case MAPEV_SLOW:
         d.mSlow = true;
-        d.mSlowMul = 0.5f;
+        d.mSlowMul = FxF(0.5f);
         break;
     case MAPEV_PUDDLE:
     case MAPEV_REFLECTION:
@@ -895,7 +895,7 @@ void PlayerMapEvent(Entity& self, MapEvent ev, uint8_t dir, fx tileX, fx tileY)
             if (!d.mRaft && !gFuckItMode)
             {
                 d.mSlow = true;
-                d.mSlowMul = 0.5f;
+                d.mSlowMul = FxF(0.5f);
                 d.mSinking = true;
             }
         }
@@ -951,8 +951,8 @@ void PlayerUpdate(Entity& self)
     d.mAddVelX = d.mAddVelY = 0;
     if (d.mReversed)
     {
-        d.mRevTimer += kDeltaTime;
-        if (d.mRevTimer > 0.9f)
+        d.mRevTimer += kFxTick;
+        if (d.mRevTimer > FxF(0.9f))
         {
             d.mReversed = false;
             d.mRevTimer = 0;
@@ -969,10 +969,9 @@ void PlayerCollided(Entity& self, Entity& other)
     if (!d.mRaft && Dust_OnConveyor(other) && d.mOnConveyor)
     {
         const Rect h = Ecs_Hitbox(other);
-        const float cx = Ecs_CenterX(self).mV;
-        const float cy = Ecs_CenterY(self).mV;
-        if (static_cast<float>(h.mX) <= cx && cx < static_cast<float>(h.mX + h.mW) && static_cast<float>(h.mY) <= cy &&
-            cy < static_cast<float>(h.mY + h.mH))
+        const fx cx = Ecs_CenterX(self);
+        const fx cy = Ecs_CenterY(self);
+        if (Fx(h.mX) <= cx && cx < Fx(h.mX + h.mW) && Fx(h.mY) <= cy && cy < Fx(h.mY + h.mH))
         {
             d.mRaft = &other;
             Dust_SetRaft(other, true);
@@ -1579,29 +1578,29 @@ void Player_AddAdditionalVel(fx x, fx y)
 void Player_Dash(Facing facing)
 {
     PlayerData& d = P();
-    auto check = [](float& dash, float addition) {
+    auto check = [](fx& dash, fx addition) {
         if (dash == 0)
         {
-            dash = addition * 1.3f;
+            dash = FxMul(addition, FxF(1.3f));
             Game_PlaySfx("dash_pad_1");
         }
-        else if (dash * addition < 0)
+        else if (FxMul(dash, addition) < 0)
         {
             dash = 0;
         }
-        else if (fabsf(dash) < 1.5f)
+        else if (FxAbs(dash) < FxF(1.5f))
         {
-            dash = addition * 1.77f;
+            dash = FxMul(addition, FxF(1.77f));
             Game_PlaySfx("dash_pad_2");
         }
     };
     if (facing == FACE_UP || facing == FACE_DOWN)
     {
-        check(d.mDashY, static_cast<float>(FacingY(facing)));
+        check(d.mDashY, Fx(FacingY(facing)));
     }
     else
     {
-        check(d.mDashX, static_cast<float>(FacingX(facing)));
+        check(d.mDashX, Fx(FacingX(facing)));
     }
 }
 
@@ -1610,7 +1609,7 @@ void Player_Reverse()
     P().mReversed = true;
 }
 
-void Player_SetSlowFor(int ticks, float mul)
+void Player_SetSlowFor(int ticks, fx mul)
 {
     P().mSlow = true;
     P().mSlowMul = mul;

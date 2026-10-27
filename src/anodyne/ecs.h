@@ -26,102 +26,102 @@
 // Units: positions are map pixels; velocities, accelerations and drag are px per second (the C#'s numbers); one
 // update is 1/60 s. Timers count seconds, ticking kFxTick (GameTimes.DeltaTime) per update like the C#'s.
 //
-// fx is a float, like the C#'s, so the port's maths rounds exactly as the C# game's does (fixed point drifts a pixel
-// off every few seconds). It is a struct rather than a bare float so nothing converts to it by accident: whole
-// numbers go through Fx(), C# float constants through FxF().
+// fx is Fix16: a 16.16 fixed point number (int32 raw, 1.0 = 65536), the same type and rounding rules as the C#'s Fix
+// (AnodyneSharp's Fix.cs), so the two games still match bit for bit while the GBA, which has no FPU, does integer
+// maths instead of soft float calls. The rules, which both sides follow exactly:
+//   - whole numbers: raw = n * 65536; float constants (FxF, the C#'s implicit float -> Fix): the float's value * 65536
+//     rounded to nearest, halves away from zero (in double, at compile time)
+//   - + and - wrap; fx * int, fx / int are raw * n, raw / n (truncating)
+//   - FxMul: (int64)a * b / 65536, truncating (so x * 0.5f is x / 2 and -a * b is -(a * b), as in float);
+//     FxDiv: ((int64)a << 16) / b, truncating, and dividing by zero gives INT32_MAX (a >= 0) or INT32_MIN
+//   - FxMod (the C#'s %): raw % raw, the sign of a
+//   - FxFloor: raw >> 16; FxTrunc (the C#'s (int) cast): raw / 65536
+//   - FxSqrt: floor(sqrt(raw << 16)), 0 for v <= 0; FxLength(x, y): floor(sqrt(x.raw^2 + y.raw^2)), in 64 bits so
+//     long vectors don't overflow
+//   - FxLengthSq(x, y): (x.raw^2 + y.raw^2) >> 16 in 64 bits, saturating at INT32_MAX
+//   - FxNormalize: x, y times FxDiv(1, FxLength(x, y)) (MonoGame's Vector2.Normalize; zero stays zero)
+//   - FxSin/FxCos: the shared table (fix16_sin.h, 1025 entries: sin of a quarter turn in 1024 steps, rounded to
+//     16.16), indexed by the angle in 1/4096 turns: (raw * 2^32 / (2 pi 65536) rounded), wrapped
+//   - Rng_Unit: ((int64)Random.Next() << 16) / int.MaxValue
+// It is a struct rather than a bare int so nothing converts to it by accident: whole numbers go through Fx(), C# float
+// constants through FxF().
 
 struct fx
 {
-    float mV;
+    int32_t mRaw;
 
     fx() = default;
     // Only a literal 0 converts implicitly (it is a null pointer constant); other whole numbers go through Fx().
-    constexpr fx(decltype(nullptr)) : mV(0.0f)
+    constexpr fx(decltype(nullptr)) : mRaw(0)
     {
     }
-    template <typename T, typename = typename std::enable_if<std::is_same<T, float>::value>::type>
-    explicit constexpr fx(T v) : mV(v)
+    static constexpr fx Raw(int32_t raw)
     {
+        fx v{};
+        v.mRaw = raw;
+        return v;
     }
 
     constexpr fx operator-() const
     {
-        return fx(-mV);
+        return Raw(static_cast<int32_t>(0u - static_cast<uint32_t>(mRaw)));
     }
     constexpr fx operator+(fx o) const
     {
-        return fx(mV + o.mV);
+        return Raw(static_cast<int32_t>(static_cast<uint32_t>(mRaw) + static_cast<uint32_t>(o.mRaw)));
     }
     constexpr fx operator-(fx o) const
     {
-        return fx(mV - o.mV);
+        return Raw(static_cast<int32_t>(static_cast<uint32_t>(mRaw) - static_cast<uint32_t>(o.mRaw)));
     }
     // Scaling by a whole number (the C#'s x * 2, x / 2f).
     constexpr fx operator*(int n) const
     {
-        return fx(mV * static_cast<float>(n));
+        return Raw(static_cast<int32_t>(static_cast<uint32_t>(mRaw) * static_cast<uint32_t>(n)));
     }
     constexpr fx operator/(int n) const
     {
-        return fx(mV / static_cast<float>(n));
+        return Raw(mRaw / n);
     }
     fx& operator+=(fx o)
     {
-        mV += o.mV;
-        return *this;
+        return *this = *this + o;
     }
     fx& operator-=(fx o)
     {
-        mV -= o.mV;
-        return *this;
+        return *this = *this - o;
     }
     fx& operator*=(int n)
     {
-        mV *= static_cast<float>(n);
-        return *this;
+        return *this = *this * n;
     }
     fx& operator/=(int n)
     {
-        mV /= static_cast<float>(n);
-        return *this;
-    }
-    // Comparisons on the bits, which order like sign-magnitude integers (+0 and -0 equal, a NaN never ordered or
-    // equal): the same answers as the float compares, without a soft float call each.
-    static constexpr uint32_t Bits(fx v)
-    {
-        return __builtin_bit_cast(uint32_t, v.mV);
-    }
-    static constexpr bool Ordered(fx a, fx b)
-    {
-        return (Bits(a) & 0x7FFFFFFFu) <= 0x7F800000u && (Bits(b) & 0x7FFFFFFFu) <= 0x7F800000u;
-    }
-    static constexpr int32_t Key(fx v)
-    {
-        return (Bits(v) & 0x80000000u) ? static_cast<int32_t>(0x80000000u - Bits(v)) : static_cast<int32_t>(Bits(v));
+        return *this = *this / n;
     }
     friend constexpr bool operator<(fx a, fx b)
     {
-        return Ordered(a, b) && Key(a) < Key(b);
+        return a.mRaw < b.mRaw;
     }
     friend constexpr bool operator>(fx a, fx b)
     {
-        return Ordered(a, b) && Key(a) > Key(b);
+        return a.mRaw > b.mRaw;
     }
     friend constexpr bool operator<=(fx a, fx b)
     {
-        return Ordered(a, b) && Key(a) <= Key(b);
+        return a.mRaw <= b.mRaw;
     }
     friend constexpr bool operator>=(fx a, fx b)
     {
-        return Ordered(a, b) && Key(a) >= Key(b);
+        return a.mRaw >= b.mRaw;
     }
     friend constexpr bool operator==(fx a, fx b)
     {
-        return Ordered(a, b) && Key(a) == Key(b);
+        return a.mRaw == b.mRaw;
     }
     friend constexpr bool operator!=(fx a, fx b)
     {
-        return !(a == b);
+        return a.mRaw != b.mRaw;
     }
 };
 inline constexpr fx operator*(int n, fx v)
@@ -129,67 +129,113 @@ inline constexpr fx operator*(int n, fx v)
     return v * n;
 }
 
-constexpr fx kFxZero = fx(0.0f);
-constexpr fx kFxOne = fx(1.0f);
+constexpr fx kFxZero = fx::Raw(0);
+constexpr fx kFxOne = fx::Raw(65536);
 constexpr int kFps = 60;
-// GameTimes.DeltaTime in deterministic mode.
-constexpr float kDeltaTime = 1.0f / 60.0f;
 
 constexpr fx Fx(int v)
 {
-    return fx(static_cast<float>(v));
+    return fx::Raw(static_cast<int32_t>(static_cast<uint32_t>(v) << 16));
 }
 // A C# float constant (e.g. 0.7f).
 constexpr fx FxF(float v)
 {
-    return fx(v);
+    const double d = static_cast<double>(v) * 65536.0;
+    return fx::Raw(d >= 0 ? static_cast<int32_t>(d + 0.5) : -static_cast<int32_t>(-d + 0.5));
 }
 // A time in seconds (a C# float constant).
 constexpr fx FxSec(float seconds)
 {
-    return fx(seconds);
+    return FxF(seconds);
 }
-// One update's worth of a timer.
-constexpr fx kFxTick = fx(kDeltaTime);
+// GameTimes.DeltaTime for what stays float on both sides: the menus, dialog, HUD, credits and PlayState's own overlay
+// timers (a few adds a frame, not the entities' maths).
+constexpr float kUiDeltaTime = 1.0f / 60.0f;
+// One update: GameTimes.DeltaTime, 1/60 s (1092 raw).
+constexpr fx kFxTick = FxF(1.0f / 60.0f);
 // Floor to whole pixels.
-int FxFloor(fx v);
+constexpr int FxFloor(fx v)
+{
+    return v.mRaw >> 16;
+}
 // C#'s (int) cast: towards zero.
 constexpr int FxTrunc(fx v)
 {
-    return static_cast<int>(v.mV);
+    return v.mRaw / 65536;
+}
+// Math.Ceiling.
+constexpr int FxCeil(fx v)
+{
+    return -((-v.mRaw) >> 16);
 }
 constexpr fx FxMul(fx a, fx b)
 {
-    return fx(a.mV * b.mV);
+    return fx::Raw(static_cast<int32_t>((static_cast<int64_t>(a.mRaw) * b.mRaw) / 65536));
 }
 constexpr fx FxDiv(fx a, fx b)
 {
-    return fx(a.mV / b.mV);
+    return b.mRaw == 0 ? fx::Raw(a.mRaw >= 0 ? INT32_MAX : INT32_MIN)
+                       : fx::Raw(static_cast<int32_t>((static_cast<int64_t>(a.mRaw) * 65536) / b.mRaw));
+}
+// The C#'s % on floats (fmod): raw % raw, the sign of a.
+constexpr fx FxMod(fx a, fx b)
+{
+    return fx::Raw(a.mRaw % b.mRaw);
 }
 // How far something moving at `perSecond` (px/s) goes in one update (GameTimes.DeltaTime * v).
 constexpr fx FxStep(fx perSecond)
 {
-    return fx(kDeltaTime * perSecond.mV);
+    return FxMul(perSecond, kFxTick);
 }
 // As raw 16.16, for the bot link's JSON.
 constexpr int FxRaw16(fx v)
 {
-    return static_cast<int>(v.mV * 65536.0f);
+    return v.mRaw;
+}
+// For what stays float on both sides (volumes, menus).
+constexpr float FxToFloat(fx v)
+{
+    return static_cast<float>(v.mRaw) * (1.0f / 65536.0f);
+}
+constexpr fx FxAbs(fx v)
+{
+    return v.mRaw < 0 ? -v : v;
+}
+constexpr fx FxMin(fx a, fx b)
+{
+    return a < b ? a : b;
+}
+constexpr fx FxMax(fx a, fx b)
+{
+    return a > b ? a : b;
 }
 fx FxSqrt(fx v);
+// Vector2.LengthSquared: (x.raw^2 + y.raw^2) >> 16 in 64 bits, saturating at INT32_MAX.
+constexpr fx FxLengthSq(fx x, fx y)
+{
+    const int64_t sq = (static_cast<int64_t>(x.mRaw) * x.mRaw + static_cast<int64_t>(y.mRaw) * y.mRaw) >> 16;
+    return fx::Raw(sq > INT32_MAX ? INT32_MAX : static_cast<int32_t>(sq));
+}
 // Vector2.Length.
 fx FxLength(fx x, fx y);
+// Vector2.Normalize (MonoGame's: x and y times 1 / Length; a zero vector stays zero).
+inline void FxNormalize(fx& x, fx& y)
+{
+    const fx inv = FxDiv(kFxOne, FxLength(x, y));
+    x = FxMul(x, inv);
+    y = FxMul(y, inv);
+}
 // MathF.Sin/Cos of an angle in radians.
 fx FxSin(fx radians);
 fx FxCos(fx radians);
-constexpr fx kFxPi = fx(3.14159265358979f); // MathHelper.Pi
-constexpr fx kFxTau = fx(6.28318530717959f); // MathHelper.TwoPi
+constexpr fx kFxPi = FxF(3.14159265358979f); // MathHelper.Pi
+constexpr fx kFxTau = FxF(6.28318530717959f); // MathHelper.TwoPi
 
 // Parabola_Thing's offset at time t: t * (period - t) / (half_period * half_period) * height.
 inline fx ParabolaOffset(fx t, fx period, int height)
 {
-    const float half = period.mV / 2;
-    return fx(t.mV * (period.mV - t.mV) / (half * half) * static_cast<float>(height));
+    const fx half = period / 2;
+    return FxDiv(FxMul(t, period - t), FxMul(half, half)) * height;
 }
 
 // MathUtilities.MoveTo: moves value towards target by speed (per second) * dt; true once it is there.
@@ -215,7 +261,8 @@ uint32_t Game_Frame();
 // Parity replays: the frame count picks up from `frame` (after the title, whose frames the two games count differently).
 void Game_SetFrame(uint32_t frame);
 // RecordingManager.Now - then, in seconds, for `then` a Game_Frame() (the C#'s TimeSpan of frame ticks at 60 a second).
-float Game_SecondsSince(uint32_t thenFrame);
+// In 16.16 from the ticks: (now - then) * 65536 / TimeSpan.TicksPerSecond, truncated.
+fx Game_SecondsSince(uint32_t thenFrame);
 
 // FSM TimerState: named timers on one clock (room for N). A timer fires once the clock reaches it and is re-armed its
 // period on from the clock's time then; Advance moves the clock on without firing anything. Reset drops the timers but
@@ -225,22 +272,22 @@ struct TimerState final
 {
     struct Timer
     {
-        float mAt;
-        float mMax;
+        fx mAt;
+        fx mMax;
         uint8_t mId;
     };
-    float mCurrent;
+    fx mCurrent;
     uint8_t mCount;
     Timer mTimers[N];
 
     // AddTimer: due `time` from now, after the ones due at the same time.
-    void Add(float time, uint8_t id)
+    void Add(fx time, uint8_t id)
     {
         if (mCount >= N)
         {
             return;
         }
-        const float at = mCurrent + time;
+        const fx at = mCurrent + time;
         int i = mCount++;
         for (; i > 0 && mTimers[i - 1].mAt > at; i--)
         {
@@ -252,11 +299,11 @@ struct TimerState final
     {
         mCount = 0;
     }
-    void Tick(float dt)
+    void Tick()
     {
-        mCurrent += dt;
+        mCurrent += kFxTick;
     }
-    void Advance(float time)
+    void Advance(fx time)
     {
         mCurrent += time;
     }
@@ -393,7 +440,7 @@ struct Visual final
     const SpriteSheetEntry* mSheet;
     int16_t mAnim; // -1: static frame
     uint16_t mAnimIndex;
-    float mTimer;
+    fx mTimer;
     uint16_t mStaticFrame;
     uint16_t mFrameBase;  // added to "variant-relative" anim frames (the C#'s per-instance frame offset)
     int16_t mFpsOverride; // Play(name, force, newFramerate); 0 = the anim's own

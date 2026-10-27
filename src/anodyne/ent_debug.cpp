@@ -396,7 +396,7 @@ bool OpenCutscene(Entity& self)
         for (int i = 0; i < kRotSquares; i++)
         {
             Square& s = sc.mSquares[i];
-            const fx percentage = fx(static_cast<float>(i + 1) / 20.0f);
+            const fx percentage = Fx(i + 1) / 20;
             s.mAngle = percentage * 360; // (degrees taken for radians, for a fun spread)
             s.mGrowth = FxMul(percentage, FxF(0.48f));
             s.mOpacity = 0;
@@ -875,12 +875,12 @@ void BlackThingUpdate(Entity& self)
     {
         return;
     }
-    const float maxScales[3] = { 10, 12, 9 };
+    const int maxScales[3] = { 10, 12, 9 };
     for (int i = 0; i < 3; i++)
     {
         if (d.mThings[i])
         {
-            d.mThings[i]->Data<ThingData>().mMaxScale = fx(maxScales[i]);
+            d.mThings[i]->Data<ThingData>().mMaxScale = Fx(maxScales[i]);
         }
     }
     gGame.mPuzzlesSolved++;
@@ -889,8 +889,8 @@ void BlackThingUpdate(Entity& self)
 // (the C#'s "force centered rendering": an even number of pixels wide)
 fx EvenScale(fx scale)
 {
-    const int evenWidth = static_cast<int>(FxMul(scale, Fx(32)).mV / 2) * 2;
-    return fx(static_cast<float>(evenWidth) / 32.0f);
+    const int evenWidth = FxTrunc(FxMul(scale, Fx(32)) / 2) * 2;
+    return Fx(evenWidth) / 32;
 }
 
 void BouncingThingUpdate(Entity& self)
@@ -927,7 +927,7 @@ const EntityClass kRotatingThing = {
     "RotatingBlackThing", RotatingThingUpdate, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
 
-Entity* MakeThing(const EntityClass& cls, const Entity& parent, int frame, float opacity)
+Entity* MakeThing(const EntityClass& cls, const Entity& parent, int frame, fx opacity)
 {
     Entity* e = Ecs_Create(cls, parent.mT->mX, parent.mT->mY, PART_VISUAL | PART_BRAIN);
     if (!e)
@@ -939,7 +939,7 @@ Entity* MakeThing(const EntityClass& cls, const Entity& parent, int frame, float
     Ecs_SetSolid(*e, false);
     Ecs_SetSheet(*e, "solid_32");
     Ecs_SetFrame(*e, frame);
-    e->mV->mOpacity = fx(opacity);
+    e->mV->mOpacity = opacity;
     e->Data<ThingData>() = ThingData();
     return e;
 }
@@ -1038,21 +1038,21 @@ Entity* Spawn_BlackThing(const MapEntity& preset, Entity&)
     BlackThingData& d = e->Data<BlackThingData>();
     d = BlackThingData();
     // (Color.Red * 0.25f, Color.Green * 0.5f: premultiplied, so dimmer as well as see-through)
-    const float min[3] = { 0.5f, 0.5f, 0.75f };
-    const float max[3] = { 2, 2, 3 };
-    const float cur[3] = { 0.5f, 2, 0 };
+    const fx min[3] = { FxF(0.5f), FxF(0.5f), FxF(0.75f) };
+    const fx max[3] = { Fx(2), Fx(2), Fx(3) };
+    const fx cur[3] = { FxF(0.5f), Fx(2), Fx(0) };
     const EntityClass* classes[3] = { &kBouncingThing, &kBouncingThing, &kRotatingThing };
     const int frames[3] = { 1, 2, 3 };
-    const float opacities[3] = { 0.25f, 0.5f, 0.7f };
+    const fx opacities[3] = { FxF(0.25f), FxF(0.5f), FxF(0.7f) };
     for (int i = 0; i < 3; i++)
     {
         Entity* t = MakeThing(*classes[i], *e, frames[i], opacities[i]);
         if (t)
         {
             ThingData& td = t->Data<ThingData>();
-            td.mMinScale = fx(min[i]);
-            td.mMaxScale = fx(max[i]);
-            td.mRealScale = fx(cur[i]);
+            td.mMinScale = min[i];
+            td.mMaxScale = max[i];
+            td.mRealScale = cur[i];
             td.mGrowing = true;
         }
         d.mThings[i] = t;
