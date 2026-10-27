@@ -1005,7 +1005,7 @@ index b8ef74a..e064865 100644
  
          bool SeePlayer()
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/GasGuy.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/GasGuy.cs
-index c8379b8..0a018c0 100644
+index c8379b8..b9d7b14 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/GasGuy.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/GasGuy.cs
 @@ -11,6 +11,7 @@ using System;
@@ -1032,7 +1032,7 @@ index c8379b8..0a018c0 100644
  
              soundDelay = 0;
 -            soundDelayMax = (float)(1.5 + GlobalState.RNG.NextDouble());
-+            soundDelayMax = (Fix)(1.5 + GlobalState.RNG.NextDouble());
++            soundDelayMax = 1.5f + Fix.RandomUnit(GlobalState.RNG);
  
              gasClouds = new EntityPool<Gas>(3, () => new Gas());
  
@@ -1220,7 +1220,7 @@ index 21f91f4..4e5bc81 100644
  
          public override void Collided(Entity other)
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Annoyer.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Annoyer.cs
-index 166041e..8767cc8 100644
+index 166041e..92351ae 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Annoyer.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/Annoyer.cs
 @@ -10,6 +10,7 @@ using RSG;
@@ -1283,6 +1283,15 @@ index 166041e..8767cc8 100644
              private IState _state;
  
              public Fireball() : base(Vector2.Zero, Lion.Fireball.GetSprite(8), DrawOrder.FG_SPRITES)
+@@ -260,7 +261,7 @@ namespace AnodyneSharp.Entities.Enemy
+                 _state = new StateMachineBuilder()
+                     .State("Shoot")
+                         .Enter((state) => Play("shoot"))
+-                        .Update((state,time) => opacity -= 0.06f * time)
++                        .Update((state,time) => opacity -= 0.06f * GameTimes.DeltaTime)
+                         .Condition(()=>opacity <= 0.6f, (s) => _state.ChangeState("Poof"))
+                         .Event<CollisionEvent<Broom>>("Hit",(s,b) => _state.ChangeState("Poof"))
+                         .Event<CollisionEvent<Player>>("Player",(s,p) => { p.entity.ReceiveDamage(1, FireballDamageDealer); _state.ChangeState("Poof"); })
 @@ -294,7 +295,7 @@ namespace AnodyneSharp.Entities.Enemy
  
              public override void Update()
@@ -1293,7 +1302,7 @@ index 166041e..8767cc8 100644
              }
          }
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/PewLaser.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/PewLaser.cs
-index bd14fe8..57a7514 100644
+index bd14fe8..ebbb3a1 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/PewLaser.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Bedroom/PewLaser.cs
 @@ -1,4 +1,5 @@
@@ -1342,7 +1351,7 @@ index bd14fe8..57a7514 100644
  
              private Vector2 spawn_offset;
  
-@@ -98,21 +100,21 @@ namespace AnodyneSharp.Entities.Enemy.Bedroom
+@@ -98,28 +100,28 @@ namespace AnodyneSharp.Entities.Enemy.Bedroom
                          break;
                      case Facing.UP:
                          spawn_offset = new Vector2(0, 8);
@@ -1367,6 +1376,14 @@ index bd14fe8..57a7514 100644
                          break;
                  }
  
+                 _state = new StateMachineBuilder()
+                     .State("Shoot")
+                         .Enter((state) => Play("shoot"))
+-                        .Update((state, time) => opacity -= 0.06f * time)
++                        .Update((state, time) => opacity -= 0.06f * GameTimes.DeltaTime)
+                         .Condition(() => touching != Touching.NONE, (s) => _state.ChangeState("Poof"))
+                         .Event<CollisionEvent<Player>>("Player", (s, p) => { p.entity.ReceiveDamage(1, DamageDealer); _state.ChangeState("Poof"); })
+                         .Event<CollisionEvent<Shieldy>>("Shieldy", (s, p) => { p.entity.ReceiveDamage(5); _state.ChangeState("Poof"); })
 @@ -165,7 +167,7 @@ namespace AnodyneSharp.Entities.Enemy.Bedroom
  
              public override void Update()
@@ -1837,7 +1854,7 @@ index c5f3a21..a79c2da 100644
  
              public Vector2 targetPos;
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Frog.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Frog.cs
-index 5d04fa4..c859674 100644
+index 5d04fa4..5d38005 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Frog.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Frog.cs
 @@ -10,6 +10,7 @@ using System;
@@ -1862,7 +1879,7 @@ index 5d04fa4..c859674 100644
                  _multiplier = speed_multiplier + 1;
  
 -                parabola = new(this, 16, (float)(0.8 + GlobalState.RNG.NextDouble()));
-+                parabola = new(this, 16, (Fix)(0.8 + GlobalState.RNG.NextDouble()));
++                parabola = new(this, 16, 0.8f + Fix.RandomUnit(GlobalState.RNG));
  
                  shadow = new Shadow(this, new Vector2(3, 2), ShadowType.Normal);
  
@@ -1876,7 +1893,7 @@ index 5d04fa4..c859674 100644
  
              public void Spawn(Frog parent, Player target)
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Person.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Person.cs
-index 3a195ce..4c2fafe 100644
+index 3a195ce..1dc5ef2 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Person.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/Person.cs
 @@ -1,10 +1,12 @@
@@ -1912,7 +1929,7 @@ index 3a195ce..4c2fafe 100644
              offset.Y += 4;
  
 -            talk_timer = (float)(0.5 + GlobalState.RNG.NextDouble());
-+            talk_timer = (Fix)(0.5 + GlobalState.RNG.NextDouble());
++            talk_timer = 0.5f + Fix.RandomUnit(GlobalState.RNG);
  
              switch (preset.Frame)
              {
@@ -1921,7 +1938,7 @@ index 3a195ce..4c2fafe 100644
              if (talk_timer < 0)
              {
 -                talk_timer = (float)(0.5 + GlobalState.RNG.NextDouble());
-+                talk_timer = (Fix)(0.5 + GlobalState.RNG.NextDouble());
++                talk_timer = 0.5f + Fix.RandomUnit(GlobalState.RNG);
                  SoundManager.PlaySoundEffect("talk_1", "talk_1", "talk_2", "talk_3", "talk_3");
              }
          }
@@ -2107,7 +2124,7 @@ index 5063c2c..9c55530 100644
                  velocity = new(GlobalState.RNG.Next(-30, 30), 30);
              }
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/FollowerBro.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/FollowerBro.cs
-index 38a4699..8637e89 100644
+index 38a4699..30c4bd1 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/FollowerBro.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/FollowerBro.cs
 @@ -1,10 +1,12 @@
@@ -2124,6 +2141,24 @@ index 38a4699..8637e89 100644
  
  namespace AnodyneSharp.Entities.Enemy.Etc
  {
+@@ -35,7 +37,7 @@ namespace AnodyneSharp.Entities.Enemy.Etc
+                 .End()
+                 .State("Appearing")
+                     .Enter((state) => { _player.dontMove = true; _preset.Alive = false; })
+-                    .Update((state, time) => opacity += 0.6f * time)
++                    .Update((state, time) => opacity += 0.6f * GameTimes.DeltaTime)
+                     .Condition(() => opacity > 0.96f, (state) => state.Parent.ChangeState("Walk"))
+                 .End()
+                 .State("Walk")
+@@ -48,7 +50,7 @@ namespace AnodyneSharp.Entities.Enemy.Etc
+                     .Condition(() => _player.Position.Y < Position.Y, (state) => state.Parent.ChangeState("Walk"))
+                 .End()
+                 .State("Disappearing")
+-                    .Update((state, time) => opacity -= 0.6f * time)
++                    .Update((state, time) => opacity -= 0.6f * GameTimes.DeltaTime)
+                     .Condition(() => opacity <= 0, (state) => exists = false)
+                 .End()
+                 .Build();
 @@ -58,7 +60,7 @@ namespace AnodyneSharp.Entities.Enemy.Etc
  
          public override void Update()
@@ -2253,7 +2288,7 @@ index bb0304b..f58ede9 100644
                  Play("shoot");
  
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SpaceFace.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SpaceFace.cs
-index 5b4dd68..f413bc4 100644
+index 5b4dd68..38e7ebc 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SpaceFace.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SpaceFace.cs
 @@ -1,17 +1,19 @@
@@ -2284,7 +2319,7 @@ index 5b4dd68..f413bc4 100644
          {
              waitTimer = 0f;
 -            waitTimerMax = (float)(0.5 + 1.5 * GlobalState.RNG.NextDouble());
-+            waitTimerMax = (Fix)(0.5 + 1.5 * GlobalState.RNG.NextDouble());
++            waitTimerMax = 0.5f + 1.5f * Fix.RandomUnit(GlobalState.RNG);
  
              _player = p;
          }
@@ -4825,7 +4860,7 @@ index 0f9d487..d85a05f 100644
                  {
                      timer -= GameTimes.DeltaTime;
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Lights/Light.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Lights/Light.cs
-index c1d305f..21d670b 100644
+index c1d305f..c71c7e6 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Lights/Light.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Lights/Light.cs
 @@ -8,6 +8,7 @@ using System;
@@ -4852,7 +4887,7 @@ index c1d305f..21d670b 100644
                  else
                  {
 -                    scale += (float)(GlobalState.RNG.NextDouble() * 0.2);
-+                    scale += (Fix)(GlobalState.RNG.NextDouble() * 0.2);
++                    scale += Fix.RandomUnit(GlobalState.RNG) * 0.2f;
                      flicker_timer = 0.05f;
                  }
              }
@@ -5200,11 +5235,11 @@ index b24c12e..5e2200e 100644
              timers.Add(new() { current = current + time, max = time, name = name });
              timers.Sort((t1, t2) => t1.current.CompareTo(t2.current));
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs b/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
-index fbcdb7e..1c7a297 100644
+index fbcdb7e..6a6ccae 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/GameTimes.cs
 @@ -1,3 +1,4 @@
-+using AnodyneSharp.Utilities;
++﻿using AnodyneSharp.Utilities;
  using Microsoft.Xna.Framework;
  using System.Collections.Generic;
  using System.Linq;
@@ -5635,11 +5670,11 @@ index aa8b981..3b43c4a 100644
              }
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Utilities/Fix.cs b/AnodyneSharp/AnodyneSharp.Shared/Utilities/Fix.cs
 new file mode 100644
-index 0000000..caeb5e0
+index 0000000..de7b473
 --- /dev/null
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Utilities/Fix.cs
 @@ -0,0 +1,170 @@
-+using System;
++﻿using System;
 +
 +namespace AnodyneSharp.Utilities
 +{
@@ -5655,7 +5690,7 @@ index 0000000..caeb5e0
 +    ///   - Sqrt: floor(sqrt(raw &lt;&lt; 16)), 0 for v &lt;= 0
 +    ///   - Sin/Cos: the shared table (FixSin.cs), indexed by the angle in 1/4096 turns, rounded:
 +    ///     (raw * 42722830 + 2^31) &gt;&gt; 32, wrapped
-+    ///   - RandomUnit (in place of (float)NextDouble() / NextSingle()): ((long)Next() &lt;&lt; 16) / int.MaxValue
++        ///   - RandomUnit (in place of (float)NextDouble() / NextSingle()): ((long)Next() &lt;&lt; 16) / int.MaxValue
 +    /// See FixVector2 for the vector rules (MonoGame's Vector2 maths in Fix).
 +    /// </summary>
 +    public readonly partial struct Fix : IComparable<Fix>, IEquatable<Fix>

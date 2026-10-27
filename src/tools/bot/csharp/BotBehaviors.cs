@@ -1226,6 +1226,12 @@ namespace AnodyneSharp.Recording
             {
                 yield break;
             }
+            // (a text box first: the dust pickup's one is still up here, and the jets' ~195 frames off are only just enough for the walk
+            // after, so they must not go on closing it)
+            if (Talking)
+            {
+                yield return ReadDialogue();
+            }
             BotRunner.Status = "wait for the steam to burn and stop";
             yield return Until(Burning, 400, "steam jets burning");
             yield return Until(() => !Burning(), 200, "steam jets stopping");

@@ -27,15 +27,31 @@ namespace AnodyneSharp.Recording
         {
         }
 
+        // ANODYNE_RNGDBG=from-to: each draw in those bot frames goes to /tmp/bot/rngdbg.txt with its stack (to find a
+        // draw the port makes or misses; the port's side is a backtrace in Rng_Next)
+        private static readonly long[] DbgRange = Environment.GetEnvironmentVariable("ANODYNE_RNGDBG") is string r && r.Split('-') is { Length: 2 } a
+            ? new[] { long.Parse(a[0]), long.Parse(a[1]) } : null;
+
+        private static void Dbg()
+        {
+            if (DbgRange != null && BotRunner.Frame >= DbgRange[0] && BotRunner.Frame <= DbgRange[1])
+            {
+                var st = new System.Diagnostics.StackTrace(2, true).GetFrames().Take(6).Select(f => $"   {f.GetMethod()?.DeclaringType?.Name}.{f.GetMethod()?.Name}:{f.GetFileLineNumber()}");
+                File.AppendAllText("/tmp/bot/rngdbg.txt", $"RNGDBG {BotRunner.Frame}\n{string.Join("\n", st)}\n");
+            }
+        }
+
         protected override double Sample()
         {
             Calls++;
+            Dbg();
             return base.Sample();
         }
 
         public override int Next()
         {
             Calls++;
+            Dbg();
             return base.Next();
         }
     }
@@ -107,6 +123,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Shown by the realtime overlay: the bot's current goal.</summary>
         public static string Status = "";
         public static bool Thinking; // set by a one-off planner for the frame it runs in (see NextFrame)
+        private static string _traceJets;
         private static string _traceStatus;
         private static Microsoft.Xna.Framework.Point _traceTile;
 
@@ -400,6 +417,16 @@ namespace AnodyneSharp.Recording
                     _traceStatus = Status;
                     _traceTile = tileNow;
                     System.Console.Error.WriteLine($"  st f{_botFrame} {Player.Position.ToXna().X:0},{Player.Position.ToXna().Y:0} {Player.state} [{Status}]");
+                }
+            }
+            if (Player != null && Environment.GetEnvironmentVariable("ANODYNE_STEAM_TRACE") != null)
+            {
+                // Debug: the steam jets' anims, on every change (ANODYNE_STEAM_TRACE)
+                string jets = string.Join(" ", Entities().Where(e => e.exists && e.GetType().DeclaringType?.Name == "OnOffLaser").Select(e => $"{e.Hitbox.X},{e.Hitbox.Y}:{(e.visible ? e.CurAnimName : "-")}"));
+                if (jets.Length > 0 && jets != _traceJets)
+                {
+                    _traceJets = jets;
+                    System.Console.Error.WriteLine($"  jets f{_botFrame} {jets}");
                 }
             }
             string why = null;
