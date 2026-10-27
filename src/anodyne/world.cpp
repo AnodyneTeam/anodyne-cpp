@@ -17,6 +17,7 @@
 #include "game_state.h"
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
+#include "sprite.h"
 #include "tex_dark.h"
 #include "tonc.h"
 
@@ -2148,6 +2149,10 @@ void World_Update()
         gGame.mEquippedBroomChanged = false;
         Player_UpdateBroomType();
     }
+    if (gGame.mGameMode == GAME_MODE_NORMAL)
+    {
+        Sprite_ChaosOff(); // (a new game, or a load)
+    }
     if (gGame.mGameMode == GAME_MODE_EXTREME_CHAOS)
     {
         gTexRandomTimer += kDeltaTime;
@@ -2163,10 +2168,16 @@ void World_Update()
         gForceTextureReload = false;
         if (gGame.mGameMode != GAME_MODE_NORMAL)
         {
+            static float sDraws[kRandomizableTextures] __attribute__((section(".sbss")));
             for (int i = 0; i < kRandomizableTextures; i++)
             {
-                Rng_NextDouble();
+                sDraws[i] = static_cast<float>(Rng_NextDouble());
             }
+            Sprite_ChaosShuffle(sDraws, kRandomizableTextures);
+        }
+        else
+        {
+            Sprite_ChaosOff();
         }
     }
     // PlayState.UpdateHealth

@@ -1479,11 +1479,16 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
     {
         Entity& e = *gDraw[i].mEntity;
         Visual& v = *e.mV;
-        const SpriteSheetEntry& sheet = *v.mSheet;
+        // (UIEntity ignores chaos's texture swaps)
+        const SpriteSheetEntry& sheet = v.mLayer == LAYER_UI ? *v.mSheet : Sprite_ChaosSheet(*v.mSheet);
         int frame = Ecs_Frame(e);
-        if (frame < 0 || frame >= sheet.mFrameCount)
+        if (frame < 0)
         {
             frame = 0;
+        }
+        else if (frame >= sheet.mFrameCount)
+        {
+            frame = &sheet == v.mSheet ? 0 : frame % sheet.mFrameCount; // (a swapped sheet: wrapped round)
         }
         uint32_t firstPart;
         const int parts = static_cast<int>(Sprite_FrameParts(sheet, frame, &firstPart));

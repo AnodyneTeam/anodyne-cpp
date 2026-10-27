@@ -25,6 +25,43 @@ void Upload(Sprite& sprite, int frame)
     sprite.mLoadedFrame = frame;
 }
 
+// Chaos: each sheet's swap (an index into kSpriteSheets), and the sheets grouped by frame size.
+uint16_t gChaosSwap[kSpriteSheetCount] __attribute__((section(".sbss")));
+uint16_t gBySize[kSpriteSheetCount] __attribute__((section(".sbss")));
+bool gChaosOn = false;
+bool gBySizeMade = false;
+
+bool SameSize(const SpriteSheetEntry& a, const SpriteSheetEntry& b)
+{
+    return a.mFrameWidth == b.mFrameWidth && a.mFrameHeight == b.mFrameHeight && !a.mFrameParts == !b.mFrameParts;
+}
+
+// gBySize: the sheet indices with each frame size's together, in registry order within it.
+void MakeBySize()
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < kSpriteSheetCount; i++)
+    {
+        bool seen = false;
+        for (uint32_t j = 0; j < i && !seen; j++)
+        {
+            seen = SameSize(kSpriteSheets[i], kSpriteSheets[j]);
+        }
+        if (seen)
+        {
+            continue;
+        }
+        for (uint32_t j = i; j < kSpriteSheetCount; j++)
+        {
+            if (SameSize(kSpriteSheets[i], kSpriteSheets[j]))
+            {
+                gBySize[n++] = static_cast<uint16_t>(j);
+            }
+        }
+    }
+    gBySizeMade = true;
+}
+
 int CurrentFrame(const Sprite& sprite)
 {
     if (sprite.mAnim < 0)
@@ -35,6 +72,50 @@ int CurrentFrame(const Sprite& sprite)
     return anim.mFrameCount ? anim.mFrames[sprite.mAnimIndex] : 0;
 }
 } // namespace
+
+void Sprite_ChaosShuffle(const float* draws, int count)
+{
+    if (count <= 0)
+    {
+        return;
+    }
+    if (!gBySizeMade)
+    {
+        MakeBySize();
+    }
+    for (uint32_t i = 0; i < kSpriteSheetCount;)
+    {
+        // a run of one frame size
+        uint32_t end = i + 1;
+        while (end < kSpriteSheetCount && SameSize(kSpriteSheets[gBySize[i]], kSpriteSheets[gBySize[end]]))
+        {
+            end++;
+        }
+        const uint32_t size = end - i;
+        for (uint32_t k = i; k < end; k++)
+        {
+            const uint32_t sheet = gBySize[k];
+            const uint32_t pick = static_cast<uint32_t>(draws[sheet % count] * size);
+            gChaosSwap[sheet] = gBySize[i + (pick < size ? pick : size - 1)];
+        }
+        i = end;
+    }
+    gChaosOn = true;
+}
+
+void Sprite_ChaosOff()
+{
+    gChaosOn = false;
+}
+
+const SpriteSheetEntry& Sprite_ChaosSheet(const SpriteSheetEntry& sheet)
+{
+    if (!gChaosOn)
+    {
+        return sheet;
+    }
+    return kSpriteSheets[gChaosSwap[&sheet - kSpriteSheets]];
+}
 
 uint32_t Sprite_SheetCount()
 {
