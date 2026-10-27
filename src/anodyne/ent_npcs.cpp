@@ -553,6 +553,10 @@ const EntityClass kGlowLight = {
     "GlowLight", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
 };
 
+const EntityClass kBrightGlowLight = {
+    "BrightGlowLight", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
 // ---- BedRoomBounceLight (Lights/Light.cs) ------------------------------------------------------------------------
 // The Bedroom's light: bounces round the screen, then after 2 s locks on to the player once it touches them.
 struct BounceLightData final
@@ -2620,7 +2624,8 @@ Entity* Spawn_EyeLight(const MapEntity& preset, Entity&)
     Ecs_SetSolid(*e, false);
     Ecs_Play(*e, "glow");
     const bool bright = strcmp(Preset_TypeValue(preset), "bright") == 0;
-    Entity* light = Ecs_Create(kGlowLight, e->mT->mX + Fx(8), e->mT->mY + Fx(6), PART_VISUAL, nullptr, e);
+    Entity* light = Ecs_Create(bright ? kBrightGlowLight : kGlowLight, e->mT->mX + Fx(8), e->mT->mY + Fx(6), PART_VISUAL,
+                                  nullptr, e);
     if (light)
     {
         Darkness_MakeLight(*light, bright ? "5-frame-glow-bright" : "5-frame-glow");
@@ -4050,6 +4055,9 @@ Entity* Spawn_CubeKing(const MapEntity& preset, Entity&)
     }
     Ecs_SetFrameBase(*e, preset.mFrame);
     Ecs_Play(*e, "a");
+    // (a 32x32 sprite: the hitbox is as big)
+    e->mB->mW = 32;
+    e->mB->mH = 32;
     e->mB->mImmovable = true;
     return e;
 }

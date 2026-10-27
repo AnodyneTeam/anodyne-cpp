@@ -234,17 +234,24 @@ void Replay(string inputPath, string tracePath, int show)
     // boot the port
     // the same way as at the start and take the C#'s RNG position again
     string[] titleRow = null;
+    bool titleBlank = false; // a C# row without a map: it is on the title, and its next row with one has loaded the save
     long resynced = -1; // (SetRng lands with the next frame: no RNG comparison on this one)
     for (int i = start; i < cs.Count && diffs <= show; i++)
     {
         long f = long.Parse(cs[i][0]);
         if (titleRow != null)
         {
-            if (cs[i][1] == "" || (cs[i][1] == titleRow[1] && cs[i][2] == titleRow[2] && cs[i][3] == titleRow[3]))
+            if (cs[i][1] == "")
+            {
+                titleBlank = true;
+                continue;
+            }
+            if (!titleBlank && cs[i][1] == titleRow[1] && cs[i][2] == titleRow[2] && cs[i][3] == titleRow[3])
             {
                 continue;
             }
             titleRow = null;
+            titleBlank = false;
             for (int n = 0; view.Mode != "play" && n < 6000; n += 12)
             {
                 view.Hold(1, 1);
