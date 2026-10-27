@@ -1,4 +1,4 @@
-using AnodyneSharp.Entities;
+﻿using AnodyneSharp.Entities;
 using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Registry;
@@ -115,12 +115,12 @@ namespace AnodyneSharp.Recording
         }
 
         public AnodyneSharp.Entities.Player Native { get; }
-        public Vector2 Position => Native.Position;
+        public Vector2 Position => Native.Position.ToXna();
         public Rectangle Hitbox => Native.Hitbox;
-        public Vector2 Center => Native.Center;
-        public Vector2 VisualCenter => Native.VisualCenter;
-        public Vector2 velocity => Native.velocity;
-        public Vector2 additionalVel => Native.additionalVel;
+        public Vector2 Center => Native.Center.ToXna();
+        public Vector2 VisualCenter => Native.VisualCenter.ToXna();
+        public Vector2 velocity => Native.velocity.ToXna();
+        public Vector2 additionalVel => Native.additionalVel.ToXna();
         public Facing facing => Native.facing;
         public PlayerState state => Native.state;
         public PlayerAnimState ANIM_STATE => Native.ANIM_STATE;
@@ -130,9 +130,9 @@ namespace AnodyneSharp.Recording
         public bool dontMove => Native.dontMove;
         public bool reversed => Native.reversed;
         public bool ON_CONVEYOR => Native.ON_CONVEYOR;
-        public float y_push => Native.y_push;
+        public float y_push => (float)Native.y_push;
         public int slowTicks => Native.slowTicks;
-        public float slowMul => Native.slowMul;
+        public float slowMul => (float)Native.slowMul;
         public IBroomView broom => Native.broom == null ? null : this;
         public Entity raft => Native.raft;
 

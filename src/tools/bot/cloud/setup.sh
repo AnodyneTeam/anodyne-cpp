@@ -1,7 +1,8 @@
 #!/bin/bash
 # Sets up a headless Linux box (e.g. a Claude Code cloud session) to run the bot without the private AnodyneSharp checkout:
 # clones upstream AnodyneSharp, applies glue.diff (a reconstruction of the recording/bot hooks that only exist in the
-# unpublished checkout), copies the bot sources from ../csharp, compiles the shaders under wine and builds the game.
+# unpublished checkout) and fix16.diff (the determinism hooks and the gameplay maths in Fix16, matching the port's fx),
+# copies the bot sources from ../csharp, compiles the shaders under wine and builds the game.
 # usage: setup.sh [dest]   (default /home/snake/dev/AnodyneSharp, the path every other bot script expects)
 # Afterwards: start Xvfb + pulseaudio (headless.sh) and use run_bot.sh / from.sh / part.sh as usual.
 set -e
@@ -27,6 +28,7 @@ cd "$DEST"
 git checkout -q -B bot $BASE
 git submodule update --init
 git apply "$HERE/glue.diff"
+git apply "$HERE/fix16.diff"
 sed -i 's#<TargetFramework>net6.0</TargetFramework>#<TargetFramework>net10.0</TargetFramework>#' Fluent-State-Machine/*.csproj
 mkdir -p AnodyneSharp/AnodyneSharp.Shared/Recording
 cp "$HERE"/../csharp/*.cs "$HERE"/RecordingManager.cs AnodyneSharp/AnodyneSharp.Shared/Recording/

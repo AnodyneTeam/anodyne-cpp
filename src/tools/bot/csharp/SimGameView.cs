@@ -1,4 +1,4 @@
-using AnodyneSharp.Entities;
+﻿using AnodyneSharp.Entities;
 using AnodyneSharp.MapData;
 using AnodyneSharp.MapData.Tiles;
 using AnodyneSharp.Utilities;
@@ -124,7 +124,7 @@ namespace AnodyneSharp.Recording
                 int x = d[0].GetInt32(), y = d[1].GetInt32(), frame = d[2].GetInt32(), flags = d[3].GetInt32();
                 foreach (var pr in list)
                 {
-                    if ((int)pr.Position.X == x && (int)pr.Position.Y == y && pr.Frame == frame)
+                    if ((int)pr.Position.ToXna().X == x && (int)pr.Position.ToXna().Y == y && pr.Frame == frame)
                     {
                         pr.Alive = (flags & 1) == 0;
                         pr.Activated = (flags & 2) != 0;
@@ -409,7 +409,7 @@ namespace AnodyneSharp.Recording
                 if (presetField != null && presetField.GetValue(e) == null && state.TryGetProperty("map", out var mapName))
                 {
                     presetField.SetValue(e, EntityManager.GetMapEntities(mapName.GetString()).FirstOrDefault(pr =>
-                        (int)pr.Position.X == (int)e.Position.X && (int)pr.Position.Y == (int)e.Position.Y));
+                        (int)pr.Position.ToXna().X == (int)e.Position.ToXna().X && (int)pr.Position.ToXna().Y == (int)e.Position.ToXna().Y));
                 }
                 FlickeringProp?.SetValue(e, j.GetProperty("flicker").GetBoolean());
                 if (j.TryGetProperty("f", out var fields))

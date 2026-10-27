@@ -234,7 +234,7 @@ namespace AnodyneSharp.Recording
                 BotRunner.Status = $"platforms: jump onto {tx},{ty}";
                 yield return K(keys.ToArray());
             }
-            Trace($"landed, platform moving {plat.velocity}");
+            Trace($"landed, platform moving {plat.velocity.ToXna()}");
         }
 
         /// <summary>Ride the platform under us until it stops (or until done() says to get off).</summary>
@@ -244,8 +244,8 @@ namespace AnodyneSharp.Recording
             bool moved = false;
             for (int i = 0; i < 900; i++)
             {
-                moved |= plat.velocity != Vector2.Zero;
-                if ((moved && plat.velocity == Vector2.Zero) || (done != null && done()))
+                moved |= plat.velocity.ToXna() != Vector2.Zero;
+                if ((moved && plat.velocity.ToXna() == Vector2.Zero) || (done != null && done()))
                 {
                     break;
                 }
@@ -272,14 +272,14 @@ namespace AnodyneSharp.Recording
             yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the last swing to end");
             var c = BotNav.CentreOf(new Point(tx, ty));
             yield return GoTo(c.X, c.Y);
-            // The dust goes down on the tile in front of the tile of Player.Center, which sits a few pixels off our hitbox's middle: stand
+            // The dust goes down on the tile in front of the tile of Player.Center.ToXna(), which sits a few pixels off our hitbox's middle: stand
             // where that point is on this tile (as near its middle as that allows).
-            var off = Player.Center - Me;
+            var off = Player.Center.ToXna() - Me;
             float Fit(float mid, float o, int t) => Math.Clamp(mid, t * 16 + 2 - o, t * 16 + 13 - o);
             var at = new Vector2(Fit(tx * 16 + 8, off.X, tx), Fit(ty * 16 + 8, off.Y, ty));
-            Trace($"sweep stand: off={off} aim={at} pos={Player.Position} hb={Player.Hitbox}");
+            Trace($"sweep stand: off={off} aim={at} pos={Player.Position.ToXna()} hb={Player.Hitbox}");
             yield return WalkTo(at.X - BotNav.HalfW, at.Y - BotNav.HalfH, tol: 0.8f);
-            Trace($"sweep stood: centre={Player.Center} facing={Player.facing}");
+            Trace($"sweep stood: centre={Player.Center.ToXna()} facing={Player.facing}");
             for (int i = 0; i < 10 && Player.facing != facing; i++)
             {
                 yield return Hold(1, face);
@@ -287,11 +287,11 @@ namespace AnodyneSharp.Recording
             // (a short broom only just reaches the next tile: lean in, staying on this tile)
             yield return Hold(nudge, face);
             yield return Wait(2);
-            Trace($"  before swing: facing={Player.facing} front={(Player.Center / 16 + Entity.FacingDirection(Player.facing)).ToPoint()} coll={AnodyneSharp.Registry.GlobalState.Map.GetCollisionData((Player.Center / 16 + Entity.FacingDirection(Player.facing)).ToPoint().ToVector2() * 16)} carried={Player.broom.dust?.Position}");
+            Trace($"  before swing: facing={Player.facing} front={(Player.Center.ToXna() / 16 + Entity.FacingDirection(Player.facing).ToXna()).ToPoint()} coll={AnodyneSharp.Registry.GlobalState.Map.GetCollisionData((Player.Center.ToXna() / 16 + Entity.FacingDirection(Player.facing).ToXna()).ToPoint().ToVector2() * 16)} carried={Player.broom.dust?.Position}");
             yield return Tap(KeyFunctions.Accept);
             for (int i = 0; i < 24 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null; i++)
             {
-                Trace($"  swing +{i}: carried={(Player.broom.dust == null ? "-" : Player.broom.dust.Position + ":" + Player.broom.dust.exists + ":" + Player.broom.dust.CurAnimName)} centre={Player.Center} broomdust={Player.broom.dust != null} plats={string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))} dusts={string.Join(" ", BotRunner.Entities().Where(e => e is Dust).Select(e => e.Position + ":" + e.exists + ":" + e.CurAnimName))}");
+                Trace($"  swing +{i}: carried={(Player.broom.dust == null ? "-" : Player.broom.dust.Position.ToXna() + ":" + Player.broom.dust.exists + ":" + Player.broom.dust.CurAnimName)} centre={Player.Center.ToXna()} broomdust={Player.broom.dust != null} plats={string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))} dusts={string.Join(" ", BotRunner.Entities().Where(e => e is Dust).Select(e => e.Position.ToXna() + ":" + e.exists + ":" + e.CurAnimName))}");
                 yield return K();
             }
             yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the swing to end");
@@ -345,12 +345,12 @@ namespace AnodyneSharp.Recording
                 yield break;
             }
             var dust = BotRunner.Entities().Where(e => e.exists && e is Dust && e.CurAnimName != "poof" && e.CurAnimName != "fallpoof")
-                .OrderBy(e => (e.Position - new Vector2(tx * 16, ty * 16)).LengthSquared()).FirstOrDefault();
+                .OrderBy(e => (e.Position.ToXna() - new Vector2(tx * 16, ty * 16)).LengthSquared()).FirstOrDefault();
             if (dust == null)
             {
                 throw new InvalidOperationException($"bot: no dust near {tx},{ty}");
             }
-            var dt = new Point((int)Math.Round(dust.Position.X / 16f), (int)Math.Round(dust.Position.Y / 16f));
+            var dt = new Point((int)Math.Round(dust.Position.ToXna().X / 16f), (int)Math.Round(dust.Position.ToXna().Y / 16f));
             Trace($"dust to sweep up at {dt}");
             foreach (var (o, key, facing) in new[] { (new Point(0, 1), KeyFunctions.Up, Facing.UP), (new Point(0, -1), KeyFunctions.Down, Facing.DOWN), (new Point(1, 0), KeyFunctions.Left, Facing.LEFT), (new Point(-1, 0), KeyFunctions.Right, Facing.RIGHT) })
             {
@@ -384,7 +384,7 @@ namespace AnodyneSharp.Recording
             }
             var pt = new Point((int)Math.Floor(Mid(plat).X / 16f), (int)Math.Floor(Mid(plat).Y / 16f));
             var ahead = plat.facing switch { Facing.UP => new Point(0, -1), Facing.DOWN => new Point(0, 1), Facing.LEFT => new Point(-1, 0), _ => new Point(1, 0) };
-            var here = BotNav.TileOf(BotRunner.Player.Position);
+            var here = BotNav.TileOf(BotRunner.Player.Position.ToXna());
             var sides = new[] { new Point(-ahead.X, -ahead.Y), new Point(ahead.Y, ahead.X), new Point(-ahead.Y, -ahead.X), ahead };
             Point? from = null;
             foreach (var o in sides)
@@ -423,7 +423,7 @@ namespace AnodyneSharp.Recording
                     yield return Ride(26, 63);
                     yield return StepTo(26, 68);
                     yield return SweepTill(24, 68, KeyFunctions.Left, Facing.LEFT, true); // the island's dust
-                    Trace($"carrying dust: {Player.broom.dust != null}; dust left: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position.ToString()))}");
+                    Trace($"carrying dust: {Player.broom.dust != null}; dust left: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position.ToXna().ToString()))}");
                     yield return SweepTill(24, 68, KeyFunctions.Up, Facing.UP, false); // ...onto the platform above
                     Trace($"island dust on the up platform: active={Active(PlatformAt(24, 67))} carrying={Player.broom.dust != null} facing={Player.facing}");
                     yield return Wait(20);
@@ -454,7 +454,7 @@ namespace AnodyneSharp.Recording
                     yield return SweepTill(22, 64, KeyFunctions.Down, Facing.DOWN, true);
                     yield return SweepTill(22, 65, KeyFunctions.Right, Facing.RIGHT, false);
                     yield return JumpOnto(23, 65, KeyFunctions.Right);
-                    yield return Ride(23, 65, () => Me.X >= PlatformAt(26, 63).Hitbox.Center.X - 3f);
+                    yield return Ride(23, 65, () => Me.X >= PlatformAt(26, 63).Hitbox.Center.ToXna().X - 3f);
                     yield return JumpOnto(26, 63, KeyFunctions.Up);
                     yield return Ride(26, 63);
                     yield return StepTo(26, 68);
@@ -473,7 +473,7 @@ namespace AnodyneSharp.Recording
                     yield return SweepTill(27, 77, KeyFunctions.Up, Facing.UP, false);
                     yield return SweepTill(27, 77, KeyFunctions.Up, Facing.UP, true);
                     yield return SweepTill(27, 75, KeyFunctions.Up, Facing.UP, false);
-                    Trace($"dust now: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position + ":" + e.CurAnimName))} plats: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))}");
+                    Trace($"dust now: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Dust).Select(e => e.Position.ToXna() + ":" + e.CurAnimName))} plats: {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is Propelled).Select(e => Mid(e) + ":" + Active(e)))}");
                     yield return JumpOnto(27, 74, KeyFunctions.Up);
                     yield return Ride(27, 74);
                     yield return StepTo(21, 74);
@@ -521,7 +521,7 @@ namespace AnodyneSharp.Recording
                     yield return Until(() => roller.CollisionOn && roller.Hitbox.Right >= Player.Hitbox.Left - 3, 300, "the spike roller to come");
                     Trace($"hop the roller at {roller.Hitbox}");
                     yield return LeapOff(KeyFunctions.Left);
-                    yield return Until(() => roller.velocity == Vector2.Zero, 600, "the spike roller to stop");
+                    yield return Until(() => roller.velocity.ToXna() == Vector2.Zero, 600, "the spike roller to stop");
                     Trace($"roller stopped at {roller.Hitbox}");
                     break;
                 }
@@ -537,11 +537,11 @@ namespace AnodyneSharp.Recording
                     }
                     Trace($"roller dropping at {roller.Hitbox}");
                     // (just south of it, but not so far south that the screen changes and it resets)
-                    for (int i = 0; i < 600 && !(roller.CollisionOn && roller.velocity == Vector2.Zero); i++)
+                    for (int i = 0; i < 600 && !(roller.CollisionOn && roller.velocity.ToXna() == Vector2.Zero); i++)
                     {
                         BotRunner.Status = "platforms: wait for the spike roller to stop";
                         BotRunner.NotStuck();
-                        yield return Player.Position.Y < 465.5f ? K(KeyFunctions.Down) : Player.Position.Y > 467f ? K(KeyFunctions.Up) : K();
+                        yield return Player.Position.ToXna().Y < 465.5f ? K(KeyFunctions.Down) : Player.Position.ToXna().Y > 467f ? K(KeyFunctions.Up) : K();
                     }
                     Trace($"roller stopped at {roller.Hitbox}");
                     break;
@@ -597,7 +597,7 @@ namespace AnodyneSharp.Recording
                     Trace($"jump down through the bottom roller at {low.Hitbox}");
                     yield return LeapOff(KeyFunctions.Down);
                     yield return GoTo(1576, 246);
-                    yield return WaitFor(() => top.CollisionOn && top.velocity == Vector2.Zero, "the top roller to stop");
+                    yield return WaitFor(() => top.CollisionOn && top.velocity.ToXna() == Vector2.Zero, "the top roller to stop");
                     Trace($"top roller stopped at {top.Hitbox}: jump the gap");
                     yield return LeapOff(KeyFunctions.Down);
                     // (a jump carries us 30px: take off right above the roller, clear of the wall on the exit corridor's east side)
@@ -618,7 +618,7 @@ namespace AnodyneSharp.Recording
                     yield return WaitFor(() => roller.CollisionOn && roller.Hitbox.Bottom >= Player.Hitbox.Top - 3, "the spike roller to come");
                     Trace($"hop the roller at {roller.Hitbox}");
                     yield return LeapOff(KeyFunctions.Up);
-                    yield return WaitFor(() => roller.velocity == Vector2.Zero, "the spike roller to stop");
+                    yield return WaitFor(() => roller.velocity.ToXna() == Vector2.Zero, "the spike roller to stop");
                     Trace($"roller stopped at {roller.Hitbox}");
                     yield return SweepUpNear(85, 22);
                     yield return SweepTill(84, 22, KeyFunctions.Down, Facing.DOWN, false);

@@ -556,7 +556,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Up the pixel seam between (4,0)'s pits, with steam pushing off it (a fall puts us back at the bottom: again), then west along the top.</summary>
         private static IEnumerable<object> BlueSteamClimb()
         {
-            for (int t = 0; t < 4 && Player.Position.Y > 40; t++)
+            for (int t = 0; t < 4 && Player.Position.ToXna().Y > 40; t++)
             {
                 yield return Exec("O1 X0 !1 R32 !0 @x731,u ^x731,u,140 W5");
                 yield return Wait(60); // (a fall: back at the bottom by now)

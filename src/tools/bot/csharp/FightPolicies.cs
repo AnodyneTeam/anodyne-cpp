@@ -58,8 +58,8 @@ namespace AnodyneSharp.Recording
         /// </summary>
         public static PKey[] AnnoyerHold(PCtx c, PolicyMem m)
         {
-            var tc = new Vector2(c.T.Center.X, c.T.Center.Y);
-            var pc = new Vector2(c.P.Center.X, c.P.Center.Y);
+            var tc = new Vector2(c.T.Center.ToXna().X, c.T.Center.ToXna().Y);
+            var pc = new Vector2(c.P.Center.ToXna().X, c.P.Center.ToXna().Y);
             float dx = tc.X - pc.X, dy = tc.Y - pc.Y;
             float dist = (float)Math.Sqrt(dx * dx + dy * dy);
             float speed = m.PrevT.HasValue ? (tc - m.PrevT.Value).Length() : 0f;
@@ -96,14 +96,14 @@ namespace AnodyneSharp.Recording
         {
             // Just broom them: when one is close, face the nearest one, hold that facing for a while (they orbit at 168px/s, so turning to
             // follow one is pointless) and swing on every cooldown; a swing held out to one side meets one on almost every lap.
-            var pc = new Vector2(c.P.Center.X, c.P.Center.Y);
+            var pc = new Vector2(c.P.Center.ToXna().X, c.P.Center.ToXna().Y);
             var all = new System.Collections.Generic.List<Rectangle> { c.T };
             all.AddRange(c.Others);
             Rectangle near = c.T;
             float bestD = 1e9f;
             foreach (var a in all)
             {
-                float d = (new Vector2(a.Center.X, a.Center.Y) - pc).Length();
+                float d = (new Vector2(a.Center.ToXna().X, a.Center.ToXna().Y) - pc).Length();
                 if (d < bestD)
                 {
                     bestD = d;
@@ -112,7 +112,7 @@ namespace AnodyneSharp.Recording
             }
             m.Swing++;
             // speed of the nearest one: match it to the closest centre of the previous frame (they come in a list, not with identities)
-            var nc = new Vector2(near.Center.X, near.Center.Y);
+            var nc = new Vector2(near.Center.ToXna().X, near.Center.ToXna().Y);
             float speed = 0f;
             float bestPrev = 1e9f;
             foreach (var pv in m.PrevCentres)
@@ -127,19 +127,19 @@ namespace AnodyneSharp.Recording
             {
                 speed = bestPrev;
             }
-            m.PrevCentres = all.ConvertAll(a => new Vector2(a.Center.X, a.Center.Y));
+            m.PrevCentres = all.ConvertAll(a => new Vector2(a.Center.ToXna().X, a.Center.ToXna().Y));
             if (bestD > 36)
             {
                 if (speed < 0.3f && bestD > 50)
                 {
                     // asleep (it wakes when we come within ~64px): walk up to it
-                    float wx = near.Center.X - pc.X, wy = near.Center.Y - pc.Y;
+                    float wx = near.Center.ToXna().X - pc.X, wy = near.Center.ToXna().Y - pc.Y;
                     return Math.Abs(wx) >= Math.Abs(wy) ? K(wx < 0 ? PKey.Left : PKey.Right) : K(wy < 0 ? PKey.Up : PKey.Down);
                 }
                 return None; // flying in: stay put, it comes to us
             }
             bool orbiting = speed > 1.4f;
-            float ddx = near.Center.X - pc.X, ddy = near.Center.Y - pc.Y;
+            float ddx = near.Center.ToXna().X - pc.X, ddy = near.Center.ToXna().Y - pc.Y;
             PFacing want;
             if (orbiting)
             {
@@ -176,8 +176,8 @@ namespace AnodyneSharp.Recording
             var pb = c.P;
             var tb = c.T;
             int gap = tb.Top - pb.Bottom;
-            float adx = tb.Center.X - pb.Center.X;
-            if (!(pb.Center.Y < tb.Center.Y && gap <= 80))
+            float adx = tb.Center.ToXna().X - pb.Center.ToXna().X;
+            if (!(pb.Center.ToXna().Y < tb.Center.ToXna().Y && gap <= 80))
             {
                 return null;
             }
@@ -238,7 +238,7 @@ namespace AnodyneSharp.Recording
             var pb = c.P;
             var tb = c.T;
             int gap = tb.Top - pb.Bottom;
-            float adx = tb.Center.X - pb.Center.X;
+            float adx = tb.Center.ToXna().X - pb.Center.ToXna().X;
             if (m.DodgeLeft > 0)
             {
                 m.DodgeLeft--;
@@ -392,7 +392,7 @@ namespace AnodyneSharp.Recording
                 sb.Offset((int)Math.Round(c.TV.X * 0.15f), (int)Math.Round(c.TV.Y * 0.15f));
             }
             var pb = c.P;
-            float dx = sb.Center.X - pb.Center.X, dy = sb.Center.Y - pb.Center.Y;
+            float dx = sb.Center.ToXna().X - pb.Center.ToXna().X, dy = sb.Center.ToXna().Y - pb.Center.ToXna().Y;
             int gx = Math.Max(sb.Left - pb.Right, pb.Left - sb.Right);
             int gy = Math.Max(sb.Top - pb.Bottom, pb.Top - sb.Bottom);
             if (Math.Max(gx, gy) < 4)
@@ -411,7 +411,7 @@ namespace AnodyneSharp.Recording
                 int oy = Math.Max(o.Top - pb.Bottom, pb.Top - o.Bottom);
                 if (Math.Max(ox, oy) < 6)
                 {
-                    var awayO = ox >= oy ? (o.Center.X < pb.Center.X ? PKey.Right : PKey.Left) : (o.Center.Y < pb.Center.Y ? PKey.Down : PKey.Up);
+                    var awayO = ox >= oy ? (o.Center.ToXna().X < pb.Center.ToXna().X ? PKey.Right : PKey.Left) : (o.Center.ToXna().Y < pb.Center.ToXna().Y ? PKey.Down : PKey.Up);
                     if (Ahead(c, awayO, 4))
                     {
                         return K(awayO);

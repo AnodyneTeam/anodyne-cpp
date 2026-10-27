@@ -1004,7 +1004,7 @@ struct PendingWarp final
     uint8_t mFacing = 0;
     uint8_t mState = WARP_NONE;
     bool mSwapped = false;    // the map was swapped this frame
-    float mAlpha = 0.0f;      // black_overlay.alpha
+    fx mAlpha = 0;            // black_overlay.alpha (a FadeEffect: Fix)
     float mPixelation = 1.0f; // GlobalState.pixelation
 } gWarp;
 void (*gMapLoader)(uint8_t map) = nullptr;
@@ -1031,9 +1031,10 @@ void WarpExit()
     gWarp.mPixelation = gWarp.mPixelation + 30.0f * kUiDeltaTime;
     gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
     const float transitionOut = gMapName && strcmp(gMapName, "BLANK") == 0 ? 1.568f : 0.785f;
-    const float alpha = gWarp.mAlpha + (1.0f / transitionOut) * kUiDeltaTime;
-    gWarp.mAlpha = alpha > 1.0f ? 1.0f : alpha;
-    if (gWarp.mAlpha == 1.0f || gFuckItMode)
+    // (ChangeAlpha(1 / transition_out): a float speed, made Fix, times DeltaTime)
+    const fx alpha = gWarp.mAlpha + FxMul(FxF(1.0f / transitionOut), kFxTick);
+    gWarp.mAlpha = alpha > kFxOne ? kFxOne : alpha;
+    if (gWarp.mAlpha == kFxOne || gFuckItMode)
     {
         WarpNow();
         Player_SetInvincible(true);
@@ -1053,9 +1054,9 @@ void WarpEnter()
     }
     gWarp.mPixelation = gWarp.mPixelation - 30.0f * kUiDeltaTime;
     gWarp.mPixelation = gWarp.mPixelation < 1.0f ? 1.0f : gWarp.mPixelation;
-    const float alpha = gWarp.mAlpha + (-1.0f / 0.8f) * kUiDeltaTime;
-    gWarp.mAlpha = alpha < 0.0f ? 0.0f : alpha;
-    if (gWarp.mAlpha == 0.0f)
+    const fx alpha = gWarp.mAlpha + FxMul(FxF(-1.0f / 0.8f), kFxTick);
+    gWarp.mAlpha = alpha < 0 ? 0 : alpha;
+    if (gWarp.mAlpha == 0)
     {
         gWarp.mState = WARP_NONE;
         Player_SetDontMove(false);
@@ -1297,7 +1298,7 @@ void DeathUpdate()
             World_RequestWarp(map, x, y, 255);
             WarpNow();
             gWarp.mState = WARP_ENTER;
-            gWarp.mAlpha = 1.0f;
+            gWarp.mAlpha = kFxOne;
         }
         SetDeathBlend(false, d.mFade);
         return;
@@ -1509,7 +1510,7 @@ void Screen_Flash(fx seconds, FlashColour colour)
     }
     gFlash.mColour = static_cast<uint16_t>(RGB15(c[0], c[1], c[2]));
     gFlash.mTint = gFlash.mColour != 0 && gFlash.mColour != 0x7FFF;
-    gFlash.mStep = FxDiv(kFxOne, FxMul(seconds, Fx(kFps)));
+    gFlash.mStep = FxMul(FxDiv(kFxOne, seconds), kFxTick); // (ChangeAlpha(-1 / time))
     if (gSettings.mFlashEasing == 0.0f)
     {
         gFlash.mAlpha = kFxOne;
@@ -1519,7 +1520,7 @@ void Screen_Flash(fx seconds, FlashColour colour)
     else
     {
         gFlash.mAlpha = FxF(0.1f);
-        gFlash.mEaseStep = FxDiv(kFxOne, FxMul(FxF(gSettings.mFlashEasing), Fx(kFps)));
+        gFlash.mEaseStep = FxMul(FxF(1.0f / gSettings.mFlashEasing), kFxTick); // (ChangeAlpha(1f / flash_easing))
         gFlash.mEasing = true;
         gFlash.mFull = false;
     }
@@ -2395,7 +2396,7 @@ bool World_GetWarpFade(int& dark, int& pixelation, bool& swapped)
 {
     swapped = gWarp.mSwapped;
     gWarp.mSwapped = false;
-    dark = static_cast<int>(gWarp.mAlpha * 65536.0f);
+    dark = gWarp.mAlpha.mRaw;
     pixelation = static_cast<int>(gWarp.mPixelation * 256.0f);
     return gWarp.mState != WARP_NONE;
 }

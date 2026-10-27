@@ -69,7 +69,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var t = new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16);
+                var t = new Point((int)(e.Position.ToXna().X + 8) / 16, (int)(e.Position.ToXna().Y + 8) / 16);
                 if (e is AnodyneSharp.Entities.Gadget.BigCardGate cg)
                 {
                     // A card gate (two tiles wide) with enough cards in hand: the walker opens it on the way.
@@ -94,11 +94,11 @@ namespace AnodyneSharp.Recording
             var grid = Gs.Grid;
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
-                if (pr.Type == null || !pr.Type.Name.EndsWith("Gate") || !pr.Alive || ((int)pr.Position.X / 160 == grid.X && (int)pr.Position.Y / 160 == grid.Y))
+                if (pr.Type == null || !pr.Type.Name.EndsWith("Gate") || !pr.Alive || ((int)pr.Position.ToXna().X / 160 == grid.X && (int)pr.Position.ToXna().Y / 160 == grid.Y))
                 {
                     continue;
                 }
-                var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                var t = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                 if (haveKey && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
                 {
                     _keyBlocks.Add(t);
@@ -149,7 +149,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                var t = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                 int needKills = pr.Frame % 5 + 1;
                 if (pr.Frame % 10 >= 5)
                 {
@@ -157,7 +157,7 @@ namespace AnodyneSharp.Recording
                     // high wire, crosses over (and counts as solved) once two of the room's enemies are dead.
                     var scr = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
                     if (pr.Frame % 5 != 0 || !presets.Any(q => q.Alive && q.Type == typeof(AnodyneSharp.Entities.Interactive.Npc.Circus.JavieraDanger)
-                        && scr.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16))))
+                        && scr.Contains(new Point((int)(q.Position.ToXna().X + 8) / 16, (int)(q.Position.ToXna().Y + 8) / 16))))
                     {
                         continue;
                     }
@@ -172,13 +172,13 @@ namespace AnodyneSharp.Recording
                 // The enemies of that screen still to kill: the live ones when it is loaded, else the presets.
                 var foes = here
                     // (clamped into the screen: an Annoyer whose swoop ran into the edge sits parked a few pixels past it, still to kill)
-                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToVector2()))
+                    ? BotRunner.Entities().Where(e => e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)).Select(e => TileOf(e.Hitbox.Center.ToXna().ToVector2()))
                         .Select(p => new Point(Math.Clamp(p.X, screen.Left, screen.Right - 1), Math.Clamp(p.Y, screen.Top, screen.Bottom - 1))).ToList()
                     : presets.Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
-                        .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
+                        .Select(q => new Point((int)(q.Position.ToXna().X + 8) / 16, (int)(q.Position.ToXna().Y + 8) / 16)).Where(screen.Contains).ToList();
                 // (kills so far: the screen's count when loaded, else its enemies that stay dead, such as a boss)
                 int killed = here ? Gs.EnemiesKilled : presets.Count(q => q.Type != null && !q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
-                    && screen.Contains(new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)));
+                    && screen.Contains(new Point((int)(q.Position.ToXna().X + 8) / 16, (int)(q.Position.ToXna().Y + 8) / 16)));
                 int need = needKills - killed;
                 var entries = new HashSet<Point>();
                 foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
@@ -233,7 +233,7 @@ namespace AnodyneSharp.Recording
             var screen = new Rectangle(t.X / 10 * 10, t.Y / 10 * 10, 10, 10);
             return AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .Where(q => q.Type != null && q.Alive && q.Type.IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false))
-                .Select(q => new Point((int)(q.Position.X + 8) / 16, (int)(q.Position.Y + 8) / 16)).Where(screen.Contains).ToList();
+                .Select(q => new Point((int)(q.Position.ToXna().X + 8) / 16, (int)(q.Position.ToXna().Y + 8) / 16)).Where(screen.Contains).ToList();
         }
 
         /// <summary>Set by the raft planner: a shut kill gate counts as a way through from a side with enough enemies to kill for it.</summary>
@@ -349,9 +349,9 @@ namespace AnodyneSharp.Recording
             var dustTiles = new List<Point>();
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
-                if (pr.Type != null && pr.Type.Name == "Dust" && (int)pr.Position.X / 160 == sx && (int)pr.Position.Y / 160 == sy)
+                if (pr.Type != null && pr.Type.Name == "Dust" && (int)pr.Position.ToXna().X / 160 == sx && (int)pr.Position.ToXna().Y / 160 == sy)
                 {
-                    dustTiles.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                    dustTiles.Add(new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16));
                 }
             }
             var g = Gs.Grid;
@@ -361,12 +361,12 @@ namespace AnodyneSharp.Recording
                 {
                     if (e.GetType().Name == "Dust")
                     {
-                        dustTiles.Add(TileOf(e.Position + new Vector2(8, 8)));
+                        dustTiles.Add(TileOf(e.Position.ToXna() + new Vector2(8, 8)));
                     }
                 }
                 if (BotRunner.Player?.broom.dust != null)
                 {
-                    dustTiles.Add(TileOf(BotRunner.Player.Position)); // the dust in the broom goes wherever the player goes
+                    dustTiles.Add(TileOf(BotRunner.Player.Position.ToXna())); // the dust in the broom goes wherever the player goes
                 }
             }
             foreach (var dt in dustTiles)
@@ -497,7 +497,7 @@ namespace AnodyneSharp.Recording
             {
                 if (e.exists && e.GetType().Name is "BounceDashTrap" or "OnSightDashTrap")
                 {
-                    var t = TileOf(e.Position + new Vector2(8, 8));
+                    var t = TileOf(e.Position.ToXna() + new Vector2(8, 8));
                     foreach (var o in new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
                     {
                         var n = new Point(t.X + o.X, t.Y + o.Y);
@@ -514,7 +514,7 @@ namespace AnodyneSharp.Recording
             {
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is true)
                 {
-                    var t = TileOf(new Vector2(e.Hitbox.Center.X - HalfW, e.Hitbox.Center.Y - HalfH));
+                    var t = TileOf(new Vector2(e.Hitbox.Center.ToXna().X - HalfW, e.Hitbox.Center.ToXna().Y - HalfH));
                     for (int ox = -1; ox <= 1; ox++)
                     {
                         for (int oy = -1; oy <= 1; oy++)
@@ -537,7 +537,7 @@ namespace AnodyneSharp.Recording
                 if (pr.Alive && pr.Type?.Name == "Frog")
                 {
                     // (and the tiles right beside a Frog: its body snags a raft going by, sat in its spit)
-                    var ft = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    var ft = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                     for (int ox = -1; ox <= 1; ox++)
                     {
                         for (int oy = -1; oy <= 1; oy++)
@@ -552,7 +552,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (pr.Alive && pr.Type?.Name == "Four_Shooter")
                 {
-                    var st = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                    var st = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                     // (it fires four ways along the grid, then four along the diagonals)
                     foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1), new Point(1, 1), new Point(-1, 1), new Point(1, -1), new Point(-1, -1) })
                     {
@@ -798,7 +798,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
-                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                var t = new Point((int)Math.Floor(pr.Position.ToXna().X / 16f), (int)Math.Floor(pr.Position.ToXna().Y / 16f));
                 _ledges[t] = new Point(t.X, t.Y + dist / 16);
             }
             return _ledges;
@@ -823,7 +823,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 int dist = pr.Frame == 1 ? 48 : pr.Frame == 2 ? 64 : 32;
-                var t = new Point((int)Math.Floor(pr.Position.X / 16f), (int)Math.Floor(pr.Position.Y / 16f));
+                var t = new Point((int)Math.Floor(pr.Position.ToXna().X / 16f), (int)Math.Floor(pr.Position.ToXna().Y / 16f));
                 _springs[t] = new Point(t.X, t.Y + dist / 16);
             }
             return _springs;
@@ -849,7 +849,7 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 // (by its middle: some sit off the grid, most of their 16px over the next tile)
-                var t = new Point((int)Math.Floor((pr.Position.X + 8f) / 16f), (int)Math.Floor((pr.Position.Y + 8f) / 16f));
+                var t = new Point((int)Math.Floor((pr.Position.ToXna().X + 8f) / 16f), (int)Math.Floor((pr.Position.ToXna().Y + 8f) / 16f));
                 _pads[t] = pr.Frame switch { 0 => new Point(0, -1), 1 => new Point(1, 0), 2 => new Point(0, 1), _ => new Point(-1, 0) };
             }
             return _pads;
@@ -1216,7 +1216,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var pt = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                var pt = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                 var (dx, dy, dir) = pr.Frame switch { 1 => (1, 0, Touching.RIGHT), 2 => (0, -1, Touching.UP), 3 => (-1, 0, Touching.LEFT), _ => (0, 1, Touching.DOWN) };
                 for (int k = 1; k <= 4; k++)
                 {
@@ -1388,12 +1388,12 @@ namespace AnodyneSharp.Recording
             // (and the ones on the other screens a route runs through, from their presets: a plan made a screen away must not ride into one)
             if (BotRunner.Player != null)
             {
-                var here = TileOf(BotRunner.Player.Position);
+                var here = TileOf(BotRunner.Player.Position.ToXna());
                 foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
                 {
                     if (pr.Alive && pr.Type?.Name is "Burst_Plant" or "Frog" or "Red_Pillar" or "Four_Shooter")
                     {
-                        var t = new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16);
+                        var t = new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16);
                         if (t.X / 10 != here.X / 10 || t.Y / 10 != here.Y / 10)
                         {
                             set.Add(t);
@@ -1440,7 +1440,7 @@ namespace AnodyneSharp.Recording
             char next = 'A';
             foreach (var p in AnodyneSharp.Entities.EntityManager.GetGridEntities(Gs.Map, grid))
             {
-                var t = new Point((int)Math.Floor((p.Position.X + 8) / 16f), (int)Math.Floor((p.Position.Y + 8) / 16f));
+                var t = new Point((int)Math.Floor((p.Position.ToXna().X + 8) / 16f), (int)Math.Floor((p.Position.ToXna().Y + 8) / 16f));
                 char ch = next <= 'Z' ? next++ : '*';
                 int cx = t.X - grid.X * 10, cy = t.Y - grid.Y * 10;
                 if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
@@ -1516,12 +1516,12 @@ namespace AnodyneSharp.Recording
                     letters[name] = ch;
                 }
                 var hb = e.Hitbox;
-                int cx = (int)Math.Floor(hb.Center.X / 16f) - grid.X * 10, cy = (int)Math.Floor(hb.Center.Y / 16f) - grid.Y * 10;
+                int cx = (int)Math.Floor(hb.Center.ToXna().X / 16f) - grid.X * 10, cy = (int)Math.Floor(hb.Center.ToXna().Y / 16f) - grid.Y * 10;
                 if (cx >= 0 && cx < 10 && cy >= 0 && cy < 10)
                 {
                     cells[cy, cx] = ch;
                 }
-                string v = e.velocity == Vector2.Zero ? "" : $" v=({e.velocity.X:0},{e.velocity.Y:0})";
+                string v = e.velocity.ToXna() == Vector2.Zero ? "" : $" v=({e.velocity.ToXna().X:0},{e.velocity.ToXna().Y:0})";
                 string frame = "";
                 try
                 {
@@ -1532,10 +1532,10 @@ namespace AnodyneSharp.Recording
                     // no sprite to have a frame
                 }
                 lines.Add($"  {ch} {name} box={hb.X},{hb.Y} {hb.Width}x{hb.Height}{v} {e.facing}{frame}" + (e.Solid ? " solid" : "")
-                        + (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr ? $" collide={sr.CollisionOn} visible={sr.visible} offY={sr.offset.Y:0}" : ""));
+                        + (e is AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller sr ? $" collide={sr.CollisionOn} visible={sr.visible} offY={sr.offset.ToXna().Y:0}" : ""));
             }
             var pb = pl.Hitbox;
-            int px = (int)Math.Floor(pb.Center.X / 16f) - grid.X * 10, py = (int)Math.Floor(pb.Center.Y / 16f) - grid.Y * 10;
+            int px = (int)Math.Floor(pb.Center.ToXna().X / 16f) - grid.X * 10, py = (int)Math.Floor(pb.Center.ToXna().Y / 16f) - grid.Y * 10;
             if (px >= 0 && px < 10 && py >= 0 && py < 10)
             {
                 cells[py, px] = '@';
@@ -1607,7 +1607,7 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.SwitchPillar) && on == 1 - pr.Frame)
                 {
-                    _pillarsUp.Add(new Point((int)Math.Floor((pr.Position.X + 8) / 16f), (int)Math.Floor((pr.Position.Y + 8) / 16f)));
+                    _pillarsUp.Add(new Point((int)Math.Floor((pr.Position.ToXna().X + 8) / 16f), (int)Math.Floor((pr.Position.ToXna().Y + 8) / 16f)));
                 }
             }
             return _pillarsUp;
@@ -1754,7 +1754,7 @@ namespace AnodyneSharp.Recording
                 string name = e.GetType().Name;
                 if (name == "TreasureChest" || name == "Statue" || name == "Sign" || name.EndsWith("Quest") || (name == "CrackedTile" && !_crossCracked) || name == "Hole" || name == "Dust_Pit" || name == "SteamPipe" || name.EndsWith("Door") || name.EndsWith("Portal"))
                 {
-                    set.Add(new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16));
+                    set.Add(new Point((int)(e.Position.ToXna().X + 8) / 16, (int)(e.Position.ToXna().Y + 8) / 16));
                     if (name.EndsWith("Door") && name != "NexusDoor" && name != "OneWayDoor")
                     {
                         // (a door off the tile grid, or a wide or tall one, reaches into the tiles round it too)
@@ -1763,26 +1763,26 @@ namespace AnodyneSharp.Recording
                 }
             }
             // Doors and portals of screens that are not loaded are known from the presets: never walk over them by accident.
-            var liveDoors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).Select(e => e.Position).ToList();
+            var liveDoors = BotRunner.Entities().Where(e => e.exists && (e.GetType().Name.EndsWith("Door") || e.GetType().Name.EndsWith("Portal"))).Select(e => e.Position.ToXna()).ToList();
             foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
             {
                 if (pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && pr.Type.Name != "NexusDoor"
-                    && !liveDoors.Any(lp => Vector2.Distance(lp, pr.Position) < 16))
+                    && !liveDoors.Any(lp => Vector2.Distance(lp, pr.Position.ToXna()) < 16))
                 {
                     // (a loaded one's own box is the one above: Red Sea (3,5)'s cave door is a small box well up in its preset's tile, and
                     // the preset's box closed the only way along under it to the gate button)
-                    set.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                    set.Add(new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16));
                     if (pr.Type.Name.StartsWith("Wide"))
                     {
                         for (int dx = -2; dx <= 2; dx++)
                         {
-                            set.Add(new Point((int)(pr.Position.X + 8) / 16 + dx, (int)(pr.Position.Y + 8) / 16));
+                            set.Add(new Point((int)(pr.Position.ToXna().X + 8) / 16 + dx, (int)(pr.Position.ToXna().Y + 8) / 16));
                         }
                     }
                     if (pr.Type.Name.EndsWith("Door") && pr.Type.Name != "OneWayDoor")
                     {
                         bool wide = pr.Type.Name.StartsWith("Wide"), tall = pr.Type.Name.StartsWith("Tall");
-                        AddDoorTiles(set, pr.Position.X - (wide ? 32 : 0), pr.Position.Y - (tall ? 32 : 0), wide ? 80 : 16, tall ? 80 : 16);
+                        AddDoorTiles(set, pr.Position.ToXna().X - (wide ? 32 : 0), pr.Position.ToXna().Y - (tall ? 32 : 0), wide ? 80 : 16, tall ? 80 : 16);
                     }
                 }
             }
@@ -1792,7 +1792,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Every tile a door's box (x,y,w,h) reaches at least 2px into.</summary>
         private static void AddDoorTiles(HashSet<Point> set, float x, float y, float w, float h)
         {
-            var here = TileOf(BotRunner.Player.Position); // (not the tile we came out of it onto)
+            var here = TileOf(BotRunner.Player.Position.ToXna()); // (not the tile we came out of it onto)
             for (int ty = (int)Math.Floor((y + 2) / 16f); ty <= (int)Math.Floor((y + h - 2) / 16f); ty++)
             {
                 for (int tx = (int)Math.Floor((x + 2) / 16f); tx <= (int)Math.Floor((x + w - 2) / 16f); tx++)
@@ -1883,17 +1883,17 @@ namespace AnodyneSharp.Recording
                 // An emitter need not sit on the tile grid (a laser at y=38 fires along y 38..54, over two tile rows): the beam covers every
                 // row (column) its 16px box touches. Pixel -> tile directly (TileOf would add a hitbox half-size).
                 var starts = new List<Point>();
-                int cx = (int)Math.Floor((e.Position.X + 8) / 16f), cy = (int)Math.Floor((e.Position.Y + 8) / 16f);
+                int cx = (int)Math.Floor((e.Position.ToXna().X + 8) / 16f), cy = (int)Math.Floor((e.Position.ToXna().Y + 8) / 16f);
                 if (d.X != 0)
                 {
-                    for (int ty = (int)Math.Floor(e.Position.Y / 16f); ty <= (int)Math.Floor((e.Position.Y + 15) / 16f); ty++)
+                    for (int ty = (int)Math.Floor(e.Position.ToXna().Y / 16f); ty <= (int)Math.Floor((e.Position.ToXna().Y + 15) / 16f); ty++)
                     {
                         starts.Add(new Point(cx, ty));
                     }
                 }
                 else
                 {
-                    for (int tx = (int)Math.Floor(e.Position.X / 16f); tx <= (int)Math.Floor((e.Position.X + 15) / 16f); tx++)
+                    for (int tx = (int)Math.Floor(e.Position.ToXna().X / 16f); tx <= (int)Math.Floor((e.Position.ToXna().X + 15) / 16f); tx++)
                     {
                         starts.Add(new Point(tx, cy));
                     }
@@ -1901,11 +1901,11 @@ namespace AnodyneSharp.Recording
                 // The bullets fly along the emitter's middle: a dust on that line stops the beam over every row (column) it touches.
                 var dusts = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust"));
                 int reach = 24;
-                var mid = TileOf(e.Position + new Vector2(8, 8));
+                var mid = TileOf(e.Position.ToXna() + new Vector2(8, 8));
                 for (int i = 1; i < 24; i++)
                 {
                     mid = new Point(mid.X + d.X, mid.Y + d.Y);
-                    if (System.Linq.Enumerable.Any(dusts, x => TileOf(x.Position + new Vector2(8, 8)) == mid))
+                    if (System.Linq.Enumerable.Any(dusts, x => TileOf(x.Position.ToXna() + new Vector2(8, 8)) == mid))
                     {
                         reach = i;
                         break;
@@ -1918,7 +1918,7 @@ namespace AnodyneSharp.Recording
                     for (int i = 1; i < reach; i++)
                     {
                         t = new Point(t.X + d.X, t.Y + d.Y);
-                        if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == t))
+                        if (IsBeamWall(t) || System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position.ToXna() + new Vector2(8, 8)) == t))
                         {
                             break;
                         }
@@ -1946,7 +1946,7 @@ namespace AnodyneSharp.Recording
                     // A plugged beam still fires its bullets across the tiles between the emitter and the plug (a bullet spawns
                     // right at the muzzle and hits whoever stands there before it reaches the dust): walk round them if possible.
                     var d = e.facing switch { AnodyneSharp.Entities.Facing.RIGHT => new Point(1, 0), AnodyneSharp.Entities.Facing.LEFT => new Point(-1, 0), AnodyneSharp.Entities.Facing.UP => new Point(0, -1), _ => new Point(0, 1) };
-                    var mt = TileOf(e.Position + new Vector2(8, 8));
+                    var mt = TileOf(e.Position.ToXna() + new Vector2(8, 8));
                     var cells = new List<Point>();
                     for (int i = 1; i < 24; i++)
                     {
@@ -1957,7 +1957,7 @@ namespace AnodyneSharp.Recording
                             cells.Clear();
                             break;
                         }
-                        if (System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position + new Vector2(8, 8)) == mt))
+                        if (System.Linq.Enumerable.Any(BotRunner.Entities(), x => x.exists && x.GetType().Name == "Dust" && TileOf(x.Position.ToXna() + new Vector2(8, 8)) == mt))
                         {
                             break;
                         }
@@ -1980,7 +1980,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var c = TileOf(e.Position + new Vector2(8, 8));
+                var c = TileOf(e.Position.ToXna() + new Vector2(8, 8));
                 for (int dx = -4; dx <= 4; dx++)
                 {
                     for (int dy = -4; dy <= 4; dy++)
@@ -1991,9 +1991,9 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            if (SpookFish != null && SpookFish.exists && SpookFish.velocity == Vector2.Zero)
+            if (SpookFish != null && SpookFish.exists && SpookFish.velocity.ToXna() == Vector2.Zero)
             {
-                var ft = TileOf(SpookFish.Position + new Vector2(8, 8));
+                var ft = TileOf(SpookFish.Position.ToXna() + new Vector2(8, 8));
                 foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
                 {
                     for (int i = 1; i < 10; i++)
@@ -2024,9 +2024,9 @@ namespace AnodyneSharp.Recording
                 }
                 foreach (var sub in e.Subs())
                 {
-                    for (int ty = (int)Math.Floor(sub.Position.Y / 16f); ty <= (int)Math.Floor((sub.Position.Y + sub.height - 1) / 16f); ty++)
+                    for (int ty = (int)Math.Floor(sub.Position.ToXna().Y / 16f); ty <= (int)Math.Floor((sub.Position.ToXna().Y + sub.height - 1) / 16f); ty++)
                     {
-                        for (int tx = (int)Math.Floor(sub.Position.X / 16f); tx <= (int)Math.Floor((sub.Position.X + sub.width - 1) / 16f); tx++)
+                        for (int tx = (int)Math.Floor(sub.Position.ToXna().X / 16f); tx <= (int)Math.Floor((sub.Position.ToXna().X + sub.width - 1) / 16f); tx++)
                         {
                             zones[new Point(tx, ty)] = Math.Max(zones.TryGetValue(new Point(tx, ty), out int z0) ? z0 : 0, 40);
                         }
@@ -2041,7 +2041,7 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var dt = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                var dt = new Point((int)Math.Floor(e.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(e.Hitbox.Center.ToXna().Y / 16f));
                 for (int dx = -1; dx <= 1; dx++)
                 {
                     for (int dy = -1; dy <= 1; dy++)
@@ -2055,11 +2055,11 @@ namespace AnodyneSharp.Recording
             // before it arrives), next to it is a hit. Close-by tiles of its lines cost more, so the route crosses where it is far.
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity != Vector2.Zero)
+                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity.ToXna() != Vector2.Zero)
                 {
                     continue;
                 }
-                var t0 = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                var t0 = new Point((int)Math.Floor(e.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(e.Hitbox.Center.ToXna().Y / 16f));
                 foreach (var d in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
                 {
                     var t = t0;
@@ -2091,7 +2091,7 @@ namespace AnodyneSharp.Recording
             foreach (var e in BotRunner.Entities())
             {
                 bool killer = IsSuburbKiller(e);
-                if (!e.exists || e == except || !(killer || e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)) || (stationaryOnly && e.velocity != Vector2.Zero))
+                if (!e.exists || e == except || !(killer || e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)) || (stationaryOnly && e.velocity.ToXna() != Vector2.Zero))
                 {
                     continue;
                 }
@@ -2325,7 +2325,7 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Doors.NexusPad))
                 {
-                    Add(new Rectangle((int)pr.Position.X + 6, (int)pr.Position.Y + 6, 22, 18));
+                    Add(new Rectangle((int)pr.Position.ToXna().X + 6, (int)pr.Position.ToXna().Y + 6, 22, 18));
                 }
             }
             return set;
@@ -2341,7 +2341,7 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
                 {
-                    switches.Add(new Point((int)Math.Floor((pr.Position.X + 8) / 16f), (int)Math.Floor((pr.Position.Y + 8) / 16f)));
+                    switches.Add(new Point((int)Math.Floor((pr.Position.ToXna().X + 8) / 16f), (int)Math.Floor((pr.Position.ToXna().Y + 8) / 16f)));
                 }
             }
             Point[] o4 = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
@@ -2443,7 +2443,7 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Gate) && pr.Frame % 10 >= 5 && pr.Frame % 10 <= 7)
                 {
-                    res[new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16)] = pr.Frame;
+                    res[new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16)] = pr.Frame;
                 }
             }
             return res;
@@ -2457,7 +2457,7 @@ namespace AnodyneSharp.Recording
             {
                 if (pr.Type == typeof(AnodyneSharp.Entities.Gadget.Button))
                 {
-                    res.Add(new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16));
+                    res.Add(new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16));
                 }
             }
             return res;
