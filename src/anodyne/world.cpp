@@ -231,9 +231,12 @@ Shake gShake = {};
 struct Flash final
 {
     fx mAlpha;
-    fx mStep; // per frame
-    bool mWhite;
-    bool mRed;
+    fx mStep;     // per frame
+    fx mEaseStep; // per frame, while easing in
+    uint16_t mColour;
+    bool mEasing;
+    bool mFull;
+    bool mTint; // (not full white or black: BLDY can't)
 };
 Flash gFlash = {};
 
@@ -253,9 +256,12 @@ uint16_t gTintBase[kPalEntries] __attribute__((section(".sbss")));
 uint16_t gTintLast[kPalEntries] __attribute__((section(".sbss")));
 bool gTinted = false;
 
-// FadeEffect: each colour moves `level`/32 of the way to red.
-void TintPalettes(int level)
+// FadeEffect: each colour moves `level`/32 of the way to `colour`.
+void TintPalettes(int level, uint16_t colour)
 {
+    const int tr = colour & 31;
+    const int tg = (colour >> 5) & 31;
+    const int tb = (colour >> 10) & 31;
     for (int i = 1; i < kPalEntries; i++)
     {
         const uint16_t now = pal_bg_mem[i];
@@ -267,7 +273,7 @@ void TintPalettes(int level)
         const int r = base & 31;
         const int g = (base >> 5) & 31;
         const int b = (base >> 10) & 31;
-        const uint16_t out = RGB15(r + (31 - r) * level / 32, g - g * level / 32, b - b * level / 32);
+        const uint16_t out = RGB15(r + (tr - r) * level / 32, g + (tg - g) * level / 32, b + (tb - b) * level / 32);
         pal_bg_mem[i] = out;
         gTintLast[i] = out;
     }
@@ -317,7 +323,17 @@ void UpdateScreenEffects()
     {
         gShake.mX = gShake.mY = 0;
     }
-    if (gFlash.mAlpha > 0)
+    if (gFlash.mEasing)
+    {
+        gFlash.mAlpha += gFlash.mEaseStep;
+        if (gFlash.mAlpha >= kFxOne)
+        {
+            gFlash.mAlpha = kFxOne;
+            gFlash.mEasing = false;
+            gFlash.mFull = true;
+        }
+    }
+    else if (gFlash.mAlpha > 0)
     {
         gFlash.mAlpha -= gFlash.mStep;
         gFlash.mAlpha = gFlash.mAlpha < 0 ? 0 : gFlash.mAlpha;
@@ -611,7 +627,7 @@ Darkness gDark = { 0, 0, FxF(0.8f) };
 const MapDarkData* gDarkData = nullptr;
 const DarkTexture* gDarkTextures = nullptr;
 const DarkTexture* gDarkTex = nullptr; // the darkness's texture (tex_dark.h); nullptr: it darkens plainly
-int gRedTint = 0;                      // this frame's red flash, when TexDark tints
+int gTintLevel = 0;                    // this frame's tinting flash, when TexDark tints
 bool gDarkWritten = false; // the last frame's BLD came from the darkness
 Entity* gPlayerLight = nullptr;
 Entity* gMainLight = nullptr; // GlobalState.PlayerLight
@@ -1403,15 +1419,41 @@ bool Screen_ShakeActive()
 
 void Screen_Flash(fx seconds, FlashColour colour)
 {
-    gFlash.mAlpha = kFxOne;
+    static const uint8_t kColours[][3] = {
+        { 255, 255, 255 }, { 0, 0, 0 }, { 255, 0, 0 }, { 255, 17, 17 }, { 17, 17, 255 },
+    };
+    const float brightness = gSettings.mFlashBrightness;
+    int c[3];
+    for (int i = 0; i < 3; i++)
+    {
+        c[i] = static_cast<int>(kColours[colour][i] * brightness * 31 / 255 + 0.5f);
+    }
+    gFlash.mColour = static_cast<uint16_t>(RGB15(c[0], c[1], c[2]));
+    gFlash.mTint = gFlash.mColour != 0 && gFlash.mColour != 0x7FFF;
     gFlash.mStep = FxDiv(kFxOne, FxMul(seconds, Fx(kFps)));
-    gFlash.mWhite = colour != FLASH_BLACK;
-    gFlash.mRed = colour == FLASH_RED;
+    if (gSettings.mFlashEasing == 0.0f)
+    {
+        gFlash.mAlpha = kFxOne;
+        gFlash.mEasing = false;
+        gFlash.mFull = true;
+    }
+    else
+    {
+        gFlash.mAlpha = FxF(0.1f);
+        gFlash.mEaseStep = FxDiv(kFxOne, FxMul(FxF(gSettings.mFlashEasing), Fx(kFps)));
+        gFlash.mEasing = true;
+        gFlash.mFull = false;
+    }
 }
 
 bool Screen_FlashActive()
 {
     return gFlash.mAlpha > 0;
+}
+
+bool Screen_FlashFull()
+{
+    return gFlash.mFull;
 }
 
 void Darkness_TargetAlpha(fx alpha, fx vel)
@@ -2162,17 +2204,17 @@ void World_Update()
                 gLightWindows = false;
                 ApplyWindows();
             }
-            if (gFlash.mRed)
+            if (gFlash.mTint)
             {
                 int level = FxFloor(gFlash.mAlpha * 32 + kFxOne / 2);
                 level = level > 32 ? 32 : level;
                 if (gDarkTex && gDark.mAlpha > 0)
                 {
-                    gRedTint = level; // (TexDark tints its own colours)
+                    gTintLevel = level; // (TexDark tints its own colours)
                 }
                 else
                 {
-                    TintPalettes(level);
+                    TintPalettes(level, gFlash.mColour);
                 }
                 if (gDark.mAlpha > 0 || gDarkWritten)
                 {
@@ -2187,7 +2229,7 @@ void World_Update()
                 y = y > 16 ? 16 : y;
                 ScreenDarken(0);
                 REG_BLDCNT = BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP |
-                             (gFlash.mWhite ? BLD_WHITE : BLD_BLACK);
+                             (gFlash.mColour ? BLD_WHITE : BLD_BLACK);
                 REG_BLDY = static_cast<uint16_t>(y);
                 gDarkWritten = true;
             }
@@ -2215,9 +2257,9 @@ void World_Update()
         {
             UntintPalettes(); // (from before the texture: TexDark takes the plain colours)
         }
-        TexDark_Frame(gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2), gRedTint);
+        TexDark_Frame(gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2), gTintLevel, gFlash.mColour);
     }
-    gRedTint = 0;
+    gTintLevel = 0;
     if (MenuDraw_IsOpen())
     {
         // (the pause menu covers the playfield)

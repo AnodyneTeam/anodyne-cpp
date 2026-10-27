@@ -19,6 +19,7 @@ volatile int gShown = 0; // the band in palette RAM
 const DarkTexture* gTexture = nullptr;
 int gAlpha = -1;
 int gTint = -1;
+uint16_t gTintColour = 0;
 
 // The VCOUNT line that swaps band `band` in: the line before its first, band 0 in the last line of VBlank.
 int SwapLine(int band)
@@ -49,7 +50,7 @@ int Overlay(int base, int blend)
     return base < 128 ? 2 * base * blend / 255 : 255 - 2 * (255 - base) * (255 - blend) / 255;
 }
 
-void BuildLuts(const DarkTexture& texture, int alpha, int tint)
+void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintColour)
 {
     for (int band = 0; band < kDarkBands; band++)
     {
@@ -63,8 +64,8 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint)
                 const int g = (f * t[3] + c * (255 - t[3])) / 255;
                 const int final8 = (g * alpha + c * (256 - alpha)) >> 8;
                 int v = (final8 * 31 + 127) / 255;
-                // the red flash after it (FadeEffect, as TintPalettes)
-                v = ch == 0 ? v + (31 - v) * tint / 32 : v - v * tint / 32;
+                // the flash after it (FadeEffect, as TintPalettes)
+                v += (((tintColour >> (5 * ch)) & 31) - v) * tint / 32;
                 gLut[band][ch][c5] = static_cast<uint8_t>(v);
             }
         }
@@ -121,7 +122,7 @@ void TexDark_Off()
     gTexture = nullptr;
 }
 
-void TexDark_Frame(const DarkTexture* texture, int alpha, int redTint)
+void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour)
 {
     if (!texture || alpha <= 0)
     {
@@ -129,13 +130,15 @@ void TexDark_Frame(const DarkTexture* texture, int alpha, int redTint)
         return;
     }
     const bool starting = !gActive;
-    const bool lutChanged = starting || texture != gTexture || alpha != gAlpha || redTint != gTint;
+    const bool lutChanged =
+        starting || texture != gTexture || alpha != gAlpha || tint != gTint || (tint && tintColour != gTintColour);
     if (lutChanged)
     {
-        BuildLuts(*texture, alpha, redTint);
+        BuildLuts(*texture, alpha, tint, tintColour);
         gTexture = texture;
         gAlpha = alpha;
-        gTint = redTint;
+        gTint = tint;
+        gTintColour = tintColour;
     }
     // New base colours: all of them when starting, else those the game rewrote since the band went in.
     static bool sDirty[kEntries] __attribute__((section(".sbss")));

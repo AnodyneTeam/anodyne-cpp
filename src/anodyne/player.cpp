@@ -1472,7 +1472,7 @@ namespace
 // Broom.UpdateBroomType's texture: the CELL's, the SUBURB's knife, or the broom.
 void BroomTexture()
 {
-    const char* sheet = strcmp(gMapName, "CELL") == 0 ? "broom_cell" : (strcmp(gMapName, "SUBURB") == 0 ? "knife" : "broom");
+    const char* sheet = Game_IsCell() ? "broom_cell" : (strcmp(gMapName, "SUBURB") == 0 ? "knife" : "broom");
     Ecs_SetTexture(*gBroom, sheet, 16, 16);
 }
 } // namespace
@@ -1514,8 +1514,7 @@ void Player_Reset(const char* mapName)
         PlayerPlay("enter_fall");
     }
     d.mEnterFall = false;
-    const bool cell = strcmp(gMapName, "CELL") == 0;
-    Ecs_SetTexture(*gPlayer, cell ? "young_player_cell" : "young_player", 16, 16);
+    Ecs_SetTexture(*gPlayer, Game_IsCell() ? "young_player_cell" : "young_player", 16, 16);
     BroomTexture();
     if (d.mRaft)
     {

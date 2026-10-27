@@ -319,7 +319,17 @@ bool LockedScene(Entity&)
             UpdateLockSquares();
             return false;
         }
-        Screen_Flash(FxF(0.33f), FLASH_WHITE); // (its onFull runs straight away)
+        Screen_Flash(FxF(0.33f), FLASH_WHITE);
+        sc.mStep = 10;
+        [[fallthrough]];
+    }
+    case 10:
+    {
+        if (!Screen_FlashFull())
+        {
+            UpdateLockSquares();
+            return false;
+        }
         StartSpawning(SQ_DISAPPEAR);
         sc.mStep = 2;
         [[fallthrough]];
@@ -421,6 +431,16 @@ bool OpenCutscene(Entity& self)
             return false;
         }
         Screen_Flash(FxF(1.6f), FLASH_WHITE);
+        sc.mStep = 30;
+        [[fallthrough]];
+    }
+    case 30:
+    {
+        if (!Screen_FlashFull())
+        {
+            UpdateOpenSquares(false);
+            return false;
+        }
         DropSquares();
         // MapUtilities.GetInGridPosition(Position) + width / 2, taken as UI coordinates
         sc.mTargetX = self.mT->mX - Fx(gGame.mGridX * 160) + Fx(16);

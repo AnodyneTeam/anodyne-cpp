@@ -7206,13 +7206,16 @@ enum CircusStep : uint8_t
     CF_JUMP,
     CF_THROW_START,
     CF_THROW_SWITCH,
+    CF_THROW_SWITCH_FLASH,
     CF_THROW_THROW,
     CF_THROW_WAIT_ARTHUR,
     CF_THROW_WAIT_JAVIERA,
+    CF_THROW_MERGE_FLASH,
     CF_DYING_START,
     CF_DYING_TALK,
     CF_DYING_WOBBLE,
     CF_DYING_FALL,
+    CF_DYING_FLASH,
     CF_DONE,
 };
 
@@ -7481,7 +7484,16 @@ void CircusFolksStep(Entity& self)
         {
             break;
         }
-        Screen_Flash(FxF(0.2f), FLASH_WHITE); // (its onFull runs straight away)
+        Screen_Flash(FxF(0.2f), FLASH_WHITE);
+        d.mStep = CF_THROW_SWITCH_FLASH;
+        [[fallthrough]];
+    }
+    case CF_THROW_SWITCH_FLASH:
+    {
+        if (!Screen_FlashFull())
+        {
+            break;
+        }
         d.mJavieraFacing = self.mFacing;
         Ecs_FaceTowards(self, p.mT->mX, p.mT->mY);
         static const char* const kThrows[4] = { "throw_l", "throw_r", "throw_u", "throw_d" };
@@ -7534,6 +7546,15 @@ void CircusFolksStep(Entity& self)
         }
         FolksPlay(arthur, "walk_d");
         Screen_Flash(FxF(0.2f), FLASH_WHITE);
+        d.mStep = CF_THROW_MERGE_FLASH;
+        [[fallthrough]];
+    }
+    case CF_THROW_MERGE_FLASH:
+    {
+        if (!Screen_FlashFull())
+        {
+            break;
+        }
         t.mX = javiera.mT->mX;
         t.mY = javiera.mT->mY;
         d.mHealth -= ad.mDamage + jd.mDamage;
@@ -7625,6 +7646,13 @@ void CircusFolksStep(Entity& self)
         }
         Game_PlaySfx("wb_hit_ground");
         Screen_Flash(kFxOne, FLASH_RED);
+        d.mStep = CF_DYING_FLASH;
+        [[fallthrough]];
+    case CF_DYING_FLASH:
+        if (!Screen_FlashFull())
+        {
+            break;
+        }
         if (self.mPreset)
         {
             Preset_SetAlive(*self.mPreset, false);
@@ -9260,7 +9288,7 @@ void BigThornCollided(Entity& self, Entity& other)
     Ecs_Play(self, "hit");
     self.Data<BigThornData>().mHealth--;
     Screen_Shake(FxF(0.03f), FxSec(0.4f));
-    Screen_Flash(FxSec(0.6f), FLASH_RED);
+    Screen_Flash(FxSec(0.6f), FLASH_BRIAR_RED);
     Game_PlaySfx("wb_hit_ground");
 }
 
@@ -9530,9 +9558,15 @@ bool BriarDie(Entity& self)
             d.mDieStep = 1;
             return BriarDie(self);
         }
-        // (its colour is 0xffff1111: blue, which the GBA's flash doesn't do)
-        Screen_Flash(FxSec(1.5f), FLASH_WHITE);
+        Screen_Flash(FxSec(1.5f), FLASH_BRIAR_BLUE); // (0xffff1111)
         Game_PlaySfx("sun_guy_death_short");
+        d.mDieStep = 20;
+        [[fallthrough]];
+    case 20:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
         d.mHappy->mExists = false;
         d.mDieCount = 0;
         d.mDieStep = 3;
@@ -9552,8 +9586,15 @@ bool BriarDie(Entity& self)
             d.mDieStep = 3;
             return BriarDie(self);
         }
-        Screen_Flash(FxSec(1.5f), FLASH_RED);
+        Screen_Flash(FxSec(1.5f), FLASH_BRIAR_RED); // (0xff1111ff)
         Game_PlaySfx("sun_guy_death_short");
+        d.mDieStep = 21;
+        [[fallthrough]];
+    case 21:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
         d.mBlue->mExists = false;
         d.mTimer = 0;
         d.mDieStep = 5;
@@ -9597,6 +9638,13 @@ bool BriarDie(Entity& self)
     case 8:
         Screen_Flash(FxSec(5), FLASH_WHITE);
         Game_PlaySfx("sun_guy_death_long");
+        d.mDieStep = 22;
+        [[fallthrough]];
+    case 22:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
         d.mBody->mExists = false;
         d.mCore->mExists = false;
         self.mExists = false;
@@ -9742,8 +9790,14 @@ bool BriarIntro(Entity& self)
         }
         [[fallthrough]];
     case 4:
-        // (the flash eases in at once: its callback runs straight away)
         Screen_Flash(FxSec(1), FLASH_WHITE);
+        d.mStep = 40;
+        [[fallthrough]];
+    case 40:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
         Game_PlaySong("briar-fight");
         self.mV->mVisible = false;
         World_SetMapOffsetX(160 * 2);
@@ -10988,12 +11042,15 @@ bool LandDieStep(Entity& self, LandPhaseData& d)
             return true;
         case 4:
             Screen_Flash(Fx(2), FLASH_WHITE);
-            v.mVisible = false;
             Game_PlaySfx("sun_guy_death_long");
             d.mShadow->mExists = false;
             d.mStep = 5;
             [[fallthrough]];
         default:
+            if (Screen_FlashFull())
+            {
+                v.mVisible = false; // (the flash's onFull)
+            }
             if (EyeLandAlive() > 0)
             {
                 return true;

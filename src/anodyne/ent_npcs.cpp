@@ -4785,6 +4785,20 @@ struct HappyTriggerData final
 
 constexpr float kRedCaveRiseSeconds = 3.475f;
 
+// The flash's callback, once it's full: Map.ReloadSettings picks up the HappyStarted settings (the hardlight darkness,
+// the tile replacements and the music), and the darkness is forced on.
+void HappyTriggerFlashed(HappyTriggerData& d)
+{
+    if (!Screen_FlashFull())
+    {
+        return;
+    }
+    World_ReloadSettings();
+    Darkness_ForceAlpha(kFxOne);
+    Game_PlaySong("happy");
+    d.mStep = 3;
+}
+
 void HappyTriggerUpdate(Entity& self)
 {
     HappyTriggerData& d = self.Data<HappyTriggerData>();
@@ -4810,6 +4824,9 @@ void HappyTriggerUpdate(Entity& self)
     case 1:
         d.mSoundTime += 1.0f / kFps;
         break;
+    case 2:
+        HappyTriggerFlashed(d);
+        return;
     default:
         return;
     }
@@ -4821,12 +4838,9 @@ void HappyTriggerUpdate(Entity& self)
     }
     Player_SetDontMove(false);
     Event_Inc("HappyStarted");
-    // (the flash's callback, at once: Map.ReloadSettings picks up the HappyStarted settings: the hardlight darkness, the
-    // tile replacements and the music)
-    World_ReloadSettings();
     Screen_Flash(FxSec(1), FLASH_RED);
-    Game_PlaySong("happy");
     d.mStep = 2;
+    HappyTriggerFlashed(d); // (at once unless the flash eases in)
 }
 
 const EntityClass kHappyTrigger = {
@@ -5106,6 +5120,7 @@ struct PostBlueData final
     uint8_t mStep;
     uint8_t mTalks;
     bool mStarted;
+    bool mHitPlayer;
 };
 
 Entity* MakeBike(Entity& owner, const MapEntity* preset, fx x, fx y)
@@ -5326,29 +5341,43 @@ bool PostBlueCutscene(Entity& self)
         const bool hitPlayer = Ecs_Intersects(bh, Ecs_Hitbox(p));
         if (hitPlayer || Ecs_Intersects(bh, Player_BroomHitbox()))
         {
-            // (the flash eases in at once: its callback runs straight away)
             Screen_Flash(FxSec(1), hitPlayer ? FLASH_RED : FLASH_WHITE);
-            b.mV->mVisible = false;
-            if (hitPlayer)
-            {
-                Player_Slump();
-            }
-            d.mExplosion = PostBlueExplosion(b);
-            d.mStep = 12;
-            return false;
+            d.mHitPlayer = hitPlayer;
+            d.mStep = 14;
+            return PostBlueCutscene(self);
         }
         if (b.mT->mX > bike.mT->mX)
         {
             Screen_Flash(FxSec(1), FLASH_RED);
-            b.mV->mVisible = false;
-            d.mExplosion = PostBlueExplosion(b);
-            d.mStep = 20;
-            return false;
+            d.mStep = 24;
+            return PostBlueCutscene(self);
         }
         Player_SetDontMove(false);
         Player_SetActionsDisabled(false);
         return false;
     }
+    case 14:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
+        d.mBullet->mV->mVisible = false;
+        if (d.mHitPlayer)
+        {
+            Player_Slump();
+        }
+        d.mExplosion = PostBlueExplosion(*d.mBullet);
+        d.mStep = 12;
+        return false;
+    case 24:
+        if (!Screen_FlashFull())
+        {
+            return false;
+        }
+        d.mBullet->mV->mVisible = false;
+        d.mExplosion = PostBlueExplosion(*d.mBullet);
+        d.mStep = 20;
+        return false;
     case 12:
         Game_ShowCutsceneDialogue("sage", "hit", 0);
         d.mStep = 13;

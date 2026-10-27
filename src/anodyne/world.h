@@ -158,7 +158,13 @@ enum FlashColour : uint8_t
 {
     FLASH_WHITE,
     FLASH_BLACK,
-    FLASH_RED, // (BLDY only fades to white or black: this one tints the palettes)
+    FLASH_RED,
+    FLASH_BRIAR_RED,  // (255, 17, 17)
+    FLASH_BRIAR_BLUE, // (17, 17, 255)
 };
+// FlashEffect.Flash: the settings' brightness scales the colour (BLDY only fades to full white or black: other colours
+// tint the palettes), and their easing fades it in first.
 void Screen_Flash(fx seconds, FlashColour colour = FLASH_WHITE);
 bool Screen_FlashActive();
+// The flash's onFull: it reached full since Screen_Flash (at once without easing).
+bool Screen_FlashFull();

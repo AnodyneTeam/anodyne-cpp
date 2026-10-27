@@ -169,7 +169,7 @@ int8_t BroomIcon()
     switch (Inventory_EquippedBroom())
     {
     case BROOM_NORMAL:
-        if (gGame.mAlwaysCellGraphics || Game_IsCell())
+        if (Game_IsCell())
         {
             return 1;
         }

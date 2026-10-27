@@ -9,9 +9,9 @@
 // base colours.
 
 void TexDark_Init();
-// Once a frame while the play state draws: the texture (nullptr: none), its alpha (Darkness.alpha, 0-256) and the red
-// flash's tint over it (0-32, FadeEffect).
-void TexDark_Frame(const DarkTexture* texture, int alpha, int redTint);
+// Once a frame while the play state draws: the texture (nullptr: none), its alpha (Darkness.alpha, 0-256) and a
+// tinting flash over it (FadeEffect: 0-32 of the way to tintColour).
+void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour);
 bool TexDark_Active();
 // Puts the plain colours back and stops (another screen takes over the palettes).
 void TexDark_Off();

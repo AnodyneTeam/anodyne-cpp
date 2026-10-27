@@ -223,7 +223,7 @@ int Inventory_CardCount()
 
 bool Game_IsCell()
 {
-    return gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0;
+    return gGame.mAlwaysCellGraphics || (gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0);
 }
 
 bool Game_CanChangeBroom()
