@@ -139,6 +139,7 @@ Entity* Spawn_SpaceFace(const MapEntity& preset, Entity& player);
 Entity* Spawn_SpaceNpc(const MapEntity& preset, Entity& player);
 Entity* Spawn_Chaser(const MapEntity& preset, Entity& player);
 Entity* Spawn_CliffDog(const MapEntity& preset, Entity& player);
+Entity* Spawn_Shell(const MapEntity& preset, Entity& player);
 Entity* Spawn_CellBody(const MapEntity& preset, Entity& player);
 Entity* Spawn_FirePillar(const MapEntity& preset, Entity& player);
 Entity* Spawn_Contort(const MapEntity& preset, Entity& player);

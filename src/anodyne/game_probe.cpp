@@ -205,6 +205,11 @@ void GameProbe_Heal(void)
     gGame.mCurHealth = gGame.mMaxHealth;
 }
 
+void GameProbe_SetEvent(const char* name, int value)
+{
+    Event_Set(name, value);
+}
+
 extern "C" int GameProbe_TraceHeader(char* buf, int cap)
 {
     return snprintf(buf, static_cast<size_t>(cap), "frame\tmap\tx\ty\thp\tdialogue\tinv");

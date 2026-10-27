@@ -26,6 +26,8 @@ int GameProbe_Warp(const char* map, int x, int y);
 int GameProbe_SetCheckpoint(const char* map, int x, int y);
 // Test shortcut: back to full health.
 void GameProbe_Heal(void);
+// Test shortcut: sets an EventRegister value (seen by entities made from then on).
+void GameProbe_SetEvent(const char* name, int value);
 // Parity replays: GlobalState.RNG as the C#'s is after `draws` numbers (reseeded with the deterministic seed). The
 // screen shake starts over too, unless `keepShake`.
 void GameProbe_SetRng(unsigned draws, bool keepShake);

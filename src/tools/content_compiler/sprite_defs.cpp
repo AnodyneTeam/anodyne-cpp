@@ -871,8 +871,15 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "wide_attack_v", 12, 24, {
         { "a", { 0, 1, 2, 3, 4 }, 14.0f, false },
     } },
+    // Shell.Blade: one idle/rotate pair per blade (its start frame); rotate runs on 32 frames, 24 to a quarter turn.
+    // Frames 24-47 are the compiler's quarter-turned copies.
     { "windmill_blade", 192, 192, {
-        { "idle", { 0 }, 1.0f, true },  // variant-relative
+        { "idle", { 0 }, 1.0f, true },
+        { "rotate", { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7 }, 20.0f, true },
+        { "idle@8", { 8 }, 1.0f, true },
+        { "rotate@8", { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }, 20.0f, true },
+        { "idle@16", { 16 }, 1.0f, true },
+        { "rotate@16", { 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23 }, 20.0f, true },
     } },
     { "windmill_inside", 48, 48, {
         { "idle", { 1 }, 1.0f, true },

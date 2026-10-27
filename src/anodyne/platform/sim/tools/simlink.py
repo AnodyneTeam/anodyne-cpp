@@ -111,6 +111,11 @@ class Sim:
         self._send("heal")
         self.file.readline()
 
+    def event(self, name, value):
+        """Test shortcut: sets an EventRegister value (for entities made after it)."""
+        self._send(f"event {name} {value}")
+        self.file.readline()
+
     def quit(self):
         try:
             self._send("quit")

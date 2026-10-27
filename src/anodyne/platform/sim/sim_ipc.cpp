@@ -230,6 +230,11 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
         {
             SendLine(GameProbe_SetCheckpoint(arg, static_cast<int>(a), static_cast<int>(b)) ? "ok" : "error no such map");
         }
+        else if (!strcmp(cmd, "event") && sscanf(line.c_str(), "event %63s %u", arg, &a) == 2)
+        {
+            GameProbe_SetEvent(arg, static_cast<int>(a));
+            SendLine("ok");
+        }
         else if (!strcmp(cmd, "heal"))
         {
             GameProbe_Heal();

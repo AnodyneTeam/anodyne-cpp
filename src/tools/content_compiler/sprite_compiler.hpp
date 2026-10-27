@@ -46,7 +46,8 @@ struct CompiledSpriteSheet final
     int mFrameCount = 0;
     int mTilesW = 0;          // frame size in 8x8 tiles (rounded up)
     int mTilesH = 0;
-    std::vector<SpritePart> mParts; // same for every frame; tile data is stored part by part
+    std::vector<SpritePart> mParts; // same for every frame (or each frame's own, see mFrameParts); tile data is stored part by part
+    std::vector<uint16_t> mFrameParts; // empty, or a sparse sheet's first part of each frame in mParts, plus the end
     std::vector<uint16_t> mPalette; // 16 GBA RGB555 entries, index 0 = transparent
     std::vector<uint8_t> mTiles;    // 4bpp, 32 bytes per 8x8 tile; frames back to back; within a frame, part by part, tiles row-major per part
     std::vector<uint8_t> mPacked;   // each frame GBA-BIOS LZ77 compressed, 4-byte aligned, back to back

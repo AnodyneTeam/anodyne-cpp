@@ -185,6 +185,7 @@ const NamedEntity kNamed[] = {
     { "Shadow_Briar", nullptr, "HAPPY", {}, EPT_BlueBriar },
     { "Shadow_Briar", nullptr, nullptr, { 5 }, EPT_BriarBoss },
     { "NPC", "generic", nullptr, { 6 }, EPT_CliffDog },
+    { "NPC", "generic", nullptr, { 3 }, EPT_Shell },
     { "NPC", "Cell_Body", nullptr, {}, EPT_CellBody },
     { "Steam_Pipe", nullptr, nullptr, {}, EPT_SteamPipe },
     { "NPC", "generic", nullptr, { 5 }, EPT_EyebossPreview },

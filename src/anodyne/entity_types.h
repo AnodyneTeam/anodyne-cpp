@@ -100,6 +100,7 @@
     X(SpaceNpc)                \
     X(Chaser)                  \
     X(CliffDog)                \
+    X(Shell)                   \
     X(CellBody)                \
     X(FirePillar)              \
     X(Contort)                 \

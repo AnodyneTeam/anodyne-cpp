@@ -175,6 +175,90 @@ std::vector<SpritePart> LayoutParts(int tilesW, int tilesH)
     return parts;
 }
 
+// A sparse sheet's frame: cover only its drawn tiles (`drawn`, tilesW x tilesH), each OBJ the shape that takes in the
+// most drawn tiles, as long as at least half its tiles are drawn (fewer OBJs for a few blank tiles).
+std::vector<SpritePart> LayoutSparseParts(const std::vector<uint8_t>& drawn, int tilesW, int tilesH)
+{
+    std::vector<SpritePart> parts;
+    std::vector<uint8_t> covered(drawn.size(), 0);
+    int tileOffset = 0;
+    for (int y = 0; y < tilesH; y++)
+    {
+        for (int x = 0; x < tilesW; x++)
+        {
+            const size_t at = static_cast<size_t>(y) * tilesW + x;
+            if (covered[at] || !drawn[at])
+            {
+                continue;
+            }
+            const ObjShape* best = nullptr;
+            int bestDrawn = 0;
+            for (const ObjShape& shape : kObjShapes)
+            {
+                if (x + shape.mTilesW > tilesW || y + shape.mTilesH > tilesH)
+                {
+                    continue;
+                }
+                bool free = true;
+                int count = 0;
+                for (int dy = 0; dy < shape.mTilesH && free; dy++)
+                {
+                    for (int dx = 0; dx < shape.mTilesW; dx++)
+                    {
+                        const size_t i = static_cast<size_t>(y + dy) * tilesW + x + dx;
+                        if (covered[i])
+                        {
+                            free = false;
+                            break;
+                        }
+                        count += drawn[i];
+                    }
+                }
+                const int area = shape.mTilesW * shape.mTilesH;
+                if (!free || count * 2 < area)
+                {
+                    continue;
+                }
+                if (!best || count > bestDrawn || (count == bestDrawn && area < best->mTilesW * best->mTilesH))
+                {
+                    best = &shape;
+                    bestDrawn = count;
+                }
+            }
+            for (int dy = 0; dy < best->mTilesH; dy++)
+            {
+                for (int dx = 0; dx < best->mTilesW; dx++)
+                {
+                    covered[static_cast<size_t>(y + dy) * tilesW + x + dx] = 1;
+                }
+            }
+            SpritePart part;
+            part.mTileX = x;
+            part.mTileY = y;
+            part.mTilesW = best->mTilesW;
+            part.mTilesH = best->mTilesH;
+            part.mShape = best->mShape;
+            part.mSize = best->mSize;
+            part.mTileOffset = tileOffset;
+            tileOffset += best->mTilesW * best->mTilesH;
+            parts.push_back(part);
+        }
+    }
+    return parts;
+}
+
+// Sparse sheets: frames much bigger than what they draw. The windmill's blades also get each frame a quarter turn
+// clockwise after the originals (frames 24-47), so the GBA draws all four of the C#'s turns with flips.
+bool IsSparseSheet(const std::string& name)
+{
+    return name == "windmill_blade";
+}
+
+bool HasQuarterTurns(const std::string& name)
+{
+    return name == "windmill_blade";
+}
+
 bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, CompiledSpriteSheet& out)
 {
     std::vector<uint8_t> raw;
@@ -295,14 +379,68 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         }
     }
 
-    out.mTiles.assign(static_cast<size_t>(out.mFrameCount) * out.mTilesW * out.mTilesH * 32, 0);
-    size_t pos = 0;
+    // Each frame's pixels, fw x fh.
+    std::vector<std::vector<Pixel>> frames;
     for (int frame = 0; frame < out.mFrameCount; frame++)
     {
         const int originX = (frame % out.mFramesPerRow) * fw;
         const int originY = (frame / out.mFramesPerRow) * fh;
+        std::vector<Pixel> px(static_cast<size_t>(fw) * fh);
+        for (int y = 0; y < fh; y++)
+        {
+            for (int x = 0; x < fw; x++)
+            {
+                px[static_cast<size_t>(y) * fw + x] = image[static_cast<size_t>(originY + y) * pngW + originX + x];
+            }
+        }
+        frames.push_back(std::move(px));
+    }
+    if (HasQuarterTurns(out.mName) && fw == fh)
+    {
+        // Turned clockwise about the frame's middle: the new (x, y) shows the old (y, size - 1 - x).
+        for (int frame = 0; frame < out.mFrameCount; frame++)
+        {
+            std::vector<Pixel> px(frames[frame].size());
+            for (int y = 0; y < fh; y++)
+            {
+                for (int x = 0; x < fw; x++)
+                {
+                    px[static_cast<size_t>(y) * fw + x] = frames[frame][static_cast<size_t>(fh - 1 - x) * fw + y];
+                }
+            }
+            frames.push_back(std::move(px));
+        }
+        out.mFrameCount *= 2;
+    }
 
-        for (const SpritePart& part : out.mParts)
+    const bool sparse = IsSparseSheet(out.mName);
+    if (sparse)
+    {
+        out.mParts.clear();
+    }
+    std::vector<size_t> frameStarts;
+    for (const std::vector<Pixel>& px : frames)
+    {
+        frameStarts.push_back(out.mTiles.size());
+        std::vector<SpritePart> frameParts = out.mParts;
+        if (sparse)
+        {
+            std::vector<uint8_t> drawn(static_cast<size_t>(out.mTilesW) * out.mTilesH, 0);
+            for (int y = 0; y < fh; y++)
+            {
+                for (int x = 0; x < fw; x++)
+                {
+                    if (!IsTransparent(px[static_cast<size_t>(y) * fw + x]))
+                    {
+                        drawn[static_cast<size_t>(y / 8) * out.mTilesW + x / 8] = 1;
+                    }
+                }
+            }
+            frameParts = LayoutSparseParts(drawn, out.mTilesW, out.mTilesH);
+            out.mFrameParts.push_back(static_cast<uint16_t>(out.mParts.size()));
+            out.mParts.insert(out.mParts.end(), frameParts.begin(), frameParts.end());
+        }
+        for (const SpritePart& part : frameParts)
         {
             for (int ty = part.mTileY; ty < part.mTileY + part.mTilesH; ty++)
             {
@@ -315,28 +453,32 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
                             uint8_t nibbles[2] = { 0, 0 };
                             for (int n = 0; n < 2; n++)
                             {
-                                const int px = tx * 8 + x + n;
-                                const int py = ty * 8 + y;
-                                if (px < fw && py < fh)
+                                const int fx = tx * 8 + x + n;
+                                const int fy = ty * 8 + y;
+                                if (fx < fw && fy < fh)
                                 {
-                                    const Pixel& p = image[static_cast<size_t>(originY + py) * pngW + originX + px];
-                                    nibbles[n] = FindPaletteIndex(out.mPalette, p);
+                                    nibbles[n] = FindPaletteIndex(out.mPalette, px[static_cast<size_t>(fy) * fw + fx]);
                                 }
                             }
                             // 4bpp: low nibble is the left pixel.
-                            out.mTiles[pos++] = static_cast<uint8_t>(nibbles[0] | (nibbles[1] << 4));
+                            out.mTiles.push_back(static_cast<uint8_t>(nibbles[0] | (nibbles[1] << 4)));
                         }
                     }
                 }
             }
         }
     }
+    frameStarts.push_back(out.mTiles.size());
+    if (sparse)
+    {
+        out.mFrameParts.push_back(static_cast<uint16_t>(out.mParts.size()));
+    }
 
-    const size_t frameBytes = static_cast<size_t>(out.mTilesW) * out.mTilesH * 32;
     for (int frame = 0; frame < out.mFrameCount; frame++)
     {
         out.mFrameOffsets.push_back(static_cast<uint32_t>(out.mPacked.size()));
-        const std::vector<uint8_t> packed = CompressLz77(out.mTiles.data() + frame * frameBytes, frameBytes);
+        const std::vector<uint8_t> packed =
+            CompressLz77(out.mTiles.data() + frameStarts[frame], frameStarts[frame + 1] - frameStarts[frame]);
         out.mPacked.insert(out.mPacked.end(), packed.begin(), packed.end());
     }
     out.mFrameOffsets.push_back(static_cast<uint32_t>(out.mPacked.size()));
@@ -508,6 +650,15 @@ void SpriteCompiler::WriteHeaders(const std::vector<CompiledSpriteSheet>& sheets
                    part.mTilesH * 8, part.mShape, part.mSize, part.mTileOffset);
         }
         Append(data, " };\n");
+        if (!s.mFrameParts.empty())
+        {
+            Append(data, "static const uint16_t kSprite_%s_FrameParts[] = {", id.c_str());
+            for (uint16_t first : s.mFrameParts)
+            {
+                Append(data, " %u,", first);
+            }
+            Append(data, " };\n");
+        }
 
         for (size_t a = 0; a < s.mAnims.size(); a++)
         {
@@ -544,9 +695,10 @@ void SpriteCompiler::WriteHeaders(const std::vector<CompiledSpriteSheet>& sheets
             Append(data, "};\n\n");
         }
 
-        Append(reg, "    { \"%s\", %d, %d, %d, %d, %d, %d, kSprite_%s_Pal, kSprite_%s_Tiles, kSprite_%s_Offsets, kSprite_%s_Parts, %zu, kSprite_%s_Anims, %zu },\n",
+        Append(reg, "    { \"%s\", %d, %d, %d, %d, %d, %d, kSprite_%s_Pal, kSprite_%s_Tiles, kSprite_%s_Offsets, kSprite_%s_Parts, %zu, %s, kSprite_%s_Anims, %zu },\n",
                s.mName.c_str(), s.mFrameWidth, s.mFrameHeight, s.mTilesW, s.mTilesH, s.mFramesPerRow, s.mFrameCount,
-               id.c_str(), id.c_str(), id.c_str(), id.c_str(), s.mParts.size(), id.c_str(), s.mAnims.size());
+               id.c_str(), id.c_str(), id.c_str(), id.c_str(), s.mParts.size(),
+               s.mFrameParts.empty() ? "nullptr" : ("kSprite_" + id + "_FrameParts").c_str(), id.c_str(), s.mAnims.size());
     }
 
     Append(reg, "};\n\nstatic const uint32_t kSpriteSheetCount = sizeof(kSpriteSheets) / sizeof(kSpriteSheets[0]);\n");

@@ -125,6 +125,8 @@ SpawnFn Entities_SpawnFn(uint8_t type)
         return Spawn_Chaser;
     case EPT_CliffDog:
         return Spawn_CliffDog;
+    case EPT_Shell:
+        return Spawn_Shell;
     case EPT_CellBody:
         return Spawn_CellBody;
     case EPT_FirePillar:

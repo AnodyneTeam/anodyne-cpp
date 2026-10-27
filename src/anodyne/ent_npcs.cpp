@@ -3202,6 +3202,7 @@ bool WindmillCutsceneStep(Entity& self)
             }
             Game_PlaySong("windmill");
             Event_Inc("WindmillOpened");
+            Ecs_FireEvent(GEV_OPENED_WINDMILL);
             if (statue)
             {
                 Ecs_Free(*statue);
@@ -4377,6 +4378,118 @@ Entity* Spawn_CliffDog(const MapEntity& preset, Entity&)
     Ecs_Play(*e, "stop");
     e->mFacing = FACE_RIGHT;
     e->Data<CliffDogData>() = CliffDogData();
+    return e;
+}
+
+// ---- Shell (Npc/Windmill/Shell.cs): the windmill's hub, with its three blades turning once the windmill is opened
+// Each blade is a 192x192 frame turned 0/90/180/270 degrees about its middle: the sheet has every frame turned a
+// quarter (frames 24-47), and flips make the other two turns.
+namespace
+{
+struct BladeData final
+{
+    fx mCenterX;
+    fx mCenterY;
+    int16_t mBaseAngle;
+    int16_t mSwapIndex;
+    const char* mRotate; // its "rotate" anim
+};
+
+void BladeSetPos(Entity& self, int angle)
+{
+    const BladeData& d = self.Data<BladeData>();
+    Visual& v = *self.mV;
+    Ecs_SetFrameBase(self, (angle == 90 || angle == 270) ? 24 : 0);
+    v.mHFlip = angle >= 180;
+    v.mVFlip = angle >= 180;
+    fx x = d.mCenterX;
+    fx y = d.mCenterY;
+    if (angle == 0 || angle == 270)
+    {
+        y -= Fx(192 - 48);
+    }
+    if (angle == 180 || angle == 270)
+    {
+        x -= Fx(192 - 48);
+    }
+    self.mT->mX = x;
+    self.mT->mY = y;
+}
+
+void BladePostUpdate(Entity& self)
+{
+    const BladeData& d = self.Data<BladeData>();
+    BladeSetPos(self, Ecs_AnimIndex(self) >= d.mSwapIndex ? (d.mBaseAngle + 270) % 360 : d.mBaseAngle);
+}
+
+void BladeOnEvent(Entity& self, int gameEvent)
+{
+    if (gameEvent == GEV_OPENED_WINDMILL)
+    {
+        Ecs_Play(self, self.Data<BladeData>().mRotate);
+    }
+    else if (gameEvent == GEV_END_SCREEN_TRANSITION)
+    {
+        self.mV->mVisible = true;
+    }
+}
+
+const EntityClass kShell = {
+    "Shell", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
+};
+
+const EntityClass kBlade = {
+    "Blade", nullptr, BladePostUpdate, nullptr, nullptr, nullptr, BladeOnEvent, nullptr, 0, 0, 0,
+};
+} // namespace
+
+Entity* Spawn_Shell(const MapEntity& preset, Entity&)
+{
+    Entity* e = Ecs_Create(kShell, Fx(160 + 32), Fx(320 + 48), PART_VISUAL, &preset);
+    if (!e)
+    {
+        return nullptr;
+    }
+    e->mB->mW = 48;
+    e->mB->mH = 48;
+    Ecs_SetSheet(*e, "windmill_shell", 48, 48);
+    e->mV->mLayer = LAYER_FG_SPRITES;
+    struct BladeSpec
+    {
+        int16_t mAngle;
+        int16_t mStart;
+        const char* mIdle;
+        const char* mRotate;
+    };
+    static const BladeSpec kBlades[3] = {
+        { 0, 0, "idle", "rotate" },
+        { 270, 8, "idle@8", "rotate@8" },
+        { 180, 16, "idle@16", "rotate@16" },
+    };
+    for (const BladeSpec& spec : kBlades)
+    {
+        Entity* b = Ecs_Create(kBlade, e->mT->mX, e->mT->mY, PART_VISUAL | PART_BRAIN, nullptr, e);
+        if (!b)
+        {
+            continue;
+        }
+        b->mB->mW = 192;
+        b->mB->mH = 192;
+        Ecs_SetSheet(*b, "windmill_blade", 192, 192);
+        b->mV->mLayer = LAYER_FOOT_OVERLAY;
+        b->mV->mVisible = false;
+        Ecs_Play(*b, spec.mIdle);
+        BladeData& d = b->Data<BladeData>();
+        d.mCenterX = e->mT->mX;
+        d.mCenterY = e->mT->mY;
+        d.mBaseAngle = spec.mAngle;
+        d.mSwapIndex = static_cast<int16_t>(24 - spec.mStart);
+        d.mRotate = spec.mRotate;
+        if (Event_Get("WindmillOpened") != 0)
+        {
+            Ecs_Play(*b, spec.mRotate);
+        }
+    }
     return e;
 }
 

@@ -1264,11 +1264,6 @@ int gBankCount = 13;
 
 ObjVramAllocator* gVram = nullptr;
 
-int FrameTiles(const SpriteSheetEntry& s)
-{
-    return s.mTilesW * s.mTilesH;
-}
-
 int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
 {
     if (frame < 0 || frame >= sheet->mFrameCount)
@@ -1289,7 +1284,7 @@ int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
             freeSlot = i;
         }
     }
-    const int tiles = FrameTiles(*sheet);
+    const int tiles = Sprite_FrameTiles(*sheet, frame);
     int block = -1;
     for (;;)
     {
@@ -1485,7 +1480,17 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         Entity& e = *gDraw[i].mEntity;
         Visual& v = *e.mV;
         const SpriteSheetEntry& sheet = *v.mSheet;
-        const int parts = static_cast<int>(sheet.mPartCount);
+        int frame = Ecs_Frame(e);
+        if (frame < 0 || frame >= sheet.mFrameCount)
+        {
+            frame = 0;
+        }
+        uint32_t firstPart;
+        const int parts = static_cast<int>(Sprite_FrameParts(sheet, frame, &firstPart));
+        if (parts == 0)
+        {
+            continue;
+        }
         // Entity.Draw: Position - offset * scale; the C# scales about the frame centre.
         const int fw = sheet.mFrameWidth;
         const int fh = sheet.mFrameHeight;
@@ -1508,7 +1513,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             break;
         }
         const int bank = AcquireBank(sheet.mPalette);
-        const int block = bank >= 0 ? AcquireFrame(&sheet, Ecs_Frame(e)) : -1;
+        const int block = bank >= 0 ? AcquireFrame(&sheet, frame) : -1;
         if (block < 0)
         {
             continue;
@@ -1517,7 +1522,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         const int prio = ObjPriority(v.mLayer);
         if (useAffine)
         {
-            const SpritePartData& part = sheet.mParts[0];
+            const SpritePartData& part = sheet.mParts[firstPart];
             // texture = P * screen, P = R(-rot) / scale (rot clockwise on screen).
             const fx c = FxCos(e.mT->mRot);
             const fx s = FxSin(e.mT->mRot);
@@ -1564,7 +1569,7 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
         const int frameHeight = sheet.mTilesH * 8;
         for (int p = 0; p < parts; p++)
         {
-            const SpritePartData& part = sheet.mParts[p];
+            const SpritePartData& part = sheet.mParts[firstPart + p];
             const int x = sx + (v.mHFlip ? frameWidth - part.mX - part.mWidth : part.mX);
             const int y = sy + (v.mVFlip ? frameHeight - part.mY - part.mHeight : part.mY);
             obj_set_attr(&oam_mem[oam + p],

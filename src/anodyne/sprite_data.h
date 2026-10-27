@@ -44,6 +44,38 @@ struct SpriteSheetEntry final
     const uint32_t* mFrameOffsets; // mFrameCount + 1 entries
     const SpritePartData* mParts;
     uint32_t mPartCount;
+    // nullptr: every frame is all of mParts. Otherwise (a sparse sheet: big frames that are mostly empty) frame N is
+    // mParts[mFrameParts[N]] up to mParts[mFrameParts[N + 1]], covering only its drawn tiles.
+    const uint16_t* mFrameParts;
     const SpriteAnimData* mAnims;
     uint32_t mAnimCount;
 };
+
+// Frame `frame`'s parts: *first is the first one's index in mParts, the result how many there are.
+inline uint32_t Sprite_FrameParts(const SpriteSheetEntry& sheet, int frame, uint32_t* first)
+{
+    if (!sheet.mFrameParts)
+    {
+        *first = 0;
+        return sheet.mPartCount;
+    }
+    *first = sheet.mFrameParts[frame];
+    return sheet.mFrameParts[frame + 1] - sheet.mFrameParts[frame];
+}
+
+// The tiles frame `frame` unpacks to.
+inline int Sprite_FrameTiles(const SpriteSheetEntry& sheet, int frame)
+{
+    if (!sheet.mFrameParts)
+    {
+        return sheet.mTilesW * sheet.mTilesH;
+    }
+    uint32_t first;
+    const uint32_t count = Sprite_FrameParts(sheet, frame, &first);
+    if (count == 0)
+    {
+        return 0;
+    }
+    const SpritePartData& last = sheet.mParts[first + count - 1];
+    return last.mTileOffset + (last.mWidth / 8) * (last.mHeight / 8);
+}

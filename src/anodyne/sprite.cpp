@@ -49,7 +49,8 @@ const SpriteSheetEntry* Sprite_SheetAt(uint32_t index)
 bool Sprite_IsDrawable(const SpriteSheetEntry& sheet)
 {
     // Any frame size works (big frames use several OBJs); only the 128 OAM entries and 32KB of OBJ VRAM limit it.
-    return sheet.mPartCount > 0 && sheet.mPartCount <= 128 && FrameBytes(sheet) <= 16 * 1024;
+    // (Sparse sheets' frames are each their own size: only the entity renderer draws those.)
+    return !sheet.mFrameParts && sheet.mPartCount > 0 && sheet.mPartCount <= 128 && FrameBytes(sheet) <= 16 * 1024;
 }
 
 const SpriteSheetEntry* Sprite_FindSheet(const char* name, int frameW, int frameH)

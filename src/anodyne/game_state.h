@@ -18,6 +18,7 @@ enum GameEvent : uint8_t
     GEV_CHANGE_CARD_COUNT,
     GEV_DUST_FALL,      // a dust fell down a hole
     GEV_EMPTY_TREASURE, // a card chest was opened for a card already held
+    GEV_OPENED_WINDMILL,
 };
 
 // Broom types (BroomType, in the C#'s order: SwitchBroom steps through it).
