@@ -9,6 +9,7 @@
 #include "credits.h"
 #include "save.h"
 #include "dialog.h"
+#include "hud.h"
 #include "tonc.h"
 
 #include "obj_vram_allocator.hpp"
@@ -374,6 +375,7 @@ int main()
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
     Dialog_Init(objVram);
+    Hud_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;

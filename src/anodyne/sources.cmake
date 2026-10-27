@@ -19,6 +19,7 @@ set(ANODYNE_GAME_SOURCES
     game_probe.cpp
     pause.cpp
     pause_draw.cpp
+    hud.cpp
     title.cpp
     soft_mosaic.cpp
     pixelate_test.cpp

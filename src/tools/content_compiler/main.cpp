@@ -21,6 +21,7 @@
 #include "entity_compiler.hpp"
 #include "ending_compiler.hpp"
 #include "menu_compiler.hpp"
+#include "hud_compiler.hpp"
 #include "title_compiler.hpp"
 #include "lz77.hpp"
 
@@ -1129,6 +1130,7 @@ int main(int argc, char **argv)
         CompileTitle(contentPaths);
         CompileEnding(contentPaths);
         CompileMenu(contentPaths);
+        CompileHud(contentPaths);
     }
 
     if (!cliOptions.mapsOnly && !cliOptions.spritesOnly)

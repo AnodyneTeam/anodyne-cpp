@@ -2,6 +2,7 @@
 #include "dialog.h"
 
 #include "entity_classes.h"
+#include "hud.h"
 #include "pause_draw.h"
 #include "player.h"
 #include "sprite.h"
@@ -10,7 +11,7 @@
 
 namespace
 {
-constexpr int kFirstOam = 0;
+constexpr int kFirstOam = kHudOamCount; // (the HUD's come first)
 // (the dialogue box, a menu's labels and panel take the entries from Dialog_FirstReservedOam on)
 constexpr int kFirstPalBank = 0;
 constexpr int kPalBankCount = 13; // 13-15: the HUD and the dialogue box
@@ -156,6 +157,7 @@ void Entities_Clear()
     if (gShown)
     {
         Ecs_HideAll(kFirstOam, Dialog_FirstReservedOam());
+        Hud_Hide();
         gShown = false;
     }
 }

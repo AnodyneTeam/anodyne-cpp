@@ -6,6 +6,7 @@
 
 #include "dialog.h"
 #include "game_state.h"
+#include "hud.h"
 #include "menu_data.h"
 #include "title_data.h"
 #include "world.h"
@@ -368,6 +369,38 @@ void Minimap_AddInterest(int gx, int gy, int delta)
     }
 }
 
+bool Minimap_Size(int& w, int& h)
+{
+    const menu::Minimap* m = CurrentMinimap();
+    if (!m)
+    {
+        return false;
+    }
+    w = m->mW;
+    h = m->mH;
+    return true;
+}
+
+int Minimap_Tile(int x, int y)
+{
+    const menu::Minimap* m = CurrentMinimap();
+    if (!m || x < 0 || x >= m->mW || y < 0 || y >= m->mH || m->mTiles[y * m->mW + x] == 255)
+    {
+        return -1;
+    }
+    return m->mTiles[y * m->mW + x];
+}
+
+int Minimap_Seen(int x, int y)
+{
+    const menu::Minimap* m = CurrentMinimap();
+    if (!m || x < 0 || x >= m->mW || y < 0 || y >= m->mH)
+    {
+        return 0;
+    }
+    return gMinimap[m->mOffset + y * m->mW + x];
+}
+
 void MenuDraw_Open()
 {
     MenuDrawState& m = gMenu;
@@ -530,8 +563,8 @@ void MenuDraw_Present()
     {
         REG_BLDCNT = 0;
     }
-    // (the entities stay under the menu)
-    for (int i = 0; i < Dialog_FirstReservedOam(); i++)
+    // (the entities stay under the menu; the HUD stays, as the C#'s header does)
+    for (int i = kHudOamCount; i < Dialog_FirstReservedOam(); i++)
     {
         obj_hide(&oam_mem[i]);
     }

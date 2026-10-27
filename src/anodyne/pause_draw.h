@@ -7,6 +7,10 @@
 void Minimap_Visit(int gx, int gy);
 // Minimap.AddInterest / RemoveInterest (delta -1): a chest on screen (gx, gy) of the current map.
 void Minimap_AddInterest(int gx, int gy, int delta);
+// The current map's minimap: its size in screens (false if it has none), a cell's tile (-1: none) and seen count.
+bool Minimap_Size(int& w, int& h);
+int Minimap_Tile(int x, int y);
+int Minimap_Seen(int x, int y);
 
 // ---- The pause menu's picture --------------------------------------------------------------------------------------
 // The menu draws into an 8bpp bitmap BG over the playfield (the map's tileset VRAM and palette, given back when it

@@ -2,6 +2,7 @@
 
 #include "dialog.h"
 #include "entities.h"
+#include "hud.h"
 #include "pause.h"
 #include "pause_draw.h"
 #include "player.h"
@@ -197,54 +198,6 @@ void SetBgOffset(int hw, int x, int y)
     REG_BG_OFS[hw].y = static_cast<uint16_t>(y);
     gBgOfsX[hw] = static_cast<int16_t>(x);
     gBgOfsY[hw] = static_cast<int16_t>(y);
-}
-
-// ---- HealthBar (UI/Health) ---------------------------------------------------------------------------------------
-// One piece per point of max health, rows of 8 right-aligned at (155, 2) of the playfield (over it: the GBA has no
-// room for the C#'s HUD strip).
-constexpr int kMaxHealthPieces = 16;
-Entity* gHealthPieces[kMaxHealthPieces] = {};
-
-const EntityClass kHealthPieceClass = {
-    "HealthBarPiece", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0,
-};
-
-void CreateHealthBar()
-{
-    for (int i = 0; i < kMaxHealthPieces; i++)
-    {
-        Entity* e = Ecs_Create(kHealthPieceClass, 0, 0, PART_VISUAL);
-        e->mPlayerOwned = true;
-        Ecs_SetSheet(*e, "health_piece");
-        Ecs_SetSolid(*e, false);
-        e->mV->mLayer = LAYER_UI;
-        e->mExists = false;
-        gHealthPieces[i] = e;
-    }
-}
-
-void UpdateHealthBar(bool hidden)
-{
-    for (int i = 0; i < kMaxHealthPieces; i++)
-    {
-        Entity& e = *gHealthPieces[i];
-        e.mExists = i < gGame.mMaxHealth;
-        e.mV->mVisible = !hidden;
-        if (!e.mExists)
-        {
-            continue;
-        }
-        const int x = 155 - 11 - 8 * (7 - i % 8) - 7 * (i / 8);
-        const int y = 2 + i / 8 * 7;
-        e.mT->mX = gCamX + Fx(x);
-        e.mT->mY = gCamY + Fx(y);
-        const char* anim = i < gGame.mCurHealth ? "full" : "empty";
-        if (i == 0 && gGame.mCurHealth == 1)
-        {
-            anim = "flash";
-        }
-        Ecs_Play(e, anim);
-    }
 }
 
 // ---- ScreenShake / FlashEffect ----------------------------------------------------------------------------------
@@ -617,7 +570,7 @@ void ApplyWindows()
         REG_WIN0H = (0 << 8) | kViewX;
         REG_WIN1H = static_cast<uint16_t>(((kViewX + kScreenPx) << 8) | 240);
         REG_WIN0V = REG_WIN1V = (0 << 8) | kScreenPx;
-        REG_WININ = WIN_BLD | (WIN_BLD << 8);
+        REG_WININ = WIN_OBJ | (WIN_OBJ << 8); // the side bars: the HUD, never darkened (hud.h)
         REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
     }
     else
@@ -626,7 +579,7 @@ void ApplyWindows()
         REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
         REG_WIN0V = (0 << 8) | kScreenPx;
         REG_WININ = gWinLayers | WIN_BLD; // anodyne.cpp hides map loads behind a full darken
-        REG_WINOUT = WIN_BLD;             // the side margins show the backdrop, which the darken has to cover too
+        REG_WINOUT = WIN_OBJ;             // the side bars: the HUD over its black panels, never darkened (hud.h)
     }
 }
 
@@ -1296,7 +1249,7 @@ void DeathUpdate()
 void DrawWorld()
 {
     UpdateBackground(false);
-    UpdateHealthBar(gDeath.mActive);
+    Hud_Draw(gDeath.mActive);
     Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY);
     gShown = true;
 }
@@ -1678,7 +1631,6 @@ bool World_Init(ObjVramAllocator& vram)
     Darkness_MakeLight(*gPlayerLight, "player-light");
     gPlayerLight->mExists = false;
     World_NewPlayState();
-    CreateHealthBar();
     return true;
 }
 
