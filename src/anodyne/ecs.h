@@ -137,6 +137,9 @@ constexpr fx Fx(int v)
 {
     return fx::Raw(static_cast<int32_t>(static_cast<uint32_t>(v) << 16));
 }
+// Fx takes whole numbers only (a float or double would truncate): FxF for a constant, Rng_Unit for a draw.
+fx Fx(float) = delete;
+fx Fx(double) = delete;
 // A C# float constant (e.g. 0.7f).
 constexpr fx FxF(float v)
 {

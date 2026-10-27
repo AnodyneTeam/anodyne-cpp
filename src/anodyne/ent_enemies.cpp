@@ -11272,7 +11272,7 @@ Entity* Spawn_Frog(const MapEntity& preset, Entity&)
         Ecs_KeepPooled(*b);
         FrogBulletData& bd = b->Data<FrogBulletData>();
         bd.mMultiplier = i + 1;
-        bd.mPeriod = fx(Fx(0.8 + Rng_NextDouble()));
+        bd.mPeriod = FxF(0.8f) + Rng_Unit();
     }
     d.mState = FROG_INITIAL;
     d.mInitial.Add(FxSec(0.8f), 0);
@@ -11978,7 +11978,7 @@ void PersonUpdate(Entity& self)
     d.mTalk -= kFxTick;
     if (d.mTalk < 0)
     {
-        d.mTalk = Fx(0.5 + Rng_NextDouble());
+        d.mTalk = FxF(0.5f) + Rng_Unit();
         static const char* const kTalk[] = { "talk_1", "talk_1", "talk_2", "talk_3", "talk_3" };
         Game_PlaySfxOneOf(kTalk, 5);
     }
@@ -12015,7 +12015,7 @@ Entity* Spawn_Person(const MapEntity& preset, Entity&)
     PersonData& d = e->Data<PersonData>();
     d.mSwitchDirMax = FxF(1.3f);
     d.mSwitchDir = FxF(2.0f);
-    d.mTalk = Fx(0.5 + Rng_NextDouble());
+    d.mTalk = FxF(0.5f) + Rng_Unit();
     switch (preset.mFrame)
     {
     case 0:
@@ -12319,7 +12319,7 @@ Entity* Spawn_GasGuy(const MapEntity& preset, Entity&)
     GasGuyData& d = e->Data<GasGuyData>();
     d = GasGuyData();
     d.mHealth = 3;
-    d.mSoundDelayMax = Fx(1.5 + Rng_NextDouble());
+    d.mSoundDelayMax = FxF(1.5f) + Rng_Unit();
     for (Entity*& g : d.mGas)
     {
         g = Ecs_Create(kGas, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
@@ -12711,7 +12711,7 @@ Entity* Spawn_SpaceFace(const MapEntity& preset, Entity&)
     Ecs_Play(*e, preset.mFrame == 0 ? "a@2" : "a");
     SpaceFaceData& d = e->Data<SpaceFaceData>();
     d = SpaceFaceData();
-    d.mWaitMax = Fx(0.5 + 1.5 * Rng_NextDouble());
+    d.mWaitMax = FxF(0.5f) + FxMul(FxF(1.5f), Rng_Unit());
     return e;
 }
 
