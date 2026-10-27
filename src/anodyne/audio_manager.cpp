@@ -55,8 +55,8 @@ static DecodeCursor sSfxCursors[AUDIO_MAX_SFX_SLOTS] EWRAM_BSS;
 // stay in sample lockstep. +32 bytes of slack per half: the FIFO DMA
 // fetches in 16-byte bursts and can run slightly ahead.
 static int32_t sMixAccumBuf[AUDIO_WORKBUF_SAMPLES];
-static int8_t sFifoABuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
-static int8_t sFifoBBuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
+alignas(4) static int8_t sFifoABuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS; // (word aligned: DMA reads words)
+alignas(4) static int8_t sFifoBBuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
 static uint32_t sPlayHalf = 0;  // half to hand to both DMAs at the next VBlank
 static bool sHalfReady = false; // are sFifoABuf/sFifoBBuf[sPlayHalf] filled?
 
@@ -199,6 +199,48 @@ static void AudioManager_OnVBlank()
         sIsrCyclesMax = cycles;
     }
 }
+
+#ifdef ANODYNE_PERF
+// qoa_run.s against the C++ loop it replaces, over the start of every sound in chunks of changing sizes (crossing
+// slices, words and frames at different points): the samples that differ, and how many were compared.
+static void CheckTracks(const AudioTrackData* tracks, uint32_t count, uint32_t& bad, uint32_t& samples)
+{
+    static int32_t sA[512] EWRAM_BSS;
+    static int32_t sB[512] EWRAM_BSS;
+    for (uint32_t t = 0; t < count; t++)
+    {
+        DecodeCursor a;
+        DecodeCursor b;
+        DecodeCursor_Start(&a, &tracks[t], true);
+        DecodeCursor_Start(&b, &tracks[t], true);
+        const bool up2 = tracks[t].sampleRate != AUDIO_SAMPLE_RATE;
+        for (uint32_t chunk = 0; chunk < 40 && (a.active || b.active); chunk++)
+        {
+            const uint32_t n = 2 + ((chunk * 74) % 440); // (even)
+            memset(sA, 0, sizeof(sA));
+            memset(sB, 0, sizeof(sB));
+            const uint32_t gotA = up2 ? DecodeCursor_Mix16Up2(&a, sA, n) : DecodeCursor_Mix16(&a, sA, n);
+            const uint32_t gotB = up2 ? DecodeCursor_Mix16Up2Ref(&b, sB, n) : DecodeCursor_Mix16Ref(&b, sB, n);
+            bad += gotA != gotB ? 1 : 0;
+            for (uint32_t i = 0; i < n; i++)
+            {
+                bad += sA[i] != sB[i] ? 1 : 0;
+            }
+            samples += n;
+        }
+    }
+}
+
+void AudioManager_SelfTest(uint32_t* bad, uint32_t* samples)
+{
+    *bad = 0;
+    *samples = 0;
+    g_AudioBlobBase = _binary_audio_blob_bin_start; // (before AudioManager_Init)
+    CheckTracks(kBgmTracks, kBgmTracksCount, *bad, *samples);
+    CheckTracks(kAmbienceTracks, kAmbienceTracksCount, *bad, *samples);
+    CheckTracks(kSfxClips, kSfxClipsCount, *bad, *samples);
+}
+#endif
 
 void AudioManager_Init()
 {

@@ -41,6 +41,8 @@ enum
     P_ACK = 52,
     P_MAP = 56,
     P_ENTITIES = 60,
+    P_AUDIO_BAD = 64,
+    P_AUDIO_SAMPLES = 68,
 };
 static const unsigned kFrameCycles = 280896;
 static const unsigned kModeMapViewer = 1;
@@ -121,6 +123,47 @@ static void Warp(int map, int x, int y)
     }
 }
 
+// Steps the CPU an instruction at a time for `frames` frames, writing "pc lr cycles" per pair to `path`.
+// (pc, lr) pairs, so symbolise.py can also put a leaf function's time (soft float...) on its caller.
+static void Profile(int frames, const char* path)
+{
+    enum { kSlots = 1 << 20 };
+    struct Hit { unsigned pc, lr, cycles; };
+    struct Hit* hits = calloc(kSlots, sizeof(struct Hit));
+    struct ARMCore* cpu = gCore->cpu;
+    struct mTiming* timing = &((struct GBA*)gCore->board)->timing;
+    const unsigned endFrame = gCore->frameCounter(gCore) + frames;
+    for (long steps = 0; gCore->frameCounter(gCore) < endFrame && steps < 100000000; steps++) // (or a hang)
+    {
+        // (the PC register runs two instructions ahead)
+        const unsigned pc = (unsigned)cpu->gprs[ARM_PC] - (cpu->cpsr.t ? 4 : 8);
+        // (code addresses only: ARM routines use LR as a scratch register, and the table would fill up)
+        unsigned lr = (unsigned)cpu->gprs[ARM_LR];
+        lr = (lr >> 24) == 0x08 || (lr >> 24) == 0x09 || (lr >> 24) == 0x03 ? lr : 0;
+        const uint64_t before = mTimingGlobalTime(timing);
+        gCore->step(gCore);
+        const unsigned spent = (unsigned)(mTimingGlobalTime(timing) - before);
+        unsigned slot = ((pc * 2654435761u) ^ (lr * 40503u)) & (kSlots - 1);
+        while (hits[slot].cycles && (hits[slot].pc != pc || hits[slot].lr != lr))
+        {
+            slot = (slot + 1) & (kSlots - 1);
+        }
+        hits[slot].pc = pc;
+        hits[slot].lr = lr;
+        hits[slot].cycles += spent ? spent : 1;
+    }
+    FILE* f = fopen(path, "w");
+    for (unsigned i = 0; i < kSlots; i++)
+    {
+        if (hits[i].cycles)
+        {
+            fprintf(f, "%x %x %u\n", hits[i].pc, hits[i].lr, hits[i].cycles);
+        }
+    }
+    fclose(f);
+    free(hits);
+}
+
 static void NoLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args)
 {
 }
@@ -158,7 +201,12 @@ int main(int argc, char** argv)
     }
     gCore->reset(gCore);
 
-    // The title, then a new game (as simlink.py does).
+    // The title, then a new game (as simlink.py does). (The main loop sets the magic: the boot's checks come first.)
+    for (int i = 0; i < 20000 && Rd(P_MAGIC) != 0x46524550; i++)
+    {
+        Run(1, 0);
+    }
+    printf("# audio decoder check: %u of %u samples differ\n", Rd(P_AUDIO_BAD), Rd(P_AUDIO_SAMPLES));
     Run(200, 0);
     Tap(KEY_START, 90);
     Tap(KEY_A, 90);
@@ -182,41 +230,7 @@ int main(int argc, char** argv)
         Warp(map, x, y);
         Run(30, 0);
         Shot("perf_profile.ppm", video, w, h);
-        // (pc, lr) pairs, so symbolise.py can also put a leaf function's time (soft float...) on its caller.
-        enum { kSlots = 1 << 20 };
-        struct Hit { unsigned pc, lr, cycles; };
-        struct Hit* hits = calloc(kSlots, sizeof(struct Hit));
-        struct ARMCore* cpu = gCore->cpu;
-        struct mTiming* timing = &((struct GBA*)gCore->board)->timing;
-        const unsigned endFrame = gCore->frameCounter(gCore) + profileFrames;
-        for (long steps = 0; gCore->frameCounter(gCore) < endFrame && steps < 100000000; steps++) // (or a hang)
-        {
-            // (the PC register runs two instructions ahead)
-            const unsigned pc = (unsigned)cpu->gprs[ARM_PC] - (cpu->cpsr.t ? 4 : 8);
-            // (code addresses only: ARM routines use LR as a scratch register, and the table would fill up)
-            unsigned lr = (unsigned)cpu->gprs[ARM_LR];
-            lr = (lr >> 24) == 0x08 || (lr >> 24) == 0x09 || (lr >> 24) == 0x03 ? lr : 0;
-            const uint64_t before = mTimingGlobalTime(timing);
-            gCore->step(gCore);
-            const unsigned spent = (unsigned)(mTimingGlobalTime(timing) - before);
-            unsigned slot = ((pc * 2654435761u) ^ (lr * 40503u)) & (kSlots - 1);
-            while (hits[slot].cycles && (hits[slot].pc != pc || hits[slot].lr != lr))
-            {
-                slot = (slot + 1) & (kSlots - 1);
-            }
-            hits[slot].pc = pc;
-            hits[slot].lr = lr;
-            hits[slot].cycles += spent ? spent : 1;
-        }
-        FILE* f = fopen("perf_profile.txt", "w");
-        for (unsigned i = 0; i < kSlots; i++)
-        {
-            if (hits[i].cycles)
-            {
-                fprintf(f, "%x %x %u\n", hits[i].pc, hits[i].lr, hits[i].cycles);
-            }
-        }
-        fclose(f);
+        Profile(profileFrames, "perf_profile.txt");
         printf("# profile of map %d at %d,%d over %d frames in perf_profile.txt\n", map, x, y, profileFrames);
         gCore->deinit(gCore);
         return 0;
@@ -227,6 +241,8 @@ int main(int argc, char** argv)
     int screens = 0;
     int slowScreens = 0;
     unsigned lagTotal = 0;
+    const int spikes = getenv("PERF_SPIKES") ? atoi(getenv("PERF_SPIKES")) : 0;
+    void* state = spikes ? malloc(gCore->stateSize(gCore)) : NULL;
     const char* from = getenv("PERF_FROM_MAP"); // (to pick a tour up part way)
     const char* to = getenv("PERF_TO_MAP");
     for (int m = from ? atoi(from) : 0; m < (to ? atoi(to) + 1 : maps); m++)
@@ -244,8 +260,20 @@ int main(int argc, char** argv)
                 }
                 Wr(P_MAX, 0);
                 Wr(P_LAG, 0);
+                // PERF_SPIKES=n: a screen with a frame over n frames' time runs again from here, profiled
+                if (spikes)
+                {
+                    gCore->saveState(gCore, state);
+                }
                 Run(frames, 0);
                 const unsigned max = Rd(P_MAX);
+                if (spikes && max > (unsigned)spikes * kFrameCycles)
+                {
+                    gCore->loadState(gCore, state);
+                    char path[64];
+                    snprintf(path, sizeof(path), "spike_%d_%d_%d.txt", m, gx, gy);
+                    Profile(frames, path);
+                }
                 const unsigned lag = Rd(P_LAG);
                 printf("%d %d,%d %u %.1f%% %u %u\n", m, gx, gy, max, 100.0 * max / kFrameCycles, lag,
                        Rd(P_ENTITIES));

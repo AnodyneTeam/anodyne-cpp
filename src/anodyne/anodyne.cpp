@@ -358,6 +358,8 @@ struct PerfProbe final
     uint32_t mAckSeq;
     int32_t mMap; // where the game is now (a kMaps index), to check warps land
     uint32_t mEntities;
+    uint32_t mAudioBad;     // AudioManager_SelfTest at boot: samples where qoa_run.s and the C++ loop differ
+    uint32_t mAudioSamples; // and how many were compared
 };
 extern "C" PerfProbe gPerfProbe;
 PerfProbe gPerfProbe __attribute__((section(".sbss")));
@@ -382,6 +384,13 @@ int main()
     REG_WAITCNT = WS_STANDARD;
 #ifdef ANODYNE_PERF
     PaintStack();
+    {
+        uint32_t bad = 0;
+        uint32_t samples = 0;
+        AudioManager_SelfTest(&bad, &samples);
+        gPerfProbe.mAudioBad = bad;
+        gPerfProbe.mAudioSamples = samples;
+    }
 #endif
     REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
     ScreenBlack(true);

@@ -12,6 +12,8 @@ void TexDark_Init();
 // Once a frame while the play state draws: the texture (nullptr: none), its alpha (Darkness.alpha, 0-256) and a
 // tinting flash over it (FadeEffect: 0-32 of the way to tintColour).
 void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour);
+// How many of the BG colours the map uses (from 0): only those are blended.
+void TexDark_SetBgColours(int count);
 bool TexDark_Active();
 // Puts the plain colours back and stops (another screen takes over the palettes).
 void TexDark_Off();

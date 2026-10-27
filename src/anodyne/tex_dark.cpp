@@ -1,5 +1,6 @@
 #include "tex_dark.h"
 
+#include "ecs.h"
 #include "tonc.h"
 
 namespace
@@ -13,6 +14,19 @@ constexpr int kBandRows = 160 / kDarkBands;
 alignas(4) uint16_t gBands[kDarkBands][kEntries] __attribute__((section(".sbss"))); // (EWRAM)
 uint16_t gBase[kEntries] __attribute__((section(".sbss")));
 uint8_t gLut[kDarkBands][3][32] __attribute__((section(".sbss")));
+
+// The BG colours in use (the map's palette, rounded up to a word): the rest of the 256 are left alone.
+int gBgCount = 256;
+
+// The end of the OBJ colours blended: the banks the entities have drawn with since the texture went on (they take
+// the lowest free bank, so usually only a few of the 13).
+volatile int gEnd = kEntries;
+
+// The next of the colours blended after i: the BG ones in use, then the OBJ banks.
+int NextEntry(int i)
+{
+    return i + 1 == gBgCount ? 256 : i + 1;
+}
 
 volatile bool gActive = false;
 volatile int gShown = 0; // the band in palette RAM
@@ -29,7 +43,11 @@ int SwapLine(int band)
 
 void Show(int band)
 {
-    memcpy32(pal_bg_mem, gBands[band], kEntries / 2);
+    memcpy32(pal_bg_mem, gBands[band], gBgCount / 2);
+    if (gEnd > 256)
+    {
+        memcpy32(pal_obj_mem, gBands[band] + 256, (gEnd - 256) / 2);
+    }
     gShown = band;
     REG_DISPSTAT = static_cast<uint16_t>((REG_DISPSTAT & 0xFF) | (SwapLine((band + 1) % kDarkBands) << 8));
 }
@@ -44,10 +62,23 @@ void OnVCount()
     Show(line >= 160 ? 0 : (line + 1) / kBandRows);
 }
 
+// x / 255 for 0 <= x < 65535, without a division call (Thumb has none: the LUTs are rebuilt as the darkness fades).
+int Div255(int x)
+{
+    return (x + (x >> 8) + 1) >> 8;
+}
+
+// 2 * p / 255 for 0 <= p <= 255 * 255.
+int TwiceDiv255(int p)
+{
+    const int q = Div255(p);
+    return 2 * q + (2 * (p - 255 * q) >= 255 ? 1 : 0);
+}
+
 // blendOverlay (blend.fx), 0-255.
 int Overlay(int base, int blend)
 {
-    return base < 128 ? 2 * base * blend / 255 : 255 - 2 * (255 - base) * (255 - blend) / 255;
+    return base < 128 ? TwiceDiv255(base * blend) : 255 - TwiceDiv255((255 - base) * (255 - blend));
 }
 
 void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintColour)
@@ -59,11 +90,11 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintCol
         {
             for (int c5 = 0; c5 < 32; c5++)
             {
-                const int c = c5 * 255 / 31;
+                const int c = (c5 * 255 * 0x2109) >> 18; // c5 * 255 / 31
                 const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
-                const int g = (f * t[3] + c * (255 - t[3])) / 255;
+                const int g = Div255(f * t[3] + c * (255 - t[3]));
                 const int final8 = (g * alpha + c * (256 - alpha)) >> 8;
-                int v = (final8 * 31 + 127) / 255;
+                int v = Div255(final8 * 31 + 127);
                 // the flash after it (FadeEffect, as TintPalettes)
                 v += (((tintColour >> (5 * ch)) & 31) - v) * tint / 32;
                 gLut[band][ch][c5] = static_cast<uint8_t>(v);
@@ -94,6 +125,12 @@ void TexDark_Init()
     irq_disable(II_VCOUNT);
 }
 
+void TexDark_SetBgColours(int count)
+{
+    TexDark_Off(); // (the bands were built for the old count)
+    gBgCount = count < 2 ? 2 : (count > 256 ? 256 : (count + 1) & ~1);
+}
+
 bool TexDark_Active()
 {
     return gActive;
@@ -111,7 +148,7 @@ void TexDark_Off()
     irq_disable(II_VCOUNT);
     gActive = false;
     // (only the colours still showing the band: the others were rewritten since)
-    for (int i = 0; i < kEntries; i++)
+    for (int i = 0; i < gEnd; i = NextEntry(i))
     {
         if (pal_bg_mem[i] == gBands[gShown][i])
         {
@@ -140,16 +177,21 @@ void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tin
         gTint = tint;
         gTintColour = tintColour;
     }
-    // New base colours: all of them when starting, else those the game rewrote since the band went in.
+    // The OBJ banks in use only grow while it's on (those it stops covering would keep a band's colours).
+    const int oldEnd = starting ? 256 : gEnd;
+    const int want = 256 + 16 * Ecs_ObjBanksInUse();
+    const int end = want > oldEnd ? want : oldEnd;
+    // New base colours: all of them when starting (or newly covered), else those the game rewrote since the band
+    // went in.
     static bool sDirty[kEntries] __attribute__((section(".sbss")));
     {
         const u16 ime = REG_IME;
         REG_IME = 0;
         const int shown = gShown;
-        for (int i = 0; i < kEntries; i++)
+        for (int i = 0; i < end; i = NextEntry(i))
         {
             const uint16_t now = pal_bg_mem[i];
-            sDirty[i] = starting || now != gBands[shown][i];
+            sDirty[i] = starting || i >= oldEnd || now != gBands[shown][i];
             if (sDirty[i])
             {
                 gBase[i] = now;
@@ -157,7 +199,7 @@ void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tin
         }
         REG_IME = ime;
     }
-    for (int i = 0; i < kEntries; i++)
+    for (int i = 0; i < end; i = NextEntry(i))
     {
         if (lutChanged || sDirty[i])
         {
@@ -167,6 +209,7 @@ void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tin
     // The band on screen now, then the interrupt takes over from the next one.
     const u16 ime = REG_IME;
     REG_IME = 0;
+    gEnd = end;
     const int line = REG_VCOUNT;
     Show(line >= 160 ? 0 : line / kBandRows);
     if (starting)

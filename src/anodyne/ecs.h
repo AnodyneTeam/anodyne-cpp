@@ -85,29 +85,43 @@ struct fx
         mV /= static_cast<float>(n);
         return *this;
     }
+    // Comparisons on the bits, which order like sign-magnitude integers (+0 and -0 equal, a NaN never ordered or
+    // equal): the same answers as the float compares, without a soft float call each.
+    static constexpr uint32_t Bits(fx v)
+    {
+        return __builtin_bit_cast(uint32_t, v.mV);
+    }
+    static constexpr bool Ordered(fx a, fx b)
+    {
+        return (Bits(a) & 0x7FFFFFFFu) <= 0x7F800000u && (Bits(b) & 0x7FFFFFFFu) <= 0x7F800000u;
+    }
+    static constexpr int32_t Key(fx v)
+    {
+        return (Bits(v) & 0x80000000u) ? static_cast<int32_t>(0x80000000u - Bits(v)) : static_cast<int32_t>(Bits(v));
+    }
     friend constexpr bool operator<(fx a, fx b)
     {
-        return a.mV < b.mV;
+        return Ordered(a, b) && Key(a) < Key(b);
     }
     friend constexpr bool operator>(fx a, fx b)
     {
-        return a.mV > b.mV;
+        return Ordered(a, b) && Key(a) > Key(b);
     }
     friend constexpr bool operator<=(fx a, fx b)
     {
-        return a.mV <= b.mV;
+        return Ordered(a, b) && Key(a) <= Key(b);
     }
     friend constexpr bool operator>=(fx a, fx b)
     {
-        return a.mV >= b.mV;
+        return Ordered(a, b) && Key(a) >= Key(b);
     }
     friend constexpr bool operator==(fx a, fx b)
     {
-        return a.mV == b.mV;
+        return Ordered(a, b) && Key(a) == Key(b);
     }
     friend constexpr bool operator!=(fx a, fx b)
     {
-        return a.mV != b.mV;
+        return !(a == b);
     }
 };
 inline constexpr fx operator*(int n, fx v)
@@ -646,6 +660,8 @@ void Ecs_SetBaseKilledEnemies(int count);
 // OAM entries firstOam .. endOam-1 are the renderer's (sorted by layer and depth, front first).
 // CutsceneState.Warp: only the cutscene's own entities are drawn (the play state isn't).
 void Ecs_SetCutsceneView(bool on);
+// The OBJ palette banks Ecs_Draw used this frame end before this one.
+int Ecs_ObjBanksInUse();
 void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY);
 // The OBJ VRAM the renderer caches frames in and the OBJ palette banks it may use.
 class ObjVramAllocator;

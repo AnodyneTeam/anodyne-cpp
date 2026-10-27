@@ -23,6 +23,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/sources.cmake)
 set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/qoa_run.s
     ${ANODYNE_GAME_SOURCES}
 )
 

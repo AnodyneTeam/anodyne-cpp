@@ -1889,6 +1889,7 @@ static void LoadMapGraphics(const MapEntry& map)
 {
     // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 28-31
     // (0x0600E000 and up), which the layers use for their maps.
+    TexDark_SetBgColours(static_cast<int>(map.mPalData.mPalSize)); // (first: it puts the old colours back)
     memcpy16(pal_bg_mem, map.mPalData.mPalData, map.mPalData.mPalSize);
     uint32_t tilesetBytes = map.mTileSetData.mTileSetSize;
     if (tilesetBytes > kMaxTilesetBytes)

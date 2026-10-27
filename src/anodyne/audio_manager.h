@@ -51,6 +51,10 @@ uint32_t AudioManager_GetBgmCount(void);
 uint32_t AudioManager_GetIsrCyclesLast(void);
 // The free-running CPU cycle counter (timers 2+3).
 uint32_t AudioManager_Cycles(void);
+#ifdef ANODYNE_PERF
+// Checks the hand-written QOA loop against the C++ one over every sound: the samples that differ, of how many.
+void AudioManager_SelfTest(uint32_t* bad, uint32_t* samples);
+#endif
 uint32_t AudioManager_GetIsrCyclesMax(void);
 void AudioManager_ResetIsrCyclesMax(void);
 uint32_t AudioManager_GetSfxCount(void);

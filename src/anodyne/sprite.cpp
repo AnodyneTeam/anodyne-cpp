@@ -134,11 +134,41 @@ bool Sprite_IsDrawable(const SpriteSheetEntry& sheet)
     return !sheet.mFrameParts && sheet.mPartCount > 0 && sheet.mPartCount <= 128 && FrameBytes(sheet) <= 16 * 1024;
 }
 
+namespace
+{
+// Sheets by name hash (every spawn looks its sheet up by name): chains in table order, so the first match is the
+// first in kSpriteSheets, as a straight search finds it.
+constexpr uint32_t kHashBuckets = 256;
+uint16_t gHashHead[kHashBuckets] __attribute__((section(".sbss"))); // index + 1, 0 = none
+uint16_t gHashNext[kSpriteSheetCount] __attribute__((section(".sbss")));
+bool gHashBuilt = false;
+
+uint32_t NameHash(const char* name)
+{
+    uint32_t h = 2166136261u; // FNV-1a
+    for (; *name; name++)
+    {
+        h = (h ^ static_cast<uint8_t>(*name)) * 16777619u;
+    }
+    return h % kHashBuckets;
+}
+} // namespace
+
 const SpriteSheetEntry* Sprite_FindSheet(const char* name, int frameW, int frameH)
 {
-    for (uint32_t i = 0; i < kSpriteSheetCount; i++)
+    if (!gHashBuilt)
     {
-        const SpriteSheetEntry& s = kSpriteSheets[i];
+        for (uint32_t i = kSpriteSheetCount; i-- > 0;)
+        {
+            const uint32_t b = NameHash(kSpriteSheets[i].mName);
+            gHashNext[i] = gHashHead[b];
+            gHashHead[b] = static_cast<uint16_t>(i + 1);
+        }
+        gHashBuilt = true;
+    }
+    for (uint32_t i = gHashHead[NameHash(name)]; i != 0; i = gHashNext[i - 1])
+    {
+        const SpriteSheetEntry& s = kSpriteSheets[i - 1];
         if (strcmp(s.mName, name) == 0 && (frameW == 0 || s.mFrameWidth == frameW) &&
             (frameH == 0 || s.mFrameHeight == frameH))
         {

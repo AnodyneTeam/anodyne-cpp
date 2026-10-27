@@ -37,8 +37,12 @@ Entity* gUpdateLast;
 
 constexpr fx kOverlapBias = Fx(4); // GameObject.OVERLAP_BIAS
 
+// Bumped by every change to the list, so a pass over a copy of it can tell when to go back to the list itself.
+uint32_t gListGen = 0;
+
 void Link(Entity* e)
 {
+    gListGen++;
     e->mPrev = gTail;
     e->mNext = nullptr;
     if (gTail)
@@ -54,6 +58,7 @@ void Link(Entity* e)
 
 void Unlink(Entity* e)
 {
+    gListGen++;
     if (e->mPrev)
     {
         e->mPrev->mNext = e->mNext;
@@ -1093,16 +1098,64 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
         note(e->mClass->mGroups);
         note(e->mClass->mCollidesWith);
     }
+    // The targets in a group are listed once, rather than walking the whole entity list again for every collider:
+    // while nothing joins or leaves the list (gListGen), the list's targets in order are exactly these.
+    static Entity* sTargets[kMaxEntities] __attribute__((section(".sbss")));
     for (int g = 0; g < groups; g++)
     {
         const uint32_t group = order[g];
+        int targets = 0;
+        for (Entity* t = gHead; t; t = t->mNext)
+        {
+            if (t->mClass->mGroups & group)
+            {
+                sTargets[targets++] = t;
+            }
+        }
+        const uint32_t gen = gListGen;
         for (Entity* c = gHead; c; c = c->mNext)
         {
             if ((c->mClass->mCollidesWith & group) == 0 || !c->mClass->mCollided || !Updatable(*c))
             {
                 continue;
             }
-            for (Entity* t = gHead; t; t = t->mNext)
+            // From the copy while the list is as it was, else (from where the copy got to) from the list itself.
+            Entity* t = nullptr;
+            bool done = false;
+            if (gListGen == gen)
+            {
+                Rect hc = Ecs_Hitbox(*c);
+                int i = 0;
+                for (; i < targets; i++)
+                {
+                    Entity* tt = sTargets[i];
+                    if (tt == c || !Updatable(*tt) || !Ecs_Intersects(hc, Ecs_Hitbox(*tt)))
+                    {
+                        continue;
+                    }
+                    c->mClass->mCollided(*c, *tt);
+                    if (!Updatable(*c))
+                    {
+                        done = true;
+                        break;
+                    }
+                    if (gListGen != gen)
+                    {
+                        t = tt->mNext;
+                        break;
+                    }
+                    hc = Ecs_Hitbox(*c); // (the callback may have moved it)
+                }
+                if (i == targets)
+                {
+                    done = true;
+                }
+            }
+            else
+            {
+                t = gHead;
+            }
+            for (; !done && t; t = t->mNext)
             {
                 if ((t->mClass->mGroups & group) == 0 || t == c || !Updatable(*t))
                 {
@@ -1402,6 +1455,20 @@ int AcquireBank(const uint16_t* pal)
     return freeBank;
 }
 
+} // namespace
+
+int Ecs_ObjBanksInUse()
+{
+    int end = gFirstBank;
+    for (int b = gFirstBank; b < gFirstBank + gBankCount; b++)
+    {
+        end = gBankPal[b] && gBankUsed[b] == gDrawTick ? b + 1 : end;
+    }
+    return end;
+}
+
+namespace
+{
 int ObjPriority(int layer)
 {
     if (layer < LAYER_MAP_BG2)

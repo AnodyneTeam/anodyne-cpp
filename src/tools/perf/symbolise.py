@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Groups perf_tour's perf_profile.txt ("pc lr cycles" lines) by function: symbolise.py first.elf perf_profile.txt [top]
-# The second table puts the time spent in libgcc helpers (soft float, division...) on the functions that called them.
+# The second table puts the time spent in libgcc helpers (soft float, division...) and the memcpy/memset family on
+# the functions that called them.
 import bisect, subprocess, sys
 
 syms = []
@@ -19,7 +20,8 @@ def name_of(pc):
 
 
 def is_helper(name):
-    return name.startswith("__") or name.startswith("____") or name in ("memset", "memcpy", "strcmp", "strlen")
+    return name.startswith("__") or name.startswith("____") or name in ("memset", "memcpy", "strcmp", "strlen",
+                                                                       "memcpy32", "memcpy16", "memset32", "memset16")
 
 
 self_time = {}
