@@ -411,11 +411,13 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel floor 3 key", () => Exec("g4 O1 X1 >440,872 W30 lift3 W30 H3,10 W20 >555,1675 G553,1676 W20 I608,1616,d W60 T W30"));
             yield return Section("hotel dasher card", () => Exec("g4 O1 X1 H2,9 W20 >339,1458 G339,1458,kl W30 g0 O1 X0 G300,1458 sight243,1458 W10 U30 W30 g2 O1 X0 W5 sight291,1314 J18,82,u W60 T W30"));
             yield return Section("hotel back from the dasher", () => Exec("g2 O1 X0 sight243,1412 D20 W5 sight307,1458 W10"));
-            yield return Section("hotel to the burst plant chasm", () => Exec("g3 O1 X1 door27 W30 H8,1 W30 H8,2 W30"));
+            // (heal on the way: past the chasm there is no way back to a checkpoint, the floor-3 fights leave us on half hearts, and
+            // (9,2)'s Slime by the burst plant takes 4-5 more)
+            yield return Section("hotel to the burst plant chasm", () => Exec("heal W30 g3 O1 X1 door27 W30 H8,1 W30 H8,2 W30"));
             string wade = string.Concat(System.Linq.Enumerable.Repeat("D2 RD4 ", 18));
             yield return Section("hotel burst plant chasm", () => Exec("D16 er1327 R60 +k W10 G1408,452 L7 " + wade + "R20 >1456,560"));
             // ((9,3)'s Dog darts about the chest's ledge and can outlast a fight: a soft one, and the chest is opened either way)
-            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F3600 W20 +s W60"));
+            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 sweepup:92,28 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F3600 W20 +s W60"));
         }
     }
 

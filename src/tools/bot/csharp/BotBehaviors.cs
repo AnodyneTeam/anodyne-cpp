@@ -64,6 +64,13 @@ namespace AnodyneSharp.Recording
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
                     continue;
                 }
+                if (tok.StartsWith("sweepup:"))
+                {
+                    // sweepup:<x>,<y>: sweep up the loose dust nearest tile x,y, from the floor beside it (nothing if we carry dust already)
+                    var a = tok.Substring(8).Split(',');
+                    yield return CrowdPlatforms.SweepUpNear(int.Parse(a[0]), int.Parse(a[1]));
+                    continue;
+                }
                 if (tok.StartsWith("dust:"))
                 {
                     // dust:<x>,<y>: carry a dust of this screen onto tile x,y; dust:<Type>: onto the thing of that type here (dust:ArthurDanger:
@@ -5591,6 +5598,7 @@ namespace AnodyneSharp.Recording
             long healAt = -100000; // when this walk last went off to heal
             int killTrips = 0; // trips round to the enemies of a kill gate on the far side
             bool warped = false; // went back to the Nexus pad to plan from there
+            bool steppedOff = false; // stepped off a wall tile our centre was over, to plan from the floor
             int flips = 0, buttonsPressed = 0;
             var doorsTaken = new HashSet<int>(); // door pairs taken to get out of a room with no other way out
             var lookedAt = new HashSet<Point>(); // screens gone to for a look at a shut gate with no button
@@ -5823,6 +5831,29 @@ namespace AnodyneSharp.Recording
                     plan = null;
                     lastHere = new Point(-1, -1);
                     continue;
+                }
+                if (route == null && !steppedOff && !BotNav.Walkable(here))
+                {
+                    // Our centre is over a wall tile (a fight left us pressed to the side of a one-tile corridor, the Circus Folks' way
+                    // out): no route starts there, so first onto the floor tile our box is mostly on, and plan again.
+                    steppedOff = true;
+                    var box = Player.Hitbox;
+                    var under = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1), new Point(1, 1), new Point(-1, 1), new Point(1, -1), new Point(-1, -1) }
+                        .Select(o => new Point(here.X + o.X, here.Y + o.Y)).Where(BotNav.Walkable)
+                        .OrderByDescending(t => { var r = Rectangle.Intersect(box, new Rectangle(t.X * 16, t.Y * 16, 16, 16)); return r.Width * r.Height; })
+                        .ThenBy(t => Math.Abs(t.X - goal.X) + Math.Abs(t.Y - goal.Y)).ToList();
+                    if (under.Count > 0)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  no route from {here} to {goal}: on a wall tile, onto {under[0]} first");
+                        }
+                        var uc = BotNav.CentreOf(under[0]);
+                        yield return WalkTo(uc.X, uc.Y, tol: 1.5f, timeout: 120);
+                        plan = null;
+                        lastHere = new Point(-1, -1);
+                        continue;
+                    }
                 }
                 if (route == null && !warped && AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type?.Name == "NexusPad")
                     && !Map.Equals("NEXUS"))

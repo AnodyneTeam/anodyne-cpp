@@ -337,7 +337,7 @@ namespace AnodyneSharp.Recording
         }
 
         /// <summary>Sweep up the loose dust nearest tile (tx,ty) (a fight may have moved it), from a floor tile beside it.</summary>
-        private static IEnumerable<object> SweepUpNear(int tx, int ty)
+        internal static IEnumerable<object> SweepUpNear(int tx, int ty)
         {
             yield return Until(() => !(Player.broom != null && Player.broom.exists), 60, "the last swing to end"); // (a swing setting dust down still holds it)
             if (Player.broom.dust != null)
