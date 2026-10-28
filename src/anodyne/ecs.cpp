@@ -488,6 +488,8 @@ int64_t FrameTicks(uint32_t frame)
     static const char* const sOffset = getenv("ANODYNE_SIM_NOW_OFFSET");
     static const uint32_t sBehind = sOffset ? static_cast<uint32_t>(atoi(sOffset)) : 0;
     frame -= sBehind;
+#elif defined(ANODYNE_LINK)
+    frame -= 340; // (what SimHost tells the simulator: the C# game's frames start 340 after the port's)
 #endif
     return static_cast<int64_t>(frame) * 10000000 / 60;
 }

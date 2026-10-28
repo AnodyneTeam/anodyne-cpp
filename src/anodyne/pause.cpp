@@ -50,8 +50,8 @@ enum EquipState : uint8_t
     EQUIP_KEY3,
 };
 
-#ifdef ANODYNE_SIM
-constexpr int kCheatCounterMax = 2; // (the C# Debug build's: the recordings the simulator replays come from one)
+#if defined(ANODYNE_SIM) || defined(ANODYNE_LINK)
+constexpr int kCheatCounterMax = 2; // (the C# Debug build's: the recordings the simulator and link ROM replay come from one)
 #else
 constexpr int kCheatCounterMax = 20;
 #endif

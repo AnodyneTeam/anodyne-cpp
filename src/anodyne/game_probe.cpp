@@ -16,23 +16,64 @@
 
 namespace
 {
+// Text into buf. With a sink, buf is only a window: what fills it is handed to the sink and it starts over (the link
+// build streams the state out this way: the whole of it would not fit in EWRAM).
 struct Out final
 {
     char* mBuf;
     int mCap;
     int mLen;
+    GameProbe_Sink mSink;
+
+    void Flush()
+    {
+        if (mSink && mLen > 0)
+        {
+            mSink(mBuf, mLen);
+            mLen = 0;
+            mBuf[0] = '\0';
+        }
+    }
 
     void Add(const char* fmt, ...) __attribute__((format(printf, 2, 3)))
     {
         if (mLen >= mCap - 1)
         {
-            return;
+            if (!mSink)
+            {
+                return;
+            }
+            Flush();
         }
         va_list args;
         va_start(args, fmt);
-        const int n = vsnprintf(mBuf + mLen, static_cast<size_t>(mCap - mLen), fmt, args);
+        va_list again;
+        va_copy(again, args);
+        int n = vsnprintf(mBuf + mLen, static_cast<size_t>(mCap - mLen), fmt, args);
+        if (mSink && n >= 0 && mLen + n >= mCap && mLen > 0)
+        {
+            // (it did not fit after what was there: send that, and write this from the start)
+            mBuf[mLen] = '\0';
+            Flush();
+            n = vsnprintf(mBuf, static_cast<size_t>(mCap), fmt, again);
+        }
+        va_end(again);
         va_end(args);
         mLen = n < 0 ? mLen : (mLen + n >= mCap ? mCap - 1 : mLen + n);
+    }
+
+    void Put(char c)
+    {
+        if (mLen + 1 >= mCap)
+        {
+            if (!mSink)
+            {
+                return;
+            }
+            Flush();
+        }
+        mBuf[mLen++] = c;
+        mBuf[mLen] = '\0';
     }
 };
 
@@ -56,14 +97,10 @@ const char* ProbeName(const Entity& e)
     return Str(e.mClass->mName);
 }
 
-extern "C" int GameProbe_Json(char* buf, int cap)
+namespace
 {
-    if (cap <= 0)
-    {
-        return 0;
-    }
-    Out o = { buf, cap, 0 };
-    buf[0] = '\0';
+void Json(Out& o)
+{
     WorldPlayerInfo p;
     World_GetPlayerInfo(p);
     o.Add("{\"mode\":\"%s\",\"map\":\"%s\",\"grid\":[%d,%d],\"transition\":%s,\"dialog\":%s,", Str(gGame.mModeName),
@@ -143,7 +180,47 @@ extern "C" int GameProbe_Json(char* buf, int cap)
         first = false;
     }
     o.Add("]}");
+}
+
+void Collision(Out& o)
+{
+    int w = 0;
+    int h = 0;
+    World_GetCellsSize(w, h);
+    o.Add("%d %d ", w, h);
+    static const char kHex[] = "0123456789abcdef";
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            uint8_t allow = 0;
+            uint8_t event = 0;
+            World_GetCell(x, y, allow, event);
+            o.Put(kHex[allow & 15]);
+            o.Put(kHex[event & 15]);
+        }
+    }
+}
+} // namespace
+
+extern "C" int GameProbe_Json(char* buf, int cap)
+{
+    if (cap <= 0)
+    {
+        return 0;
+    }
+    Out o = { buf, cap, 0, nullptr };
+    buf[0] = '\0';
+    Json(o);
     return o.mLen;
+}
+
+extern "C" void GameProbe_JsonTo(GameProbe_Sink sink, char* scratch, int cap)
+{
+    Out o = { scratch, cap, 0, sink };
+    scratch[0] = '\0';
+    Json(o);
+    o.Flush();
 }
 
 extern "C" int GameProbe_Collision(char* buf, int cap)
@@ -152,26 +229,18 @@ extern "C" int GameProbe_Collision(char* buf, int cap)
     {
         return 0;
     }
-    Out o = { buf, cap, 0 };
+    Out o = { buf, cap, 0, nullptr };
     buf[0] = '\0';
-    int w = 0;
-    int h = 0;
-    World_GetCellsSize(w, h);
-    o.Add("%d %d ", w, h);
-    static const char kHex[] = "0123456789abcdef";
-    for (int y = 0; y < h; y++)
-    {
-        for (int x = 0; x < w && o.mLen + 3 < cap; x++)
-        {
-            uint8_t allow = 0;
-            uint8_t event = 0;
-            World_GetCell(x, y, allow, event);
-            buf[o.mLen++] = kHex[allow & 15];
-            buf[o.mLen++] = kHex[event & 15];
-        }
-    }
-    buf[o.mLen] = '\0';
+    Collision(o);
     return o.mLen;
+}
+
+extern "C" void GameProbe_CollisionTo(GameProbe_Sink sink, char* scratch, int cap)
+{
+    Out o = { scratch, cap, 0, sink };
+    scratch[0] = '\0';
+    Collision(o);
+    o.Flush();
 }
 
 int GameProbe_Warp(const char* map, int x, int y)

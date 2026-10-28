@@ -28,6 +28,9 @@
 #include "map_registry.h"
 #include "game_state.h"
 #include "game_probe.h"
+#ifdef ANODYNE_LINK
+#include "link_ipc.h"
+#endif
 
 static_assert(kEntityPresetCount <= kMaxPresets, "more entity presets than game_state.h has room for");
 static_assert(kMapCount <= static_cast<uint32_t>(kMaxMaps), "more maps than game_state.h has room for");
@@ -382,6 +385,9 @@ int main()
     // power-on 4/2 with no prefetch - everything still running from ROM
     // (Thumb code, const data, the audio blob) gets substantially faster.
     REG_WAITCNT = WS_STANDARD;
+#ifdef ANODYNE_LINK
+    Link_Init();
+#endif
 #ifdef ANODYNE_PERF
     PaintStack();
     {
@@ -464,7 +470,16 @@ int main()
             GameProbe_Warp(kMapNames[gPerfProbe.mCmdMap % kMapCount], gPerfProbe.mCmdX, gPerfProbe.mCmdY);
         }
 #endif
+#ifdef ANODYNE_LINK
+        // Driven over the link port: the host's keys, each frame they're held a fresh press (as the C# game sees the
+        // bot's keys, and as the simulator gives them below).
+        Link_OnFrame();
         key_poll();
+        __key_curr = Link_Keys();
+        __key_prev = 0;
+#else
+        key_poll();
+#endif
 #ifdef ANODYNE_SIM
         // Driven by the C# bot (SimHost): every frame a key is held is a fresh press, as the C# game sees the bot's keys.
         static const bool sKeyRepeat = getenv("ANODYNE_SIM_KEY_REPEAT") != nullptr;

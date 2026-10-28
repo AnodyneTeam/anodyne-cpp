@@ -51,6 +51,14 @@ if(ANODYNE_PERF)
     target_compile_definitions(first_lib PRIVATE ANODYNE_PERF)
 endif()
 
+# -DANODYNE_LINK=ON: the bot link over the link port (link_ipc.h), for tools/link's mGBA bridge. Not for release:
+# the ROM waits on the cable every frame.
+option(ANODYNE_LINK "Build the ROM with the bot link over the link port" OFF)
+if(ANODYNE_LINK)
+    target_sources(first_lib PRIVATE ${SOURCEDIR}/anodyne/link_ipc.cpp)
+    target_compile_definitions(first_lib PRIVATE ANODYNE_LINK)
+endif()
+
 target_include_directories(first_lib PRIVATE
     "${CMAKE_BINARY_DIR}/tools" # content-compiler output (map_registry.h, sprite_registry.h, ...)
     "${LIBTONC_DIR}/include"
