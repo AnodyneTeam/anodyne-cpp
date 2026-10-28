@@ -105,6 +105,10 @@ fx gScrollPosX = 0;                     // ScrollingTex.Position (0 down to -160
 fx gScrollPosY = 0;
 int gScrollTX = 0;                      // ring origin (tile coordinates) of the scroll layer
 int gScrollTY = 0;
+// What the position's wraps took off, in px: the ring follows the unwrapped position, so a wrap (a 160px jump the
+// 160px pattern hides) is a one-column step for it, not a redraw of 20 columns.
+int gScrollUnwrapX = 0;
+int gScrollUnwrapY = 0;
 
 // ---- Background ---------------------------------------------------------------------------------------------
 // Screen entry for 8x8 tile (mx, my) of a layer: look up its 16x16 tile and pick the matching quarter. Outside the
@@ -493,21 +497,39 @@ void UpdateScroll(bool advance, bool force)
         gScrollPosY += FxStep(Fx(gScroll->mVelocityY));
         if (gScrollPosX < -Fx(160)) // Position.X < -Texture.Width / 2
         {
+            gScrollUnwrapX += FxTrunc(gScrollPosX);
             gScrollPosX = 0;
         }
         if (gScrollPosY > 0)
         {
+            gScrollUnwrapY += FxTrunc(gScrollPosY) + 160;
             gScrollPosY = -Fx(160);
         }
         else if (gScrollPosY < -Fx(160))
         {
+            gScrollUnwrapY += FxTrunc(gScrollPosY);
             gScrollPosY = 0;
+        }
+        // Every 1280px (160 tiles: whole patterns, and whole turns of the 32-tile ring) the ring's tiles are the same
+        // again: fold it back there so it never overflows.
+        constexpr int kFold = 1280;
+        if (gScrollUnwrapX <= -kFold || gScrollUnwrapX >= kFold)
+        {
+            const int fold = gScrollUnwrapX < 0 ? -kFold : kFold;
+            gScrollUnwrapX -= fold;
+            gScrollTX += fold / 8;
+        }
+        if (gScrollUnwrapY <= -kFold || gScrollUnwrapY >= kFold)
+        {
+            const int fold = gScrollUnwrapY < 0 ? -kFold : kFold;
+            gScrollUnwrapY -= fold;
+            gScrollTY += fold / 8;
         }
     }
 
     // (int) cast truncates towards zero
-    const int posX = FxTrunc(gScrollPosX);
-    const int posY = FxTrunc(gScrollPosY);
+    const int posX = FxTrunc(gScrollPosX) + gScrollUnwrapX;
+    const int posY = FxTrunc(gScrollPosY) + gScrollUnwrapY;
     const int vx = -kViewX - posX;
     const int vy = -posY;
     if (force)
@@ -1952,6 +1974,8 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     gScroll = scroll.mPattern ? &scroll : nullptr;
     gScrollPosX = 0;
     gScrollPosY = 0;
+    gScrollUnwrapX = 0;
+    gScrollUnwrapY = 0;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
 
     PickSpawn();

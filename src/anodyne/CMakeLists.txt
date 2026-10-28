@@ -24,6 +24,7 @@ set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
     ${SOURCEDIR}/anodyne/platform/gba/sys/qoa_run.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/lmul_arm.s
     ${ANODYNE_GAME_SOURCES}
 )
 
@@ -49,6 +50,8 @@ target_compile_options(first_lib PRIVATE
 option(ANODYNE_PERF "Build the ROM with the perf probe" OFF)
 if(ANODYNE_PERF)
     target_compile_definitions(first_lib PRIVATE ANODYNE_PERF)
+    # (line numbers for the profiler: tools/perf/symbolise.py --lines; the ROM itself is the same)
+    target_compile_options(first_lib PRIVATE -g)
 endif()
 
 # -DANODYNE_LINK=ON: the bot link over the link port (link_ipc.h), for tools/link's mGBA bridge. Not for release:

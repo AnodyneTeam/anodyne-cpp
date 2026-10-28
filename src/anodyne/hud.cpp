@@ -238,9 +238,12 @@ HudState CurrentState(bool healthHidden)
         s.mWindowY = static_cast<uint8_t>(y < 0 ? 0 : y);
         s.mPlayerX = static_cast<int8_t>(gGame.mGridX);
         s.mPlayerY = static_cast<int8_t>(gGame.mGridY);
-        for (int i = 0; i < 20; i++)
+        for (int row = 0; row < 4; row++)
         {
-            s.mCells[i] = static_cast<uint8_t>(Minimap_Seen(s.mWindowX + i % 5, s.mWindowY + i / 5));
+            for (int col = 0; col < 5; col++)
+            {
+                s.mCells[row * 5 + col] = static_cast<uint8_t>(Minimap_Seen(s.mWindowX + col, s.mWindowY + row));
+            }
         }
     }
     return s;

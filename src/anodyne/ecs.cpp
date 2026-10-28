@@ -1066,7 +1066,20 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
 {
     Entity* player = World_Player();
 
+    // The entities a pass could pick by their class (which never changes), listed once in list order: while nothing
+    // joins or leaves the list (gListGen), walking these is walking the list and skipping the rest.
+    static Entity* sPicked[kMaxEntities] __attribute__((section(".sbss")));
+
     // Map colliders: the map's tiles, then every solid PartOfMap entity they overlap.
+    int partsOfMap = 0;
+    for (Entity* m = gHead; m; m = m->mNext)
+    {
+        if ((m->mClass->mFlags & ECF_PART_OF_MAP) && m->mClass->mCollided)
+        {
+            sPicked[partsOfMap++] = m;
+        }
+    }
+    const uint32_t mapGen = gListGen;
     for (Entity* e = gHead; e; e = e->mNext)
     {
         if (!Updatable(*e) || !(e->mClass->mFlags & ECF_MAP_COLLISION))
@@ -1079,7 +1092,33 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
             e->mB->mAllow = TOUCH_NONE; // tile events still apply
         }
         Map_Collide(*e);
-        for (Entity* m = gHead; m; m = m->mNext)
+        Entity* m = nullptr;
+        if (gListGen == mapGen)
+        {
+            int i = 0;
+            for (; i < partsOfMap; i++)
+            {
+                Entity* mm = sPicked[i];
+                if (mm == e || !Updatable(*mm) || !Ecs_Solid(*mm))
+                {
+                    continue;
+                }
+                if (Ecs_Intersects(Ecs_Hitbox(*mm), Ecs_Hitbox(*e)))
+                {
+                    mm->mClass->mCollided(*mm, *e);
+                    if (gListGen != mapGen)
+                    {
+                        m = mm->mNext;
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            m = gHead;
+        }
+        for (; m; m = m->mNext)
         {
             if (m == e || !Updatable(*m) || !(m->mClass->mFlags & ECF_PART_OF_MAP) || !Ecs_Solid(*m) ||
                 !m->mClass->mCollided)
@@ -1115,27 +1154,63 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
         note(player->mClass->mGroups);
         note(player->mClass->mCollidesWith);
     }
-    for (const Entity* e = gHead; e; e = e->mNext)
+    // The list with each entity's groups and the groups it collides with (none without a callback), so the passes
+    // below needn't go through every entity's class: taken again if the list changes.
+    static Entity* sAll[kMaxEntities] __attribute__((section(".sbss")));
+    static uint32_t sGroupsOf[kMaxEntities] __attribute__((section(".sbss")));
+    static uint32_t sWithOf[kMaxEntities] __attribute__((section(".sbss")));
+    int all = 0;
+    auto snapshot = [&](bool noting)
     {
-        note(e->mClass->mGroups);
-        note(e->mClass->mCollidesWith);
-    }
+        all = 0;
+        for (Entity* e = gHead; e; e = e->mNext)
+        {
+            const EntityClass& k = *e->mClass;
+            if (noting)
+            {
+                note(k.mGroups);
+                note(k.mCollidesWith);
+            }
+            sAll[all] = e;
+            sGroupsOf[all] = k.mGroups;
+            sWithOf[all] = k.mCollided ? k.mCollidesWith : 0;
+            all++;
+        }
+        return gListGen;
+    };
+    uint32_t snapGen = snapshot(true);
     // The targets in a group are listed once, rather than walking the whole entity list again for every collider:
     // while nothing joins or leaves the list (gListGen), the list's targets in order are exactly these.
     static Entity* sTargets[kMaxEntities] __attribute__((section(".sbss")));
+    // The targets' hitboxes and whether they update: only a callback changes those, so they're taken again after
+    // one rather than for every collider.
+    static Rect sBoxes[kMaxEntities] __attribute__((section(".sbss")));
+    static bool sUpdatable[kMaxEntities] __attribute__((section(".sbss")));
     for (int g = 0; g < groups; g++)
     {
         const uint32_t group = order[g];
-        int targets = 0;
-        for (Entity* t = gHead; t; t = t->mNext)
+        if (gListGen != snapGen)
         {
-            if (t->mClass->mGroups & group)
+            snapGen = snapshot(false);
+        }
+        int targets = 0;
+        int colliders = 0;
+        for (int k = 0; k < all; k++)
+        {
+            if (sGroupsOf[k] & group)
             {
-                sTargets[targets++] = t;
+                sTargets[targets++] = sAll[k];
+            }
+            if (sWithOf[k] & group)
+            {
+                sPicked[colliders++] = sAll[k];
             }
         }
         const uint32_t gen = gListGen;
-        for (Entity* c = gHead; c; c = c->mNext)
+        bool boxesTaken = false;
+        int ci = 0;
+        for (Entity* c = colliders ? sPicked[0] : nullptr; c;
+             c = gListGen == gen ? (++ci < colliders ? sPicked[ci] : nullptr) : c->mNext)
         {
             if ((c->mClass->mCollidesWith & group) == 0 || !c->mClass->mCollided || !Updatable(*c))
             {
@@ -1150,12 +1225,22 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
                 int i = 0;
                 for (; i < targets; i++)
                 {
+                    if (!boxesTaken)
+                    {
+                        for (int k = 0; k < targets; k++)
+                        {
+                            sUpdatable[k] = Updatable(*sTargets[k]);
+                            sBoxes[k] = Ecs_Hitbox(*sTargets[k]);
+                        }
+                        boxesTaken = true;
+                    }
                     Entity* tt = sTargets[i];
-                    if (tt == c || !Updatable(*tt) || !Ecs_Intersects(hc, Ecs_Hitbox(*tt)))
+                    if (tt == c || !sUpdatable[i] || !Ecs_Intersects(hc, sBoxes[i]))
                     {
                         continue;
                     }
                     c->mClass->mCollided(*c, *tt);
+                    boxesTaken = false;
                     if (!Updatable(*c))
                     {
                         done = true;
@@ -1186,6 +1271,7 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
                 if (Ecs_Intersects(Ecs_Hitbox(*c), Ecs_Hitbox(*t)))
                 {
                     c->mClass->mCollided(*c, *t);
+                    boxesTaken = false;
                     if (!Updatable(*c))
                     {
                         break;
@@ -1375,6 +1461,8 @@ struct FrameSlot final
     uint32_t mLastUsed;
 };
 FrameSlot gFrames[kFrameCacheSize] ECS_EWRAM;
+// Where a sheet's frame was last found in gFrames, by a hash of the two (checked: a stale hint just means a search).
+uint8_t gFrameHint[256] ECS_EWRAM;
 int gFrameTiles = 0;
 uint32_t gDrawTick = 1;
 
@@ -1393,6 +1481,16 @@ int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
     {
         frame = 0;
     }
+    const uint32_t hash = ((reinterpret_cast<uintptr_t>(sheet) >> 2) ^ (static_cast<uint32_t>(frame) * 37)) & 255;
+    {
+        const int hint = gFrameHint[hash];
+        FrameSlot& s = gFrames[hint < kFrameCacheSize ? hint : 0];
+        if (s.mSheet == sheet && s.mFrame == frame)
+        {
+            s.mLastUsed = gDrawTick;
+            return s.mBlock;
+        }
+    }
     int freeSlot = -1;
     for (int i = 0; i < kFrameCacheSize; i++)
     {
@@ -1400,6 +1498,7 @@ int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
         if (s.mSheet == sheet && s.mFrame == frame)
         {
             s.mLastUsed = gDrawTick;
+            gFrameHint[hash] = static_cast<uint8_t>(i);
             return s.mBlock;
         }
         if (!s.mSheet && freeSlot < 0)
@@ -1441,6 +1540,7 @@ int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
             freeSlot = lru;
         }
     }
+    gFrameHint[hash] = static_cast<uint8_t>(freeSlot);
     FrameSlot& s = gFrames[freeSlot];
     s.mSheet = sheet;
     s.mFrame = static_cast<uint16_t>(frame);
@@ -1520,7 +1620,10 @@ int32_t DepthKey(const Entity& e, int depth)
     if (v.mLayer == LAYER_ENTITIES)
     {
         const int y = FxTrunc(e.mT->mY);
-        const int inGrid = ((y % 160) + 160) % 160;
+        // (y mod 160 by a multiply where it's exact, as Thumb has no divide)
+        const uint32_t biased = static_cast<uint32_t>(y + 160 * 64);
+        const int inGrid = biased < 81920 ? static_cast<int>(biased - ((biased * 52429u) >> 23) * 160)
+                                          : ((y % 160) + 160) % 160;
         key += (inGrid + e.mB->mH + 256) << 6;
     }
     return key + 32;
@@ -1670,7 +1773,24 @@ void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shake
             // texture = P * screen, P = R(-rot) / scale (rot clockwise on screen).
             const fx c = FxCos(e.mT->mRot);
             const fx s = FxSin(e.mT->mRot);
-            const fx inv = FxDiv(kFxOne, v.mScale);
+            // 1 / scale, remembered for the last few scales (Thumb has no divide: FxDiv's is a slow library call, and
+            // a screen's scaled sprites mostly share a few scales)
+            static fx sScales[4] = { kFxOne, kFxOne, kFxOne, kFxOne };
+            static fx sInverses[4] = { kFxOne, kFxOne, kFxOne, kFxOne };
+            static int sNextScale = 0;
+            int si = 0;
+            while (si < 4 && sScales[si] != v.mScale)
+            {
+                si++;
+            }
+            if (si == 4)
+            {
+                si = sNextScale;
+                sNextScale = (sNextScale + 1) & 3;
+                sScales[si] = v.mScale;
+                sInverses[si] = FxDiv(kFxOne, v.mScale);
+            }
+            const fx inv = sInverses[si];
             const int cs = FxMul(c, inv).mRaw / 256; // 8.8
             const int sn = FxMul(s, inv).mRaw / 256;
             int pa = cs;
