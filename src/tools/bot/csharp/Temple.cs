@@ -414,7 +414,8 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel to the burst plant chasm", () => Exec("g3 O1 X1 door27 W30 H8,1 W30 H8,2 W30"));
             string wade = string.Concat(System.Linq.Enumerable.Repeat("D2 RD4 ", 18));
             yield return Section("hotel burst plant chasm", () => Exec("D16 er1327 R60 +k W10 G1408,452 L7 " + wade + "R20 >1456,560"));
-            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F W20 +s W60"));
+            // ((9,3)'s Dog darts about the chest's ledge and can outlast a fight: a soft one, and the chest is opened either way)
+            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F3600 W20 +s W60"));
         }
     }
 
@@ -455,14 +456,29 @@ namespace AnodyneSharp.Recording
 
     public class Postgame : BotScript
     {
+        /// <summary>
+        /// After the credits the game can go on from a save in BLUE (3,0): the way to the Nexus pad is back up (2,0)'s
+        /// laser column, its dust plugs gone with the reload. Plug them again as the endgame did (nothing to do from anywhere else).
+        /// </summary>
+        private static IEnumerable<object> OutOfBlue()
+        {
+            if (Map != "BLUE")
+            {
+                yield break;
+            }
+            yield return Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10");
+        }
+
         public override IEnumerable<object> Run()
         {
             yield return Say("The post-game cards");
+            yield return Section("out of blue", OutOfBlue);
             // Hotel (5,0) City Man: from the roof (the Hotel's menu warp lands there), dig east into the Teleguy room, clear it for its
             // kill gate and open the chest. (4,0) on the way is left alone: its Burst Plant sits in the ceiling between two Pew Lasers,
             // and fighting it under them cost the whole health bar; walking straight through costs a bolt from each. The menu warp
-            // lands back on the roof, which has no way down to the portal, so out the way the endgame leaves.
-            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 X0 >800,100 W5 X1 g6 F W60"
+            // lands back on the roof, which has no way down to the portal, so out the way the endgame leaves. (Hearts topped up first: the
+            // game goes on after the credits with what the endgame left, 8 of 14 once, and (4,0)'s bolts took the rest.)
+            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 heal W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 X0 >800,100 W5 X1 g6 F W60"
                 + " g0 I928,80,d W60 T W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200 X1"));
             // Street (1,6) Follower: dig down through the hedge to the chest.
             yield return Section("street follower card", () => Exec("O1 X1 viaSTREET W30 dig17,64 W10 I272,1008,d W60 T W30"));
@@ -527,8 +543,9 @@ namespace AnodyneSharp.Recording
             // forth over the edge, no map collision on either frame of it) holding Up climbs the edge line through the walls into the
             // room, and holding Down back out again after the chest. Post-game only, with the swap broom.
             yield return Section("nexus sealed card", () => Exec("O1 X1 >788,548 W10 wigU@408 W10 I832,400,d W60 T W30 >805,410 W10 wigD@546 W10"));
+            // (d1200: (1,3)'s Annoyers first, from the bank: dodging them off the raft sent it round the current's loop for good)
             yield return Section("debug green man card", () => Exec("O1 X1 door90 W60 >40,440 W10 ~40,470 W5 ~40,530 W5 ~150,600 W5"
-                + " ~340,500 W5 ~485,612 O0 rhop31,38/31,36/33,36/35,36/35,34/37,34/37,32/38,31;p;t12;rR O1 ~720,570 W10 I720,592,d W60 T W30"));
+                + " ~340,500 W5 d1200 W10 ~485,612 O0 rhop31,38/31,36/33,36/35,36/35,34/37,34/37,32/38,31;p;t12;rR O1 ~720,570 W10 I720,592,d W60 T W30"));
         }
     }
 
@@ -549,7 +566,8 @@ namespace AnodyneSharp.Recording
             yield return Section("blue (2,0) lasers", () => Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10"));
             yield return Section("blue mitra buttons", () => Exec("g6 O1 X1 b150,40 W30 G72,36 W1500"));
             yield return Section("blue back to go", () => Exec("g6 O1 X1 >36,84 W5 L40 W200 g6 O1 X1 >40,408 W30 L60 W100"));
-            yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,60 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
+            // (b60,57, not 60,60: a box at y 60 reaches the 2x2 pit's core corner, and a fight that left us below it stood at the lip)
+            yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,57 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
             yield return Section("happy back to go", () => Exec("g6 O1 X1 W30 >764,244 W10 R40 W150 >392,300 W30"));
             yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending credits"));
         }

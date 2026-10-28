@@ -1282,6 +1282,9 @@ namespace AnodyneSharp.Recording
         /// True if a steam jet lies over (or within 6px of) any of `tiles` and a crossing begun now could meet its burn: it is up (or rising),
         /// or it has been down for more than ~40 frames, or it has not been seen go down yet. A crossing of a few tiles takes well under a second.
         /// </summary>
+        /// <summary>True if our box is in a steam jet's line (up or not): waiting there for it is waiting for the burn.</summary>
+        protected static bool InSteamLine() => BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.Hitbox.Intersects(Player.Hitbox));
+
         protected static bool SteamUnsafeOver(List<Point> tiles)
         {
             foreach (var e in BotRunner.Entities())
@@ -8558,6 +8561,18 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 RaftLog($"round {round}: from {here} (wet={wetNow}) first water {path[wi]} goal {goal}, {path.Count} tiles");
+                var toLaunch = path.Take(wi + 2).ToList();
+                if (!wetNow && !InSteamLine() && SteamUnsafeOver(toLaunch))
+                {
+                    // A steam jet over the way to the launch (REDCAVE (5,0): its put-in is under one): wait out here for it to go down,
+                    // then go while it stays down. Walked in as it rose, its push held us in the burn for its whole two seconds.
+                    RaftLog($"round {round}: steam over the way to the launch at {path[wi]}: waiting for it to go down");
+                    for (int w = 0; w < 400 && SteamUnsafeOver(toLaunch) && !InSteamLine(); w++)
+                    {
+                        BotRunner.NotStuck();
+                        yield return K();
+                    }
+                }
                 if (!wetNow && Player.broom.dust == null && !BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
                 {
                     // No dust on this screen to float on (it does not come with us over a screen's edge, and the one here was ridden off
@@ -20996,6 +21011,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            _sweepNodes += seen.Count;
             _sweepReach = "" + string.Join(" ", seen.GroupBy(x => x.Item1).Select(g => $"{g.Key.X},{g.Key.Y}[{string.Join(",", g.Select(x => x.Item2).OrderBy(x => x))}]"));
             if (Environment.GetEnvironmentVariable("ANODYNE_SWEEP_TRACE") != null)
             {
@@ -21008,6 +21024,7 @@ namespace AnodyneSharp.Recording
         }
 
         private static string _sweepReach = "";
+        private static int _sweepNodes;
         private static bool _sweepWalkOk;
 
         /// <summary>Crosses this screen to `goal` (a tile on it or the first one past its edge) timing each move against its spike rollers.</summary>
@@ -21045,9 +21062,8 @@ namespace AnodyneSharp.Recording
                 }
                 var tracks = SweeperTracks(SweepStep * (SweepSteps + 3));
                 // (a short look ahead first: most ways turn up within a few dozen moves, and the long search is the bot's dearest frame)
-                long planT0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _sweepNodes = 0;
                 var plan = PlanPastSweepers(here, goal, tracks, 40) ?? PlanPastSweepers(here, goal, tracks);
-                double planMs = (System.Diagnostics.Stopwatch.GetTimestamp() - planT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 if (plan == null && noPlan < 120)
                 {
                     // No timed way from here just now (a bar about to reach us, say): don't hand over to the plain walk, which walks into it.
@@ -21119,9 +21135,9 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         BotRunner.Status = $"sweepers: no way yet from {here} (for {goal}): wait";
-                        // (plan again in a few frames: the search is dear, so the wait grows with what this one cost, to keep the
-                        // bot's own time per frame at ~5ms over the wait)
-                        int waitFor = Math.Clamp((int)Math.Ceiling(planMs / 5.0), 6, 30);
+                        // (plan again in a few frames: the search is dear, so the wait grows with what this one cost. Counted in the
+                        // search's states, not its milliseconds: a wait off the wall clock came out a frame or two different run to run)
+                        int waitFor = Math.Clamp((_sweepNodes + 1999) / 2000, 6, 30);
                         for (int w = 0; w < waitFor; w++, i++, noPlan++)
                         {
                             yield return K();
