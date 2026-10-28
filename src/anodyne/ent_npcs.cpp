@@ -5959,7 +5959,7 @@ bool EndingCutscene(Entity& self)
         if (d.mWhite < Fx(1))
         {
             // FadeEffect.ChangeAlpha(0.12f)
-            d.mWhite = d.mWhite + 0.12f * kFxTick;
+            d.mWhite = d.mWhite + FxMul(FxF(0.12f), kFxTick);
             d.mWhite = d.mWhite < 0 ? 0 : (d.mWhite > Fx(1) ? Fx(1) : d.mWhite);
             Screen_SetFade(fx(d.mWhite));
             return false;
@@ -5972,7 +5972,7 @@ bool EndingCutscene(Entity& self)
     case 16:
         if (d.mBlack < Fx(1))
         {
-            d.mBlack = d.mBlack + 0.3f * kFxTick;
+            d.mBlack = d.mBlack + FxMul(FxF(0.3f), kFxTick);
             d.mBlack = d.mBlack < 0 ? 0 : (d.mBlack > Fx(1) ? Fx(1) : d.mBlack);
             Screen_SetEndingBlack(fx(d.mBlack));
             return false;

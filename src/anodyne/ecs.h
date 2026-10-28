@@ -83,6 +83,15 @@ struct fx
     {
         return Raw(mRaw / n);
     }
+    // A float would quietly narrow to a whole number here (0.12f * kFxTick is 0): FxMul(FxF(...), ...) instead.
+    fx operator*(float) const = delete;
+    fx operator*(double) const = delete;
+    fx operator/(float) const = delete;
+    fx operator/(double) const = delete;
+    fx& operator*=(float) = delete;
+    fx& operator*=(double) = delete;
+    fx& operator/=(float) = delete;
+    fx& operator/=(double) = delete;
     fx& operator+=(fx o)
     {
         return *this = *this + o;
@@ -128,6 +137,8 @@ inline constexpr fx operator*(int n, fx v)
 {
     return v * n;
 }
+fx operator*(float, fx) = delete;
+fx operator*(double, fx) = delete;
 
 constexpr fx kFxZero = fx::Raw(0);
 constexpr fx kFxOne = fx::Raw(65536);

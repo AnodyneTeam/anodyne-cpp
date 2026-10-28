@@ -813,7 +813,7 @@ namespace AnodyneSharp.Recording
             }
             var p = Player;
             _trace.WriteLine($"{_frame}\t{Gs.Map}\t{(p == null ? 0 : (int)p.Position.ToXna().X)}\t{(p == null ? 0 : (int)p.Position.ToXna().Y)}\t{Gs.Health}\t{(string.IsNullOrEmpty(Gs.Dialogue) ? 0 : 1)}\tb{(Gs.HasBroom ? 1 : 0)}k{Gs.MapKeys}c{Gs.CardCount}");
-            _entTrace?.WriteLine($"{_frame}\t{EntLine()}");
+            _entTrace?.WriteLine($"{_frame}\t{EntLine()}\t{Gs.View.PlayerRaw}");
             if (!Active || _frame % 300 == 0)
             {
                 _trace.Flush();

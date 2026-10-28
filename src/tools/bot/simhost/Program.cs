@@ -203,6 +203,7 @@ void Replay(string inputPath, string tracePath, int show)
     // types the port has shown so far: the C# also lists the ones the port has no class for yet)
     // SIMHOST_DUMP=FROM-TO: print both games' rows and entities for those C# frames
     long dumpFrom = -1, dumpTo = -1;
+    bool rawDiffShown = false;
     if (Environment.GetEnvironmentVariable("SIMHOST_DUMP") is string dump)
     {
         var d = dump.Split('-');
@@ -278,10 +279,14 @@ void Replay(string inputPath, string tracePath, int show)
                 continue;
             }
         }
+        if (f % 50000 == 0)
+        {
+            Console.Error.WriteLine($"(replay at C# f{f}, port {view.Mode} {view.Map})"); // (progress, and where a hang is)
+        }
         string mine = Row(f), theirs = string.Join("\t", cs[i]);
         if (f >= dumpFrom && f <= dumpTo)
         {
-            Console.WriteLine($"f{f}\n  C#   {theirs}\t{(csEnts.TryGetValue(f, out var de) ? de[1] + " " + (de.Length > 2 ? de[2] : "") : "")}\n  port {mine}\t{BotRunner.EntLine().Replace('\t', ' ')}");
+            Console.WriteLine($"f{f}\n  C#   {theirs}\t{(csEnts.TryGetValue(f, out var de) ? de[1] + " " + (de.Length > 2 ? de[2] : "") : "")}\n  port {mine}\t{BotRunner.EntLine().Replace('\t', ' ')}\n  port pos {view.Player?.Position.X:R},{view.Player?.Position.Y:R} mode={view.Mode} mask={(f < masks.Count ? masks[(int)f] : -1):x}");
         }
         if (!entDiffShown && i > start && f != resynced && csEnts.TryGetValue(f, out var ce))
         {
@@ -292,6 +297,12 @@ void Replay(string inputPath, string tracePath, int show)
                 entDiffShown = true;
                 Console.WriteLine($"first entity/RNG difference at C# f{f}:\n  C#   rng={ce[1]} {te}\n  port rng={mineE[0]} {me}");
             }
+        }
+        if (!rawDiffShown && i > start && f != resynced && csEnts.TryGetValue(f, out var cr) && cr.Length > 3 && cr[3] != view.PlayerRaw)
+        {
+            // (the player's exact Fix16 position: a sub-pixel drift shows up here long before it moves a pixel in the rows)
+            rawDiffShown = true;
+            Console.WriteLine($"first player sub-pixel difference at C# f{f}: C# {cr[3]} port {view.PlayerRaw}");
         }
         if (mine != theirs)
         {

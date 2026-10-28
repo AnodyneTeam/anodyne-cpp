@@ -23,6 +23,8 @@ namespace AnodyneSharp.Recording
         int Health { get; }
         /// <summary>GlobalState.RNG draws so far (InternalSample calls), -1 if not counted: for parity traces.</summary>
         long RngCalls { get; }
+        /// <summary>The player's position as raw Fix16 "x,y" ("-" with no player): for parity traces, finer than the pixel rows.</summary>
+        string PlayerRaw { get; }
         int MaxHealth { get; }
         /// <summary>The text of the open dialogue box: null or "" when none is open.</summary>
         string Dialogue { get; }

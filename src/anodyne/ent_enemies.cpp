@@ -905,7 +905,8 @@ struct DogData final
     TimerState<1> mAttack; // AttackTimer, armed once when the dog is made and never reset
 };
 
-const fx kDogAttackSpeeds[5] = { FxF(66.0f), FxF(84.0f), FxF(84.0f), FxF(96.0f), FxF(102.0f) };
+// AttackSpeed: 60 * the Fix speeds, so 60 times each one's rounding (66.0002..., not 66)
+const fx kDogAttackSpeeds[5] = { 60 * FxF(1.1f), 60 * FxF(1.4f), 60 * FxF(1.4f), 60 * FxF(1.6f), 60 * FxF(1.7f) };
 
 void DogSetFlip(Entity& self)
 {

@@ -14,8 +14,8 @@
 #include "title_data.h"
 #include "world.h"
 
-// The C#'s logic runs as it does there, floats and all (the bot's held Accept runs it at 8x, so its timing decides
-// the frame the title comes back on). Drawn here: the labels (BG0, the font's 7px glyphs, centred like the C#'s), the
+// The C#'s logic runs as it does there: its labels in float, the backdrop, overlay and screenies (UIEntities) in Fix
+// (the bot's held Accept runs it at 8x, so its timing decides the frame the title comes back on). Drawn here: the labels (BG0, the font's 7px glyphs, centred like the C#'s), the
 // "go" backdrop under its dim overlay (BG1), the screenies (BG2/BG3, one per frame cross-fading into the next), the
 // cast's sprites and the save popup.
 namespace
@@ -151,8 +151,8 @@ struct Credits final
     int mBase[kMaxLabels]; // each label's y relative to the first's
     const char* mText[kMaxLabels];
     const char* mEndText = "";
-    float mBgY = 0;
-    float mDim = 0;
+    fx mBgY = kFxZero; // (UIEntity positions and opacities are Fix in the C#, so these move as Fix; the labels stay float)
+    fx mDim = kFxZero;
     bool mStopScroll = false;
     int mStep = 0;
     int mIndex = 0;
@@ -166,9 +166,9 @@ struct Credits final
     // Screenie
     int mShotFrame = -1;
     bool mShotDone = false;
-    float mShotOverlay = 0; // its own opaque dim overlay
-    float mShot1 = 0;       // the frame shown
-    float mShot2 = 0;       // the frame before, fading out over it
+    fx mShotOverlay = kFxZero; // its own opaque dim overlay
+    fx mShot1 = kFxZero;       // the frame shown
+    fx mShot2 = kFxZero;       // the frame before, fading out over it
 } gC __attribute__((section(".sbss")));
 ObjVramAllocator* gVram = nullptr;
 
@@ -282,25 +282,26 @@ void ProgressScreenie()
     }
     if (f == 0)
     {
-        gC.mShot1 = 0;
+        gC.mShot1 = kFxZero;
     }
     else
     {
-        gC.mShot1 = 1;
-        gC.mShot2 = 1;
+        gC.mShot1 = kFxOne;
+        gC.mShot2 = kFxOne;
     }
 }
 
-// MathUtilities.MoveTo with GameTimes.DeltaTime scaled by TimeScale.
-bool MoveToScaled(float& v, float target, float speed, float dt)
+// MathUtilities.MoveTo (its Fix overload) with GameTimes.DeltaTime scaled by TimeScale.
+bool MoveToScaled(fx& v, fx target, fx speed, fx dt)
 {
+    const fx step = FxMul(speed, dt);
     if (v > target)
     {
-        v = v - speed * dt < target ? target : v - speed * dt;
+        v = v - step < target ? target : v - step;
     }
     else
     {
-        v = v + speed * dt > target ? target : v + speed * dt;
+        v = v + step > target ? target : v + step;
     }
     return v == target;
 }
@@ -440,7 +441,7 @@ void Draw()
         return;
     }
     REG_BG1HOFS = static_cast<uint16_t>(-40);
-    REG_BG1VOFS = static_cast<uint16_t>(kViewTop - static_cast<int>(gC.mBgY));
+    REG_BG1VOFS = static_cast<uint16_t>(kViewTop - FxTrunc(gC.mBgY));
     REG_BG2HOFS = REG_BG3HOFS = static_cast<uint16_t>(-40);
     REG_BG2VOFS = REG_BG3VOFS = 0; // (the screenies sit at C# y 10)
     auto weight = [](float v) { return static_cast<uint16_t>(static_cast<int>(v * 16 + 0.5f)); };
@@ -448,14 +449,14 @@ void Draw()
     if (f < 0)
     {
         REG_BLDCNT = BLD_BG1 | BLD_BLACK;
-        REG_BLDY = weight(gC.mDim);
+        REG_BLDY = weight(FxToFloat(gC.mDim));
         return;
     }
     if (f == 0)
     {
         // The first frame and its overlay fade in together over the dimmed backdrop, which is gone once they're done.
         REG_BG2CNT = BG_CBB(kCbbShots) | BG_SBB(kSbShot[0]) | BG_8BPP | BG_REG_32x32 | BG_PRIO(2);
-        if (gC.mShotOverlay >= 1)
+        if (gC.mShotOverlay >= kFxOne)
         {
             REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG1) | DCNT_BG2;
             REG_BLDCNT = 0;
@@ -463,7 +464,7 @@ void Draw()
         }
         REG_DISPCNT = REG_DISPCNT | DCNT_BG1 | DCNT_BG2;
         REG_BLDCNT = BLD_BG2 | BLD_STD | (BLD_BG1 << 8);
-        REG_BLDALPHA = BLDA_BUILD(weight(gC.mShot1), weight((1 - gC.mDim) * (1 - gC.mShotOverlay) * (1 - gC.mShot1)));
+        REG_BLDALPHA = BLDA_BUILD(weight(FxToFloat(gC.mShot1)), weight((1 - FxToFloat(gC.mDim)) * (1 - FxToFloat(gC.mShotOverlay)) * (1 - FxToFloat(gC.mShot1))));
         return;
     }
     // The last frame (on top) fades out over this one.
@@ -474,11 +475,11 @@ void Draw()
     const uint16_t bgTop = static_cast<uint16_t>(DCNT_BG2 << upper);
     const uint16_t bgBottom = static_cast<uint16_t>(DCNT_BG2 << lower);
     REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG1) | bgBottom;
-    if (gC.mShot2 > 0)
+    if (gC.mShot2 > kFxZero)
     {
         REG_DISPCNT = REG_DISPCNT | bgTop;
         REG_BLDCNT = (BLD_BG2 << upper) | BLD_STD | ((BLD_BG2 << lower) << 8);
-        REG_BLDALPHA = BLDA_BUILD(weight(gC.mShot2), weight(1 - gC.mShot2));
+        REG_BLDALPHA = BLDA_BUILD(weight(FxToFloat(gC.mShot2)), weight(1 - FxToFloat(gC.mShot2)));
     }
     else
     {
@@ -552,8 +553,8 @@ void Credits_Enter(ObjVramAllocator& vram)
         y += h > 180 ? h : 180;
     }
     gC.mEndText = Dialog_GetFor("misc", "any", "ending", 25 + 4);
-    gC.mBgY = -480 + 180;
-    gC.mDim = 0.2f;
+    gC.mBgY = Fx(-480 + 180);
+    gC.mDim = FxF(0.2f);
     InvalidateRing();
     for (int i = 0; i < 32 * 32; i++)
     {
@@ -607,6 +608,7 @@ bool Credits_Update()
         }
     }
     const float dt = kUiDeltaTime * timeScale;
+    const fx dtFx = FxF(dt); // GameTimes.DeltaTime: the float frame time times TimeScale, made Fix
     DrawCast(dt);
 
     // StateLogic
@@ -617,7 +619,7 @@ bool Credits_Update()
         gC.mStep = 1;
         [[fallthrough]];
     case 1:
-        if (!MoveToScaled(gC.mBgY, 0, 15, dt))
+        if (!MoveToScaled(gC.mBgY, kFxZero, Fx(15), dtFx))
         {
             break;
         }
@@ -638,7 +640,7 @@ bool Credits_Update()
         gC.mStep = 3;
         [[fallthrough]];
     case 3:
-        if (!MoveToScaled(gC.mDim, 0, 0.06f, dt))
+        if (!MoveToScaled(gC.mDim, kFxZero, FxF(0.06f), dtFx))
         {
             break;
         }
@@ -673,14 +675,14 @@ bool Credits_Update()
     {
         if (gC.mShotFrame == 0)
         {
-            if (MoveToScaled(gC.mShot1, 1, 0.54f, dt) || MoveToScaled(gC.mShotOverlay, 1, 0.54f, dt))
+            if (MoveToScaled(gC.mShot1, kFxOne, FxF(0.54f), dtFx) || MoveToScaled(gC.mShotOverlay, kFxOne, FxF(0.54f), dtFx))
             {
-                gC.mShot1 = 1;
-                gC.mShotOverlay = 1;
+                gC.mShot1 = kFxOne;
+                gC.mShotOverlay = kFxOne;
                 gC.mShotDone = true;
             }
         }
-        else if (MoveToScaled(gC.mShot2, 0, 0.54f, dt))
+        else if (MoveToScaled(gC.mShot2, kFxZero, FxF(0.54f), dtFx))
         {
             gC.mShotDone = true;
         }

@@ -16,6 +16,7 @@ namespace AnodyneSharp.Recording
         public bool ScreenTransition => GlobalState.ScreenTransition;
         public int Health => GlobalState.CUR_HEALTH;
         public long RngCalls => GlobalState.RNG is CountingRandom c ? c.Calls : -1;
+        public string PlayerRaw => BotRunner.GamePlayer is { } p ? $"{p.Position.X.Raw},{p.Position.Y.Raw}" : "-";
         public int MaxHealth => GlobalState.MAX_HEALTH;
         public string Dialogue => GlobalState.Dialogue;
         public bool LastDialogueFinished => GlobalState.LastDialogueFinished;

@@ -150,6 +150,7 @@ namespace AnodyneSharp.Recording
         public bool ScreenTransition => Bool("transition");
         public int Health => _state.GetProperty("player").GetProperty("health").GetInt32();
         public long RngCalls => _state.TryGetProperty("rng", out var r) ? r.GetInt64() : -1;
+        public string PlayerRaw => Player != null && _state.GetProperty("player").GetProperty("fx16") is var fx ? $"{fx[0].GetInt32()},{fx[1].GetInt32()}" : "-";
         public int MaxHealth => Int("maxHealth");
         // The port only reports whether the box is open, not its text.
         // GlobalState.Dialogue: empty while a cutscene's DialogueEvent box is up, as in the C#

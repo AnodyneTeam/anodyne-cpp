@@ -19,6 +19,9 @@ constexpr int kHitH = 12;
 constexpr int kDefaultYOffset = 4;
 constexpr fx kWalkSpeed = Fx(70);
 constexpr fx kFuckItWalkSpeed = Fx(200);
+// Player.ClimbLogic's walkSpeed * 0.7f: worked out in float before the Fix conversion, so 49 exactly, not 70 times Fix 0.7
+constexpr fx kClimbSpeed = FxF(70 * 0.7f);
+constexpr fx kFuckItClimbSpeed = FxF(200 * 0.7f);
 constexpr fx kBumpVelocity = Fx(50);
 constexpr fx kConveyorVel = Fx(35);
 constexpr fx kCornerAssist = Fx(30);
@@ -696,11 +699,11 @@ void LadderLogic()
         PlayerPlay("climb");
         if (key_is_down(KEY_UP))
         {
-            t.mVelY = -FxMul(WalkSpeed(), FxF(0.7f));
+            t.mVelY = -(gFuckItMode ? kFuckItClimbSpeed : kClimbSpeed);
         }
         else if (key_is_down(KEY_DOWN))
         {
-            t.mVelY = FxMul(WalkSpeed(), FxF(0.7f));
+            t.mVelY = (gFuckItMode ? kFuckItClimbSpeed : kClimbSpeed);
         }
         else
         {
