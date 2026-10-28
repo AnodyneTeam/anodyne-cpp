@@ -2070,7 +2070,9 @@ namespace AnodyneSharp.Recording
                         {
                             break;
                         }
-                        zones[t] = (zones.TryGetValue(t, out int z1) ? z1 : 0) + Math.Max(2, 13 - 3 * i);
+                        // (right beside it there is no crossing at all: it is on us at once, and its line there is too wide to jump
+                        // from a standstill; a route up APARTMENT (5,1)'s west column past its trap stood at the line for good)
+                        zones[t] = (zones.TryGetValue(t, out int z1) ? z1 : 0) + (i == 1 ? 40 : Math.Max(2, 13 - 3 * i));
                     }
                 }
             }

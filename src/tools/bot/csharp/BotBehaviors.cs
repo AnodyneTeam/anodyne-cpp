@@ -2698,6 +2698,13 @@ namespace AnodyneSharp.Recording
                 if (pick == null)
                 {
                     System.Console.Error.WriteLine($"  rat: no ambush spot within reach of {rat.Hitbox}");
+                    if (attempt < 2)
+                    {
+                        // (the room's other rats and dash traps can cover every spot for this lap: a moment later they have moved on,
+                        // APARTMENT (5,1)'s kill gate stayed shut after two fights that each gave up at once)
+                        yield return Wait(30);
+                        continue;
+                    }
                     yield break;
                 }
                 var (pf, ptl, pface) = pick.Value;
@@ -17401,6 +17408,10 @@ namespace AnodyneSharp.Recording
             {
                 // The same fight (same screen, same enemies) has ended with us put off its screen time after time (a current, a
                 // knock-back at the edge): starting it once more only goes round again. Leave it to the route.
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  fight refused: {key} ended off its screen {_fightLeftCount} times");
+                }
                 yield break;
             }
             if (soft && _fightDepth > 0 && (only == null || _fightDepth > 1 || _nestedSoft >= 6))
@@ -17409,6 +17420,10 @@ namespace AnodyneSharp.Recording
                 // itself, round and round for ever: the outer fight is already on it; so would the "shooter on the way" one, for the very
                 // plant the outer fight was routing over a gap to, 7000 times over. One foe in the way of the outer fight's walk is fought,
                 // a few times over at most: refused, the walk went on into the Slime blocking a corridor, hit after hit.)
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  fight refused: nested (depth {_fightDepth}, soft {_nestedSoft})");
+                }
                 yield break;
             }
             if (_fightDepth == 0)

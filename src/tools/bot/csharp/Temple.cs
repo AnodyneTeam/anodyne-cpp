@@ -256,7 +256,8 @@ namespace AnodyneSharp.Recording
                 ">642,818 W10 `h2_45"));
             // (4,5), first visit: its dust onto the DOWN platform to the pocket, hop the hole to the bullet Slimes and kill them (that opens the
             // north gate for good), their dust back over the hole onto the UP platform, and up. A fight may end with us back in the pocket.
-            yield return Section("hotel2 (4,5) slimes", () => Exec("O1 X0 J41,51,r+ W10 J42,51,d- W20 (42,52 W10 )712,920,40 G690,915 W5 er697 W20 G752,915 X1 F W60 X0 " +
+            // (fight from where the hop lands before walking on: a bullet Slime in the way of the walk pushed us back into the pocket)
+            yield return Section("hotel2 (4,5) slimes", () => Exec("O1 X0 J41,51,r+ W10 J42,51,d- W20 (42,52 W10 )712,920,40 G690,915 W5 er697 W20 X1 F G752,915 F W60 X0 " +
                 "'43,57,5 )712,920,40 G690,915 W5 er697 W30 J47,58,r+ W10 G722,915 W5 el W30 J43,57,u- W20 (43,56 W10 `h2_45b"));
             // (4,5) again: out west and back puts its dust back; onto the RIGHT platform this time, across to the open gate, and (4,4)'s Dog.
             yield return Section("hotel2 (4,5) to (4,4) and its dog", () => Exec("O1 X0 G691,822 W5 G660,822 W5 G610,820 W20 G660,820 W20 J41,51,r+ W10 " +

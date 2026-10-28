@@ -639,6 +639,15 @@ namespace AnodyneSharp.Recording
                 {
                     _stack.Pop();
                 }
+                if (_stack.Count > 0)
+                {
+                    // (the dropped helpers' finally blocks have to run: a fight left in mid-air kept its nesting count up, and every
+                    // fight on the way after that death was refused as "nested", hit after hit from an Annoyer nothing would answer)
+                    foreach (var e in keep.Take(keep.Count - _stack.Count))
+                    {
+                        e.Dispose();
+                    }
+                }
                 if (_stack.Count == 0)
                 {
                     foreach (var e in Enumerable.Reverse(keep))
@@ -676,7 +685,7 @@ namespace AnodyneSharp.Recording
                     System.Console.Error.WriteLine("  section step failed, retrying: " + e.Message);
                     while (_stack.Count > 0 && !(_stack.Peek() is SectionEnumerator))
                     {
-                        _stack.Pop();
+                        _stack.Pop().Dispose(); // (runs the dropped steps' finally blocks, as on a death)
                     }
                     ((SectionEnumerator)_stack.Peek()).Fail();
                     continue;
@@ -1833,7 +1842,9 @@ namespace AnodyneSharp.Recording
                     var me = Pos + new Vector2(5, 6);
                     return ring.OrderBy(x => (BotNav.CentreOf(x) + new Vector2(5, 6) - me).LengthSquared()).First();
                 }
-                if (d >= 6 || (t != start && !BotNav.IsSpike(t)) || BotNav.CurrentMap.GetTileClass(t).Item1 == AnodyneSharp.Entities.Touching.ANY)
+                // (and on through shallow water: a fight that ended with us on a hole's lip in REDCAVE (0,0)'s pool had only the
+                // current between us and floor)
+                if (d >= 6 || (t != start && !BotNav.IsSpike(t) && !OnConveyor(t)) || BotNav.CurrentMap.GetTileClass(t).Item1 == AnodyneSharp.Entities.Touching.ANY)
                 {
                     continue;
                 }
@@ -2048,13 +2059,15 @@ namespace AnodyneSharp.Recording
                             System.Console.Error.WriteLine($"  no path from unwalkable tile {BotNav.TileOf(Pos)} ({BotNav.CurrentMap.GetTileClass(BotNav.TileOf(Pos))}): walking off it to {exit}");
                         }
                         var ec = BotNav.CentreOf(exit);
-                        for (int w = 0; w < 45 && !BotNav.Walkable(BotNav.TileOf(Pos)); w++)
+                        for (int w = 0; w < 90 && !BotNav.Walkable(BotNav.TileOf(Pos)); w++)
                         {
                             // (a plain step at a time: a fall or a knock-back ends it, and the replan starts from wherever we are)
                             float ex = ec.X - Pos.X, ey = ec.Y - Pos.Y;
                             var keys = new List<KeyFunctions>();
-                            if (Math.Abs(ex) > 1.5f) { keys.Add(ex < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
-                            if (Math.Abs(ey) > 1.5f) { keys.Add(ey < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
+                            // (the long way first, the short one only when it is more than a nudge: a few px across into a raft's dust
+                            // beside us pinned us there, REDCAVE (0,0))
+                            if (Math.Abs(ex) > (Math.Abs(ey) > Math.Abs(ex) ? 8f : 1.5f)) { keys.Add(ex < 0 ? KeyFunctions.Left : KeyFunctions.Right); }
+                            if (Math.Abs(ey) > (Math.Abs(ex) > Math.Abs(ey) ? 8f : 1.5f)) { keys.Add(ey < 0 ? KeyFunctions.Up : KeyFunctions.Down); }
                             yield return keys.ToArray();
                         }
                         goto replan;

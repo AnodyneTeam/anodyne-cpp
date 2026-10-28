@@ -102,7 +102,8 @@ namespace AnodyneSharp.Recording
         {
             yield return Say("Red Cave: the top and the boss");
             yield return Section("redcave north entrance", () => Exec("n0 W60 O1 X1 oREDSEA@224,1105 W30 O1 X1 oREDCAVE@551,581 W60 `rc_north_in"));
-            yield return Section("redcave along the top", () => Exec("O1 X0 H5,0 W60 `rc_50_in"));
+            // (hearts first: the jets on the raft ride and the boss after it leave no room for a low start)
+            yield return Section("redcave along the top", () => Exec("heal O1 X0 H5,0 W60 `rc_50_in"));
             // (5,0): the way to the boss is up a channel whose current runs out of its room. Sweep up the dust by the north wall, drop it in
             // the channel's inlet straight after a steam burst and ride it against the current under both jets, into the boss room.
             // (rb1: the whole fight, its wave and dash phases too, which the route needs only for its code coverage.) One section with the
