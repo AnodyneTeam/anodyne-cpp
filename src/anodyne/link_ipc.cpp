@@ -79,8 +79,10 @@ void ReadLine()
         while (!(REG_JOYCNT & kJoyCntRecv))
         {
         }
-        const uint32_t w = REG_JOY_RECV;
+        // Acked before it's read: the host sends the next word once this one is read, and an ack after that could
+        // clear the next word's flag along with this one's.
         REG_JOYCNT = kJoyCntRecv;
+        const uint32_t w = REG_JOY_RECV;
         for (int i = 0; i < 4; i++)
         {
             const char c = static_cast<char>(w >> (8 * i));
