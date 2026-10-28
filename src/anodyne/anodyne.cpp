@@ -363,6 +363,8 @@ struct PerfProbe final
     uint32_t mEntities;
     uint32_t mAudioBad;     // AudioManager_SelfTest at boot: samples where qoa_run.s and the C++ loop differ
     uint32_t mAudioSamples; // and how many were compared
+    uint32_t mFxDivBad;     // CheckFxDiv at boot: divisions where fx_div_arm.s and libgcc's differ
+    uint32_t mFxDivChecks;  // and how many were compared
 };
 extern "C" PerfProbe gPerfProbe;
 PerfProbe gPerfProbe __attribute__((section(".sbss")));
@@ -376,6 +378,49 @@ __attribute__((noinline)) void PaintStack()
     {
         *p = 0x5354434B; // 'STCK'
     }
+}
+
+extern "C" int32_t FxDivRaw(int32_t a, int32_t b);
+extern "C" int32_t FxDivSlow(int32_t a, int32_t b);
+
+// FxDivRaw (fx_div_arm.s) against libgcc's 64-bit divide: the edges, then random pairs of all sizes.
+void CheckFxDiv()
+{
+    static const int32_t kEdges[] = { 0,      1,         -1,        2,         -2,         0x7FFF,
+                                      0x8000, -0x8000,   0xFFFF,    0x10000,   -0x10000,   0x7FFF0000,
+                                      INT32_MAX, INT32_MIN, INT32_MIN + 1, -0x7FFF0000, 12345, -98765 };
+    uint32_t bad = 0;
+    uint32_t checks = 0;
+    for (int32_t a : kEdges)
+    {
+        for (int32_t b : kEdges)
+        {
+            if (b != 0)
+            {
+                bad += FxDivRaw(a, b) != FxDivSlow(a, b) ? 1 : 0;
+                checks++;
+            }
+        }
+    }
+    uint32_t x = 2463534242u;
+    for (int i = 0; i < 20000; i++)
+    {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        const int32_t a = static_cast<int32_t>(x) >> (x & 31);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        const int32_t b = static_cast<int32_t>(x) >> (x & 31);
+        if (b != 0)
+        {
+            bad += FxDivRaw(a, b) != FxDivSlow(a, b) ? 1 : 0;
+            checks++;
+        }
+    }
+    gPerfProbe.mFxDivBad = bad;
+    gPerfProbe.mFxDivChecks = checks;
 }
 #endif
 
@@ -397,6 +442,7 @@ int main()
         gPerfProbe.mAudioBad = bad;
         gPerfProbe.mAudioSamples = samples;
     }
+    CheckFxDiv();
 #endif
     REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
     ScreenBlack(true);

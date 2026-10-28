@@ -473,7 +473,7 @@ bool RockInteract(Entity& self, Facing)
     if (Event_Get("RockTalk") == 0)
     {
         // The first rock also explains what rocks are.
-        static char sJoined[512];
+        static char sJoined[512] __attribute__((section(".sbss"))); // (EWRAM: IWRAM is the stack's)
         char rock[384];
         snprintf(rock, sizeof(rock), "%s", text ? text : "");
         const char* intro = Dialog_GetFor("misc", "any", "rock", 0);

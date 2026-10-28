@@ -252,6 +252,58 @@ CompiledAudioTrack AudioCompiler::CompileItem(const AudioItemSpec& spec)
     track.sampleRate = sampleRate;
     track.totalSamples = totalSamples;
 
+    if (spec.category.rfind("sfx", 0) == 0 && totalSamples > 0 && totalSamples <= mOptions.sfxPcmMaxSamples)
+    {
+        // PCM8, from the QOA (so it's the sound the QOA version played, and the cache still holds)
+        std::vector<int16_t> pcm(totalSamples);
+        qoa_desc qoa = {};
+        qoa.channels = 1;
+        qoa.samplerate = sampleRate;
+        uint32_t pos = 0;
+        uint32_t done = 0;
+        while (pos < encoded.size() && done < totalSamples)
+        {
+            unsigned int frameLenOut = 0;
+            const unsigned int used = qoa_decode_frame(&encoded[pos], static_cast<unsigned int>(encoded.size() - pos),
+                                                       &qoa, &pcm[done], &frameLenOut);
+            if (used == 0)
+            {
+                break;
+            }
+            pos += used;
+            done += frameLenOut;
+        }
+        int peak = 1;
+        for (int16_t v : pcm)
+        {
+            peak = std::max(peak, std::abs(static_cast<int>(v)));
+        }
+        // the most the clip can be scaled up (by 2^shift) with its peak still fitting a byte
+        int shift = 0;
+        while (shift < 7 && (static_cast<int64_t>(peak) << (shift + 1)) <= 127 * 256)
+        {
+            shift++;
+        }
+        std::vector<uint8_t> bytes(totalSamples);
+        for (uint32_t i = 0; i < totalSamples; i++)
+        {
+            const double scaled = std::round(static_cast<double>(pcm[i]) * (1 << shift) / 256.0);
+            bytes[i] = static_cast<uint8_t>(static_cast<int8_t>(std::clamp(scaled, -128.0, 127.0)));
+        }
+        auto [offset, length] = AddFrame(bytes.data(), totalSamples);
+        track.frames.push_back({offset, length});
+        track.pcm8 = true;
+        track.pcmShift = static_cast<uint8_t>(shift);
+        track.loopEnabled = spec.loop;
+        track.loopStartFrame = spec.loop ? std::min(spec.loopStartSample, totalSamples - 1) : 0;
+        if (mOptions.verbose)
+        {
+            printf("  %-24s %8u samples  %8u bytes  PCM8 (<< %d)\n", spec.name.c_str(), totalSamples, totalSamples,
+                   shift);
+        }
+        return track;
+    }
+
     uint32_t pos = 0;
     uint32_t nominalSampleOffset = 0;
     uint32_t loopStartFrameIdx = 0;

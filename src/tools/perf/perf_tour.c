@@ -43,6 +43,8 @@ enum
     P_ENTITIES = 60,
     P_AUDIO_BAD = 64,
     P_AUDIO_SAMPLES = 68,
+    P_FXDIV_BAD = 72,
+    P_FXDIV_CHECKS = 76,
 };
 static const unsigned kFrameCycles = 280896;
 static const unsigned kModeMapViewer = 1;
@@ -207,6 +209,7 @@ int main(int argc, char** argv)
         Run(1, 0);
     }
     printf("# audio decoder check: %u of %u samples differ\n", Rd(P_AUDIO_BAD), Rd(P_AUDIO_SAMPLES));
+    printf("# FxDiv check: %u of %u divisions differ\n", Rd(P_FXDIV_BAD), Rd(P_FXDIV_CHECKS));
     Run(200, 0);
     Tap(KEY_START, 90);
     Tap(KEY_A, 90);

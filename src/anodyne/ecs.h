@@ -186,8 +186,18 @@ constexpr fx FxMul(fx a, fx b)
 {
     return fx::Raw(static_cast<int32_t>((static_cast<int64_t>(a.mRaw) * b.mRaw) / 65536));
 }
+#if defined(__arm__) && !defined(ANODYNE_SIM)
+// FxDiv's division on the GBA, b != 0 (platform/gba/sys/fx_div_arm.s: ARM code in IWRAM, not libgcc's 64-bit one).
+extern "C" int32_t FxDivRaw(int32_t a, int32_t b);
+#endif
 constexpr fx FxDiv(fx a, fx b)
 {
+#if defined(__arm__) && !defined(ANODYNE_SIM)
+    if (!__builtin_is_constant_evaluated() && b.mRaw != 0)
+    {
+        return fx::Raw(FxDivRaw(a.mRaw, b.mRaw));
+    }
+#endif
     return b.mRaw == 0 ? fx::Raw(a.mRaw >= 0 ? INT32_MAX : INT32_MIN)
                        : fx::Raw(static_cast<int32_t>((static_cast<int64_t>(a.mRaw) * 65536) / b.mRaw));
 }

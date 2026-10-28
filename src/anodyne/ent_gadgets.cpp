@@ -2667,7 +2667,8 @@ bool ElevatorMenuStep(Entity& self)
         d.mMenuExit = true; // ExitSubState
         Game_PlaySfx("menu_select");
     }
-    if (d.mLastSel != d.mSel)
+    const bool moved = d.mLastSel != d.mSel;
+    if (moved)
     {
         d.mLastSel = d.mSel;
         Game_PlaySfx("menu_move");
@@ -2678,7 +2679,11 @@ bool ElevatorMenuStep(Entity& self)
         Dialog_HidePanel();
         return true;
     }
-    ElevatorMenuDraw(d);
+    // (drawn when it opens and when the selection moves: the text is rendered into sprites, which stay up)
+    if (moved)
+    {
+        ElevatorMenuDraw(d);
+    }
     return false;
 }
 

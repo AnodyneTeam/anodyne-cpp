@@ -15,11 +15,15 @@ typedef struct AudioTrackData
 {
     const char* name;      // debug-HUD only
     uint32_t sampleRate;
-    uint32_t totalSamples; // debug-HUD only (duration display)
+    uint32_t totalSamples;
     uint32_t frameCount;
     uint8_t loopEnabled;
-    uint32_t loopStartFrame; // index into `frames`, meaningful only if loopEnabled
+    uint32_t loopStartFrame; // index into `frames` (PCM8: the first sample), meaningful only if loopEnabled
     const AudioFrameRef* frames;
+    // PCM8 (short SFX): frames[0] holds the samples, a signed byte each, each worth byte << (8 - pcmShift) at
+    // 16-bit scale. Mixed with an add rather than decoded.
+    uint8_t pcm8;
+    uint8_t pcmShift;
 } AudioTrackData;
 
 // Must be >= AudioCompilerOptions::frameLenSamples (see audio_compiler.hpp) -

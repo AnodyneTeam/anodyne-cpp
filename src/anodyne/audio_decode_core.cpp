@@ -96,9 +96,65 @@ namespace
     // each IWRAM entry point gets its own branch-free copy of the hot loop.
     // kAsm: the GBA's hand-written loop (qoa_run.s) where it can (the 2x one needs the last sample to be the
     // history's newest, which only a new frame's header breaks).
+    // MixImpl for a PCM8 track: the samples are there to add (the first of each 2x pair halfway from the previous
+    // one, as below).
+    template <bool kUp2>
+    inline __attribute__((always_inline)) uint32_t MixPcm(DecodeCursor* c, int32_t* accum, uint32_t count)
+    {
+        const uint32_t shift = 8u - c->track->pcmShift;
+        int32_t last = c->lastSample;
+        uint32_t written = 0;
+        while (written < count && c->active)
+        {
+            if (c->pcmLeft == 0)
+            {
+                const uint32_t start = c->track->loopStartFrame;
+                if (!c->loop || start >= c->track->totalSamples)
+                {
+                    c->active = 0;
+                    break;
+                }
+                c->pcm = reinterpret_cast<const int8_t*>(g_AudioBlobBase + c->track->frames[0].offset) + start;
+                c->pcmLeft = c->track->totalSamples - start;
+            }
+            uint32_t n = count - written;
+            if (n > c->pcmLeft)
+            {
+                n = c->pcmLeft;
+            }
+            const int8_t* p = c->pcm;
+            const int8_t* const pEnd = p + n;
+            int32_t* out = accum + (kUp2 ? written * 2 : written);
+            while (p != pEnd)
+            {
+                const int32_t s = static_cast<int32_t>(*p++) << shift;
+                if (kUp2)
+                {
+                    out[0] += (last + s) >> 1;
+                    out[1] += s;
+                    out += 2;
+                }
+                else
+                {
+                    *out++ += s;
+                }
+                last = s;
+            }
+            c->pcm = pEnd;
+            c->pcmLeft -= n;
+            written += n;
+        }
+        c->lastSample = last;
+        return written;
+    }
+
     template <bool kUp2, bool kAsm>
     inline __attribute__((always_inline)) uint32_t MixImpl(DecodeCursor* c, int32_t* accum, uint32_t count)
     {
+        if (c->track->pcm8)
+        {
+            return MixPcm<kUp2>(c, accum, count);
+        }
         uint32_t written = 0;
         while (written < count && c->active)
         {
@@ -213,6 +269,11 @@ void DecodeCursor_Start(DecodeCursor* c, const AudioTrackData* track, bool loop)
     c->track = track;
     c->loop = loop ? 1 : 0;
     c->active = (track != nullptr && track->frameCount > 0) ? 1 : 0;
+    if (c->active && track->pcm8)
+    {
+        c->pcm = reinterpret_cast<const int8_t*>(g_AudioBlobBase + track->frames[0].offset);
+        c->pcmLeft = track->totalSamples;
+    }
 }
 
 

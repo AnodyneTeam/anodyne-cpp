@@ -41,6 +41,8 @@ struct DecodeCursor final
     int32_t weights[4] = {};
     int32_t lastSample = 0;  // previous decoded sample (for 2x upsampling's interpolation)
     uint32_t frameIndex = 0; // index of the NEXT frame to start
+    const int8_t* pcm = nullptr; // PCM8: the next sample
+    uint32_t pcmLeft = 0;        // PCM8: samples before the end
     uint8_t active = 0;
     uint8_t loop = 0;
 };

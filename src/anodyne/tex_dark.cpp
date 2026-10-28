@@ -182,28 +182,53 @@ void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tin
     const int want = 256 + 16 * Ecs_ObjBanksInUse();
     const int end = want > oldEnd ? want : oldEnd;
     // New base colours: all of them when starting (or newly covered), else those the game rewrote since the band
-    // went in.
-    static bool sDirty[kEntries] __attribute__((section(".sbss")));
+    // went in. Compared a word (two colours) at a time: both ranges are whole words.
+    static uint16_t sDirty[kEntries] __attribute__((section(".sbss")));
+    int dirtyCount = 0;
+    const int ranges[2][2] = { { 0, gBgCount }, { 256, end } };
     {
         const u16 ime = REG_IME;
         REG_IME = 0;
-        const int shown = gShown;
-        for (int i = 0; i < end; i = NextEntry(i))
+        const uint32_t* const pal = reinterpret_cast<const uint32_t*>(pal_bg_mem);
+        const uint32_t* const shown = reinterpret_cast<const uint32_t*>(gBands[gShown]);
+        for (const auto& range : ranges)
         {
-            const uint16_t now = pal_bg_mem[i];
-            sDirty[i] = starting || i >= oldEnd || now != gBands[shown][i];
-            if (sDirty[i])
+            for (int i = range[0]; i < range[1]; i += 2)
             {
-                gBase[i] = now;
+                const uint32_t now = pal[i >> 1];
+                const bool all = starting || i >= oldEnd;
+                if (!all && now == shown[i >> 1])
+                {
+                    continue;
+                }
+                for (int half = 0; half < 2; half++)
+                {
+                    const uint16_t colour = static_cast<uint16_t>(now >> (16 * half));
+                    if (all || colour != static_cast<uint16_t>(shown[i >> 1] >> (16 * half)))
+                    {
+                        gBase[i + half] = colour;
+                        sDirty[dirtyCount++] = static_cast<uint16_t>(i + half);
+                    }
+                }
             }
         }
         REG_IME = ime;
     }
-    for (int i = 0; i < end; i = NextEntry(i))
+    if (lutChanged)
     {
-        if (lutChanged || sDirty[i])
+        for (const auto& range : ranges)
         {
-            BlendEntry(i);
+            for (int i = range[0]; i < range[1]; i++)
+            {
+                BlendEntry(i);
+            }
+        }
+    }
+    else
+    {
+        for (int k = 0; k < dirtyCount; k++)
+        {
+            BlendEntry(sDirty[k]);
         }
     }
     // The band on screen now, then the interrupt takes over from the next one.

@@ -65,10 +65,8 @@ SECTIONS
 
     .text : ALIGN(4)
     {
-        *(EXCLUDE_FILE(*libgcc.a:_arm_addsubsf3.o *libgcc.a:_arm_muldivsf3.o *libgcc.a:_arm_cmpsf2.o
-                       *libgcc.a:_arm_fixsfsi.o) .text)
-        *(EXCLUDE_FILE(*libgcc.a:_arm_addsubsf3.o *libgcc.a:_arm_muldivsf3.o *libgcc.a:_arm_cmpsf2.o
-                       *libgcc.a:_arm_fixsfsi.o) .text*)
+        *(.text)
+        *(.text*)
         *(.gnu.linkonce.t.*) /* Used for vague linking */
 
         /* ARM/Thumb interworking code */
@@ -186,11 +184,8 @@ SECTIONS
         *(.iwram*)
         *iwram.*(.text*)
         *iwram.*(.data*)
-        /* The soft float the gameplay leans on (its maths is float, as the C#'s): ARM code, 3-4x faster here */
-        *libgcc.a:_arm_addsubsf3.o(.text*)
-        *libgcc.a:_arm_muldivsf3.o(.text*)
-        *libgcc.a:_arm_cmpsf2.o(.text*)
-        *libgcc.a:_arm_fixsfsi.o(.text*)
+        /* (soft float stays in ROM: since Fix16 only menus and the HUD use it, and IWRAM is better spent on the
+           draw loop) */
         . = ALIGN(4);
         __IWRAM_END__ = .;
     } > IWRAM AT> ROM

@@ -13,6 +13,20 @@
 
 // Pools and per-frame buffers live in EWRAM (".sbss" in gba_cart.ld: uninitialised, Ecs_Init resets them).
 #define ECS_EWRAM __attribute__((section(".sbss")))
+// The draw loop runs every frame for every sprite: its code sits in IWRAM, which has no wait states.
+#ifdef ANODYNE_SIM
+#define ECS_IWRAM_CODE
+#else
+#define ECS_IWRAM_CODE __attribute__((section(".iwram.ecs_draw"), noinline))
+#endif
+
+#ifndef ANODYNE_SIM
+// FxDivRaw's quotients over 32 bits (fx_div_arm.s).
+extern "C" int32_t FxDivSlow(int32_t a, int32_t b)
+{
+    return static_cast<int32_t>((static_cast<int64_t>(a) * 65536) / b);
+}
+#endif
 
 namespace
 {
@@ -1062,13 +1076,42 @@ bool Ecs_SeparateRect(Entity& a, fx rx, fx ry, fx rw, fx rh, uint8_t allow)
 }
 
 // ---- Systems -------------------------------------------------------------------------------------------------
+namespace
+{
+struct DrawItem final
+{
+    Entity* mEntity;
+    int32_t mKey;
+};
+// Working space for one call of Ecs_DoCollisions or of Ecs_Draw, which never run at once: they share it (EWRAM is
+// nearly full).
+union FrameScratch
+{
+    struct
+    {
+        Entity* mPicked[kMaxEntities];
+        Entity* mAll[kMaxEntities];
+        uint32_t mGroupsOf[kMaxEntities];
+        uint32_t mWithOf[kMaxEntities];
+        Entity* mTargets[kMaxEntities];
+        Rect mBoxes[kMaxEntities];
+        bool mUpdatable[kMaxEntities];
+    } mCollisions;
+    struct
+    {
+        DrawItem mSorted[kMaxVisuals];
+    } mDraw;
+};
+FrameScratch gScratch ECS_EWRAM;
+} // namespace
+
 void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
 {
     Entity* player = World_Player();
 
     // The entities a pass could pick by their class (which never changes), listed once in list order: while nothing
     // joins or leaves the list (gListGen), walking these is walking the list and skipping the rest.
-    static Entity* sPicked[kMaxEntities] __attribute__((section(".sbss")));
+    Entity** const sPicked = gScratch.mCollisions.mPicked;
 
     // Map colliders: the map's tiles, then every solid PartOfMap entity they overlap.
     int partsOfMap = 0;
@@ -1156,9 +1199,9 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
     }
     // The list with each entity's groups and the groups it collides with (none without a callback), so the passes
     // below needn't go through every entity's class: taken again if the list changes.
-    static Entity* sAll[kMaxEntities] __attribute__((section(".sbss")));
-    static uint32_t sGroupsOf[kMaxEntities] __attribute__((section(".sbss")));
-    static uint32_t sWithOf[kMaxEntities] __attribute__((section(".sbss")));
+    Entity** const sAll = gScratch.mCollisions.mAll;
+    uint32_t* const sGroupsOf = gScratch.mCollisions.mGroupsOf;
+    uint32_t* const sWithOf = gScratch.mCollisions.mWithOf;
     int all = 0;
     auto snapshot = [&](bool noting)
     {
@@ -1181,11 +1224,11 @@ void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
     uint32_t snapGen = snapshot(true);
     // The targets in a group are listed once, rather than walking the whole entity list again for every collider:
     // while nothing joins or leaves the list (gListGen), the list's targets in order are exactly these.
-    static Entity* sTargets[kMaxEntities] __attribute__((section(".sbss")));
+    Entity** const sTargets = gScratch.mCollisions.mTargets;
     // The targets' hitboxes and whether they update: only a callback changes those, so they're taken again after
     // one rather than for every collider.
-    static Rect sBoxes[kMaxEntities] __attribute__((section(".sbss")));
-    static bool sUpdatable[kMaxEntities] __attribute__((section(".sbss")));
+    Rect* const sBoxes = gScratch.mCollisions.mBoxes;
+    bool* const sUpdatable = gScratch.mCollisions.mUpdatable;
     for (int g = 0; g < groups; g++)
     {
         const uint32_t group = order[g];
@@ -1462,7 +1505,8 @@ struct FrameSlot final
 };
 FrameSlot gFrames[kFrameCacheSize] ECS_EWRAM;
 // Where a sheet's frame was last found in gFrames, by a hash of the two (checked: a stale hint just means a search).
-uint8_t gFrameHint[256] ECS_EWRAM;
+constexpr int kFrameHints = 1024;
+uint8_t gFrameHint[kFrameHints] ECS_EWRAM;
 int gFrameTiles = 0;
 uint32_t gDrawTick = 1;
 
@@ -1481,7 +1525,9 @@ int AcquireFrame(const SpriteSheetEntry* sheet, int frame)
     {
         frame = 0;
     }
-    const uint32_t hash = ((reinterpret_cast<uintptr_t>(sheet) >> 2) ^ (static_cast<uint32_t>(frame) * 37)) & 255;
+    const uint32_t hash =
+        ((static_cast<uint32_t>(reinterpret_cast<uintptr_t>(sheet)) + static_cast<uint32_t>(frame)) * 2654435761u) >>
+        (32 - 10); // (kFrameHints = 2^10)
     {
         const int hint = gFrameHint[hash];
         FrameSlot& s = gFrames[hint < kFrameCacheSize ? hint : 0];
@@ -1629,12 +1675,6 @@ int32_t DepthKey(const Entity& e, int depth)
     return key + 32;
 }
 
-struct DrawItem final
-{
-    Entity* mEntity;
-    int32_t mKey;
-};
-DrawItem gDraw[kMaxVisuals] ECS_EWRAM;
 int gLastOamEnd = 0;
 int gLastOamFirst = 0;
 } // namespace
@@ -1677,13 +1717,14 @@ void Ecs_SetCutsceneView(bool on)
     gCutsceneView = on;
 }
 
-void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
+ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
 {
     if (!gVram)
     {
         return;
     }
     gDrawTick++;
+    DrawItem* const gDraw = gScratch.mDraw.mSorted;
     int count = 0;
     for (Entity* e = gHead; e && count < kMaxVisuals; e = e->mNext)
     {

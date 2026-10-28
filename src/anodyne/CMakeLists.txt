@@ -25,6 +25,7 @@ set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
     ${SOURCEDIR}/anodyne/platform/gba/sys/qoa_run.s
     ${SOURCEDIR}/anodyne/platform/gba/sys/lmul_arm.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/fx_div_arm.s
     ${ANODYNE_GAME_SOURCES}
 )
 

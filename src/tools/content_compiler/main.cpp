@@ -1022,9 +1022,9 @@ static void WriteAudioTrackArray(const char* arrayName, const char* varPrefix,
     for (size_t i = 0; i < tracks.size(); i++)
     {
         const CompiledAudioTrack& t = tracks[i];
-        fprintf(f, "    { \"%s\", %uu, %uu, %zuu, %u, %uu, %s_%zu_Frames },\n", EscapeCString(t.name).c_str(),
-                t.sampleRate, t.totalSamples, t.frames.size(), t.loopEnabled ? 1 : 0, t.loopStartFrame, varPrefix,
-                i);
+        fprintf(f, "    { \"%s\", %uu, %uu, %zuu, %u, %uu, %s_%zu_Frames, %u, %u },\n",
+                EscapeCString(t.name).c_str(), t.sampleRate, t.totalSamples, t.frames.size(), t.loopEnabled ? 1 : 0,
+                t.loopStartFrame, varPrefix, i, t.pcm8 ? 1 : 0, t.pcmShift);
     }
     fprintf(f, "};\n");
     fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n\n", arrayName, arrayName, arrayName);
@@ -1135,6 +1135,8 @@ static void CompileAllAudio(ContentPaths& contentPaths, const AudioCliOptions& c
     // not by frame size.) See AUDIO_MAX_FRAME_SAMPLES in audio_manager.h,
     // must match.
     options.frameLenSamples = 1280;
+    // PCM8 SFX (see AudioCompilerOptions): every clip up to bubble_loop's length, about +0.6MB of ROM.
+    options.sfxPcmMaxSamples = 26000;
 
     // Per-track loop-start overrides (in samples at the track's own encode
     // rate) - no original AnodyneSharp loop-point metadata exists anywhere in

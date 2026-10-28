@@ -83,6 +83,9 @@ bool gIntro = false;
 alignas(4) uint32_t gCanvas[kCanvasTiles * 8] __attribute__((section(".sbss")));  // 4bpp tiles, in OBJ order (each OBJ's tiles consecutive)
 alignas(4) uint32_t gBoxImage[kCanvasTiles * 8] __attribute__((section(".sbss"))); // the empty box, for fast redraws
 bool gUploadNeeded = false;
+uint32_t gUploads = 0;    // Upload()s so far
+uint32_t gLabelsHash = 0; // what Dialog_ShowLabels last drew (with gLabelsUpload: and it's still in the OBJs' tiles)
+uint32_t gLabelsUpload = 0;
 
 uint16_t gSavedBldCnt = 0;
 uint16_t gSavedBldAlpha = 0;
@@ -594,6 +597,7 @@ void Upload()
         tile += n;
     }
     gUploadNeeded = false;
+    gUploads++;
 }
 
 void PlaceObjs()
@@ -913,32 +917,58 @@ void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, i
     pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
     pal_obj_mem[kPalBank * 16 + kWhite] = RGB15(31, 31, 31);
     const uint32_t ink = white ? kWhite : kBlack;
-    memset(gCanvas, 0, sizeof(gCanvas));
+    // The same labels as last time, still in the OBJs' tiles (menus ask every frame): just the OBJs.
+    uint32_t hash = 2166136261u;
+    auto mix = [&hash](uint32_t v)
+    {
+        hash = (hash ^ v) * 16777619u;
+    };
     for (int i = 0; i < count; i++)
     {
-        int x = xs[i];
         for (const char* c = lines[i]; *c; c++)
         {
-            if (HasGlyph(*c) && *c != ' ')
-            {
-                DrawGlyph(*c, x, ys[i] - top, ink, white);
-            }
-            x += kCharW;
+            mix(static_cast<uint8_t>(*c));
         }
+        mix(0x100u + static_cast<uint32_t>(xs[i]));
+        mix(static_cast<uint32_t>(ys[i]));
     }
-    if (selectorY >= 0)
+    mix(static_cast<uint32_t>(count));
+    mix(static_cast<uint32_t>(top));
+    mix(static_cast<uint32_t>(selectorX));
+    mix(static_cast<uint32_t>(selectorY));
+    mix(ink);
+    const bool same = hash == gLabelsHash && gLabelsUpload == gUploads;
+    if (!same)
     {
-        // MenuSelector: a small arrow pointing right.
-        for (int r = 0; r < 5; r++)
+        memset(gCanvas, 0, sizeof(gCanvas));
+        for (int i = 0; i < count; i++)
         {
-            const int len = r < 3 ? r + 1 : 5 - r;
-            for (int c = 0; c < len; c++)
+            int x = xs[i];
+            for (const char* c = lines[i]; *c; c++)
             {
-                SetPixel(gCanvas, selectorX + c, selectorY - top + r, ink);
+                if (HasGlyph(*c) && *c != ' ')
+                {
+                    DrawGlyph(*c, x, ys[i] - top, ink, white);
+                }
+                x += kCharW;
             }
         }
+        if (selectorY >= 0)
+        {
+            // MenuSelector: a small arrow pointing right.
+            for (int r = 0; r < 5; r++)
+            {
+                const int len = r < 3 ? r + 1 : 5 - r;
+                for (int c = 0; c < len; c++)
+                {
+                    SetPixel(gCanvas, selectorX + c, selectorY - top + r, ink);
+                }
+            }
+        }
+        Upload();
+        gLabelsHash = hash;
+        gLabelsUpload = gUploads;
     }
-    Upload();
     if (gObjOam != (gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam))
     {
         HideObjs();
@@ -967,6 +997,7 @@ void Dialog_HideLabels()
         gVram->free(gObjBlock[o]);
     }
     gLabels = false;
+    gLabelsHash = 0;
 }
 
 void Dialog_ShowPanel(int x, int y, int w, int h)
