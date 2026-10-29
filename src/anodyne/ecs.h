@@ -207,9 +207,14 @@ constexpr fx FxMod(fx a, fx b)
     return fx::Raw(a.mRaw % b.mRaw);
 }
 // How far something moving at `perSecond` (px/s) goes in one update (GameTimes.DeltaTime * v).
+// (FxMul's result, but in 32-bit pieces: the tick is under 1.0, so no 64-bit multiply is needed)
 constexpr fx FxStep(fx perSecond)
 {
-    return FxMul(perSecond, kFxTick);
+    static_assert(kFxTick.mRaw > 0 && kFxTick.mRaw < 65536, "FxStep's split needs a tick under 1.0");
+    const int32_t v = perSecond.mRaw;
+    const uint32_t low = static_cast<uint32_t>(v & 0xFFFF) * static_cast<uint32_t>(kFxTick.mRaw);
+    const int32_t floor = (v >> 16) * kFxTick.mRaw + static_cast<int32_t>(low >> 16);
+    return fx::Raw(v < 0 && (low & 0xFFFF) != 0 ? floor + 1 : floor); // (FxMul rounds towards zero)
 }
 // As raw 16.16, for the bot link's JSON.
 constexpr int FxRaw16(fx v)

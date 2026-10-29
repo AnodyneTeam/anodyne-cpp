@@ -566,7 +566,28 @@ fx Rng_Unit()
 
 int Rng_Range(int lo, int hi)
 {
-    return static_cast<int>(Rng_NextDouble() * (static_cast<int64_t>(hi) - lo)) + lo;
+    // (int)(NextDouble() * range): next * range / (2^31 - 1) in integers (no soft doubles), unless it lands too near a
+    // whole number for the doubles' rounding to be sure of; then the doubles themselves.
+    constexpr uint32_t kMbig = 0x7FFFFFFF;
+    constexpr uint32_t kSlack = 1u << 16;
+    const int64_t range = static_cast<int64_t>(hi) - lo;
+    const int next = Rng_Next();
+    if (range > 0 && range <= INT32_MAX)
+    {
+        const uint64_t p = static_cast<uint64_t>(next) * static_cast<uint64_t>(range);
+        uint32_t q = static_cast<uint32_t>(p >> 31); // p = q * 2^31 + low = q * kMbig + (low + q)
+        uint32_t r = static_cast<uint32_t>(p & kMbig) + q;
+        while (r >= kMbig)
+        {
+            r -= kMbig;
+            q++;
+        }
+        if (r > kSlack && r < kMbig - kSlack)
+        {
+            return static_cast<int>(q) + lo;
+        }
+    }
+    return static_cast<int>(next * (1.0 / 0x7FFFFFFF) * range) + lo;
 }
 
 int FacingX(Facing f)

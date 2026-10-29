@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -1027,7 +1028,21 @@ static void WriteAudioTrackArray(const char* arrayName, const char* varPrefix,
                 t.loopStartFrame, varPrefix, i, t.pcm8 ? 1 : 0, t.pcmShift);
     }
     fprintf(f, "};\n");
-    fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n\n", arrayName, arrayName, arrayName);
+    fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n", arrayName, arrayName, arrayName);
+    // The indices in strcmp order of their names (ties by index), so a lookup by name is a binary search.
+    std::vector<uint16_t> byName(tracks.size());
+    for (size_t i = 0; i < tracks.size(); i++)
+    {
+        byName[i] = static_cast<uint16_t>(i);
+    }
+    std::stable_sort(byName.begin(), byName.end(), [&](uint16_t a, uint16_t b)
+                     { return strcmp(tracks[a].name.c_str(), tracks[b].name.c_str()) < 0; });
+    fprintf(f, "static const uint16_t %sByName[] = {", arrayName);
+    for (size_t i = 0; i < byName.size(); i++)
+    {
+        fprintf(f, "%s%u", i == 0 ? "\n    " : (i % 16 ? ", " : ",\n    "), byName[i]);
+    }
+    fprintf(f, "%s};\n\n", byName.empty() ? " 0 " : "\n");
 }
 
 static void WriteAudioRegistry(uint32_t outputSampleRate, const std::vector<CompiledAudioTrack>& bgm,

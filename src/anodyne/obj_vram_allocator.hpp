@@ -24,13 +24,8 @@ public:
         if (blocksNeeded <= 0 || sizeBytes % BlockSize != 0)
             return -1;
 
-        for (int i = 0; i + blocksNeeded <= BlockCount; ) {
-
-            if (i % blocksNeeded != 0) {
-                i += (blocksNeeded - (i % blocksNeeded));
-                continue;
-            }
-
+        // (aligned to its own size: i stays a multiple of blocksNeeded, with no divide per step)
+        for (int i = 0; i + blocksNeeded <= BlockCount; i += blocksNeeded) {
             int j;
             for (j = 0; j < blocksNeeded; j++) {
                 if (map[i + j] != UNUSED)
@@ -43,8 +38,6 @@ public:
                     map[i + j] = CONTINUE;
                 return i;      // block ID == tile index
             }
-
-            i += blocksNeeded;
         }
 
         return -1;

@@ -306,22 +306,30 @@ const char* AudioManager_GetSfxName(uint32_t sfxId)
     return (sfxId < kSfxClipsCount) ? kSfxClips[sfxId].name : "";
 }
 
-static int32_t FindTrack(const AudioTrackData* tracks, uint32_t count, const char* name)
+// A binary search of the names in order (byName, from the content compiler); the first track of that name.
+static int32_t FindTrack(const AudioTrackData* tracks, const uint16_t* byName, uint32_t count, const char* name)
 {
-    for (uint32_t i = 0; i < count; i++)
+    uint32_t lo = 0;
+    uint32_t hi = count;
+    while (lo < hi)
     {
-        if (strcmp(tracks[i].name, name) == 0)
+        const uint32_t mid = (lo + hi) / 2;
+        if (strcmp(tracks[byName[mid]].name, name) < 0)
         {
-            return (int32_t)i;
+            lo = mid + 1;
+        }
+        else
+        {
+            hi = mid;
         }
     }
-    return -1;
+    return lo < count && strcmp(tracks[byName[lo]].name, name) == 0 ? static_cast<int32_t>(byName[lo]) : -1;
 }
 
-int32_t AudioManager_FindBgm(const char* name) { return FindTrack(kBgmTracks, kBgmTracksCount, name); }
+int32_t AudioManager_FindBgm(const char* name) { return FindTrack(kBgmTracks, kBgmTracksByName, kBgmTracksCount, name); }
 int32_t AudioManager_FindAmbience(const char* name)
 {
-    return FindTrack(kAmbienceTracks, kAmbienceTracksCount, name);
+    return FindTrack(kAmbienceTracks, kAmbienceTracksByName, kAmbienceTracksCount, name);
 }
 int32_t AudioManager_FindSfx(const char* name)
 {
@@ -343,7 +351,7 @@ int32_t AudioManager_FindSfx(const char* name)
             }
         }
     }
-    const int32_t id = FindTrack(kSfxClips, kSfxClipsCount, name);
+    const int32_t id = FindTrack(kSfxClips, kSfxClipsByName, kSfxClipsCount, name);
     if (rom)
     {
         sNames[sNext] = name;
