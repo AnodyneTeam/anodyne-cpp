@@ -273,6 +273,9 @@ bool MoveTo(fx& value, fx target, fx speedPerSecond);
 // Rng: the game's random numbers (GlobalState.RNG), .NET's System.Random exactly, so a run seeded like the C#'s
 // (RecordingManager.DeterministicSeed) rolls the same numbers.
 void Rng_Seed(int seed);
+// The C#'s Random is seeded from the clock; the GBA has none, so the title seeds it from how long the player took
+// to pick a file (unless Rng_Seed already chose a seed, as the bot does to match a C# run).
+void Rng_SeedFromPlayer(uint32_t entropy);
 // How many numbers have been drawn since Rng_Seed (the parity traces compare it with the C#'s).
 uint32_t Rng_Calls();
 // Random.Next(): [0, int.MaxValue).

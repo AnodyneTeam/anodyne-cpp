@@ -13,11 +13,14 @@
 
 // Pools and per-frame buffers live in EWRAM (".sbss" in gba_cart.ld: uninitialised, Ecs_Init resets them).
 #define ECS_EWRAM __attribute__((section(".sbss")))
-// The draw loop runs every frame for every sprite: its code sits in IWRAM, which has no wait states.
+// The loops run every frame for every entity (drawing, collisions, physics): their code sits in IWRAM, which has no
+// wait states. (ECS_IWRAM_LEAF: small helpers they call, still inlined where the compiler likes)
 #ifdef ANODYNE_SIM
 #define ECS_IWRAM_CODE
+#define ECS_IWRAM_LEAF
 #else
 #define ECS_IWRAM_CODE __attribute__((section(".iwram.ecs_draw"), noinline))
+#define ECS_IWRAM_LEAF __attribute__((section(".iwram.ecs_draw")))
 #endif
 
 #ifndef ANODYNE_SIM
@@ -441,8 +444,23 @@ bool MoveTo(fx& value, fx target, fx speedPerSecond)
 }
 
 // ---- Rng: .NET's legacy System.Random (Knuth's subtractive generator), as seeded with an int ----------------
+namespace
+{
+bool gRngPinned = false; // a seed was chosen (the bot's, to match a C# run): the player's choice doesn't replace it
+} // namespace
+
+void Rng_SeedFromPlayer(uint32_t entropy)
+{
+    if (!gRngPinned)
+    {
+        Rng_Seed(static_cast<int>(entropy & 0x7FFFFFFF));
+        gRngPinned = false;
+    }
+}
+
 void Rng_Seed(int seed)
 {
+    gRngPinned = true;
     constexpr int kMbig = 0x7FFFFFFF;
     constexpr int kMseed = 161803398;
     const int subtraction = seed == INT32_MIN ? INT32_MAX : (seed < 0 ? -seed : seed);
@@ -980,12 +998,12 @@ int Ecs_SpriteHeight(const Entity& e)
 }
 
 // ---- GameObject helpers --------------------------------------------------------------------------------------
-Rect Ecs_Hitbox(const Entity& e)
+ECS_IWRAM_LEAF Rect Ecs_Hitbox(const Entity& e)
 {
     return { FxTrunc(e.mT->mX), FxTrunc(e.mT->mY), e.mB->mW, e.mB->mH };
 }
 
-bool Ecs_Intersects(const Rect& a, const Rect& b)
+ECS_IWRAM_LEAF bool Ecs_Intersects(const Rect& a, const Rect& b)
 {
     return a.mX < b.mX + b.mW && a.mX + a.mW > b.mX && a.mY < b.mY + b.mH && a.mY + a.mH > b.mY;
 }
@@ -1126,7 +1144,7 @@ union FrameScratch
 FrameScratch gScratch ECS_EWRAM;
 } // namespace
 
-void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
+ECS_IWRAM_CODE void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int screenY)
 {
     Entity* player = World_Player();
 
@@ -1388,7 +1406,7 @@ void Ecs_BaseUpdate(Entity& e)
     }
 }
 
-void Ecs_BasePostUpdate(Entity& e)
+ECS_IWRAM_CODE void Ecs_BasePostUpdate(Entity& e)
 {
     Physics(e);
     if (e.mV)

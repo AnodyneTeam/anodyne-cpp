@@ -5,6 +5,7 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
+#include "ecs.h"
 #include "game_state.h"
 #include "save.h"
 #include "screen_fx.hpp"
@@ -493,6 +494,8 @@ void Title_Enter(ObjVramAllocator& vram)
 
 bool Title_Update(int* slot)
 {
+    static uint32_t sFrames = 0; // (the seed: frames on the title, and where in the frame the press was read)
+    sFrames++;
     const bool anyKey = key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START);
     UpdateBg(true);
     bool start = false;
@@ -696,6 +699,7 @@ bool Title_Update(int* slot)
             PlaySfx("menu_select");
             if (gMenuIndex < 3)
             {
+                Rng_SeedFromPlayer(sFrames * 2654435761u ^ REG_VCOUNT);
                 *slot = gMenuIndex;
                 if (Save_Exists(gMenuIndex))
                 {

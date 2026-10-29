@@ -46,14 +46,16 @@ uint16_t* MapDst()
 
 // ---- Sampling the real screen at one pixel -------------------------------------------------------------------
 
+// (16-bit fields: 128 of these sit in IWRAM, which the stack shares)
 struct Obj final
 {
-    int x, y, w, h;
-    int cx, cy;           // centre of the (possibly double-size) box
+    int16_t x, y, w, h;
+    int16_t cx, cy;       // centre of the (possibly double-size) box
+    int16_t pa, pb, pc, pd;
+    int16_t tile;
+    uint8_t prio, bank;
     bool affine;
     bool hflip, vflip;
-    int pa, pb, pc, pd;
-    int tile, prio, bank;
 };
 
 Obj gObjs[128];
