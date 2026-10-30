@@ -106,7 +106,8 @@ std::vector<uint16_t> ExtractPaletteFromTileSet(const TileSet& tileSet)
 // ------------------------------------------------------------
 void SavePaletteGBA(const std::string& nameSpace,
                     const std::string& headerName,
-                    const std::vector<uint16_t>& palette)
+                    const std::vector<uint16_t>& palette,
+                    size_t fgFrom)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
@@ -114,7 +115,8 @@ void SavePaletteGBA(const std::string& nameSpace,
 
     fprintf(f, "namespace %s\n{\n", nameSpace.c_str());
     fprintf(f, "// Auto-generated GBA palette\n");
-    fprintf(f, "const unsigned short gTilesetPaletteSizeElements = %d;\n\n", palette.size());
+    fprintf(f, "const unsigned short gTilesetPaletteSizeElements = %d;\n", palette.size());
+    fprintf(f, "const unsigned short gTilesetPaletteFgFrom = %zu;\n\n", fgFrom);
     fprintf(f, "const unsigned short gTilesetPalette[%zu] =\n{\n", palette.size());
 
     for(size_t i=0; i<palette.size(); i++)
@@ -382,6 +384,74 @@ void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerNam
 // ------------------------------------------------------------
 // MAP COMPILATION
 // ------------------------------------------------------------
+static bool MapHasFgBlend(const std::string& mapName);
+
+// FG_Blend leaves the map's FG layer alone, so the 8x8 tiles only the FG layer draws get their own copy of the
+// colours, after the others, which TexDark doesn't FG_Blend (tiles the FG layer shares with the others can't, and
+// are blended). Returns where the copy starts: the palette's size if there is none.
+static size_t SplitFgColours(const std::string& mapName, const MapCompileResult& map, std::vector<uint16_t>& palette,
+                             std::vector<uint8_t>& tiles)
+{
+    const size_t base = palette.size();
+    if (!MapHasFgBlend(mapName) || map.layers[2].Width() == 0)
+    {
+        return base;
+    }
+    if (base * 2 - 1 > 256)
+    {
+        printf("WARNING: %s: no room for the FG layer's colours, FG_Blend blends it too\n", mapName.c_str());
+        return base;
+    }
+    const size_t tileCount = tiles.size() / 64;
+    std::vector<uint8_t> use(tileCount, 0); // bit 0: drawn by BG/BG2/animated tiles/scrolling background, bit 1: FG
+    for (int layer = 0; layer < 3; layer++)
+    {
+        const Array2D<uint32_t>& cells = map.layers[layer];
+        for (uint32_t y = 0; y < cells.Height(); y++)
+        {
+            for (uint32_t x = 0; x < cells.Width(); x++)
+            {
+                const uint32_t tile16 = cells.Get(x, y);
+                for (int q = 0; q < 4 && tile16 != 0 && tile16 * 4 + q < map.tile16Entries.size(); q++)
+                {
+                    use[map.tile16Entries[tile16 * 4 + q] & 0xFFFF] |= layer == 2 ? 2 : 1;
+                }
+            }
+        }
+    }
+    for (const TileAnimOut& a : map.anims)
+    {
+        for (uint32_t slot : a.slots)
+        {
+            use[slot] |= 1;
+        }
+    }
+    for (uint32_t entry : map.scrollPattern)
+    {
+        use[entry & 0xFFFF] |= 1;
+    }
+    int shared = 0;
+    for (size_t t = 0; t < tileCount; t++)
+    {
+        if (use[t] == 3)
+        {
+            shared++;
+        }
+        if (use[t] != 2)
+        {
+            continue;
+        }
+        for (size_t i = t * 64; i < t * 64 + 64; i++)
+        {
+            tiles[i] = static_cast<uint8_t>(tiles[i] ? tiles[i] + base - 1 : 0);
+        }
+    }
+    palette.insert(palette.end(), palette.begin() + 1, palette.begin() + base);
+    printf("%s: FG layer colours from %zu (%d 8x8 tiles shared with the other layers)\n", mapName.c_str(), base,
+           shared);
+    return base;
+}
+
 // Set when the generated map header format changed since the headers on disk were written.
 static bool gForceMapRebuild = false;
 
@@ -484,12 +554,13 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
         paletteTiles.AppendTilesToRow(ret.animFrameTiles);
     }
     auto palette = ExtractPaletteFromTileSet(paletteTiles);
-    SavePaletteGBA(mapName, palHeader, palette);
-
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
+    const std::vector<uint16_t> basePalette = palette;
+    const size_t fgFrom = SplitFgColours(mapName, ret, palette, tiles);
+    SavePaletteGBA(mapName, palHeader, palette, fgFrom);
     SaveTileSetGBA(mapName, tilesHeader, tiles);
 
-    SaveMapLayersGBA(mapName, mapHeader, ret, palette);
+    SaveMapLayersGBA(mapName, mapHeader, ret, basePalette);
 
     printf("Map compilation complete: %s\n", mapName.c_str());
 }
@@ -593,6 +664,7 @@ static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
     return kSpecs;
 }
 
+
 // ------------------------------------------------------------
 // MAP DARKNESS SETTINGS
 // The darkness settings from old/Content/Maps/<MAP>/Settings.json: DarknessAlpha (alpha -1 = not set there),
@@ -606,6 +678,7 @@ struct MapDarkArea final
     int playerLight; // -1 = not set
     const char* texture = "";
     const char* replace = nullptr;
+    const char* fgBlend = ""; // FG_Blend ("": not set)
 };
 
 struct MapDarkEvent final
@@ -625,11 +698,14 @@ struct MapDarkSpec final
     const char* texture = "";
     std::vector<MapDarkEvent> events = {};
     const char* extraBlend = ""; // Settings.json ExtraBlend: an overlay on the whole screen, over the darkness
+    const char* fgBlend = "";    // Settings.json FG_Blend: an overlay on all but the FG layer, under the darkness
+    bool staticFx = false;       // Settings.json Static: grey noise over the game screen
 };
 
 static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
 {
     static const std::vector<MapDarkSpec> kSpecs = {
+        { "APARTMENT", -1, false, {}, "apartment_overlay" },
         { "BEACH", -1, false, {}, "beach_hardlight" },
         { "BEDROOM", 0, false, {
             { 320, 0, 160, 160, 0.2f, -1 },
@@ -643,14 +719,17 @@ static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
         { "BLUE", -1, false, {}, "blue_overlay" },
         { "CIRCUS", 0, false, { { 1280, 160, 160, 160, 0.8f, -1 } } },
         { "CLIFF", -1, false, {}, "cliff_overlay" },
+        { "CROWD", -1, false, {}, "crowd_overlay" },
         { "DRAWER", 0, true, {
             { 0, 0, 320, 160, 1.0f, -1 },
             { 0, 160, 160, 640, 1.0f, -1 },
             { 0, 800, 960, 960, 1.0f, -1 },
-        } },
+        }, "", {}, "", "", true },
+        { "FOREST", -1, false, {}, "", {}, "", "forest_fg_overlay" },
         { "GO", -1, false, { { 320, 0, 160, 160, -1, -1, "ending_hardlight" } }, "go_hardlight" },
         { "HAPPY", -1, false, { { 320, 320, 480, 160, 0.0f, -1, "", "" } }, "",
           { { "HappyStarted", -1, "happy_hardlight", "20-21;30-31" } } },
+        { "HOTEL", -1, false, { { 0, 0, 960, 160, -1, -1, "", nullptr, "hotel_roof_fg_hardlight" } }, "hotel_overlay" },
         { "NEXUS", -1, false, {}, "nexus_overlay" },
         { "REDCAVE", -1, false, {}, "redcave_overlay" },
         { "REDSEA", -1, false, {}, "redsea_hardlight" },
@@ -661,16 +740,39 @@ static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
             { 0, 800, 320, 160, 0.91f, 1 },
             { 0, 1120, 320, 160, 0.91f, 1 },
             { 160, 960, 160, 160, 0.91f, 1 },
-        }, "", {}, "suburb_extra_overlay" },
+        }, "", {}, "suburb_extra_overlay", "suburb_fg_overlay", true },
         { "TERMINAL", -1, false, {}, "terminal_overlay" },
         { "WINDMILL", -1, false, {}, "windmill_overlay" },
     };
     return kSpecs;
 }
 
-// Darkness.Render with a texture: each 8px band of the 160x160 playfield as one colour and alpha (the texture's
-// pixels averaged, weighted by their alpha), what the GBA swaps the palettes by down the screen. An ExtraBlend
-// texture covers the 160x180 UI screen: its playfield is the last 160 rows.
+static bool MapHasFgBlend(const std::string& mapName)
+{
+    for (const auto& spec : GetMapDarkSpecs())
+    {
+        if (mapName != spec.map)
+        {
+            continue;
+        }
+        if (*spec.fgBlend)
+        {
+            return true;
+        }
+        for (const auto& area : spec.areas)
+        {
+            if (*area.fgBlend)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Darkness.Render with a texture: each 8px band of the 160x160 playfield as one colour and alpha (the median of the
+// texture's colours, which keeps the middle of a vignette as it is, and its average alpha), what the GBA swaps the
+// palettes by down the screen. An ExtraBlend texture covers the 160x180 UI screen: its playfield is the last 160 rows.
 constexpr int kDarkBands = 20;
 
 static bool DarkTextureBands(const ContentPaths& contentPaths, const std::string& name, std::string& out)
@@ -691,24 +793,25 @@ static bool DarkTextureBands(const ContentPaths& contentPaths, const std::string
     out += buf;
     for (int band = 0; band < kDarkBands; band++)
     {
-        double sum[3] = { 0, 0, 0 };
+        std::vector<uint8_t> channel[3];
         double alpha = 0;
         for (unsigned y = top + band * 8; y < top + band * 8 + 8u; y++)
         {
             for (unsigned x = 0; x < w; x++)
             {
                 const uint8_t* p = &px[(y * w + x) * 4];
-                for (int c = 0; c < 3; c++)
+                for (int c = 0; c < 3 && p[3] > 0; c++)
                 {
-                    sum[c] += p[c] * (p[3] / 255.0);
+                    channel[c].push_back(p[c]);
                 }
                 alpha += p[3] / 255.0;
             }
         }
         int rgba[4] = { 0, 0, 0, 0 };
-        for (int c = 0; c < 3 && alpha > 0; c++)
+        for (int c = 0; c < 3 && !channel[c].empty(); c++)
         {
-            rgba[c] = static_cast<int>(sum[c] / alpha + 0.5);
+            std::sort(channel[c].begin(), channel[c].end());
+            rgba[c] = channel[c][channel[c].size() / 2];
         }
         rgba[3] = static_cast<int>(alpha * 255 / (w * 8) + 0.5);
         snprintf(buf, sizeof(buf), " { %d, %d, %d, %d },", rgba[0], rgba[1], rgba[2], rgba[3]);
@@ -741,7 +844,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     {
         fprintf(f,
             "    {\n"
-            "        { %s::gTilesetPaletteSizeElements, %s::gTilesetPalette },\n"
+            "        { %s::gTilesetPaletteSizeElements, %s::gTilesetPalette, %s::gTilesetPaletteFgFrom },\n"
             "        { %s::gTilesetDataSizeElements,    %s::gTilesetData    },\n"
             "        { %s::gTile16Count, %s::gTile16Entries,\n"
             "          { { %s::gLayerWidth[0], %s::gLayerHeight[0], %s::gLayerUnpackedSize[0], %s::gLayer0Packed },\n"
@@ -751,7 +854,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             "          %s::gColTileCount, %s::gColTiles },\n"
             "        { %s::gTileAnimCount, %s::gTileAnims, %s::gTileAnimFrames }\n"
             "    },\n",
-            name.c_str(), name.c_str(),                                                            // palette (2)
+            name.c_str(), name.c_str(), name.c_str(),                                              // palette (3)
             name.c_str(), name.c_str(),                                                            // tileset (2)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // tile16 + layer 0 (6)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 1 (4)
@@ -848,8 +951,9 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
                 fprintf(f, "static const MapDarkArea kMapDarkAreas_%s[] = {\n", name.c_str());
                 for (const auto& area : spec.areas)
                 {
-                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s },\n", area.x, area.y, area.w, area.h,
-                            alpha256(area.alpha), area.playerLight, textureId(area.texture), quoted(area.replace).c_str());
+                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s, %d },\n", area.x, area.y, area.w, area.h,
+                            alpha256(area.alpha), area.playerLight, textureId(area.texture), quoted(area.replace).c_str(),
+                            textureId(area.fgBlend));
                 }
                 fprintf(f, "};\n");
             }
@@ -880,13 +984,14 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         {
             const std::string areas = spec->areas.empty() ? "nullptr" : "kMapDarkAreas_" + name;
             const std::string events = spec->events.empty() ? "nullptr" : "kMapDarkEvents_" + name;
-            fprintf(f, "    { %d, %d, %d, %zu, %s, %zu, %s, %d },\n", alpha256(spec->alpha), spec->playerLight ? 1 : 0,
-                    textureId(spec->texture), spec->areas.size(), areas.c_str(), spec->events.size(), events.c_str(),
-                    textureId(spec->extraBlend));
+            fprintf(f, "    { %d, %d, %d, %zu, %s, %zu, %s, %d, %d, %d },\n", alpha256(spec->alpha),
+                    spec->playerLight ? 1 : 0, textureId(spec->texture), spec->areas.size(), areas.c_str(),
+                    spec->events.size(), events.c_str(), textureId(spec->extraBlend), textureId(spec->fgBlend),
+                    spec->staticFx ? 1 : 0);
         }
         else
         {
-            fprintf(f, "    { 0, 0, -1, 0, nullptr, 0, nullptr, -1 },\n");
+            fprintf(f, "    { 0, 0, -1, 0, nullptr, 0, nullptr, -1, -1, 0 },\n");
         }
     }
     fprintf(f, "};\n\n");
@@ -1323,7 +1428,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "9-constexpr";
+        const std::string kMapFormatVersion = "11-solidrain";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))

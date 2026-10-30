@@ -21,6 +21,9 @@ bool World_TakeQuickLoad();
 void World_ForceTextureReload();
 // Copies the map's tileset into BG VRAM again (the pause menu draws over it).
 void World_ReloadTileset();
+// Once a frame in play, after everything else set the blend registers: the map's static or the windmill's rain
+// blended over the screen, while they're free.
+void World_ApplyBlendLayers();
 
 // Loads the map's palette/tileset into VRAM and its collision into RAM, then puts the player on a free spot.
 // mapName (e.g. "FIELDS") selects the map's foot-overlay sprites; `audio` is its music/ambience settings and `scroll` its scrolling background (if any).

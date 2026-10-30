@@ -869,6 +869,10 @@ int main()
         {
             ScreenBlack(false);
         }
+        if (mode == AppMode::MapViewer && !galleryOn)
+        {
+            World_ApplyBlendLayers();
+        }
 
         AudioManager_Update();
 #ifdef ANODYNE_PERF
