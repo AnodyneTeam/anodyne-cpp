@@ -1,0 +1,333 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
+index eed8300..f337ece 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
+@@ -40,7 +40,7 @@ namespace AnodyneSharp.Drawing
+             {
+                 Vector2 pos = Position2D;
+                 // (what the map draws: the wide view's screen reaches ViewMargin past the room either side)
+-                return new Rectangle((int)pos.X - SpriteDrawer.ViewMargin, (int)pos.Y, SpriteDrawer.ViewWidth, SCREEN_HEIGHT_IN_PIXELS);
++                return new Rectangle((int)pos.X - SpriteDrawer.MapMargin, (int)pos.Y, SpriteDrawer.ViewWidth, SCREEN_HEIGHT_IN_PIXELS);
+             }
+         }
+ 
+@@ -84,7 +84,7 @@ namespace AnodyneSharp.Drawing
+             Transform = Matrix.CreateTranslation(-Position) *
+                                          //Matrix.CreateRotationZ(Rotation) *
+                                          Matrix.CreateScale(new Vector3(Zoom, Zoom, 1)) *
+-                                         Matrix.CreateTranslation(new Vector3(SpriteDrawer.ViewWidth * 0.5f, 160 * 0.5f, 0)) *
++                                         Matrix.CreateTranslation(new Vector3(SpriteDrawer.ViewWidth * 0.5f, SCREEN_HEIGHT_IN_PIXELS * 0.5f, 0)) *
+                                          Matrix.CreateTranslation(Offset);
+         }
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
+index 651570a..e853a38 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
+@@ -37,7 +37,7 @@ namespace AnodyneSharp.Drawing
+             Vector2 topleft = Position + SpriteDrawer.Camera.Position2D;
+             Rectangle pos = new Rectangle((int)topleft.X, (int)topleft.Y, Texture.Width, Texture.Height);
+             SpriteDrawer.DrawSprite(Texture,pos,Z:DrawingUtilities.GetDrawingZ(_layer,0));
+-            if (SpriteDrawer.ViewMargin > 0)
++            if (SpriteDrawer.ViewWidth > Texture.Width / 2)
+             {
+                 // (the texture repeats every half: copies either side cover the wide view's margins)
+                 SpriteDrawer.DrawSprite(Texture, new Rectangle(pos.X - Texture.Width / 2, pos.Y, Texture.Width, Texture.Height), Z: DrawingUtilities.GetDrawingZ(_layer, 0));
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+index 6dfa1f6..71a8571 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+@@ -29,14 +29,16 @@ namespace AnodyneSharp.Drawing
+         // the 160px room, and the UI stays centred over it.
+         public const int WIDE_WIDTH = 240;
+         public static int ViewWidth => GlobalState.settings.wide_view ? WIDE_WIDTH : GameConstants.SCREEN_WIDTH_IN_PIXELS;
+-        public static int ViewMargin => (ViewWidth - GameConstants.SCREEN_WIDTH_IN_PIXELS) / 2;
++        // (the UI's and the 160px overlay textures' margin; MapMargin: how far the screen reaches past the room)
++        public static int ViewMargin => (ViewWidth - GameConstants.UI_WIDTH) / 2;
++        public static int MapMargin => (ViewWidth - GameConstants.SCREEN_WIDTH_IN_PIXELS) / 2;
+         private static int _targetWidth;
+ 
+         // A 160px-wide overlay texture's place on a ViewWidth-wide screen (blend.fx: clamped at its edges).
+         public static void SetOverlayRect(Effect e, bool screenSized)
+         {
+-            float scale = screenSized ? 1f : ViewWidth / (float)GameConstants.SCREEN_WIDTH_IN_PIXELS;
+-            float offset = screenSized ? 0f : -ViewMargin / (float)GameConstants.SCREEN_WIDTH_IN_PIXELS;
++            float scale = screenSized ? 1f : ViewWidth / (float)GameConstants.UI_WIDTH;
++            float offset = screenSized ? 0f : -ViewMargin / (float)GameConstants.UI_WIDTH;
+             e.Parameters["OverlayScale"].SetValue(new Vector2(scale, 1f));
+             e.Parameters["OverlayOffset"].SetValue(new Vector2(offset, 0f));
+         }
+@@ -49,12 +51,12 @@ namespace AnodyneSharp.Drawing
+             _depth?.Dispose();
+             _render?.Dispose();
+             _render2?.Dispose();
+-            _game = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
+-            _game2 = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
+-            _depth = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
+-            _render = new RenderTarget2D(_graphicsDevice, _targetWidth, 180);
+-            _render2 = new RenderTarget2D(_graphicsDevice, _targetWidth, 180);
+-            _depthrender?.Parameters["Projection"].SetValue(Projection(new(_targetWidth, 160)));
++            _game = new RenderTarget2D(_graphicsDevice, _targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            _game2 = new RenderTarget2D(_graphicsDevice, _targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            _depth = new RenderTarget2D(_graphicsDevice, _targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            _render = new RenderTarget2D(_graphicsDevice, _targetWidth, GameConstants.HEADER_HEIGHT + GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            _render2 = new RenderTarget2D(_graphicsDevice, _targetWidth, GameConstants.HEADER_HEIGHT + GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            _depthrender?.Parameters["Projection"].SetValue(Projection(new(_targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS)));
+         }
+ 
+         private static RenderTarget2D _game;
+@@ -107,7 +109,7 @@ namespace AnodyneSharp.Drawing
+         public static void Load(ContentManager c)
+         {
+             _depthrender = c.Load<Effect>("effects/render_depth");
+-            _depthrender.Parameters["Projection"].SetValue(Projection(new(_targetWidth, 160)));
++            _depthrender.Parameters["Projection"].SetValue(Projection(new(_targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS)));
+             blend = c.Load<Effect>("effects/blend");
+         }
+ 
+@@ -197,7 +199,7 @@ namespace AnodyneSharp.Drawing
+ 
+             _spriteBatch.Begin(sortMode: SpriteSortMode.Texture, blendState: BlendState.AlphaBlend, samplerState: SamplerState, effect: effect);
+ 
+-            int w = _render.Width;
++            int w = _render.Width, h = _render.Height;
+             switch(GlobalState.settings.resolution)
+             {
+                 case Resolution.Windowed:
+@@ -205,13 +207,13 @@ namespace AnodyneSharp.Drawing
+                     break;
+                 case Resolution.Scaled:
+ #if ANDROID
+-                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, 0, w * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
++                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, 0, w * GlobalState.settings.scale, h * GlobalState.settings.scale), FullScreenFade);
+ #else
+-                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, _graphicsDevice.PresentationParameters.BackBufferHeight / 2 - 180 * GlobalState.settings.scale / 2, w * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
++                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, _graphicsDevice.PresentationParameters.BackBufferHeight / 2 - h * GlobalState.settings.scale / 2, w * GlobalState.settings.scale, h * GlobalState.settings.scale), FullScreenFade);
+ #endif
+                     break;
+                 case Resolution.Stretch:
+-                    float scale = _graphicsDevice.PresentationParameters.BackBufferHeight / 180.0f;
++                    float scale = _graphicsDevice.PresentationParameters.BackBufferHeight / (float)h;
+                     _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - (int)(w * scale)/2, 0, (int)(w*scale), _graphicsDevice.PresentationParameters.BackBufferHeight), FullScreenFade);
+                     break;
+             }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/CollisionGroups.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/CollisionGroups.cs
+index 63d7d6e..e834af0 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/CollisionGroups.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/CollisionGroups.cs
+@@ -123,7 +123,7 @@ namespace AnodyneSharp.Entities
+             }
+ 
+             Vector2 roomUpLeft = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
+-            Vector2 roomBottomRight = roomUpLeft + Vector2.One * GameConstants.SCREEN_WIDTH_IN_PIXELS;
++            Vector2 roomBottomRight = roomUpLeft + new Vector2(GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
+ 
+             foreach(Entity e in _keepOnScreen.Where(e=>e.exists))
+             {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs
+index ba3e7dc..27f1c18 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs
+@@ -125,7 +125,7 @@ namespace AnodyneSharp.Entities.Events
+ 
+     class SavingIcon : UIEntity
+     {
+-        public SavingIcon() : base(new Vector2(GameConstants.SCREEN_WIDTH_IN_PIXELS / 2 - 32, 20), new AnimatedSpriteRenderer("autosave_icon", 64, 16,
++        public SavingIcon() : base(new Vector2(GameConstants.UI_WIDTH / 2 - 32, 20), new AnimatedSpriteRenderer("autosave_icon", 64, 16,
+             new Anim("a", new int[] { 0, 1, 2, 3, 4, 5 },8)), DrawOrder.TEXT)
+         {
+             SetTexture("autosave_icon", 64, 16); //Disable chaos mode
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs b/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs
+index d9bc73a..7a34c08 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs
+@@ -38,13 +38,16 @@ namespace AnodyneSharp.Registry
+ 
+         public static string SavePath;
+ 
+-        public const int SCREEN_WIDTH_IN_TILES = 10;
+-        public const int SCREEN_HEIGHT_IN_TILES = 10;
++        // Wide rooms (ANODYNE_WIDE_ROOMS=1): the world cut into 15x9-tile screens (240x144) under a 16px HUD row, not 10x10
++        public static readonly bool WIDE_ROOMS = System.Environment.GetEnvironmentVariable("ANODYNE_WIDE_ROOMS") == "1";
++        public static readonly int SCREEN_WIDTH_IN_TILES = WIDE_ROOMS ? 15 : 10;
++        public static readonly int SCREEN_HEIGHT_IN_TILES = WIDE_ROOMS ? 9 : 10;
+         public const int TILE_WIDTH = 16;
+         public const int TILE_HEIGHT = 16;
+-        public const int SCREEN_WIDTH_IN_PIXELS = 160;
+-        public const int SCREEN_HEIGHT_IN_PIXELS = 160;
+-        public const int HEADER_HEIGHT = 20; //Height of header. Needed in screen scrolling 
++        public static readonly int SCREEN_WIDTH_IN_PIXELS = SCREEN_WIDTH_IN_TILES * TILE_WIDTH;
++        public static readonly int SCREEN_HEIGHT_IN_PIXELS = SCREEN_HEIGHT_IN_TILES * TILE_HEIGHT;
++        public const int UI_WIDTH = 160; // (the UI's layout, centred over a wider screen)
++        public static readonly int HEADER_HEIGHT = WIDE_ROOMS ? 16 : 20; //Height of header. Needed in screen scrolling 
+ 
+         public const int BUTTON_WIDTH = 13;
+         public const int BUTTON_HEIGHT = 14;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Registry/GlobalState.cs b/AnodyneSharp/AnodyneSharp.Shared/Registry/GlobalState.cs
+index 351b2bb..23e58aa 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Registry/GlobalState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Registry/GlobalState.cs
+@@ -185,7 +185,7 @@ namespace AnodyneSharp.Registry
+ 
+         public static Point TopLeftTile => new(CURRENT_GRID_X * 10, CURRENT_GRID_Y * 10);
+ 
+-        public static Rectangle ScreenHitbox => new(CURRENT_GRID_X * 160, CURRENT_GRID_Y * 160, 160, 160);
++        public static Rectangle ScreenHitbox => new(CURRENT_GRID_X * GameConstants.SCREEN_WIDTH_IN_PIXELS, CURRENT_GRID_Y * GameConstants.SCREEN_HEIGHT_IN_PIXELS, GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
+ 
+         public static bool CanChangeBroom
+         {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/CutsceneState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/CutsceneState.cs
+index ad41dc3..f350aa5 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/CutsceneState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/CutsceneState.cs
+@@ -90,7 +90,7 @@ namespace AnodyneSharp.States
+         public void Warp(string map, Point grid)
+         {
+             _map = new(map);
+-            SpriteDrawer.Camera.GoTo(grid.ToVector2() * 160);
++            SpriteDrawer.Camera.GoTo(MapUtilities.GetRoomUpperLeftPos(grid));
+             DrawPlayState = false;
+             UpdateEntities = false;
+             _map.ReloadSettings(SpriteDrawer.Camera.Position2D, graphics_only:true, screen_transition: false);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
+index f9bf4c4..7017d72 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/MainMenu/TitleState.cs
+@@ -98,7 +98,7 @@ namespace AnodyneSharp.States.MainMenu
+                     .Enter((state) =>
+                     {
+                         int lineH = GameConstants.FONT_LINE_HEIGHT + 2;
+-                        int center = GameConstants.SCREEN_WIDTH_IN_PIXELS / 2;
++                        int center = GameConstants.UI_WIDTH / 2;
+                         int charWidth = FontManager.GetCharacterWidth();
+                         int charWidthEng = FontManager.GetCharacterWidth(true);
+ 
+@@ -282,7 +282,7 @@ namespace AnodyneSharp.States.MainMenu
+ 
+             _background = new ScrollingTex("title_bg", new Vector2(0, -30), DrawOrder.BACKGROUND);
+ 
+-            nexusImage = new UIEntity(new Vector2(0, 180), "door", GameConstants.SCREEN_WIDTH_IN_PIXELS, 116, DrawOrder.UI_OBJECTS);
++            nexusImage = new UIEntity(new Vector2(0, 180), "door", GameConstants.UI_WIDTH, 116, DrawOrder.UI_OBJECTS);
+ 
+             doorGlow = new UIEntity(Vector2.Zero, "door_glow", 64, 32, new RefLayer(nexusImage.layer_def, 1))
+             {
+@@ -299,7 +299,7 @@ namespace AnodyneSharp.States.MainMenu
+                 visible = false
+             };
+ 
+-            pressEnter = new UIEntity(new Vector2((GameConstants.SCREEN_WIDTH_IN_PIXELS - 96) / 2, GameConstants.SCREEN_HEIGHT_IN_PIXELS), "press_enter", 96, 16, DrawOrder.MENUTEXT)
++            pressEnter = new UIEntity(new Vector2((GameConstants.UI_WIDTH - 96) / 2, GameConstants.SCREEN_HEIGHT_IN_PIXELS), "press_enter", 96, 16, DrawOrder.MENUTEXT)
+             {
+                 visible = false
+             };
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/ControlsSubstate.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/ControlsSubstate.cs
+index db9c07f..c5c42cf 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/ControlsSubstate.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/ControlsSubstate.cs
+@@ -442,7 +442,7 @@ namespace AnodyneSharp.States.MenuSubstates
+                 buttonSpacing += 20;
+             }
+ 
+-            float x = GameConstants.SCREEN_WIDTH_IN_PIXELS / 2 - menuWidth / 2;
++            float x = GameConstants.UI_WIDTH / 2 - menuWidth / 2;
+             float y = (GlobalState.CurrentLanguage == Language.ZH_CN ? 0 : 8);
+             float yStep = GameConstants.FONT_LINE_HEIGHT - GameConstants.LineOffset + 8;
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GameplayMenu.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GameplayMenu.cs
+index 9c9ba2f..1a06434 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GameplayMenu.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GameplayMenu.cs
+@@ -36,7 +36,7 @@ namespace AnodyneSharp.States.MenuSubstates.ConfigSubstates
+         {
+             bool isChinese = GlobalState.CurrentLanguage == Language.ZH_CN;
+ 
+-            float x = GameConstants.SCREEN_WIDTH_IN_PIXELS / 2 - 136 / 2;
++            float x = GameConstants.UI_WIDTH / 2 - 136 / 2;
+             float menuX = x + 10;
+             float y = -2;
+             float yStep = GameConstants.FONT_LINE_HEIGHT - GameConstants.LineOffset + 5 + (isChinese ? 2 : 0);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
+index f18a3b8..bf83dcf 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
+@@ -40,7 +40,7 @@ namespace AnodyneSharp.States.MenuSubstates.ConfigSubstates
+         {
+             bool isChinese = GlobalState.CurrentLanguage == Language.ZH_CN;
+ 
+-            float x = GameConstants.SCREEN_WIDTH_IN_PIXELS / 2 - 136 / 2;
++            float x = GameConstants.UI_WIDTH / 2 - 136 / 2;
+             float menuX = x + 10;
+             float y = -4;
+             float yStep = GameConstants.FONT_LINE_HEIGHT - GameConstants.LineOffset + 3 + (isChinese ? 2 : 0);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/UI/Font/Writing/TextWriter.cs b/AnodyneSharp/AnodyneSharp.Shared/UI/Font/Writing/TextWriter.cs
+index 4ae8fe6..23dff32 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/UI/Font/Writing/TextWriter.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/UI/Font/Writing/TextWriter.cs
+@@ -191,7 +191,7 @@ namespace AnodyneSharp.UI.Text
+                         if (CenterText)
+                         {
+                             float width = GetLineWidth(i);
+-                            pos = WriteAreaTopLeft + new Vector2(c.X, currentY) + new Vector2(GameConstants.SCREEN_WIDTH_IN_PIXELS / 2 - width / 2, 0);
++                            pos = WriteAreaTopLeft + new Vector2(c.X, currentY) + new Vector2(GameConstants.UI_WIDTH / 2 - width / 2, 0);
+                         }
+                         else
+                         {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Utilities/AssemblyReaderUtil.cs b/AnodyneSharp/AnodyneSharp.Shared/Utilities/AssemblyReaderUtil.cs
+index 6db175f..7e6cd52 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Utilities/AssemblyReaderUtil.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Utilities/AssemblyReaderUtil.cs
+@@ -13,6 +13,10 @@ namespace AnodyneSharp.Utilities
+     {
+         public static Stream? GetStream(string path, Assembly? assembly = null)
+         {
++            if (Registry.GameConstants.WIDE_ROOMS && WideContent(path) is Stream wide)
++            {
++                return wide;
++            }
+             assembly ??= Assembly.GetEntryAssembly();
+ 
+             path = $"{assembly!.GetName().Name}.{path}";
+@@ -21,6 +25,20 @@ namespace AnodyneSharp.Utilities
+ 
+             return ModLoader.mods.Aggregate(s,(stream,mod) => mod.OnManifestLoad(stream,path));
+         }
++
++        // Wide rooms: the maps and Entities.xml from tools/wide_rooms/remap.py's output (ANODYNE_WIDE_CONTENT, the
++        // anodyne-cpp checkout's old/ContentWide) instead of the built-in ones
++        private static Stream? WideContent(string path)
++        {
++            string? dir = Environment.GetEnvironmentVariable("ANODYNE_WIDE_CONTENT");
++            if (dir == null || !(path.StartsWith("Content.Maps.") || path == "Content.Entities.xml"))
++            {
++                return null;
++            }
++            string[] parts = path.Split('.');
++            string file = Path.Combine(dir, Path.Combine(parts[1..^2]), parts[^2] + "." + parts[^1]);
++            return File.Exists(file) ? File.OpenRead(file) : null;
++        }
+     }
+ #nullable restore
+ }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs b/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
+index e3b6a80..70205e7 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
+@@ -21,7 +21,7 @@ namespace AnodyneSharp.Utilities
+ 
+         public static Vector2 GetRoomUpperLeftPos(Point pos)
+         {
+-            return pos.ToFixVector2() * SCREEN_WIDTH_IN_PIXELS;
++            return new Vector2(pos.X * SCREEN_WIDTH_IN_PIXELS, pos.Y * SCREEN_HEIGHT_IN_PIXELS);
+         }
+ 
+         public static Vector2 GetInGridPosition(Vector2 pos)
+@@ -31,7 +31,8 @@ namespace AnodyneSharp.Utilities
+ 
+         public static Microsoft.Xna.Framework.Vector2 GetInGridPosition(Microsoft.Xna.Framework.Vector2 pos)
+         {
+-            return pos - GetRoomCoordinate(pos).ToVector2() * SCREEN_WIDTH_IN_PIXELS;
++            Point r = GetRoomCoordinate(pos);
++            return pos - new Microsoft.Xna.Framework.Vector2(r.X * SCREEN_WIDTH_IN_PIXELS, r.Y * SCREEN_HEIGHT_IN_PIXELS);
+         }
+ 
+         public static int GetMapID(string mapName)

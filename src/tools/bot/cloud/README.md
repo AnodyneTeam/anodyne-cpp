@@ -32,3 +32,9 @@ the map shows 40px of the rooms either side of the current one, and the UI stays
 changes, so a bot run's traces are the same either way. The port's version is `gSettings.mWideView` (anodyne/world.h).
 `ANODYNE_BOT_SHOT_AT=F1,F2,...` (with `ANODYNE_BOT_DRAW_EVERY=1`) saves frame F's screen to `/tmp/bot/at_fF.png`, to set
 beside SimHost's `SIMHOST_SHOT` screens of a replay.
+
+## Wide rooms
+
+`wide_rooms.diff`: with `ANODYNE_WIDE_ROOMS=1` the world is cut into 15x9-tile rooms (240x144) under a 16px HUD row.
+The maps and Entities.xml then come from `ANODYNE_WIDE_CONTENT` (the anodyne-cpp checkout's `old/ContentWide`, made by
+`src/tools/wide_rooms/remap.py`) instead of the built-in ones. Saves hold positions, so use a new game (or a wide save).

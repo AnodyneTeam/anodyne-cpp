@@ -32,6 +32,7 @@ git submodule update --init
 git apply "$HERE/glue.diff"
 git apply "$HERE/fix16.diff"
 git apply "$HERE/wide.diff"
+git apply "$HERE/wide_rooms.diff"
 sed -i 's#<TargetFramework>net6.0</TargetFramework>#<TargetFramework>net10.0</TargetFramework>#' Fluent-State-Machine/*.csproj
 mkdir -p AnodyneSharp/AnodyneSharp.Shared/Recording
 cp "$HERE"/../csharp/*.cs "$HERE"/RecordingManager.cs AnodyneSharp/AnodyneSharp.Shared/Recording/
