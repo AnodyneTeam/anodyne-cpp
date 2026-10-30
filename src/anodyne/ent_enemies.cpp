@@ -4,6 +4,7 @@
 #include "dialog.h"
 #include "entities.h"
 #include "player.h"
+#include "room.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -2285,7 +2286,7 @@ void SeerWaveUpdate(Entity& self)
     {
         self.mExists = false;
     }
-    if (self.mT->mY > Fx(160))
+    if (self.mT->mY > Fx(kRoomH))
     {
         d.mEnd = true;
         self.mExists = false;
@@ -2810,20 +2811,15 @@ struct BigWaveData final
     bool mDisablePlayerHit;
 };
 
-fx RoomLeft()
+// (room.h: offsets added to these land where the wide rooms moved them)
+RoomEdgeX RoomLeft()
 {
-    return Fx(gGame.mGridX * 160);
+    return Room_Left(gGame.mGridX);
 }
 
-fx RoomTop()
+RoomEdgeY RoomTop()
 {
-    return Fx(gGame.mGridY * 160);
-}
-
-// MapUtilities.GetInGridPosition (each axis against its own room).
-fx InGrid(fx v)
-{
-    return v - Fx(FxTrunc(v / 160) * 160);
+    return Room_Top(gGame.mGridY);
 }
 
 void BubbleSfx()
@@ -2877,7 +2873,7 @@ void SmallWaveUpdate(Entity& self)
         self.mExists = false;
         return;
     }
-    if (InGrid(self.mT->mX) < Fx(32))
+    if (Room_GridX160(self.mT->mX) < Fx(32))
     {
         Ecs_Play(self, "fall");
     }
@@ -2931,7 +2927,7 @@ void BigWaveUpdate(Entity& self)
         }
         BigWaveLaunch(self); // (rise)
     }
-    if (InGrid(self.mT->mX) < Fx(32))
+    if (Room_GridX160(self.mT->mX) < Fx(32))
     {
         Ecs_Play(self, "fall");
         self.Data<BigWaveData>().mDisablePlayerHit = true;
@@ -2947,7 +2943,7 @@ void BigWaveCollided(Entity& self, Entity& other)
         // target = p.Position + ((16, 128) - GetInGridPosition(p.Position))
         const fx px = other.mT->mX;
         const fx py = other.mT->mY;
-        Player_AutoJump(kFxOne, px + (Fx(16) - InGrid(px)), py + (Fx(8 * 16) - InGrid(py)), 50, -Fx(500));
+        Player_AutoJump(kFxOne, Room_LeftOf(px) + Fx(16), Room_TopOf(py) + Fx(8 * 16), 50, -Fx(500));
         d.mDisablePlayerHit = true;
     }
 }
@@ -3263,10 +3259,10 @@ void RedBossDashUpdate(Entity& self)
 {
     Transform& t = *self.mT;
     uint8_t dirs = SHAKE_NONE;
-    const fx tlX = InGrid(t.mX);
-    const fx tlY = InGrid(t.mY);
-    const fx brX = InGrid(t.mX + Fx(self.mB->mW));
-    const fx brY = InGrid(t.mY + Fx(self.mB->mH));
+    const fx tlX = Room_GridX160(t.mX);
+    const fx tlY = Room_GridY160(t.mY);
+    const fx brX = Room_GridX160(t.mX + Fx(self.mB->mW));
+    const fx brY = Room_GridY160(t.mY + Fx(self.mB->mH));
     if (tlY < Fx(2 * 16))
     {
         t.mVelY = Fx(60);
@@ -3480,7 +3476,7 @@ void RedBossStep(Entity& self)
         d.mState = RB_WAIT_PLAYER;
         [[fallthrough]];
     case RB_WAIT_PLAYER:
-        if (InGrid(World_Player()->mT->mX) < Fx(48))
+        if (Room_GridX160(World_Player()->mT->mX) < Fx(48))
         {
             break;
         }
@@ -3702,14 +3698,14 @@ bool ParabolaTick(Parabola& p, Entity& e, Entity* shadow, int maxFrame)
 }
 
 // The current screen's top-left (GlobalState.CurrentMapGrid).
-fx GridLeft()
+RoomEdgeX GridLeft()
 {
-    return Fx(gGame.mGridX * 160);
+    return Room_Left(gGame.mGridX);
 }
 
-fx GridTop()
+RoomEdgeY GridTop()
 {
-    return Fx(gGame.mGridY * 160);
+    return Room_Top(gGame.mGridY);
 }
 
 // ---- DeathExplosion
@@ -3928,7 +3924,7 @@ bool WallLaserStep(Entity& self)
         d.mStep = 2;
         [[fallthrough]];
     case 2:
-        if (InGrid(t.mY) < Fx(16 * 6 + 11))
+        if (Room_GridY160(t.mY) < Fx(16 * 6 + 11))
         {
             return true;
         }
@@ -3936,7 +3932,7 @@ bool WallLaserStep(Entity& self)
         d.mStep = 3;
         [[fallthrough]];
     case 3:
-        if (InGrid(t.mY) > Fx(45))
+        if (Room_GridY160(t.mY) > Fx(45))
         {
             return true;
         }
@@ -3944,7 +3940,7 @@ bool WallLaserStep(Entity& self)
         d.mStep = 4;
         [[fallthrough]];
     case 4:
-        if (InGrid(t.mY) < Fx(16 * 6 + 11))
+        if (Room_GridY160(t.mY) < Fx(16 * 6 + 11))
         {
             return true;
         }
@@ -4115,11 +4111,16 @@ bool LHandStompStep(Entity& h)
                 Screen_Shake(FxF(0.02f), FxF(0.5f));
                 Game_PlaySfx("floor_crack");
                 const int tile = d.mGround == GROUND_NONE ? d.mCracked : d.mHole;
-                const int tlX = gGame.mGridX * 10;
-                const int tlY = gGame.mGridY * 10;
-                for (int x = 2; x < 8; ++x)
+                const int tlX = gGame.mGridX * kRoomTilesW;
+                const int row = FxFloor(Room_Y(gGame.mGridY, Fx(6 * 16 + 8))) / 16;
+                for (int x = 0; x < kRoomTilesW; ++x)
                 {
-                    World_ChangeTile(0, tlX + x, tlY + 6, tile);
+                    // (the room's tiles 2-7 across, wherever the wide rooms put them)
+                    const int src = FxFloor(Room_GridX160(Fx((tlX + x) * 16 + 8))) / 16;
+                    if (src >= 2 && src < 8)
+                    {
+                        World_ChangeTile(0, tlX + x, row, tile);
+                    }
                 }
                 d.mGround = d.mGround == GROUND_NONE ? GROUND_CRACKED : GROUND_FULL;
             }
@@ -4141,7 +4142,7 @@ bool RHandStompStep(Entity& h)
         d.mShadow->mV->mVisible = true;
         d.mStep = 1;
     }
-    const fx x = InGrid(t.mX);
+    const fx x = Room_GridX160(t.mX);
     if ((t.mVelX < 0 && x < Fx(16)) || (t.mVelX > 0 && x > Fx(16 * 9 - h.mB->mW)))
     {
         t.mVelX = -t.mVelX;
@@ -4184,7 +4185,7 @@ bool HandStep(Entity& h)
             }
             d.mStep = 1;
         }
-        if (InGrid(t.mY) < Fx(6 * 16))
+        if (Room_GridY160(t.mY) < Fx(6 * 16))
         {
             return true;
         }
@@ -4542,7 +4543,7 @@ void WallBossStep(Entity& self)
         d.mState = WB_WAIT_PLAYER;
         [[fallthrough]];
     case WB_WAIT_PLAYER:
-        if (InGrid(World_Player()->mT->mY) > Fx(80))
+        if (Room_GridY160(World_Player()->mT->mY) > Fx(80))
         {
             break;
         }
@@ -5310,7 +5311,7 @@ void SplitBulletUpdate(Entity& self)
     {
         MoveTo(v.mOpacity, 0, FxF(0.3f));
     }
-    if (v.mOpacity == kFxOne && InGrid(self.mT->mY) > Fx(8 * 16))
+    if (v.mOpacity == kFxOne && Room_GridY160(self.mT->mY) > Fx(8 * 16))
     {
         Ecs_Play(self, "fizzle");
     }
@@ -5388,8 +5389,8 @@ struct SplitBossData final
     bool mVolume; // its VolumeEvent(0, 0.3)
     int mHealth;
     fx mInvulnTime;
-    fx mTlX; // the fight area's top left
-    fx mTlY;
+    RoomEdgeX mTlX; // the fight area's top left
+    RoomEdgeY mTlY;
     // the coroutines' locals
     int mDash;
     int mNumDashes;
@@ -5638,7 +5639,7 @@ bool SplitDashStep(Entity& self, SplitBossData& d)
             d.mNumDashes = SplitPhase(d) + 2;
             d.mNumDrops = SplitPhase(d) + 2;
             d.mSpawnedCount = 0;
-            if (FxTrunc(t.mX / 160) != gGame.mGridX || FxTrunc(t.mY / 160) != gGame.mGridY)
+            if (Room_GridOfX(t.mX) != gGame.mGridX || Room_GridOfY(t.mY) != gGame.mGridY)
             {
                 v.mOpacity = 0; // straight after another dash: start appearing on the left at once
             }
@@ -7228,8 +7229,8 @@ enum CircusVolume : uint8_t
 
 struct CircusFolksData final
 {
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     fx mEntranceY;
     fx mTimer; // walkTimer / fallTimer
     Parabola mArc;
@@ -7951,8 +7952,8 @@ constexpr int kSageBullets = 6;
 
 struct SageBossData final
 {
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     fx mTimer; // bClock / timer
     fx mFlickerLength;
     Entity* mLong[kSageBullets];  // _lBullets
@@ -8784,7 +8785,7 @@ void BriarThornCollided(Entity& self, Entity&)
 void BriarBulletUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
-    if (InGrid(self.mT->mY) > Fx(150))
+    if (Room_GridY160(self.mT->mY) > Fx(150))
     {
         self.mExists = false;
     }
@@ -8870,8 +8871,8 @@ Entity* BriarDustSpawn(const Entity& eye)
 void FireEyeStart(Entity& eye, int phase)
 {
     FireEyeData& d = eye.Data<FireEyeData>();
-    const fx left = Fx(gGame.mGridX * 160);
-    const fx top = Fx(gGame.mGridY * 160);
+    const RoomEdgeX left = Room_Left(gGame.mGridX);
+    const RoomEdgeY top = Room_Top(gGame.mGridY);
     Ecs_Play(eye, "grow");
     eye.mT->mX = left + Fx(phase == 0 ? 70 : 50);
     eye.mT->mY = top + Fx(phase == 0 ? 80 : 100);
@@ -9132,7 +9133,7 @@ bool IceCrystalStep(Entity& self)
         case 3:
             if (!(d.mHitBroom || d.mHitPlayer))
             {
-                const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+                const Rect screen = { gGame.mGridX * kRoomW, gGame.mGridY * kRoomH, kRoomW, kRoomH };
                 if (!Ecs_Intersects(Ecs_Hitbox(self), screen))
                 {
                     d.mWaiting = true; // state = Wait()
@@ -9674,8 +9675,8 @@ enum BriarMainState : uint8_t
 
 struct BriarMainData final
 {
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     Entity* mGate;
     Entity* mFight;
     WaterFlow mWater;
@@ -9695,8 +9696,8 @@ Entity* SpawnBriarFight(Entity& main);
 bool BriarWaterStep(BriarMainData& d)
 {
     const int tile = d.mBossRush ? 267 : 194;
-    const int cx = FxTrunc(d.mTopLeftX) / 16;
-    const int cy = FxTrunc(d.mTopLeftY) / 16;
+    const int gx = d.mTopLeftX.mGrid;
+    const int gy = d.mTopLeftY.mGrid;
     switch (d.mWaterStep)
     {
     case 0:
@@ -9712,19 +9713,19 @@ bool BriarWaterStep(BriarMainData& d)
         {
             return true;
         }
-        World_ChangeTile(0, cx + 5, cy + 1, tile);
+        Room_ChangeTile160(0, gx, gy, 5, 1, tile);
         d.mWaterStep = 2;
         return true;
     case 2:
-        World_ChangeTile(0, cx + 5, cy, tile);
+        Room_ChangeTile160(0, gx, gy, 5, 0, tile);
         d.mWaterStep = 3;
         return true;
     case 3:
-        World_ChangeTile(0, cx + 4, cy + 1, tile);
+        Room_ChangeTile160(0, gx, gy, 4, 1, tile);
         d.mWaterStep = 4;
         return true;
     case 4:
-        World_ChangeTile(0, cx + 4, cy, tile);
+        Room_ChangeTile160(0, gx, gy, 4, 0, tile);
         d.mWaterStep = 5;
         return false;
     default:
@@ -9799,7 +9800,7 @@ bool BriarIntro(Entity& self)
         }
         Game_PlaySong("briar-fight");
         self.mV->mVisible = false;
-        World_SetMapOffsetX(160 * 2);
+        World_SetMapOffsetX(kRoomW * 2);
         d.mGate->mT->mY += Fx(9 * 16);
         d.mFight = SpawnBriarFight(self);
         d.mStep = 5;
@@ -9929,8 +9930,8 @@ const EntityClass kThornGate = {
 // new BriarBossFight(player, bossRush), GlobalState.SpawnEntity'd with its sub-entities in their list order.
 Entity* SpawnBriarFight(Entity& main)
 {
-    const fx left = main.Data<BriarMainData>().mTopLeftX;
-    const fx top = main.Data<BriarMainData>().mTopLeftY;
+    const RoomEdgeX left = main.Data<BriarMainData>().mTopLeftX;
+    const RoomEdgeY top = main.Data<BriarMainData>().mTopLeftY;
     Entity* made[64];
     int count = 0;
     bool ok = true;
@@ -9955,7 +9956,9 @@ Entity* SpawnBriarFight(Entity& main)
         }
         return e;
     };
-    Entity* fight = make(kBriarFight, left, top, &main, "briar_overhang", 160, 48, PART_VISUAL | PART_BRAIN);
+    // (160 wide: centred in a wide room)
+    Entity* fight = make(kBriarFight, fx(left) + Fx((kRoomW - 160) / 2), top, &main, "briar_overhang", 160, 48,
+                         PART_VISUAL | PART_BRAIN);
     if (!fight)
     {
         return nullptr;
@@ -10330,8 +10333,8 @@ struct WaterPhaseData final
     bool mVolume; // its VolumeEvent(0, 0.42), quiet, is fading the song out
     bool mVolumeLive;
     fx mT; // SpeedUpOnHit's tm, WaitingOnHit's t
-    fx mTlX;  // the pool's top left
-    fx mTlY;
+    RoomEdgeX mTlX;  // the pool's top left
+    RoomEdgeY mTlY;
     Entity* mPupil;
     Entity* mEyelids;
     Entity* mMarker;
@@ -10480,7 +10483,9 @@ void WaterPhaseStep(Entity& self, WaterPhaseData& d)
         if (d.mHealth > 0)
         {
             EyeFightStep(self, d);
-            const Rect box = { FxTrunc(d.mTlX) + 12, FxTrunc(d.mTlY) + 16, 16 * 7 + 4 - 12, 16 * 8 - 16 };
+            const int boxX = FxTrunc(d.mTlX + Fx(12));
+            const int boxY = FxTrunc(d.mTlY + Fx(16));
+            const Rect box = { boxX, boxY, FxTrunc(d.mTlX + Fx(16 * 7 + 4)) - boxX, FxTrunc(d.mTlY + Fx(16 * 8)) - boxY };
             if (KeepInRect(self, box))
             {
                 Game_PlaySfx("wb_tap_ground");
@@ -10666,8 +10671,8 @@ struct LandPhaseData final
     fx mPaceY;
     fx mBaseX; // LandLogic's base_pt
     fx mBaseY;
-    fx mTlX;
-    fx mTlY;
+    RoomEdgeX mTlX;
+    RoomEdgeY mTlY;
     Parabola mJump;
     Entity* mShadow;
     Entity* mMarker;
@@ -11739,8 +11744,8 @@ Entity* Spawn_RedBoss(const MapEntity& preset, Entity&)
         sb = SplashBulletData();
         sb.mShadow = shadow;
         // (the screen being loaded: the boss's own)
-        sb.mStartX = e->mT->mX - InGrid(e->mT->mX) + Fx(2 * 16) + Fx(3);
-        sb.mStartY = e->mT->mY - InGrid(e->mT->mY) + Fx((3 + i) * 16) + Fx(3);
+        sb.mStartX = Room_LeftOf(e->mT->mX) + Fx(2 * 16) + Fx(3);
+        sb.mStartY = Room_TopOf(e->mT->mY) + Fx((3 + i) * 16) + Fx(3);
         b->mT->mX = b->mT->mLastX = sb.mStartX;
         b->mT->mY = b->mT->mLastY = sb.mStartY;
         sb.mPeriod = FxF(1.2f) + Rng_Unit();
@@ -11816,8 +11821,8 @@ Entity* Spawn_WallBoss(const MapEntity& preset, Entity&)
     d = WallBossData();
     d.mBossRush = strcmp(Preset_TypeValue(preset), "boss_rush") == 0;
     // (the screen being loaded: the boss's own)
-    const fx left = Fx(preset.mX / 160 * 160);
-    const fx top = Fx(preset.mY / 160 * 160);
+    const RoomEdgeX left = Room_Left(preset.mX / kRoomW);
+    const RoomEdgeY top = Room_Top(preset.mY / kRoomH);
     Player_SetGridEntranceAt(left + Fx(86), top + Fx(81));
 
     // (a sub-entity: made now, kept while it doesn't exist)
@@ -11836,7 +11841,9 @@ Entity* Spawn_WallBoss(const MapEntity& preset, Entity&)
     };
     constexpr uint8_t kParts = PART_VISUAL | PART_BRAIN;
 
-    d.mWall = make(e, kWall, left, top, "wallboss_wall", 160, 32, LAYER_VERY_BG_ENTITIES, kParts);
+    // (the wall and face are 160 and 64 wide: centred in a wide room)
+    d.mWall = make(e, kWall, fx(left) + Fx((kRoomW - 160) / 2), top, "wallboss_wall", 160, 32, LAYER_VERY_BG_ENTITIES,
+                   kParts);
     if (!d.mWall)
     {
         return nullptr;
@@ -11845,7 +11852,7 @@ Entity* Spawn_WallBoss(const MapEntity& preset, Entity&)
     Ecs_SetSolid(*d.mWall, true);
     Ecs_Play(*d.mWall, "move");
 
-    d.mFace = make(e, kFace, left + Fx((160 - 64) / 2), top, "f_wallboss_face", 64, 32, LAYER_ENTITIES, kParts);
+    d.mFace = make(e, kFace, fx(left) + Fx((kRoomW - 64) / 2), top, "f_wallboss_face", 64, 32, LAYER_ENTITIES, kParts);
     if (!d.mFace)
     {
         return nullptr;
@@ -12404,8 +12411,8 @@ Entity* Spawn_SplitBoss(const MapEntity& preset, Entity&)
     Ecs_SetSolid(*e, false);
     e->mB->mImmovable = true;
     // (the screen being loaded: the boss's own)
-    d.mTlX = Fx(preset.mX / 160 * 160 + 32);
-    d.mTlY = Fx(preset.mY / 160 * 160 + 48);
+    d.mTlX = Room_Left(preset.mX / kRoomW) + Fx(32);
+    d.mTlY = Room_Top(preset.mY / kRoomH) + Fx(48);
     e->mT->mX = d.mTlX + Fx(48 - 16 / 2);
     e->mT->mY = d.mTlY + Fx(32);
     Player_SetGridEntranceAt(d.mTlX + Fx(42), d.mTlY + Fx(40));
@@ -12589,10 +12596,11 @@ Entity* Spawn_EyeBossWater(const MapEntity& preset, Entity&)
     }
     Preset_SetAlive(preset, true);
     // (the screen being loaded: the boss's own)
-    d.mTlX = Fx(preset.mX / 160 * 160 + 16);
-    d.mTlY = Fx(preset.mY / 160 * 160 + 16);
+    d.mTlX = Room_Left(preset.mX / kRoomW) + Fx(16);
+    d.mTlY = Room_Top(preset.mY / kRoomH) + Fx(16);
     Player_SetGridEntranceAt(d.mTlX + Fx(80), d.mTlY + Fx(20));
-    const Rect area = { FxTrunc(d.mTlX), FxTrunc(d.mTlY), 16 * 8, 16 * 9 };
+    const Rect area = { FxTrunc(d.mTlX), FxTrunc(d.mTlY), FxTrunc(d.mTlX + Fx(16 * 8)) - FxTrunc(d.mTlX),
+                        FxTrunc(d.mTlY + Fx(16 * 9)) - FxTrunc(d.mTlY) };
     for (Entity*& b : d.mBullets)
     {
         b = Ecs_Create(kEyeWaterBullet, 0, 0, PART_VISUAL | PART_BRAIN, nullptr, e);
@@ -12633,8 +12641,8 @@ Entity* Spawn_EyeBossLand(const MapEntity& preset, Entity&)
         return e;
     }
     Game_IgnoreMusicNextUpdate(); // the music stays if the player goes back up
-    d.mTlX = Fx(preset.mX / 160 * 160 + 16);
-    d.mTlY = Fx(preset.mY / 160 * 160 + 16);
+    d.mTlX = Room_Left(preset.mX / kRoomW) + Fx(16);
+    d.mTlY = Room_Top(preset.mY / kRoomH) + Fx(16);
     Player_SetGridEntranceAt(d.mTlX + Fx(70), d.mTlY + Fx(50));
     d.mShadow = Ecs_Create(kEntityShadow, e->mT->mX, e->mT->mY + Fx(14), PART_VISUAL, nullptr, e);
     d.mMarker = MakeEnemyMarker(*e);
@@ -12888,8 +12896,8 @@ Entity* Spawn_ArthurDanger(const MapEntity& preset, Entity&)
     d.mShadow->mT->mX = e->mT->mX + Fx(4);
     d.mShadow->mT->mY = e->mT->mY + Fx(6);
     // (the room it's in: GlobalState.CurrentMapGrid isn't the new screen yet while it scrolls in)
-    const fx roomX = Fx(preset.mX) - InGrid(Fx(preset.mX));
-    const fx roomY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    const RoomEdgeX roomX = Room_LeftOf(Fx(preset.mX));
+    const RoomEdgeY roomY = Room_TopOf(Fx(preset.mY));
     d.mPillow = Spawn_DustAt(roomX + Fx(46), roomY + Fx(16));
     if (!d.mPillow)
     {
@@ -12943,8 +12951,8 @@ Entity* Spawn_CircusFolks(const MapEntity& preset, Entity&)
     }
     CircusFolksData& d = e->Data<CircusFolksData>();
     d = CircusFolksData();
-    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX)) + Fx(16);
-    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY)) + Fx(16);
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX)) + Fx(16);
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY)) + Fx(16);
     d.mEntranceY = d.mTopLeftY + Fx(16 * 7 + 4);
     Player_SetGridEntranceAt(d.mTopLeftX + Fx(75), d.mEntranceY);
     e->mB->mH = 16;
@@ -13008,8 +13016,8 @@ Entity* Spawn_SageBoss(const MapEntity& preset, Entity&)
     }
     SageBossData& d = e->Data<SageBossData>();
     d = SageBossData();
-    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX));
-    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX));
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY));
     e->mB->mW = e->mB->mH = 10;
     e->mV->mOffX = Fx(3);
     e->mV->mOffY = Fx(8);
@@ -13057,8 +13065,8 @@ Entity* Spawn_BriarBoss(const MapEntity& preset, Entity&)
     }
     BriarMainData& d = e->Data<BriarMainData>();
     d = BriarMainData();
-    d.mTopLeftX = Fx(preset.mX) - InGrid(Fx(preset.mX));
-    d.mTopLeftY = Fx(preset.mY) - InGrid(Fx(preset.mY));
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX));
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY));
     e->mT->mX = d.mTopLeftX + Fx(80 - 16 / 2);
     e->mT->mY = d.mTopLeftY + Fx(32);
     e->mT->mLastX = e->mT->mX;

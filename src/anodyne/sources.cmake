@@ -25,4 +25,5 @@ set(ANODYNE_GAME_SOURCES
     soft_mosaic.cpp
     pixelate_test.cpp
     world.cpp
+    room.cpp
 )

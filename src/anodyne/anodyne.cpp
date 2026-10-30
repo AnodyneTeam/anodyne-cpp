@@ -26,6 +26,7 @@
 #include "pixelate_test.hpp"
 
 #include "map_registry.h"
+#include "room.h"
 #include "game_state.h"
 #include "game_probe.h"
 #ifdef ANODYNE_LINK
@@ -177,6 +178,8 @@ static void LoadWorldMap(bool placedAfter = false)
     {
         SetReturnTargetToNexus();
     }
+    Room_SetTables(kRoomRemap, kMapNames, static_cast<int>(kMapCount));
+    Room_SetRemap(kRoomRemap[gCurrentMap]);
     // Entities first: World_Load places the player and loads the screen's entities.
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
@@ -474,6 +477,12 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     GameState_Reset();
+#ifdef ANODYNE_SIM
+    if (const char* wide = getenv("ANODYNE_WIDE"))
+    {
+        gSettings.mWideView = wide[0] == '1'; // (as the C#'s wide.diff)
+    }
+#endif
     World_Init(objVram);
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
@@ -802,6 +811,13 @@ int main()
                     World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
+                    if (gSettings.mWideView || kWideRooms)
+                    {
+                        offsets.originX = offsets.viewX = 0;
+                        offsets.viewW = 240;
+                        // (wide rooms: the C# screen is the GBA's, its header row at the top)
+                        offsets.originY = kWideRooms ? 0 : offsets.originY;
+                    }
                     Mosaic_Apply(warpPix, offsets);
                     warpShown = true;
                 }

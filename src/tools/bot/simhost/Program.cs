@@ -234,6 +234,10 @@ void Replay(string inputPath, string tracePath, int show)
     // wait for the C# to load the save (its row stops repeating the last one before the title, and has a map again), then
     // boot the port
     // the same way as at the start and take the C#'s RNG position again
+    // SIMHOST_SHOT=F1,F2...: a screenshot at those C# frames (SIMHOST_SHOT_DIR, default /tmp: simhost_fN.png), to set
+    // beside the C#'s (ANODYNE_BOT_SHOT_AT)
+    var replayShots = (Environment.GetEnvironmentVariable("SIMHOST_SHOT") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(long.Parse).ToHashSet();
+    string shotDir = Environment.GetEnvironmentVariable("SIMHOST_SHOT_DIR") ?? "/tmp";
     string[] titleRow = null;
     bool titleBlank = false; // a C# row without a map: it is on the title, and its next row with one has loaded the save
     long resynced = -1; // (SetRng lands with the next frame: no RNG comparison on this one)
@@ -278,6 +282,10 @@ void Replay(string inputPath, string tracePath, int show)
                 titleRow = cs[i];
                 continue;
             }
+        }
+        if (replayShots.Contains(f))
+        {
+            view.Shot($"{shotDir}/simhost_f{f}.png");
         }
         if (f % 50000 == 0)
         {

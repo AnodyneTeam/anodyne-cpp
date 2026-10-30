@@ -29,7 +29,7 @@ add_executable(CompileContent
 
 add_custom_target(RunContentCompiler ALL
     COMMAND "${CMAKE_COMMAND}" -E echo "Running: $<TARGET_FILE:CompileContent>"
-    COMMAND "${CMAKE_COMMAND}" -E env "$<TARGET_FILE:CompileContent>"
+    COMMAND "${CMAKE_COMMAND}" -E env "$<TARGET_FILE:CompileContent>" ${CONTENT_COMPILER_ARGS}
     COMMENT "Always running content compiler"
 )
 

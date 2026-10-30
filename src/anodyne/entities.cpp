@@ -232,8 +232,8 @@ void Entities_EndTransition()
     Ecs_FireEvent(GEV_END_SCREEN_TRANSITION);
 }
 
-void Entities_Draw(int camX, int camY, int screenX, int shakeX, int shakeY)
+void Entities_Draw(int camX, int camY, int screenX, int shakeX, int shakeY, bool wide)
 {
-    Ecs_Draw(camX, camY, screenX, kFirstOam, Dialog_FirstReservedOam(), shakeX, shakeY);
+    Ecs_Draw(camX, camY, screenX, kFirstOam, Dialog_FirstReservedOam(), shakeX, shakeY, wide);
     gShown = true;
 }

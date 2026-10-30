@@ -675,7 +675,7 @@ constexpr int kControlsPages = sizeof(kControlsPageSize);
 
 int OptionCount(uint8_t menu)
 {
-    return menu == MENU_GRAPHICS ? 7 : 6;
+    return menu == MENU_GRAPHICS ? 8 : 6;
 }
 
 OptionDef MakeSlider(float* value, float max, float step)
@@ -753,8 +753,10 @@ OptionDef GetOption(uint8_t menu, int i)
         return MakeSlider(&s.mFlashEasing, 0.2f, 0.02f);
     case 5:
         return OptionDef{OPT_ACTION};
-    default:
+    case 6:
         return MakeCheck(&s.mScreenshake);
+    default:
+        return MakeCheck(&s.mWideView);
     }
 }
 
@@ -1687,6 +1689,10 @@ const char* OptionLabel(uint8_t menu, int i)
     case MENU_GAMEPLAY:
         return i == 0 ? Misc("config", 3) : Misc("gameplay", i - 1);
     default:
+        if (i == 7)
+        {
+            return "Wide view"; // (not the C#'s: wide.diff's, in English only)
+        }
         return i == 0 ? Misc("config", 12) : (i == 1 ? Misc("config", 16) : Misc("graphics", i == 2 ? 0 : i + 2));
     }
 }
@@ -1709,7 +1715,7 @@ OptionPos GetOptionPos(uint8_t menu, int i)
     }
     static const OptionPos kGraphics[] = {
         {22, 7, 32, 18, 90}, {22, 29, 72, 29, 20}, {22, 40, 52, 40, 80}, {30, 67, 70, 67, 0},
-        {30, 78, 70, 78, 0}, {30, 89, 0, 0, 0},    {22, 105, 132, 105, 0},
+        {30, 78, 70, 78, 0}, {30, 89, 0, 0, 0},    {22, 105, 132, 105, 0}, {22, 116, 132, 116, 0},
     };
     return kGraphics[i];
 }
@@ -1930,10 +1936,23 @@ void Draw()
         break;
     }
 }
+
+bool gWideAtOpen = false;
+
+// The pause menu puts back the display it found: the play state's windows change with the wide view.
+void CloseMenuDraw()
+{
+    MenuDraw_Close();
+    if (gSettings.mWideView != gWideAtOpen)
+    {
+        World_ApplyWindows();
+    }
+}
 } // namespace
 
 void Pause_Open()
 {
+    gWideAtOpen = gSettings.mWideView;
     gPause = PauseData();
     gPause.mOpen = true;
     gPause.mPageCount = PageCount();
@@ -1951,7 +1970,7 @@ bool Pause_IsOpen()
 void Pause_Close()
 {
     gPause.mOpen = false;
-    MenuDraw_Close();
+    CloseMenuDraw();
 }
 
 void Pause_Reset()
@@ -2017,7 +2036,7 @@ bool Pause_Update()
 {
     if (!UpdateMenu())
     {
-        MenuDraw_Close();
+        CloseMenuDraw();
         return false;
     }
     gPause.mFlashFrames++;

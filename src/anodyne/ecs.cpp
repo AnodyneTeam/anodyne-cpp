@@ -9,6 +9,7 @@
 
 #include "fix16_sin.h"
 #include "obj_vram_allocator.hpp"
+#include "room.h"
 #include "sprite.h"
 
 // Pools and per-frame buffers live in EWRAM (".sbss" in gba_cart.ld: uninitialised, Ecs_Init resets them).
@@ -1366,8 +1367,8 @@ ECS_IWRAM_CODE void Ecs_DoCollisions(bool ignorePlayerMap, int screenX, int scre
     // KeepOnScreen.
     const fx left = Fx(screenX);
     const fx top = Fx(screenY);
-    const fx right = Fx(screenX + 160);
-    const fx bottom = Fx(screenY + 160);
+    const fx right = Fx(screenX + kRoomW);
+    const fx bottom = Fx(screenY + kRoomH);
     for (Entity* e = gHead; e; e = e->mNext)
     {
         if (!Updatable(*e) || !(e->mClass->mFlags & ECF_KEEP_ON_SCREEN))
@@ -1707,7 +1708,8 @@ int32_t DepthKey(const Entity& e, int depth)
         const int y = FxTrunc(e.mT->mY);
         // (y mod 160 by a multiply where it's exact, as Thumb has no divide)
         const uint32_t biased = static_cast<uint32_t>(y + 160 * 64);
-        const int inGrid = biased < 81920 ? static_cast<int>(biased - ((biased * 52429u) >> 23) * 160)
+        const int inGrid = kWideRooms ? ((y % kRoomH) + kRoomH) % kRoomH
+                         : biased < 81920 ? static_cast<int>(biased - ((biased * 52429u) >> 23) * 160)
                                           : ((y % 160) + 160) % 160;
         key += (inGrid + e.mB->mH + 256) << 6;
     }
@@ -1756,7 +1758,8 @@ void Ecs_SetCutsceneView(bool on)
     gCutsceneView = on;
 }
 
-ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
+ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY,
+                             bool wide)
 {
     if (!gVram)
     {
@@ -1764,6 +1767,8 @@ ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int en
     }
     gDrawTick++;
     DrawItem* const gDraw = gScratch.mDraw.mSorted;
+    const int clipL = wide ? 0 : viewX;
+    const int clipR = wide ? 240 : viewX + kRoomW;
     int count = 0;
     for (Entity* e = gHead; e && count < kMaxVisuals; e = e->mNext)
     {
@@ -1828,7 +1833,7 @@ ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int en
         const int sw = unscaled ? fw : FxTrunc(FxMul(Fx(fw), v.mScale));
         const int sh = unscaled ? fh : FxTrunc(FxMul(Fx(fh), v.mScale));
         // Off the playfield entirely: skip.
-        if (v.mLayer != LAYER_UI && (sx + sw <= viewX || sx >= viewX + 160 || sy + sh <= 0 || sy >= 160))
+        if (v.mLayer != LAYER_UI && (sx + sw <= clipL || sx >= clipR || sy + sh <= kRoomViewY || sy >= 160))
         {
             continue;
         }

@@ -14,6 +14,11 @@ struct MosaicBgOffsets final
     // and the C# draws a 20px HUD above the game area (the title screen is shifted up by 10 instead).
     int originX = 40;
     int originY = -20;
+    // The part of the screen shown (the rest is black): the playfield, or all 240px in the wide view (world.h),
+    // whose C# screen starts at x=0. Its blocks only go down to 17px in software (kMaxCols), so up to 16 they're
+    // the hardware's (the grid lines up across, and down when the block size divides 20).
+    int viewX = 40;
+    int viewW = 160;
 };
 
 // `pix` is the C# Pixelation (8.8 fixed, 1.0 = off). Call every frame while the effect runs, after the sprites are drawn.

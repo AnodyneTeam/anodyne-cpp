@@ -1,0 +1,438 @@
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+index 30177ea..e587d02 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/AnodyneGame.cs
+@@ -1,4 +1,4 @@
+-#region Using Statements
++﻿#region Using Statements
+ using AnodyneSharp.Dialogue;
+ using AnodyneSharp.Drawing;
+ using AnodyneSharp.Drawing.Effects;
+@@ -255,7 +255,7 @@ namespace AnodyneSharp
+             switch (GlobalState.settings.resolution)
+             {
+                 case Resolution.Windowed:
+-                    graphics.PreferredBackBufferWidth = 160 * GlobalState.settings.scale;
++                    graphics.PreferredBackBufferWidth = SpriteDrawer.ViewWidth * GlobalState.settings.scale;
+                     graphics.PreferredBackBufferHeight = 180 * GlobalState.settings.scale;
+                     break;
+                 case Resolution.Scaled:
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Content/effects/blend.fx b/AnodyneSharp/AnodyneSharp.Shared/Content/effects/blend.fx
+index 22d4102..71208bd 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Content/effects/blend.fx
++++ b/AnodyneSharp/AnodyneSharp.Shared/Content/effects/blend.fx
+@@ -20,7 +20,12 @@ sampler2D TextureSampler : register(s0);
+ texture OverlayTex;
+ sampler2D OverlaySampler = sampler_state {
+ 	Texture = <OverlayTex>;
++	AddressU = CLAMP;
++	AddressV = CLAMP;
+ };
++// Where the overlay sits on the screen (SpriteDrawer.SetOverlayRect): a 160px texture on the wide view's 240px.
++float2 OverlayScale;
++float2 OverlayOffset;
+ 
+ bool HardLight;
+ 
+@@ -62,7 +67,7 @@ float4 MainPS(VertexShaderOutput input) : COLOR
+ 	float4 color = tex2D(TextureSampler, input.Tex);
+ 	if (DepthCutoff > 0.f && tex2D(DepthSampler, input.Tex).x <= DepthCutoff)
+ 		return color;
+-	float4 blend = tex2D(OverlaySampler, input.Tex);
++	float4 blend = tex2D(OverlaySampler, input.Tex * OverlayScale + OverlayOffset);
+ 	if (blend.a == 0)
+ 		return color;
+ 	blend.rgb /= blend.a;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Content/effects/wave.fx b/AnodyneSharp/AnodyneSharp.Shared/Content/effects/wave.fx
+index 72ba463..0abced8 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Content/effects/wave.fx
++++ b/AnodyneSharp/AnodyneSharp.Shared/Content/effects/wave.fx
+@@ -8,6 +8,7 @@
+ #endif
+ 
+ int phase_offset;
++float2 ScreenSize;
+ 
+ sampler2D Screen : register(s0) {
+ 	AddressU = CLAMP;
+@@ -46,7 +47,7 @@ float4 MainPS(VertexShaderOutput input) : COLOR
+ 	
+ 	int phase = (yloc / 15) % 12 - 6;
+ 	input.Position.x += 3 - abs(phase);
+-	return tex2D(Screen, input.Position.xy / float2(160,180));
++	return tex2D(Screen, input.Position.xy / ScreenSize);
+ }
+ 
+ technique Wave
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
+index 07e2e93..eed8300 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Camera.cs
+@@ -39,7 +39,8 @@ namespace AnodyneSharp.Drawing
+             get
+             {
+                 Vector2 pos = Position2D;
+-                return new Rectangle((int)pos.X, (int)pos.Y, SCREEN_HEIGHT_IN_PIXELS, SCREEN_HEIGHT_IN_PIXELS);
++                // (what the map draws: the wide view's screen reaches ViewMargin past the room either side)
++                return new Rectangle((int)pos.X - SpriteDrawer.ViewMargin, (int)pos.Y, SpriteDrawer.ViewWidth, SCREEN_HEIGHT_IN_PIXELS);
+             }
+         }
+ 
+@@ -83,7 +84,7 @@ namespace AnodyneSharp.Drawing
+             Transform = Matrix.CreateTranslation(-Position) *
+                                          //Matrix.CreateRotationZ(Rotation) *
+                                          Matrix.CreateScale(new Vector3(Zoom, Zoom, 1)) *
+-                                         Matrix.CreateTranslation(new Vector3(160 * 0.5f, 160 * 0.5f, 0)) *
++                                         Matrix.CreateTranslation(new Vector3(SpriteDrawer.ViewWidth * 0.5f, 160 * 0.5f, 0)) *
+                                          Matrix.CreateTranslation(Offset);
+         }
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Blend.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Blend.cs
+index 52a96fe..6e0bd94 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Blend.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Blend.cs
+@@ -36,6 +36,7 @@ namespace AnodyneSharp.Drawing.Effects
+             blend.Parameters["OverlayTex"].SetValue(tex);
+             blend.Parameters["DepthCutoff"].SetValue(cutoff);
+             blend.Parameters["Projection"].SetValue(SpriteDrawer.Projection(screen.Bounds.Size));
++            SpriteDrawer.SetOverlayRect(blend, false);
+             batch.Begin(samplerState: SamplerState.PointClamp, effect: blend);
+             batch.Draw(screen, screen.Bounds, Color.White);
+             batch.End();
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Darkness.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Darkness.cs
+index 8579bb2..7868c70 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Darkness.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Darkness.cs
+@@ -82,7 +82,7 @@ namespace AnodyneSharp.Drawing.Effects
+         public void Load(ContentManager content, GraphicsDevice graphicsDevice)
+         {
+             device = graphicsDevice;
+-            lights_applied = new RenderTarget2D(graphicsDevice, GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
++            lights_applied = new RenderTarget2D(graphicsDevice, SpriteDrawer.ViewWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS);
+             blend = content.Load<Effect>("effects/blend");
+         }
+ 
+@@ -91,13 +91,20 @@ namespace AnodyneSharp.Drawing.Effects
+ 
+             RenderTargetBinding[] resultTargets = device.GetRenderTargets();
+ 
++            if (lights_applied.Width != screen.Width)
++            {
++                lights_applied.Dispose();
++                lights_applied = new RenderTarget2D(device, screen.Width, screen.Height);
++            }
++
+             device.SetRenderTarget(lights_applied);
+ 
+             if (darkness != null)
+             {
+                 device.Clear(Color.Transparent);
+-                batch.Begin();
+-                batch.Draw(darkness, screen.Bounds, Color.White);
++                // (the 160px texture, its edge columns carried on across the wide view's margins)
++                batch.Begin(samplerState: SamplerState.PointClamp);
++                batch.Draw(darkness, screen.Bounds, new Rectangle(-SpriteDrawer.ViewMargin, 0, screen.Width, darkness.Height), Color.White);
+                 batch.End();
+             }
+             else
+@@ -124,6 +131,7 @@ namespace AnodyneSharp.Drawing.Effects
+                 blend.Parameters["HardLight"].SetValue(hard_light);
+                 blend.Parameters["DepthCutoff"].SetValue(0f);
+                 blend.Parameters["Projection"].SetValue(SpriteDrawer.Projection(screen.Bounds.Size));
++                SpriteDrawer.SetOverlayRect(blend, true);
+                 batch.Begin(samplerState: SamplerState.PointClamp, effect: blend);
+                 batch.Draw(screen, screen.Bounds, Color.White);
+                 batch.End();
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Glitch.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Glitch.cs
+index 05eeecd..f38d8ab 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Glitch.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Glitch.cs
+@@ -62,8 +62,10 @@ namespace AnodyneSharp.Drawing.Effects
+ 
+             public void Recalc()
+             {
+-                source = new Rectangle(GlobalState.RNG.Next(160), GlobalState.RNG.Next(180), GlobalState.RNG.Next(16, 32), GlobalState.RNG.Next(16, 32));
+-                dest = new Point(GlobalState.RNG.Next(160),GlobalState.RNG.Next(180));
++                // (the same draws in the wide view, spread over its width)
++                int w = SpriteDrawer.ViewWidth;
++                source = new Rectangle(GlobalState.RNG.Next(160) * w / 160, GlobalState.RNG.Next(180), GlobalState.RNG.Next(16, 32), GlobalState.RNG.Next(16, 32));
++                dest = new Point(GlobalState.RNG.Next(160) * w / 160,GlobalState.RNG.Next(180));
+             }
+ 
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/ScreenShake.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/ScreenShake.cs
+index 9e9156c..7f887f3 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/ScreenShake.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/ScreenShake.cs
+@@ -63,7 +63,7 @@ namespace AnodyneSharp.Drawing.Effects
+ 
+         public void Render(SpriteBatch batch, Texture2D screen)
+         {
+-            Microsoft.Xna.Framework.Vector2 pos = new(screen.Width * (float)_pos.X, screen.Height * (float)_pos.Y);
++            Microsoft.Xna.Framework.Vector2 pos = new((screen.Width - 2 * SpriteDrawer.ViewMargin) * (float)_pos.X, screen.Height * (float)_pos.Y);
+             batch.GraphicsDevice.Clear(Color.Black);
+             batch.Begin(samplerState:SamplerState.PointClamp);
+             batch.Draw(screen, pos, Color.White);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/TitleScreenOverlay.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/TitleScreenOverlay.cs
+index 3510117..87ce295 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/TitleScreenOverlay.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/TitleScreenOverlay.cs
+@@ -56,6 +56,7 @@ namespace AnodyneSharp.Drawing.Effects
+             blend.Parameters["HardLight"].SetValue(false);
+             blend.Parameters["DepthCutoff"].SetValue(1f);
+             blend.Parameters["Projection"].SetValue(SpriteDrawer.Projection(screen.Bounds.Size));
++            SpriteDrawer.SetOverlayRect(blend, false);
+             batch.Begin(samplerState: SamplerState.PointClamp, effect: blend);
+             batch.Draw(screen, screen.Bounds, Color.White);
+             batch.End();
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Wave.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Wave.cs
+index b26e8a5..34628bd 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Wave.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/Effects/Wave.cs
+@@ -38,6 +38,7 @@ namespace AnodyneSharp.Drawing.Effects
+         {
+             effect.Parameters["phase_offset"].SetValue((int)(timer*180));
+             effect.Parameters["Projection"].SetValue(SpriteDrawer.Projection(screen.Bounds.Size));
++            effect.Parameters["ScreenSize"].SetValue(new Vector2(screen.Width, screen.Height));
+             batch.Begin(effect: effect);
+             batch.Draw(screen, screen.Bounds, Color.White);
+             batch.End();
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
+index ac2497f..651570a 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/ScrollingTex.cs
+@@ -37,6 +37,12 @@ namespace AnodyneSharp.Drawing
+             Vector2 topleft = Position + SpriteDrawer.Camera.Position2D;
+             Rectangle pos = new Rectangle((int)topleft.X, (int)topleft.Y, Texture.Width, Texture.Height);
+             SpriteDrawer.DrawSprite(Texture,pos,Z:DrawingUtilities.GetDrawingZ(_layer,0));
++            if (SpriteDrawer.ViewMargin > 0)
++            {
++                // (the texture repeats every half: copies either side cover the wide view's margins)
++                SpriteDrawer.DrawSprite(Texture, new Rectangle(pos.X - Texture.Width / 2, pos.Y, Texture.Width, Texture.Height), Z: DrawingUtilities.GetDrawingZ(_layer, 0));
++                SpriteDrawer.DrawSprite(Texture, new Rectangle(pos.X + Texture.Width / 2, pos.Y, Texture.Width, Texture.Height), Z: DrawingUtilities.GetDrawingZ(_layer, 0));
++            }
+         }
+ 
+         public void Update()
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+index 6112e08..6dfa1f6 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Drawing/SpriteDrawer.cs
+@@ -24,6 +24,39 @@ namespace AnodyneSharp.Drawing
+ 
+         public static Matrix Projection(Point screenSize) => Matrix.CreateOrthographicOffCenter(0, screenSize.X, screenSize.Y, 0, 0, -1);
+ 
++        // Wide view (settings.wide_view): the game screen is 240px across instead of 160, showing 40px of the rooms
++        // either side of the current one. Only the drawing changes: the camera, its grid and every game rule stay on
++        // the 160px room, and the UI stays centred over it.
++        public const int WIDE_WIDTH = 240;
++        public static int ViewWidth => GlobalState.settings.wide_view ? WIDE_WIDTH : GameConstants.SCREEN_WIDTH_IN_PIXELS;
++        public static int ViewMargin => (ViewWidth - GameConstants.SCREEN_WIDTH_IN_PIXELS) / 2;
++        private static int _targetWidth;
++
++        // A 160px-wide overlay texture's place on a ViewWidth-wide screen (blend.fx: clamped at its edges).
++        public static void SetOverlayRect(Effect e, bool screenSized)
++        {
++            float scale = screenSized ? 1f : ViewWidth / (float)GameConstants.SCREEN_WIDTH_IN_PIXELS;
++            float offset = screenSized ? 0f : -ViewMargin / (float)GameConstants.SCREEN_WIDTH_IN_PIXELS;
++            e.Parameters["OverlayScale"].SetValue(new Vector2(scale, 1f));
++            e.Parameters["OverlayOffset"].SetValue(new Vector2(offset, 0f));
++        }
++
++        private static void MakeTargets()
++        {
++            _targetWidth = ViewWidth;
++            _game?.Dispose();
++            _game2?.Dispose();
++            _depth?.Dispose();
++            _render?.Dispose();
++            _render2?.Dispose();
++            _game = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
++            _game2 = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
++            _depth = new RenderTarget2D(_graphicsDevice, _targetWidth, 160);
++            _render = new RenderTarget2D(_graphicsDevice, _targetWidth, 180);
++            _render2 = new RenderTarget2D(_graphicsDevice, _targetWidth, 180);
++            _depthrender?.Parameters["Projection"].SetValue(Projection(new(_targetWidth, 160)));
++        }
++
+         private static RenderTarget2D _game;
+         private static RenderTarget2D _game2;
+         private static RenderTarget2D _render;
+@@ -35,7 +68,7 @@ namespace AnodyneSharp.Drawing
+         private static SpriteBatch _secondary; //To be used for entity-specific drawing to a custom target
+         private static Dictionary<Point, GrowableResourceList<RenderTarget2D>> customTargets = new();
+ 
+-        public static int MaxScale => Math.Min(GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Width / 160, GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height / 180);
++        public static int MaxScale => Math.Min(GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Width / ViewWidth, GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height / 180);
+ 
+         public static void Initialize(GraphicsDevice graphicsDevice)
+         {
+@@ -46,11 +79,7 @@ namespace AnodyneSharp.Drawing
+             _spriteBatch = new(_graphicsDevice);
+             _secondary = new(_graphicsDevice);
+ 
+-            _game = new RenderTarget2D(_graphicsDevice, 160, 160);
+-            _game2 = new RenderTarget2D(_graphicsDevice, 160, 160);
+-            _depth = new RenderTarget2D(_graphicsDevice, 160, 160);
+-            _render = new RenderTarget2D(_graphicsDevice, 160, 180);
+-            _render2 = new RenderTarget2D(_graphicsDevice, 160, 180);
++            MakeTargets();
+ 
+             SolidTex = new(_graphicsDevice, 2, 2);
+             SolidTex.SetData(new Color[] {Color.White,Color.White,Color.White,Color.White});
+@@ -67,7 +96,7 @@ namespace AnodyneSharp.Drawing
+             return (_secondary, res.GetNext());
+         }
+ 
+-        /// <summary>Bot: writes the last rendered frame (160x180, HUD on top) to a PNG.</summary>
++        /// <summary>Bot: writes the last rendered frame (160x180, or 240x180 in the wide view, HUD on top) to a PNG.</summary>
+         public static void SaveRender(string path)
+         {
+             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+@@ -78,7 +107,7 @@ namespace AnodyneSharp.Drawing
+         public static void Load(ContentManager c)
+         {
+             _depthrender = c.Load<Effect>("effects/render_depth");
+-            _depthrender.Parameters["Projection"].SetValue(Projection(new(160)));
++            _depthrender.Parameters["Projection"].SetValue(Projection(new(_targetWidth, 160)));
+             blend = c.Load<Effect>("effects/blend");
+         }
+ 
+@@ -88,6 +117,10 @@ namespace AnodyneSharp.Drawing
+             {
+                 cache.Reset();
+             }
++            if (_targetWidth != ViewWidth)
++            {
++                MakeTargets();
++            }
+             Camera.Recalc();
+             _graphicsDevice.SetRenderTargets(_game,_depth);
+             _depthrender.Parameters["View"].SetValue(Camera.Transform);
+@@ -101,14 +134,19 @@ namespace AnodyneSharp.Drawing
+             {
+                 cache.Reset();
+             }
++            if (_targetWidth != ViewWidth)
++            {
++                MakeTargets();
++            }
+             _graphicsDevice.SetRenderTarget(_render);
+             _graphicsDevice.Clear(BackColor);
+ 
+             _spriteBatch.Begin(sortMode: SpriteSortMode.FrontToBack, blendState: BlendState.AlphaBlend, samplerState: SamplerState);
+-            _spriteBatch.Draw(_game, new Rectangle(0, GameConstants.HEADER_HEIGHT, GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS), Color.White);
++            _spriteBatch.Draw(_game, new Rectangle(0, GameConstants.HEADER_HEIGHT, _targetWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS), Color.White);
+             _spriteBatch.End();
+             
+-            _spriteBatch.Begin(sortMode: SpriteSortMode.BackToFront, blendState: BlendState.AlphaBlend, samplerState: SamplerState);
++            // (the UI is laid out for 160px: the wide view centres it)
++            _spriteBatch.Begin(sortMode: SpriteSortMode.BackToFront, blendState: BlendState.AlphaBlend, samplerState: SamplerState, transformMatrix: Matrix.CreateTranslation(ViewMargin, 0, 0));
+         }
+ 
+         public static void DrawSprite(Texture2D texture, Rectangle rect, Rectangle? sRect = null, Color? color = null, float rotation = 0, SpriteEffects flip = SpriteEffects.None, float Z = 0)
+@@ -159,6 +197,7 @@ namespace AnodyneSharp.Drawing
+ 
+             _spriteBatch.Begin(sortMode: SpriteSortMode.Texture, blendState: BlendState.AlphaBlend, samplerState: SamplerState, effect: effect);
+ 
++            int w = _render.Width;
+             switch(GlobalState.settings.resolution)
+             {
+                 case Resolution.Windowed:
+@@ -166,14 +205,14 @@ namespace AnodyneSharp.Drawing
+                     break;
+                 case Resolution.Scaled:
+ #if ANDROID
+-                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - 160 * GlobalState.settings.scale/2, 0, 160 * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
++                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, 0, w * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
+ #else
+-                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - 160 * GlobalState.settings.scale/2, _graphicsDevice.PresentationParameters.BackBufferHeight / 2 - 180 * GlobalState.settings.scale / 2, 160 * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
++                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - w * GlobalState.settings.scale/2, _graphicsDevice.PresentationParameters.BackBufferHeight / 2 - 180 * GlobalState.settings.scale / 2, w * GlobalState.settings.scale, 180 * GlobalState.settings.scale), FullScreenFade);
+ #endif
+                     break;
+                 case Resolution.Stretch:
+                     float scale = _graphicsDevice.PresentationParameters.BackBufferHeight / 180.0f;
+-                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - (int)(160 * scale)/2, 0, (int)(160*scale), _graphicsDevice.PresentationParameters.BackBufferHeight), FullScreenFade);
++                    _spriteBatch.Draw(_render, new Rectangle(_graphicsDevice.PresentationParameters.BackBufferWidth / 2 - (int)(w * scale)/2, 0, (int)(w*scale), _graphicsDevice.PresentationParameters.BackBufferHeight), FullScreenFade);
+                     break;
+             }
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Decorations/DeathFadeIn.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Decorations/DeathFadeIn.cs
+index f7d2862..f16b645 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Decorations/DeathFadeIn.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Decorations/DeathFadeIn.cs
+@@ -47,7 +47,7 @@ namespace AnodyneSharp.Entities.Decorations
+ 
+         public void Draw()
+         {
+-            SpriteDrawer.DrawSprite(fadeIn, Microsoft.Xna.Framework.Vector2.Zero, new Rectangle(0,0, GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS + GameConstants.HEADER_HEIGHT), Z: DrawingUtilities.GetDrawingZ( DrawOrder.DEATH_FADEIN), color: color * (float)Opacity);
++            SpriteDrawer.DrawSprite(fadeIn, new Microsoft.Xna.Framework.Vector2(-SpriteDrawer.ViewMargin, 0), new Rectangle(0,0, SpriteDrawer.ViewWidth, GameConstants.SCREEN_HEIGHT_IN_PIXELS + GameConstants.HEADER_HEIGHT), Z: DrawingUtilities.GetDrawingZ( DrawOrder.DEATH_FADEIN), color: color * (float)Opacity);
+         }
+     }
+ }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Registry/Settings.cs b/AnodyneSharp/AnodyneSharp.Shared/Registry/Settings.cs
+index 38844c4..7658a67 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Registry/Settings.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Registry/Settings.cs
+@@ -46,20 +46,31 @@ namespace AnodyneSharp.Registry
+         public float flash_brightness { get; set; } = 1.0f;
+         public float flash_easing { get; set; } = 0.0f;
+         public bool screenshake { get; set; } = true;
++        // (SpriteDrawer.ViewWidth: a 240px game screen; ANODYNE_WIDE=1 turns it on from the command line)
++        public bool wide_view { get; set; } = false;
+ 
+         public static Settings Load()
+         {
+             try
+             {
+                 string save = File.ReadAllText($"{GameConstants.SavePath}Settings.json");
+-                return JsonSerializer.Deserialize<Settings>(save);
++                return WideFromEnv(JsonSerializer.Deserialize<Settings>(save));
+             }
+             catch
+             {
+-                return new();
++                return WideFromEnv(new());
+             }
+         }
+ 
++        private static Settings WideFromEnv(Settings s)
++        {
++            if (System.Environment.GetEnvironmentVariable("ANODYNE_WIDE") is string w)
++            {
++                s.wide_view = w == "1";
++            }
++            return s;
++        }
++
+         public void Save()
+         {
+             File.WriteAllText($"{GameConstants.SavePath}Settings.json", JsonSerializer.Serialize<Settings>(this));
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
+index 3318a8f..f18a3b8 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/States/MenuSubstates/ConfigSubstates/GraphicsMenu.cs
+@@ -96,6 +96,13 @@ namespace AnodyneSharp.States.MenuSubstates.ConfigSubstates
+                 ValueChangedEvent = (val) => { GlobalState.settings.screenshake = val; }
+             };
+ 
++            var wideLabel = new UILabel(new Vector2(menuX, shakeLabel.Position.Y + yStep), true, "Wide view", layer: DrawOrder.TEXT, forceEnglish: true);
++
++            var wideSetting = new CheckBox(new Vector2(x + 120, wideLabel.Position.Y), GlobalState.settings.wide_view, MenuStyle.SubMenu, DrawOrder.SUBMENU_SLIDER)
++            {
++                ValueChangedEvent = (val) => { GlobalState.ResolutionDirty = GlobalState.settings.wide_view != val; GlobalState.settings.wide_view = val; }
++            };
++
+             options = new()
+             {
+                 (resolutionLabel, resolutionSelect),
+@@ -104,7 +111,8 @@ namespace AnodyneSharp.States.MenuSubstates.ConfigSubstates
+                 (brightnessLabel, brightnessSelect),
+                 (easingLabel, easingSelect),
+                 (testLabel, new ActionOption(() => GlobalState.flash.Flash(1.0f, Color.White))),
+-                (shakeLabel, shakeSetting)
++                (shakeLabel, shakeSetting),
++                (wideLabel, wideSetting)
+             };
+         }
+     }

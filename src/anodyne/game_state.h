@@ -108,6 +108,13 @@ enum GameModeKind : uint8_t
 
 extern bool gFuckItMode; // GlobalState.FUCK_IT_MODE_ON: a cheat's, kept over a new game
 
+// The wide view's starting value (a -DANODYNE_WIDE_VIEW=ON build starts with it on; the sim also takes ANODYNE_WIDE=1).
+#ifdef ANODYNE_WIDE_VIEW
+constexpr bool kWideViewDefault = true;
+#else
+constexpr bool kWideViewDefault = false;
+#endif
+
 // GlobalState.settings (Settings.json in the C#): the config menu's values. Selector settings hold the option index.
 struct Settings final
 {
@@ -126,6 +133,7 @@ struct Settings final
     float mFlashBrightness = 1.0f;
     float mFlashEasing = 0.0f;
     bool mScreenshake = true;
+    bool mWideView = kWideViewDefault; // the map fills the 240px screen, not just the 160px room (see world.h)
 };
 
 extern Settings gSettings;

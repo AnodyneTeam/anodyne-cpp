@@ -6,6 +6,12 @@
 // icon in its frame with the dust icon, the key count and the mini minimap on the left, the health bar on the right.
 // Black panels cover the bars behind it, so sprites poking out of the playfield stay hidden there.
 
+// Wide rooms (room.h) fill the screen under a 16px row: the HUD goes back to the C#'s header there, over black.
+// The wide view (world.h) has no side bars: the HUD keeps its place, in a black box in each top corner over the map.
+constexpr int kHudBarW = 40;
+constexpr int kHudWideLeftH = 64;  // the broom, the keys and the mini minimap
+constexpr int kHudWideRightH = 36; // up to four rows of health
+
 // The first OAM entries are the HUD's; the entities' come after them.
 constexpr int kHudOamCount = 15;
 
