@@ -23,24 +23,45 @@ public:
         return mBasePath;
     }
 
+    // Wide rooms: the maps and Entities.xml from tools/wide_rooms/remap.py's output instead (everything else stays)
+    void SetMapBasePath(const std::string& mapBasePath)
+    {
+        mMapBasePath = mapBasePath;
+    }
+
+    bool IsWideRooms() const
+    {
+        return !mMapBasePath.empty();
+    }
+
+    const std::string& GetMapBasePath() const
+    {
+        return mMapBasePath.empty() ? mBasePath : mMapBasePath;
+    }
+
+    std::string GetMapDir(const std::string& mapName) const
+    {
+        return CombinePaths(GetMapBasePath(), "Maps", mapName);
+    }
+
     std::string GetEntitiesPath() const
     {
-        return CombinePaths(mBasePath, "Entities.xml");
+        return CombinePaths(GetMapBasePath(), "Entities.xml");
     }
 
     std::string GetMapBGCSVPath(const std::string& mapName) const
     {
-        return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), "BG.csv");
+        return CombinePaths(GetMapDir(mapName), "BG.csv");
     }
 
     std::string GetMapLayerCSVPath(const std::string& mapName, const std::string& layer) const
     {
-        return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), layer + ".csv");
+        return CombinePaths(GetMapDir(mapName), layer + ".csv");
     }
 
     std::string GetMapTileDataPath(const std::string& mapName) const
     {
-        return CombinePaths(CombinePaths(mBasePath, "Maps", mapName), "TileData.col");
+        return CombinePaths(GetMapDir(mapName), "TileData.col");
     }
 
     std::string GetMapTilesetPath(const std::string& mapName) const
@@ -122,5 +143,6 @@ private:
     }
 
     std::string mBasePath;
+    std::string mMapBasePath;
     mutable std::map<std::string, std::string> mTextureIndex;
 };

@@ -588,7 +588,9 @@ std::string BuildEntityTables(const ContentPaths& contentPaths, const std::vecto
                 const auto m = cardLookup.find(mapName);
                 if (m != cardLookup.end())
                 {
-                    const auto c = m->second.find({ x / 160, y / 160 });
+                    const int roomW = contentPaths.IsWideRooms() ? 240 : 160;
+                    const int roomH = contentPaths.IsWideRooms() ? 144 : 160;
+                    const auto c = m->second.find({ x / roomW, y / roomH });
                     linkId = c != m->second.end() ? c->second : -1;
                 }
             }

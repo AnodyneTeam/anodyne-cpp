@@ -192,6 +192,16 @@ struct MapSwapperList final
     const MapSwapRegion* mRegions;
 };
 
+// Wide rooms (tools/wide_rooms/remap.py): per grid column the 15 source columns of each room, per grid row the 9
+// source rows, for positions the code has of its own (room.h). Empty with normal rooms.
+struct RoomRemapData final
+{
+    uint32_t mRoomsW;
+    uint32_t mRoomsH;
+    const uint8_t* mCols; // mRoomsW * 15
+    const uint8_t* mRows; // mRoomsH * 9
+};
+
 // A map entity preset (Entities.xml, resolved to a class by the content compiler like the C# EntityManager).
 // Positions are map pixels. mGlobalId indexes the game's per-preset state (EntityPreset.Alive / Activated) and is
 // unique over all maps. A placeholder (an entity the port doesn't implement yet) draws static frame mLookFrame of

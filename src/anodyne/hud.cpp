@@ -9,6 +9,7 @@
 #include "hud_data.h"
 #include "pause_draw.h"
 #include "player.h"
+#include "room.h"
 #include "title_data.h"
 
 namespace
@@ -34,22 +35,23 @@ enum CanvasId : uint8_t
     CANVAS_COUNT,
 };
 
-// Screen positions. The left bar: the C#'s header items, in the same order down instead of across.
-constexpr int kLeftX = 4;
+// Screen positions. The left bar: the C#'s header items, in the same order down instead of across. Wide rooms: the
+// C#'s header row (16px there), the items squeezed up and together to fit a 64px canvas each side.
+constexpr int kLeftX = kWideRooms ? 40 : 4;
 constexpr int kLeftY = 0;
-constexpr int kIconX = 9; // (in the left canvases)
-constexpr int kIconY = 4;
+constexpr int kIconX = kWideRooms ? 2 : 9; // (in the left canvases)
+constexpr int kIconY = kWideRooms ? 0 : 4;
 constexpr int kDustX = kIconX + 8; // (the C#'s 2,3 and 10,10)
 constexpr int kDustY = kIconY + 7;
-constexpr int kKeyX = 8;
-constexpr int kKeyY = 24;
+constexpr int kKeyX = kWideRooms ? 18 : 8;
+constexpr int kKeyY = kWideRooms ? 1 : 24;
 constexpr int kLabelX = kKeyX + 7; // (the C#'s 30,3 and 37,5)
 constexpr int kLabelY = kKeyY + 2;
-constexpr int kMinimapX = 3;
-constexpr int kMinimapY = 42;
-constexpr int kHealthX = 202;
-constexpr int kHealthY = 4;
-constexpr int kHealthPerRow = 4; // (the C#'s rows of 8 don't fit)
+constexpr int kMinimapX = kWideRooms ? 39 : 3;
+constexpr int kMinimapY = kWideRooms ? 0 : 42;
+constexpr int kHealthX = kWideRooms ? 144 : 202;
+constexpr int kHealthY = kWideRooms ? 2 : 4;
+constexpr int kHealthPerRow = kWideRooms ? 8 : 4; // (the C#'s rows of 8 don't fit a side bar)
 constexpr int kMaxHealth = 16;
 constexpr int kGlyphTop = 2; // the font's glyphs sit 2px down their 8px line
 
@@ -330,7 +332,7 @@ void Hud_Init(ObjVramAllocator& vram)
 {
     HudData& h = gHud;
     memset(&h, 0, sizeof(h));
-    const int sizes[CANVAS_COUNT][2] = {{4, 8}, {4, 8}, {8, 4}};
+    const int sizes[CANVAS_COUNT][2] = {{kWideRooms ? 8 : 4, kWideRooms ? 4 : 8}, {kWideRooms ? 8 : 4, kWideRooms ? 4 : 8}, {8, 4}};
     for (int i = 0; i < CANVAS_COUNT; i++)
     {
         h.mCanvas[i].mTilesW = sizes[i][0];
@@ -370,10 +372,24 @@ void Hud_Draw(bool healthHidden)
         h.mValid = true;
     }
     // (the frame, dust and key over the broom icon and the minimap; the panels under them all)
-    SetObj(0, h.mCanvas[CANVAS_LEFT].mBlock, kPalBankOther, false, kLeftX, kLeftY);
-    SetObj(1, h.mCanvas[CANVAS_LEFT_ICON].mBlock, kPalBankLeft, false, kLeftX, kLeftY);
+    SetObj(0, h.mCanvas[CANVAS_LEFT].mBlock, kPalBankOther, kWideRooms, kLeftX, kLeftY);
+    SetObj(1, h.mCanvas[CANVAS_LEFT_ICON].mBlock, kPalBankLeft, kWideRooms, kLeftX, kLeftY);
     SetObj(2, h.mCanvas[CANVAS_HEALTH].mBlock, kPalBankOther, true, kHealthX, kHealthY);
     int oam = 3;
+    if (kWideRooms)
+    {
+        // The header row (world.cpp's window 0): the panel as 64x32, its bottom half across the top
+        for (int col = 0; col < 4; col++)
+        {
+            SetObj(oam++, h.mBlackBlock, kPalBankOther, true, col * 64, kRoomViewY - 32);
+        }
+        while (oam < kHudOamCount)
+        {
+            obj_hide(&oam_mem[oam++]);
+        }
+        h.mShown = true;
+        return;
+    }
     if (gSettings.mWideView)
     {
         // Just the boxes (world.cpp's windows 0/1): a 32x64 panel and one 8px on, ending at the box's bottom (the

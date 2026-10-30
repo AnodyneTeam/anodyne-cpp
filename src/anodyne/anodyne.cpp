@@ -26,6 +26,7 @@
 #include "pixelate_test.hpp"
 
 #include "map_registry.h"
+#include "room.h"
 #include "game_state.h"
 #include "game_probe.h"
 #ifdef ANODYNE_LINK
@@ -177,6 +178,7 @@ static void LoadWorldMap(bool placedAfter = false)
     {
         SetReturnTargetToNexus();
     }
+    Room_SetRemap(kRoomRemap[gCurrentMap]);
     // Entities first: World_Load places the player and loads the screen's entities.
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
                     kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));

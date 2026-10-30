@@ -714,6 +714,78 @@ static bool DarkTextureBands(const ContentPaths& contentPaths, const std::string
     return true;
 }
 
+// Wide rooms: the settings above are in the 160x160 rooms, and every rectangle in them is whole rooms, so it scales
+// by the room (240 across, 144 down).
+static int RoomX(const ContentPaths& contentPaths, int x)
+{
+    return contentPaths.IsWideRooms() ? x / 160 * 240 + x % 160 : x;
+}
+
+static int RoomY(const ContentPaths& contentPaths, int y)
+{
+    return contentPaths.IsWideRooms() ? y / 160 * 144 + y % 160 : y;
+}
+
+// Wide rooms: remap.py's tables (remap.txt: per map its rooms across and down, then each grid column's 15 source
+// columns and each grid row's 9 source rows), for the code's own room positions; normal rooms: none.
+static void WriteRoomRemap(FILE* f, const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
+{
+    std::map<std::string, std::vector<int>> cols;
+    std::map<std::string, std::vector<int>> rows;
+    if (contentPaths.IsWideRooms())
+    {
+        std::ifstream in(std::filesystem::path(contentPaths.GetMapBasePath()) / "remap.txt");
+        std::string line;
+        while (std::getline(in, line))
+        {
+            std::stringstream ss(line);
+            std::string name;
+            int across = 0;
+            int down = 0;
+            ss >> name >> across >> down;
+            for (int i = 0, v = 0; i < across * 15 && ss >> v; i++)
+            {
+                cols[name].push_back(v);
+            }
+            for (int i = 0, v = 0; i < down * 9 && ss >> v; i++)
+            {
+                rows[name].push_back(v);
+            }
+        }
+    }
+    for (const auto& name : mapNames)
+    {
+        if (cols.count(name) == 0)
+        {
+            continue;
+        }
+        std::string out = "static const uint8_t kRoomRemap_" + name + "[] = {";
+        for (int v : cols[name])
+        {
+            out += std::to_string(v) + ",";
+        }
+        for (int v : rows[name])
+        {
+            out += std::to_string(v) + ",";
+        }
+        fprintf(f, "%s };\n", out.c_str());
+    }
+    fprintf(f, "static const RoomRemapData kRoomRemap[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        if (cols.count(name) != 0)
+        {
+            fprintf(f, "    { %zu, %zu, kRoomRemap_%s, kRoomRemap_%s + %zu },\n", cols[name].size() / 15,
+                    rows[name].size() / 9, name.c_str(), name.c_str(), cols[name].size());
+        }
+        else
+        {
+            fprintf(f, "    { 0, 0, nullptr, nullptr },\n");
+        }
+    }
+    fprintf(f, "};\n\n");
+}
+
 void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
 {
     FILE* f = fopen("map_registry.h", "w");
@@ -785,7 +857,8 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             fprintf(f, "static const MapAudioArea kMapAudioAreas_%s[] = {\n", name.c_str());
             for (const auto& area : spec->areas)
             {
-                fprintf(f, "    { %d, %d, %d, %d, \"%s\" },\n", area.x, area.y, area.w, area.h, area.music);
+                fprintf(f, "    { %d, %d, %d, %d, \"%s\" },\n", RoomX(contentPaths, area.x), RoomY(contentPaths, area.y),
+                        RoomX(contentPaths, area.w), RoomY(contentPaths, area.h), area.music);
             }
             fprintf(f, "};\n");
         }
@@ -844,7 +917,8 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
                 fprintf(f, "static const MapDarkArea kMapDarkAreas_%s[] = {\n", name.c_str());
                 for (const auto& area : spec.areas)
                 {
-                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s },\n", area.x, area.y, area.w, area.h,
+                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s },\n", RoomX(contentPaths, area.x),
+                            RoomY(contentPaths, area.y), RoomX(contentPaths, area.w), RoomY(contentPaths, area.h),
                             alpha256(area.alpha), area.playerLight, textureId(area.texture), quoted(area.replace).c_str());
                 }
                 fprintf(f, "};\n");
@@ -912,7 +986,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     std::unordered_set<std::string> swapperMaps;
     for (const auto& name : mapNames)
     {
-        std::ifstream in(std::filesystem::path(contentPaths.GetBasePath()) / "Maps" / name / "Swapper.dat");
+        std::ifstream in(std::filesystem::path(contentPaths.GetMapDir(name)) / "Swapper.dat");
         std::string line;
         std::string rows;
         bool first = true;
@@ -977,6 +1051,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     fprintf(f, "};\n\n");
     fputs(BuildEntityTables(contentPaths, mapNames).c_str(), f);
     fprintf(f, "\n");
+    WriteRoomRemap(f, contentPaths, mapNames);
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
 
     fclose(f);
@@ -1083,6 +1158,7 @@ struct AudioCliOptions final
     bool mapsOnly = false;
     bool audioOnly = false;
     bool spritesOnly = false;
+    bool wideRooms = false; // --wide-rooms: 15x9-tile rooms (old/ContentWide)
 };
 
 static AudioCliOptions ParseAudioCliOptions(int argc, char** argv)
@@ -1098,6 +1174,10 @@ static AudioCliOptions ParseAudioCliOptions(int argc, char** argv)
         else if (arg == "--verbose")
         {
             options.verbose = true;
+        }
+        else if (arg == "--wide-rooms")
+        {
+            options.wideRooms = true;
         }
         else if (arg == "--maps-only")
         {
@@ -1284,6 +1364,10 @@ int main(int argc, char **argv)
     AudioCliOptions cliOptions = ParseAudioCliOptions(argc, argv);
 
     ContentPaths contentPaths("../../../old/Content");
+    if (cliOptions.wideRooms)
+    {
+        contentPaths.SetMapBasePath("../../../old/ContentWide");
+    }
 
     std::vector<std::string> mapNames = {
         "APARTMENT",
@@ -1318,7 +1402,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "9-constexpr";
+        const std::string kMapFormatVersion = cliOptions.wideRooms ? "9-constexpr-wide" : "9-constexpr";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))

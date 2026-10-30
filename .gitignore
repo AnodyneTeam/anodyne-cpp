@@ -452,3 +452,5 @@ __pycache__/
 
 .vscode/settings.json
 src/lib/libtonc.a
+src/build-wroom/
+src/build-wroomlink/

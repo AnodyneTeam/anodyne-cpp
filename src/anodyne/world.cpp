@@ -6,6 +6,7 @@
 #include "pause.h"
 #include "pause_draw.h"
 #include "player.h"
+#include "room.h"
 #include "save.h"
 
 #include <stdio.h>
@@ -25,9 +26,9 @@ namespace
 {
 // ---- Constants from AnodyneSharp (GameConstants.cs / PlayState.cs) ---------------------------------------------
 constexpr int kTileSize = 16;
-constexpr int kScreenPx = 160;               // SCREEN_WIDTH/HEIGHT_IN_PIXELS
-constexpr int kScreenCells = kScreenPx / kTileSize; // 10x10 tiles per screen
-constexpr int kViewX = (240 - kScreenPx) / 2; // playfield is centred on the 240x160 GBA screen
+// (room.h: kRoomW/H, SCREEN_WIDTH/HEIGHT_IN_PIXELS, and kRoomTilesW/H, 10x10 tiles a screen or 15x9 wide)
+constexpr int kViewX = kRoomViewX; // playfield's top-left on the 240x160 GBA screen: centred, or under the header row
+constexpr int kViewY = kRoomViewY;
 constexpr fx kScrollSpeed = Fx(250);         // PlayState.Scroll_Speed, px/s
 
 // CollisionEventType, same values as the C# enum.
@@ -45,9 +46,12 @@ enum : uint8_t
     EVENT_GRASS = 9,
 };
 
-// Largest map: 120x120 16x16 tiles.
-constexpr uint32_t kMaxCollisionCells = 120 * 120;
+// Largest map: 120x120 16x16 tiles (wide rooms: 180x108, FIELDS and HOTEL).
+constexpr uint32_t kMaxCollisionCells = kWideRooms ? 180 * 108 : 120 * 120;
 constexpr uint32_t kMaxLayerBytes = kMaxCollisionCells * 2;
+// The layers share one buffer, each after the one before. With wide rooms no map has more than two of the largest
+// layers' worth (SPACE's three are smaller), and three wouldn't fit in EWRAM.
+constexpr uint32_t kLayerPoolBytes = (kWideRooms ? 2 : 3) * kMaxLayerBytes;
 
 // The map is three stacked layers (BG, BG2, FG) plus an optional scrolling background; each is one hardware BG
 // (all 8bpp, sharing the map's tileset in CBB0). Lower priority number = in front. The C# draw order is
@@ -62,7 +66,7 @@ constexpr int kRoleScreenblock[kRoleCount] = { 31, 30, 29, 28 }; // the tileset 
 constexpr uint32_t kMaxTilesetBytes = 0xE000;
 
 // Uninitialised EWRAM (".sbss" in gba_cart.ld): the current map's unpacked layers and collision cells.
-alignas(4) uint8_t gLayerBuffer[kLayerCount][kMaxLayerBytes] __attribute__((section(".sbss")));
+alignas(4) uint8_t gLayerBuffer[kLayerPoolBytes] __attribute__((section(".sbss")));
 alignas(4) uint8_t gCollisionGrid[kMaxCollisionCells] __attribute__((section(".sbss")));
 
 ObjVramAllocator* gVram = nullptr;
@@ -357,12 +361,12 @@ void UpdateScreenEffects()
             if (gShake.mDirs & SHAKE_HORIZONTAL)
             {
                 const fx x = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
-                gShake.mX = FxTrunc(FxMul(x, Fx(kScreenPx)));
+                gShake.mX = FxTrunc(FxMul(x, Fx(kRoomW)));
             }
             if (gShake.mDirs & SHAKE_VERTICAL)
             {
                 const fx y = FxMul(Rng_Unit() * 2, gShake.mIntensity) - gShake.mIntensity;
-                gShake.mY = FxTrunc(FxMul(y, Fx(kScreenPx)));
+                gShake.mY = FxTrunc(FxMul(y, Fx(kRoomH)));
             }
         }
     }
@@ -387,11 +391,12 @@ void UpdateScreenEffects()
     }
 }
 
-// Screen x of world x 0 is kViewX - camera, so the BG origin is the camera minus the playfield's left margin.
+// Screen x of world x 0 is kViewX - camera, so the BG origin is the camera minus the playfield's left margin (and y
+// the same with its top one).
 void UpdateBackground(bool force)
 {
     const int vx = FxFloor(gCamX) - kViewX;
-    const int vy = FxFloor(gCamY);
+    const int vy = FxFloor(gCamY) - kViewY;
     if (force)
     {
         BgFull(vx >> 3, vy >> 3);
@@ -563,7 +568,7 @@ void UpdateScroll(bool advance, bool force)
     const int posX = FxTrunc(gScrollPosX) + gScrollUnwrapX;
     const int posY = FxTrunc(gScrollPosY) + gScrollUnwrapY;
     const int vx = -kViewX - posX;
-    const int vy = -posY;
+    const int vy = -kViewY - posY;
     if (force)
     {
         ScrollFull(vx >> 3, vy >> 3);
@@ -704,6 +709,17 @@ void ApplyWindows()
     {
         return; // windows are off (the sprite gallery)
     }
+    if (kWideRooms)
+    {
+        // Window 0 is the header row (the HUD, OBJ only, never darkened); the rest of the screen is the playfield, as
+        // the wide view below.
+        REG_DISPCNT = (REG_DISPCNT & ~(DCNT_WIN1 | DCNT_WINOBJ)) | (gLightWindows ? DCNT_WINOBJ : 0);
+        REG_WIN0H = (0 << 8) | 240;
+        REG_WIN0V = (0 << 8) | kViewY;
+        REG_WININ = WIN_OBJ;
+        REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
+        return;
+    }
     if (gSettings.mWideView)
     {
         // Windows 0/1 are the HUD's boxes (OBJ only, never darkened); the rest of the screen is the playfield, as
@@ -721,16 +737,16 @@ void ApplyWindows()
     {
         REG_DISPCNT = REG_DISPCNT | DCNT_WIN1 | DCNT_WINOBJ;
         REG_WIN0H = (0 << 8) | kViewX;
-        REG_WIN1H = static_cast<uint16_t>(((kViewX + kScreenPx) << 8) | 240);
-        REG_WIN0V = REG_WIN1V = (0 << 8) | kScreenPx;
+        REG_WIN1H = static_cast<uint16_t>(((kViewX + kRoomW) << 8) | 240);
+        REG_WIN0V = REG_WIN1V = (0 << 8) | kRoomH;
         REG_WININ = WIN_OBJ | (WIN_OBJ << 8); // the side bars: the HUD, never darkened (hud.h)
         REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
     }
     else
     {
         REG_DISPCNT = REG_DISPCNT & ~(DCNT_WIN1 | DCNT_WINOBJ);
-        REG_WIN0H = (kViewX << 8) | (kViewX + kScreenPx);
-        REG_WIN0V = (0 << 8) | kScreenPx;
+        REG_WIN0H = (kViewX << 8) | (kViewX + kRoomW);
+        REG_WIN0V = (0 << 8) | kRoomH;
         REG_WININ = gWinLayers | WIN_BLD; // anodyne.cpp hides map loads behind a full darken
         REG_WINOUT = WIN_OBJ;             // the side bars: the HUD over its black panels, never darkened (hud.h)
     }
@@ -874,15 +890,15 @@ void PickSpawn()
     int bestScreenX = 0;
     int bestScreenY = 0;
     int bestScore = -1;
-    for (int gy = 0; gy + kScreenCells <= gCellsH; gy += kScreenCells)
+    for (int gy = 0; gy + kRoomTilesH <= gCellsH; gy += kRoomTilesH)
     {
-        for (int gx = 0; gx + kScreenCells <= gCellsW; gx += kScreenCells)
+        for (int gx = 0; gx + kRoomTilesW <= gCellsW; gx += kRoomTilesW)
         {
             int open = 0;
             int solid = 0;
-            for (int y = 0; y < kScreenCells; y++)
+            for (int y = 0; y < kRoomTilesH; y++)
             {
-                for (int x = 0; x < kScreenCells; x++)
+                for (int x = 0; x < kRoomTilesW; x++)
                 {
                     const uint8_t* c = ClassAtCell(gx + x, gy + y);
                     open += (c[0] == 0 && c[1] == 0) ? 1 : 0;
@@ -893,8 +909,8 @@ void PickSpawn()
             if (score > bestScore)
             {
                 bestScore = score;
-                bestScreenX = gx / kScreenCells;
-                bestScreenY = gy / kScreenCells;
+                bestScreenX = gx / kRoomTilesW;
+                bestScreenY = gy / kRoomTilesH;
             }
         }
     }
@@ -902,18 +918,18 @@ void PickSpawn()
     gGridX = bestScreenX;
     gGridY = bestScreenY;
 
-    int bestCellX = gGridX * kScreenCells + kScreenCells / 2;
-    int bestCellY = gGridY * kScreenCells + kScreenCells / 2;
+    int bestCellX = gGridX * kRoomTilesW + kRoomTilesW / 2;
+    int bestCellY = gGridY * kRoomTilesH + kRoomTilesH / 2;
     int bestDist = 1 << 30;
-    for (int y = 0; y < kScreenCells; y++)
+    for (int y = 0; y < kRoomTilesH; y++)
     {
-        for (int x = 0; x < kScreenCells; x++)
+        for (int x = 0; x < kRoomTilesW; x++)
         {
-            const int cx = gGridX * kScreenCells + x;
-            const int cy = gGridY * kScreenCells + y;
+            const int cx = gGridX * kRoomTilesW + x;
+            const int cy = gGridY * kRoomTilesH + y;
             const uint8_t* c = ClassAtCell(cx, cy);
-            const int dx = x - kScreenCells / 2;
-            const int dy = y - kScreenCells / 2;
+            const int dx = x - kRoomTilesW / 2;
+            const int dy = y - kRoomTilesH / 2;
             if (c[0] == 0 && c[1] == 0 && dx * dx + dy * dy < bestDist)
             {
                 bestDist = dx * dx + dy * dy;
@@ -1137,13 +1153,13 @@ void WarpEnter()
 // ---- PlayState: screens ----------------------------------------------------------------------------------------
 void MoveCameraToGrid()
 {
-    gCamX = Fx(gGridX * kScreenPx);
-    gCamY = Fx(gGridY * kScreenPx);
+    gCamX = Fx(gGridX * kRoomW);
+    gCamY = Fx(gGridY * kRoomH);
 }
 
 bool GridExists(int gx, int gy)
 {
-    return gx >= 0 && gy >= 0 && (gx + 1) * kScreenCells <= gCellsW && (gy + 1) * kScreenCells <= gCellsH;
+    return gx >= 0 && gy >= 0 && (gx + 1) * kRoomTilesW <= gCellsW && (gy + 1) * kRoomTilesH <= gCellsH;
 }
 
 // PlayState.CheckForTransition. The C# lets the player walk off the map (a glitch effect); here a missing
@@ -1154,8 +1170,8 @@ void CheckForTransition()
     Transform& t = *p.mT;
     const fx w = Fx(p.mB->mW);
     const fx h = Fx(p.mB->mH);
-    const fx bx = Fx(gGridX * kScreenPx);
-    const fx by = Fx(gGridY * kScreenPx);
+    const fx bx = Fx(gGridX * kRoomW);
+    const fx by = Fx(gGridY * kRoomH);
     int gx = gGridX;
     int gy = gGridY;
     fx newX = t.mX;
@@ -1171,15 +1187,15 @@ void CheckForTransition()
         gy--;
         newY = by - h;
     }
-    else if (t.mY > by + Fx(kScreenPx) - h)
+    else if (t.mY > by + Fx(kRoomH) - h)
     {
         gy++;
-        newY = by + Fx(kScreenPx);
+        newY = by + Fx(kRoomH);
     }
-    else if (t.mX > bx + Fx(kScreenPx) - w)
+    else if (t.mX > bx + Fx(kRoomW) - w)
     {
         gx++;
-        newX = bx + Fx(kScreenPx);
+        newX = bx + Fx(kRoomW);
     }
     else
     {
@@ -1189,8 +1205,8 @@ void CheckForTransition()
     if (!GridExists(gx, gy))
     {
         // Keep the hitbox inside the current screen.
-        t.mX = t.mX < bx ? bx : (t.mX > bx + Fx(kScreenPx) - w ? bx + Fx(kScreenPx) - w : t.mX);
-        t.mY = t.mY < by ? by : (t.mY > by + Fx(kScreenPx) - h ? by + Fx(kScreenPx) - h : t.mY);
+        t.mX = t.mX < bx ? bx : (t.mX > bx + Fx(kRoomW) - w ? bx + Fx(kRoomW) - w : t.mX);
+        t.mY = t.mY < by ? by : (t.mY > by + Fx(kRoomH) - h ? by + Fx(kRoomH) - h : t.mY);
         t.mLastX = t.mX;
         t.mLastY = t.mY;
         return;
@@ -1221,8 +1237,8 @@ void StateTransition()
     {
         MoveCameraToGrid();
     }
-    const bool doneX = MoveTo(gCamX, Fx(gGridX * kScreenPx), kScrollSpeed);
-    const bool doneY = MoveTo(gCamY, Fx(gGridY * kScreenPx), kScrollSpeed);
+    const bool doneX = MoveTo(gCamX, Fx(gGridX * kRoomW), kScrollSpeed);
+    const bool doneY = MoveTo(gCamY, Fx(gGridY * kRoomH), kScrollSpeed);
     if (doneX && doneY)
     {
         Player_SetInvincible(false);
@@ -1317,8 +1333,8 @@ void DeathUpdate()
     {
         Entity& dummy = *d.mDummy;
         // PlayerDieDummy: towards (80, 100) of the screen (80, 80 of the playfield).
-        MoveTo(dummy.mT->mX, Fx(gGridX * kScreenPx + 80), Fx(30));
-        MoveTo(dummy.mT->mY, Fx(gGridY * kScreenPx + 80), Fx(30));
+        MoveTo(dummy.mT->mX, Fx(gGridX * kRoomW + kRoomW / 2), Fx(30));
+        MoveTo(dummy.mT->mY, Fx(gGridY * kRoomH + kRoomH / 2), Fx(30));
         Ecs_BasePostUpdate(dummy);
         if (!d.mGotControl && Ecs_AnimFinished(dummy))
         {
@@ -1416,7 +1432,7 @@ void DrawWorld()
 {
     UpdateBackground(false);
     Hud_Draw(gDeath.mActive);
-    Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY, gSettings.mWideView);
+    Entities_Draw(FxFloor(gCamX), FxFloor(gCamY) - kViewY, kViewX, gShake.mX, gShake.mY, gSettings.mWideView);
     gShown = true;
 }
 // TileMap.changedTiles / oldChangedTiles: each tile's value from before its first change on this screen. As a screen
@@ -1713,7 +1729,7 @@ struct WaveOfs final
     uint16_t mX;
     uint16_t mY;
 };
-constexpr int kWaveRows = kScreenPx + 1; // line 0 by hand, then one HBlank transfer before each further line
+constexpr int kWaveRows = 160 + 1; // line 0 by hand, then one HBlank transfer before each further line
 constexpr int kWaveNone = -1;            // nothing new for the interrupt
 constexpr int kWaveOff = -2;             // the interrupt stops the DMA
 alignas(4) WaveOfs gWaveTable[2][kWaveRows][4] __attribute__((section(".sbss")));
@@ -1971,20 +1987,23 @@ static void LoadMapGraphics(const MapEntry& map)
     ResetTileChanges();
     gTile16Entries = map.mScreenBlockData.mTile16Entries;
     gTile16Count = map.mScreenBlockData.mTile16Count;
+    uint32_t used = 0;
     for (int layer = 0; layer < kLayerCount; layer++)
     {
         const MapLayerData& data = map.mScreenBlockData.mLayers[layer];
         gLayerW[layer] = data.mWidth;
         gLayerH[layer] = data.mHeight;
-        gLayerTiles[layer] = reinterpret_cast<const uint16_t*>(gLayerBuffer[layer]);
-        if (data.mWidth == 0 || data.mUnpackedSize == 0 || data.mUnpackedSize > kMaxLayerBytes)
+        gLayerTiles[layer] = reinterpret_cast<const uint16_t*>(gLayerBuffer + used);
+        if (data.mWidth == 0 || data.mUnpackedSize == 0 || data.mUnpackedSize > kMaxLayerBytes ||
+            used + data.mUnpackedSize > kLayerPoolBytes)
         {
             gLayerW[layer] = 0; // empty layer
             gLayerH[layer] = 0;
         }
         else
         {
-            LZ77UnCompWram(data.mPacked, gLayerBuffer[layer]);
+            LZ77UnCompWram(data.mPacked, gLayerBuffer + used);
+            used += (data.mUnpackedSize + 3) & ~3u;
         }
     }
 }
@@ -2124,8 +2143,8 @@ void World_CutsceneWarp(int map, int gx, int gy)
     LoadMapGraphics(gMapTable[map]);
     gScroll = nullptr;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
-    gCamX = Fx(gx * kScreenPx);
-    gCamY = Fx(gy * kScreenPx);
+    gCamX = Fx(gx * kRoomW);
+    gCamY = Fx(gy * kRoomH);
     UpdateBackground(true);
     Ecs_SetCutsceneView(true);
 }
@@ -2235,7 +2254,7 @@ void World_Update()
         }
         if (updateEntities)
         {
-            Ecs_DoCollisions(false, gGridX * kScreenPx, gGridY * kScreenPx);
+            Ecs_DoCollisions(false, gGridX * kRoomW, gGridY * kRoomH);
         }
     }
     else
@@ -2281,7 +2300,7 @@ void World_Update()
             }
         }
         // No player-map collision during a screen transition.
-        Ecs_DoCollisions(wasTransition || gTransition, gGridX * kScreenPx, gGridY * kScreenPx);
+        Ecs_DoCollisions(wasTransition || gTransition, gGridX * kRoomW, gGridY * kRoomH);
     }
 
     // PlayState.EntityUpdate
@@ -2533,8 +2552,8 @@ void World_PlaceAt(int x, int y, uint8_t facing, bool warp)
     Player_Reset(gMapName);
     Player_PlaceAt(Fx(x), Fx(y), facing <= 3 ? kFacing[facing] : -1, warp);
     Player_BeIdle();
-    gGridX = x / kScreenPx;
-    gGridY = y / kScreenPx;
+    gGridX = x / kRoomW;
+    gGridY = y / kRoomH;
     while (gGridX > 0 && !GridExists(gGridX, gGridY))
     {
         gGridX--;
@@ -2637,7 +2656,7 @@ void SetTile(int layer, int cx, int cy, int tile)
 
     // Redraw it if it's on the current screen (the streamed BG window holds it)
     cx -= gMapOffCells;
-    if (cx >= 0 && cx / kScreenCells == gGridX && cy / kScreenCells == gGridY)
+    if (cx >= 0 && cx / kRoomTilesW == gGridX && cy / kRoomTilesH == gGridY)
     {
         for (int i = 0; i < 4; i++)
         {

@@ -11,7 +11,7 @@ Choosing the columns and the row: per grid column (every room in it, all layers)
 tiles most often repeat their neighbours' get doubled, and per grid row the inner row that most often repeats the rows
 next to it is dropped. Sharing the choice along a grid column/row keeps the openings between neighbouring rooms lined
 up. Out: the maps (BG/BG2/FG.csv), Entities.xml, Settings.json areas and Swapper.dat regions moved to match, the other
-files copied, and remap.json (per map: each grid column's 15 source columns, each grid row's 9 source rows) for code
+files copied, and remap.json/remap.txt (per map: each grid column's 15 source columns, each grid row's 9 source rows) for code
 that has positions of its own.
 """
 import json
@@ -187,6 +187,11 @@ def main():
             fh.write(line)
     with open(os.path.join(out, "remap.json"), "w") as fh:
         json.dump({n: {"cols": r.cols, "rows": r.rows} for n, r in remaps.items()}, fh, indent=1)
+    # (the same, flat for the C++ content compiler: "<map> <rooms across> <rooms down> <cols...> <rows...>")
+    with open(os.path.join(out, "remap.txt"), "w") as fh:
+        for n, r in remaps.items():
+            flat = [v for c in r.cols for v in c] + [v for row in r.rows for v in row]
+            fh.write(f"{n} {len(r.cols)} {len(r.rows)} {' '.join(map(str, flat))}\n")
     print(f"{len(remaps)} maps -> {out}")
 
 
