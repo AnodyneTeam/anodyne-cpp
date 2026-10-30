@@ -666,6 +666,11 @@ int main()
                 mode = AppMode::Intro;
                 introPhase = 0;
                 introTimer = 90;
+                const int32_t blank = AudioManager_FindBgm("blank"); // (IntroState WaitStart)
+                if (blank >= 0)
+                {
+                    AudioManager_PlayBGM(static_cast<uint32_t>(blank));
+                }
             }
         }
         else if (mode == AppMode::Credits)

@@ -3,8 +3,7 @@
 #include "obj_vram_allocator.hpp"
 
 // The title screen and main menu (ported from AnodyneSharp's TitleState / MainMenuState): scrolling background,
-// the Nexus door rising into view, the title text, then the file menu. There are no save files yet, so every
-// slot starts a new game.
+// the Nexus door rising into view, the title text, then the file menu (FileSubstate: continue, new game, copy).
 
 // Takes over the display (BG1-3 + OBJ) and starts the title music. Needs OAM slots 0-15 and OBJ palette banks 0-5.
 void Title_Enter(ObjVramAllocator& vram);

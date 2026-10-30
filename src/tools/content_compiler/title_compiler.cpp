@@ -70,16 +70,7 @@ bool CompileTitle(const ContentPaths& paths)
             return false;
         }
     }
-    // title_bg is (0,0,0) / (5,7,18): near-black in the C# too. Double it so the scrolling pattern is visible at all
-    // on the GBA's coarser 5-bit colours and LCD.
-    for (size_t i = 0; i + 3 < images[0].mRgba.size(); i += 4)
-    {
-        for (int ch = 0; ch < 3; ch++)
-        {
-            const unsigned v = images[0].mRgba[i + ch] * 2;
-            images[0].mRgba[i + ch] = static_cast<uint8_t>(v > 255 ? 255 : v);
-        }
-    }
+    // (title_bg is (0,0,0) / (5,7,18): near-black in the C#, and kept so)
 
     // ---- shared palette (index 0 = transparent) ----
     // Drop low bits of each channel until the distinct colours fit.

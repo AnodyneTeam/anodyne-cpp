@@ -1,12 +1,15 @@
 #include "title.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "tonc.h"
 
 #include "audio_manager.h"
+#include "dialog.h"
 #include "ecs.h"
 #include "game_state.h"
+#include "hud_data.h"
 #include "save.h"
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
@@ -16,79 +19,75 @@
 namespace
 {
 constexpr int kViewX = 40;       // the 160px playfield is centred on the 240px screen
-constexpr int kViewY = -10;      // the C# screen is 180px tall; show rows 10..170
+constexpr int kViewY = -15;      // the C# screen is 180px tall; show rows 15..175 (title text to "press enter")
+constexpr int kMenuViewY = -20;  // the main menu shows rows 20..180 (its labels run from 31 to 176)
 constexpr int kSbBg = 28;
 constexpr int kSbDoor = 29;
 constexpr int kSbText = 27;
-constexpr int kCbbText = 3;
+constexpr int kCbbText = 2;      // the text canvas: 4bpp tiles 1-400 cover the playfield (CBB 0-1 hold the title art)
+constexpr int kTextBank = 15;    // its colours: 1 the credits, 2 the menu's grey, 3 white, 4 and 11-15 health
+constexpr int kInkCredits = 1;
+constexpr int kInkGrey = 2;
+constexpr int kInkWhite = 3;
+constexpr int kCharW = 7;        // FontManager.GetCharacterWidth (English)
+constexpr int kGlyphTop = 2;     // the C# font's glyphs sit 2px down their 8px line
 constexpr int kBgScrollSpeed = 30;     // px/s (ScrollingTex velocity (0, -30))
-constexpr int kDoorRiseSpeed = 20;     // px/s
+constexpr int kDoorRise = 20 * 65536 / 60; // 16.16 px a frame (nexusImage velocity -20 px/s)
 constexpr int kDoorEndY = 180 - 116;   // door top when fully risen
-constexpr int kFlashFrames = 90;       // 1.5s: TitleState PressStart = Flash(1.5s, White): instantly white, then fading out
-constexpr int kFadeFrames = 30;
-constexpr int kBlinkFrames = 60;
+constexpr int kBlinkFrames = 60;       // PressEnterTimer: 1s
 
 constexpr int kMenuItems = 4;
 // Affine matrix slot n lives in the attr3 words of OAM entries 4n..4n+3, so use the last slots (OAM 120-127 unused).
 constexpr int kSpinAffine1 = 30;
 constexpr int kSpinAffine2 = 31;
 
-// Dialogue box (C# TextBox, bottom position): sprite at (2, 114), text cells on the 8px BG1 grid inside it.
-constexpr int kBoxX = kViewX + 2;
-constexpr int kBoxY = 160 - 44 - 2;
-constexpr int kTextCol = (kViewX + 8) / 8;
-constexpr int kTextRow = (kBoxY + 6) / 8;
-constexpr int kTextCols = 17;
-constexpr int kTextLines = 3; // 12px apart like the C#: lines 0/2 on BG1, line 1 on BG2 shifted 4px
-constexpr int kCharsPerFrame = 2; // IntroState: DialogueState speed x4
-
 enum class State
 {
-    Credits,   // black, "Original game by..." typed out letter by letter
-    Rise,      // door scrolls up
-    Flash,     // white flash into the title
-    Title,     // title text + blinking "press start"
-    Pixelate,  // mosaic grows to 15px blocks while dimming slightly
-    FadeOut,   // mosaic keeps growing while fading to black, then the menu
-    MenuFadeIn,
-    Menu,
-    IntroFade,  // menu -> black
-    IntroBox,   // the sage's dialogue
-    IntroWait   // 1.5s of black, then the game
+    IntroFade,      // fading in from black (2s), nothing written yet
+    CreditsWrite,   // "Original game by..." typed out letter by letter in random order
+    CreditsFade,    // to 30% at 0.6/s
+    CreditsFadeEnd, // to 0 at 2/s, 1s
+    ScrollUp,       // door scrolls up
+    Title,          // DisplayTitle: title text + blinking "press enter" (flash and white glint fading out)
+    Pixelate,       // mosaic grows while dimming slightly
+    FadeOut,        // mosaic keeps growing while fading to black, then the menu
+    Menu,           // MainMenuState
+    LoadFade        // FileSubstate.LoadedSave: black at 0.72/s, then the intro or the game
 };
 
-State gState = State::Credits;
+State gState = State::IntroFade;
 int gTimer = 0;
 int gBgScroll = 0;       // Fx 24.8, px scrolled
 int gBgTopRow = -1;
-int gDoorY = 180;        // C# coordinates
-int gDoorSub = 0;        // Fx 8 fraction
-int gMenuIndex = 0;
-int gBlink = 0;
+int gDoorY = 180 << 16;  // C# coordinates, 16.16
 int gPix = 256;          // C# Pixelation, 8.8 (block size in px; 1.0 = off)
 int gDark = 0;           // C# black_overlay alpha, 16.16
+int gFlash = 0;          // C# flash alpha, 16.16 (gFlashWhite: towards white, else black)
+int gFlashStep = 0;      // its fall a frame
+bool gFlashWhite = false;
+int gGlint = 0;          // titleOverlay / subtitleOverlay opacity, 16.16
+int gBlinkTimer = 0;
+bool gPressVisible = true;
 
 Sprite gTitleText;
 Sprite gRemake;
 Sprite gPressEnter;
 Sprite gArrow;
+Sprite gSubArrow;
 Sprite gGlow;
 Sprite gSpin1;
 Sprite gInner1;
 Sprite gInner2;
 Sprite gSpin2;
-Sprite gBox;
 bool gHaveText = false;
 bool gHaveRemake = false;
 bool gHavePress = false;
 bool gHaveArrow = false;
+bool gHaveSubArrow = false;
 bool gHaveGlow = false;
 bool gHaveSpin = false;
 bool gHaveInner = false;
-bool gHaveBox = false;
-int gPromptBlink = 0;
 int gSpinAngle = 0;
-bool gShowTitleSprites = false;
 
 void PlaySfx(const char* name)
 {
@@ -102,42 +101,121 @@ void ApplyBlend()
     REG_BLDALPHA = BLDA_BUILD(16, 16);
 }
 
-void Fade(int mode, int level)
+// The full-screen effects over everything: the black overlay, then the flash (white or black) over it. The GBA has
+// one brightness fade, so the stronger of the two shows.
+void ApplyFade()
 {
-    // mode: 0 none, 2 lighten, 3 darken (BLDCNT effect bits 6-7), applied to everything.
-    if (mode == 0)
+    const int dark = (gDark * 16 + 32768) >> 16;
+    const int flash = (gFlash * 16 + 32768) >> 16;
+    if (flash > 0 && (gFlashWhite ? flash >= dark : true))
+    {
+        REG_BLDCNT = ((gFlashWhite ? 2 : 3) << 6) | 0x3F;
+        REG_BLDY = static_cast<uint16_t>(gFlashWhite ? flash : (flash > dark ? flash : dark));
+    }
+    else if (dark > 0)
+    {
+        REG_BLDCNT = (3 << 6) | 0x3F;
+        REG_BLDY = static_cast<uint16_t>(dark);
+    }
+    else
     {
         ApplyBlend();
+    }
+}
+
+// GlobalState.flash.Flash(seconds, colour): instantly full, then fading out.
+void StartFlash(int frames, bool white)
+{
+    gFlash = 65536;
+    gFlashStep = 65536 / frames;
+    gFlashWhite = white;
+}
+
+void UpdateFlash()
+{
+    gFlash = gFlash > gFlashStep ? gFlash - gFlashStep : 0;
+}
+
+// ---- The text canvas (UILabel): BG1, a 160x160 bitmap of 4bpp tiles -------------------------------------------------
+uint32_t* CanvasTiles()
+{
+    return reinterpret_cast<uint32_t*>(&tile_mem[kCbbText][1]);
+}
+
+void Canvas_Clear()
+{
+    memset32(CanvasTiles(), 0, 400 * 8);
+}
+
+void Canvas_Init()
+{
+    memset32(&tile_mem[kCbbText][0], 0, 8);
+    Canvas_Clear();
+    for (int ty = 0; ty < 32; ty++)
+    {
+        for (int tx = 0; tx < 32; tx++)
+        {
+            const int cx = tx - kViewX / 8;
+            se_mem[kSbText][ty * 32 + tx] = static_cast<SCR_ENTRY>(
+                cx >= 0 && cx < 20 && ty < 20 ? (1 + ty * 20 + cx) | (kTextBank << 12) : 0);
+        }
+    }
+}
+
+void Canvas_Plot(int x, int y, int ink)
+{
+    if (static_cast<unsigned>(x) >= 160u || static_cast<unsigned>(y) >= 160u)
+    {
         return;
     }
-    REG_BLDCNT = (mode << 6) | 0x3F;
-    REG_BLDY = static_cast<uint16_t>(level);
+    volatile uint32_t* row = CanvasTiles() + ((y >> 3) * 20 + (x >> 3)) * 8 + (y & 7);
+    const int shift = (x & 7) * 4;
+    *row = (*row & ~(15u << shift)) | (static_cast<uint32_t>(ink) << shift);
 }
 
-void ClearText()
+bool HasGlyph(char c)
 {
-    for (int i = 0; i < 32 * 32; i++)
+    // (glyph 0 is 'a': any other character on it has none)
+    return c > ' ' && static_cast<uint8_t>(c) < 128 && (title::kFontAscii[static_cast<uint8_t>(c)] != 0 || c == 'a');
+}
+
+// One character of a label whose text starts at (x, y) of the C# screen, shown with the screen's row `viewY` at
+// the top of the GBA's.
+void Canvas_Char(char ch, int x, int y, int ink, int viewY)
+{
+    if (!HasGlyph(ch))
     {
-        se_mem[kSbText][i] = 0;
+        return;
+    }
+    const uint32_t* rows = reinterpret_cast<const uint32_t*>(title::kFontTiles) + title::kFontAscii[static_cast<uint8_t>(ch)] * 8;
+    for (int r = 0; r < 8; r++)
+    {
+        const uint32_t w = rows[r];
+        for (int c = 0; c < 8; c++)
+        {
+            if ((w >> (c * 4)) & 15)
+            {
+                Canvas_Plot(x + c, y + viewY + kGlyphTop + r, ink);
+            }
+        }
     }
 }
 
-// 8x8 glyph cells on BG1, palette bank `bank` (14/15 colour index 1).
-void PutTextOn(int sb, int tx, int ty, const char* text, int bank)
+void Canvas_Text(const char* text, int x, int y, int ink, int viewY)
 {
-    for (int i = 0; text[i] && tx + i < 32; i++)
+    for (int i = 0; text[i]; i++)
     {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        const uint8_t glyph = c < 128 ? title::kFontAscii[c] : 0;
-        se_mem[sb][ty * 32 + tx + i] = static_cast<uint16_t>(c == ' ' ? 0 : (glyph + 1) | (bank << 12));
+        Canvas_Char(text[i], x + i * kCharW, y, ink, viewY);
     }
 }
 
-void PutText(int tx, int ty, const char* text, int bank)
+void SetCreditsOpacity(int op) // 16.16
 {
-    PutTextOn(kSbText, tx, ty, text, bank);
+    auto ch = [op](int v) { const int c = ((v * op >> 16) + 4) >> 3; return c > 31 ? 31 : c; };
+    pal_bg_mem[kTextBank * 16 + kInkCredits] = RGB15(ch(68), ch(109), ch(113)); // Color(68, 109, 113) * opacity
 }
 
+// ---- background, door, sprites ---------------------------------------------------------------------------------------
 void WriteBgRow(int row)
 {
     const int imageRow = row % title::kBgTilesH;
@@ -157,9 +235,10 @@ void UpdateBg(bool advance)
     const int top = px >> 3;
     if (top != gBgTopRow)
     {
-        // Rows top..top+21 must be present; fill any that are new.
-        const int first = (gBgTopRow < 0) ? top : gBgTopRow + 22;
-        const int last = top + 21;
+        // The screen shows image rows (px - kViewY) / 8 .. (px - kViewY + 159) / 8, within top..top+23: fill any that
+        // are new (the map is a ring of 32 rows).
+        const int first = (gBgTopRow < 0) ? top : gBgTopRow + 24;
+        const int last = top + 23;
         for (int r = (first > last - 31 ? first : last - 31); r <= last; r++)
         {
             WriteBgRow(r);
@@ -170,42 +249,67 @@ void UpdateBg(bool advance)
     REG_BG3VOFS = static_cast<uint16_t>(px - kViewY);
 }
 
-void SetDoorY(int y)
+int DoorY()
 {
-    gDoorY = y;
+    return gDoorY >> 16;
+}
+
+void SetDoorY(int y16)
+{
+    gDoorY = y16;
     REG_BG2HOFS = static_cast<uint16_t>(-kViewX);
-    REG_BG2VOFS = static_cast<uint16_t>(-(y + kViewY));
+    REG_BG2VOFS = static_cast<uint16_t>(-(DoorY() + kViewY));
 }
 
 void HideAllSprites()
 {
-    if (gHaveText) { Sprite_Hide(gTitleText); }
-    if (gHaveRemake) { Sprite_Hide(gRemake); }
-    if (gHavePress) { Sprite_Hide(gPressEnter); }
-    if (gHaveArrow) { Sprite_Hide(gArrow); }
-    if (gHaveGlow) { Sprite_Hide(gGlow); }
-    if (gHaveSpin) { Sprite_Hide(gSpin1); Sprite_Hide(gSpin2); }
-    if (gHaveInner) { Sprite_Hide(gInner1); Sprite_Hide(gInner2); }
-    if (gHaveBox) { Sprite_Hide(gBox); }
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gArrow, &gSubArrow, &gGlow, &gSpin1, &gSpin2, &gInner1, &gInner2 };
+    for (Sprite* s : all)
+    {
+        if (s->mSheet)
+        {
+            Sprite_Hide(*s);
+        }
+    }
 }
 
-void DrawTitleSprites(bool pressVisible, bool spin = true)
+// titleOverlay / subtitleOverlay: the white copies of the title over it, fading out. Both are the same shape as the
+// title art (title_remake_white leaves out its black outline), so the title's colours are tinted to white instead.
+void TintTitle(int op) // 16.16
+{
+    const Sprite* const sprites[2] = { &gTitleText, &gRemake };
+    for (int k = 0; k < 2; k++)
+    {
+        const Sprite& s = *sprites[k];
+        if (!s.mSheet)
+        {
+            continue;
+        }
+        for (int i = 1; i < 16; i++)
+        {
+            const uint16_t c = s.mSheet->mPalette[i];
+            if (k == 1 && c == 0)
+            {
+                pal_obj_bank[s.mPalBank][i] = c; // (the outline)
+                continue;
+            }
+            uint16_t out = 0;
+            for (int ch = 0; ch < 3; ch++)
+            {
+                const int v = (c >> (5 * ch)) & 31;
+                out |= static_cast<uint16_t>((v + (((31 - v) * op + 32768) >> 16)) << (5 * ch));
+            }
+            pal_obj_bank[s.mPalBank][i] = out;
+        }
+    }
+}
+
+void DrawTitleSprites()
 {
     if (gHaveText) { Sprite_Draw(gTitleText, kViewX + 16, 16 + kViewY); }
     if (gHaveRemake) { Sprite_Draw(gRemake, kViewX + 45, 47 + kViewY); }
     if (gHaveGlow) { Sprite_Draw(gGlow, kViewX + 48, kDoorEndY + 17 + kViewY); }
-    if (!spin && gHaveSpin)
-    {
-        // A semi-transparent OBJ ignores the brightness fade of the flash and would show as a dark blob.
-        Sprite_Hide(gSpin1);
-        Sprite_Hide(gSpin2);
-        if (gHaveInner)
-        {
-            Sprite_Hide(gInner1);
-            Sprite_Hide(gInner2);
-        }
-    }
-    if (spin && gHaveSpin)
+    if (gHaveSpin)
     {
         // doorSpin1/2 spin at +-90 degrees/s about the centre of a 64x64 image at (48, door top).
         gSpinAngle = (gSpinAngle + 65536 / 4 / 60) & 0xFFFF;
@@ -221,9 +325,9 @@ void DrawTitleSprites(bool pressVisible, bool spin = true)
     }
     if (gHavePress)
     {
-        if (pressVisible)
+        if (gPressVisible)
         {
-            Sprite_Draw(gPressEnter, kViewX + 32, 150 + kViewY);
+            Sprite_Draw(gPressEnter, kViewX + (160 - 96) / 2, 160 + kViewY);
         }
         else
         {
@@ -233,179 +337,550 @@ void DrawTitleSprites(bool pressVisible, bool spin = true)
 }
 
 // ---- credits (TitleState CreditsWrite/CreditsFade): two sets of three lines typed out in random order ----
-constexpr int kCredRows[3] = { 8, 10, 11 };
+constexpr int kMaxCredit = 32;
 int gCredSet = 0;
-int gCredPhase = 0; // 0 write, 1 fade to dim, 2 fade out and wait
-int gCredOpacity = 256; // 8.8
-int gCredTimer = 0;
-char gCredShown[3][24];
+int gCredOpacity = 65536; // 16.16
+int gCredX[3];
+int gCredY[3];
 int gCredRemaining = 0;
-uint8_t gCredOrder[96][2];
+uint8_t gCredOrder[3 * kMaxCredit][2];
 uint32_t gCredRng = 0x2545F491;
-
-void CreditsColour()
-{
-    pal_bg_mem[14 * 16 + 1] = RGB15((8 * gCredOpacity) >> 8, (13 * gCredOpacity) >> 8, (14 * gCredOpacity) >> 8);
-}
-
-void CreditsDraw()
-{
-    for (int i = 0; i < 3; i++)
-    {
-        const int len = static_cast<int>(strlen(gCredShown[i]));
-        PutText(15 - len / 2, kCredRows[i], gCredShown[i], 14);
-    }
-}
 
 void CreditsStart(int set)
 {
     gCredSet = set;
-    gCredPhase = 0;
-    gCredOpacity = 256;
-    gCredTimer = 0;
+    gCredOpacity = 65536;
     gCredRemaining = 0;
-    ClearText();
+    SetCreditsOpacity(gCredOpacity);
+    Canvas_Clear();
     for (int i = 0; i < 3; i++)
     {
+        // TitleState CreditsWrite.Enter: centred on 80, lines at 88 - lineH - 4, 88 and 88 + lineH (lineH 10)
         const char* line = title::kCreditLines[set * 3 + i];
         const int len = static_cast<int>(strlen(line));
-        for (int c = 0; c < len && c < 23; c++)
+        gCredX[i] = 80 - len * kCharW / 2;
+        gCredY[i] = i == 0 ? 88 - 10 - 4 : (i == 1 ? 88 : 98);
+        // (every character takes a turn, the spaces too)
+        for (int c = 0; c < len && c < kMaxCredit; c++)
         {
-            gCredShown[i][c] = ' ';
-            if (line[c] != ' ')
-            {
-                gCredOrder[gCredRemaining][0] = static_cast<uint8_t>(i);
-                gCredOrder[gCredRemaining][1] = static_cast<uint8_t>(c);
-                gCredRemaining++;
-            }
+            gCredOrder[gCredRemaining][0] = static_cast<uint8_t>(i);
+            gCredOrder[gCredRemaining][1] = static_cast<uint8_t>(c);
+            gCredRemaining++;
         }
-        gCredShown[i][len < 23 ? len : 23] = 0;
     }
-    CreditsColour();
 }
 
-// ---- new-game intro dialogue ----
-char gLines[48][kTextCols + 1] __attribute__((section(".sbss")));
-int gLineCount = 0;
-int gPage = 0;
-int gBoxFirstLine = 0;
-int gReveal = 0;
-int gBoxChars = 0;
-
-void LoadPage()
+// ---- main menu (MainMenuState + FileSubstate) ---------------------------------------------------------------------
+enum class FileItem
 {
-    // Greedy word wrap of the page into kTextCols columns; '\n' forces a break.
-    gLineCount = 0;
-    const char* text = title::kIntroPages[gPage];
-    int col = 0;
-    memset(gLines, 0, sizeof(gLines));
-    const char* p = text;
-    while (*p && gLineCount < 47)
-    {
-        if (*p == '\n')
-        {
-            gLineCount++;
-            col = 0;
-            p++;
-            continue;
-        }
-        if (*p == ' ')
-        {
-            // A space never goes past the last column: index kTextCols is the line's terminator.
-            if (col > 0 && col < kTextCols)
-            {
-                gLines[gLineCount][col++] = ' ';
-            }
-            p++;
-            continue;
-        }
-        int wordLen = 0;
-        while (p[wordLen] && p[wordLen] != ' ' && p[wordLen] != '\n')
-        {
-            wordLen++;
-        }
-        if (col > 0 && col + wordLen > kTextCols)
-        {
-            while (col > 0 && gLines[gLineCount][col - 1] == ' ')
-            {
-                gLines[gLineCount][--col] = 0;
-            }
-            gLineCount++;
-            col = 0;
-        }
-        for (int i = 0; i < wordLen && col < kTextCols; i++)
-        {
-            gLines[gLineCount][col++] = p[i];
-        }
-        p += wordLen;
-    }
-    gLineCount++;
-    gBoxFirstLine = 0;
+    Game,
+    NewGame,
+    Yes,
+    No,
+    Copy,
+    Save1,
+    Save2,
+    Save3,
+    Cancel
+};
+
+enum class FileView
+{
+    Normal,
+    Confirm,
+    CopyTo,
+};
+
+int gMenuIndex = 0;      // MainMenuState._state (it's static there: the menu keeps it)
+bool gInSub = false;
+FileItem gItem = FileItem::Game;
+FileView gView = FileView::Normal;
+int gConfirm = 0;        // confirmState
+bool gCopyMode = false;
+int gCopyTarget = 0;
+bool gHaveSave = false;
+SaveInfo gInfo;
+bool gMenuDirty = true;
+
+const char* TitleLine(int id)
+{
+    return Dialog_Peek("misc", "any", "title", id);
 }
 
-void StartBox()
+// A label with the keyboard keys ([SOMEKEY-C] / [SOMEKEY-X]) as the GBA's buttons.
+void ButtonText(char* out, int cap, const char* text)
 {
-    gReveal = 0;
-    gBoxChars = 0;
-    gPromptBlink = 0;
-    for (int i = 0; i < 32 * 32; i++)
+    int n = 0;
+    while (*text && n < cap - 1)
     {
-        se_mem[kSbDoor][i] = 0; // BG2 carries line 1 in the intro (the door is gone by then)
+        if (strncmp(text, "[SOMEKEY-C]", 11) == 0)
+        {
+            out[n++] = 'A';
+            text += 11;
+        }
+        else if (strncmp(text, "[SOMEKEY-X]", 11) == 0)
+        {
+            out[n++] = 'B';
+            text += 11;
+        }
+        else
+        {
+            out[n++] = *text++;
+        }
     }
-    for (int l = gBoxFirstLine; l < gLineCount && l < gBoxFirstLine + kTextLines; l++)
-    {
-        gBoxChars += static_cast<int>(strlen(gLines[l]));
-    }
-    ClearText();
+    out[n] = 0;
 }
 
-void DrawBoxText()
+void LoadFile()
 {
-    int left = gReveal;
-    for (int l = 0; l < kTextLines && gBoxFirstLine + l < gLineCount; l++)
+    gHaveSave = gMenuIndex < 3 && Save_Peek(gMenuIndex, gInfo);
+    gItem = FileItem::Game;
+    gView = FileView::Normal;
+    gConfirm = 0;
+    gCopyMode = false;
+    gMenuDirty = true;
+}
+
+constexpr int kFileX = 60;
+constexpr int kFileY = 28;
+constexpr int kFileStep = 12;
+
+int ItemY(FileItem item)
+{
+    switch (item)
     {
-        const char* line = gLines[gBoxFirstLine + l];
-        const int len = static_cast<int>(strlen(line));
-        char buf[kTextCols + 1];
-        const int n = left < len ? left : len;
-        memcpy(buf, line, n);
-        buf[n] = 0;
-        // Lines are 12px apart: 0 and 2 sit on the BG1 grid, line 1 on BG2 (scrolled 4px) one row down.
-        PutTextOn(l == 1 ? kSbDoor : kSbText, kTextCol, kTextRow + (l == 0 ? 0 : (l == 1 ? 1 : 3)), buf, 15);
-        left -= n;
-        if (left <= 0)
-        {
-            break;
-        }
+    case FileItem::NewGame: return kFileY + kFileStep;
+    case FileItem::Copy: return kFileY + kFileStep * 2;
+    case FileItem::No: return kFileY + kFileStep;
+    case FileItem::Yes: return kFileY + kFileStep * 2;
+    case FileItem::Save1: return kFileY + kFileStep;
+    case FileItem::Save2: return kFileY + kFileStep * 2;
+    case FileItem::Save3: return kFileY + kFileStep * 3;
+    case FileItem::Cancel: return kFileY + kFileStep * 4;
+    default: return kFileY;
     }
 }
 
 void DrawMenu()
 {
-    ClearText();
-    static const char* const kLabels[kMenuItems] = { "1", "2", "3", "Config" };
+    if (!gMenuDirty)
+    {
+        return;
+    }
+    gMenuDirty = false;
+    Canvas_Clear();
+    // MainMenuState.SetLabels: x 10, from y 31 every 16px, Color(116, 140, 144)
+    static const char* const kSlots[3] = { "1", "2", "3" };
     for (int i = 0; i < kMenuItems; i++)
     {
-        PutText(kViewX / 8 + 2, 5 + i * 2, kLabels[i], i == gMenuIndex ? 15 : 14);
+        Canvas_Text(i < 3 ? kSlots[i] : Dialog_Peek("misc", "any", "config", 0), 10, 31 + i * 16, kInkGrey, kMenuViewY);
     }
-    if (gMenuIndex < 3)
+    char buf[64];
+    char a[32];
+    char b[32];
+    ButtonText(a, sizeof(a), Dialog_Peek("misc", "any", "secrets", 14));
+    ButtonText(b, sizeof(b), Dialog_Peek("misc", "any", "secrets", 15));
+    snprintf(buf, sizeof(buf), "%s %s", a, b);
+    Canvas_Text(buf, 2, 168, kInkGrey, kMenuViewY);
+    if (gMenuIndex >= 3)
     {
-        PutText(kViewX / 8 + 6, 5 + gMenuIndex * 2, Save_Exists(gMenuIndex) ? "Continue" : "New Game", 15);
+        return; // (ConfigSubstate: not on the title yet)
     }
-    PutText(kViewX / 8 + 1, 17, "A: select  B: back", 14);
-    if (gHaveArrow)
+    // FileSubstate.SetLabels: x 60, from y 28 every 12px
+    if (gView == FileView::Normal)
     {
-        Sprite_Draw(gArrow, kViewX + 2, 34 + kViewY + 14 + gMenuIndex * 16 - 6 + 0);
+        Canvas_Text(TitleLine(gHaveSave ? 11 : 12), kFileX, kFileY, kInkGrey, kMenuViewY);
+        if (gHaveSave)
+        {
+            Canvas_Text(TitleLine(12), kFileX, kFileY + kFileStep, kInkGrey, kMenuViewY);
+            Canvas_Text(TitleLine(25), kFileX, kFileY + kFileStep * 2, kInkGrey, kMenuViewY);
+        }
+    }
+    else if (gView == FileView::Confirm)
+    {
+        Canvas_Text(TitleLine(13 + gConfirm * 3), kFileX, kFileY, kInkGrey, kMenuViewY);
+        Canvas_Text(TitleLine(14 + gConfirm * 3), kFileX, kFileY + kFileStep, kInkGrey, kMenuViewY);
+        Canvas_Text(TitleLine(15 + gConfirm * 3), kFileX, kFileY + kFileStep * 2, kInkGrey, kMenuViewY);
+    }
+    else
+    {
+        Canvas_Text(TitleLine(27), kFileX, kFileY, kInkGrey, kMenuViewY);
+        for (int i = 0; i < 3; i++)
+        {
+            snprintf(buf, sizeof(buf), "%s%d", TitleLine(24), i + 1);
+            Canvas_Text(buf, kFileX, kFileY + kFileStep * (i + 1), i == gMenuIndex ? kInkWhite : kInkGrey, kMenuViewY);
+        }
+        Canvas_Text(TitleLine(26), kFileX, kFileY + kFileStep * 4, kInkGrey, kMenuViewY);
+    }
+    if (gHaveSave)
+    {
+        // the time ("hh:mm:ss"), deaths and cards, in white
+        const uint32_t secs = gInfo.mPlayFrames / 60;
+        snprintf(buf, sizeof(buf), "%02u:%02u:%02u", static_cast<unsigned>(secs / 3600),
+                 static_cast<unsigned>(secs / 60 % 60), static_cast<unsigned>(secs % 60));
+        Canvas_Text(buf, kFileX, kFileY + kFileStep * 7, kInkWhite, kMenuViewY);
+        // ("{n} " + " deaths  ": the compiled lines lose their leading space)
+        snprintf(buf, sizeof(buf), "%d %s", gInfo.mDeaths, TitleLine(22));
+        Canvas_Text(buf, kFileX, kFileY + kFileStep * 8, kInkWhite, kMenuViewY);
+        snprintf(buf, sizeof(buf), "%d %s", gInfo.mCards, TitleLine(23));
+        Canvas_Text(buf, kFileX, kFileY + kFileStep * 9, kInkWhite, kMenuViewY);
+    }
+    if (gHaveSave && gView != FileView::CopyTo)
+    {
+        // HealthBar at (128, y + 5 steps): rows of 8 boxes leftwards from its right end, full ones first
+        for (int i = 0; i < gInfo.mMaxHealth && i < 16; i++)
+        {
+            const int x = 128 - 11 - 8 * (7 - i % 8) - 7 * (i / 8);
+            const int y = kFileY + kFileStep * 5 + i / 8 * 7;
+            const hud::Image& img = hud::kImgHealth;
+            const int sx = (i < gInfo.mCurHealth ? 0 : 1) * img.mFrameW;
+            for (int r = 0; r < img.mFrameH; r++)
+            {
+                for (int c = 0; c < img.mFrameW; c++)
+                {
+                    const uint8_t p = img.mPixels[r * img.mW + sx + c];
+                    if (p)
+                    {
+                        Canvas_Plot(x + c, y + r + kMenuViewY, p);
+                    }
+                }
+            }
+        }
     }
 }
 
-void EnterTitleLayout()
+void DrawSelectors()
 {
-    SetDoorY(kDoorEndY);
-    gShowTitleSprites = true;
-    ClearText();
+    // MainMenuState: the selector at (2, 34 + 16 * state); FileSubstate's at its label, 7px left and 2px down
+    if (gHaveArrow)
+    {
+        Sprite_Update(gArrow);
+        Sprite_Draw(gArrow, kViewX + 2, 34 + gMenuIndex * 16 + kMenuViewY);
+    }
+    if (gHaveSubArrow)
+    {
+        if (gInSub)
+        {
+            Sprite_Update(gSubArrow);
+            Sprite_Draw(gSubArrow, kViewX + kFileX - 7, ItemY(gItem) + 2 + kMenuViewY);
+        }
+        else
+        {
+            Sprite_Hide(gSubArrow);
+        }
+    }
+}
+
+void EnterSub()
+{
+    gInSub = true;
+    if (gHaveArrow)
+    {
+        Sprite_Play(gArrow, "disabledRight");
+    }
+    if (gHaveSubArrow)
+    {
+        Sprite_Play(gSubArrow, "enabledRight", true);
+    }
+}
+
+void ExitSub()
+{
+    gInSub = false;
+    PlaySfx("menu_select");
+    if (gHaveArrow)
+    {
+        Sprite_Play(gArrow, "enabledRight");
+    }
+}
+
+void ExitConfirmation()
+{
+    gItem = FileItem::NewGame;
+    gConfirm = 0;
+    gView = FileView::Normal;
+    gMenuDirty = true;
+}
+
+void EnterCopy()
+{
+    gItem = gMenuIndex == 0 ? FileItem::Save2 : FileItem::Save1;
+    gConfirm = 0;
+    gView = FileView::CopyTo;
+    gCopyMode = true;
+    gMenuDirty = true;
+}
+
+void ExitCopy()
+{
+    gItem = FileItem::Copy;
+    gConfirm = 0;
+    gView = FileView::Normal;
+    gCopyMode = false;
+    gMenuDirty = true;
+}
+
+void CopyCheck(int target)
+{
+    PlaySfx("menu_select");
+    gCopyTarget = target;
+    if (!Save_Exists(target))
+    {
+        Save_Copy(gMenuIndex, target);
+        ExitCopy();
+    }
+    else
+    {
+        gView = FileView::Confirm;
+        gItem = FileItem::No;
+        gMenuDirty = true;
+    }
+}
+
+// FileSubstate.HandleInput. Returns true once a file was chosen.
+bool FileInput()
+{
+    const bool accept = key_hit(KEY_A) || key_hit(KEY_START);
+    const bool cancel = key_hit(KEY_B);
+    const bool up = key_hit(KEY_UP);
+    const bool down = key_hit(KEY_DOWN);
+    const bool left = key_hit(KEY_LEFT);
+    bool moved = false;
+    bool selected = false;
+    auto back = [&]() {
+        if (cancel || left)
+        {
+            ExitSub();
+        }
+    };
+    switch (gItem)
+    {
+    case FileItem::Game:
+        if (accept)
+        {
+            PlaySfx("menu_select");
+            return true;
+        }
+        else if (up)
+        {
+            moved = true;
+        }
+        else if (down)
+        {
+            moved = true;
+            if (gHaveSave)
+            {
+                gItem = FileItem::NewGame;
+            }
+        }
+        else
+        {
+            back();
+        }
+        break;
+    case FileItem::NewGame:
+        if (accept)
+        {
+            gItem = FileItem::No;
+            selected = true;
+            gView = FileView::Confirm;
+            gMenuDirty = true;
+        }
+        else if (up)
+        {
+            moved = true;
+            gItem = FileItem::Game;
+        }
+        else if (down)
+        {
+            moved = true;
+            gItem = FileItem::Copy;
+        }
+        else
+        {
+            back();
+        }
+        break;
+    case FileItem::Yes:
+        if (accept)
+        {
+            selected = true;
+            if (gConfirm == 2)
+            {
+                if (gCopyMode)
+                {
+                    Save_Copy(gMenuIndex, gCopyTarget);
+                    ExitCopy();
+                }
+                else
+                {
+                    // DeletedSave
+                    Save_Delete(gMenuIndex);
+                    gHaveSave = false;
+                    gItem = FileItem::Game;
+                    gView = FileView::Normal;
+                    gMenuDirty = true;
+                }
+            }
+            else
+            {
+                gItem = FileItem::No;
+                gConfirm++;
+                gMenuDirty = true;
+            }
+        }
+        else if (cancel)
+        {
+            selected = true;
+            if (gCopyMode)
+            {
+                EnterCopy();
+            }
+            else
+            {
+                ExitConfirmation();
+            }
+        }
+        else if (up)
+        {
+            moved = true;
+            gItem = FileItem::No;
+        }
+        else if (down)
+        {
+            moved = true;
+        }
+        break;
+    case FileItem::No:
+        if (accept || cancel)
+        {
+            selected = true;
+            if (gCopyMode)
+            {
+                EnterCopy();
+            }
+            else
+            {
+                ExitConfirmation();
+            }
+        }
+        else if (up)
+        {
+            moved = true;
+        }
+        else if (down)
+        {
+            moved = true;
+            gItem = FileItem::Yes;
+        }
+        break;
+    case FileItem::Copy:
+        if (accept)
+        {
+            selected = true;
+            EnterCopy();
+        }
+        else if (up)
+        {
+            moved = true;
+            gItem = FileItem::NewGame;
+        }
+        else if (down)
+        {
+            moved = true;
+        }
+        else
+        {
+            back();
+        }
+        break;
+    case FileItem::Save1:
+    case FileItem::Save2:
+    case FileItem::Save3:
+    {
+        const int n = static_cast<int>(gItem) - static_cast<int>(FileItem::Save1);
+        if (accept)
+        {
+            CopyCheck(n);
+        }
+        else if (cancel)
+        {
+            selected = true;
+            ExitCopy();
+        }
+        else if (up)
+        {
+            moved = true;
+            // (the file being copied is skipped)
+            int m = n - 1;
+            if (m == gMenuIndex)
+            {
+                m--;
+            }
+            if (m >= 0)
+            {
+                gItem = static_cast<FileItem>(static_cast<int>(FileItem::Save1) + m);
+            }
+        }
+        else if (down)
+        {
+            moved = true;
+            int m = n + 1;
+            if (m == gMenuIndex)
+            {
+                m++;
+            }
+            gItem = m > 2 ? FileItem::Cancel : static_cast<FileItem>(static_cast<int>(FileItem::Save1) + m);
+        }
+        break;
+    }
+    case FileItem::Cancel:
+        if (accept || cancel)
+        {
+            selected = true;
+            ExitCopy();
+        }
+        else if (up)
+        {
+            moved = true;
+            const int m = gMenuIndex == 2 ? 1 : 2;
+            gItem = static_cast<FileItem>(static_cast<int>(FileItem::Save1) + m);
+        }
+        else if (down)
+        {
+            moved = true;
+        }
+        break;
+    }
+    if (moved)
+    {
+        PlaySfx("menu_move");
+    }
+    if (selected)
+    {
+        PlaySfx("menu_select");
+    }
+    return false;
+}
+
+void StartTitle()
+{
+    // A new TitleState: the door below the screen, the credits to come, black fading in.
+    REG_DISPCNT = DCNT_MODE0 | DCNT_BG1 | DCNT_BG2 | DCNT_BG3 | DCNT_OBJ | DCNT_OBJ_1D | DCNT_WIN0;
     HideAllSprites();
-    gBlink = 0;
+    TintTitle(0);
+    gState = State::IntroFade;
+    gTimer = 0;
+    gPix = 256;
+    gDark = 0;
+    gGlint = 0;
+    gBlinkTimer = 0;
+    gPressVisible = true;
+    gCredSet = 0;
+    Canvas_Clear();
+    SetDoorY(180 << 16);
+    StartFlash(120, false); // Flash(2s, Black)
+    ApplyFade();
 }
 } // namespace
 
@@ -425,14 +900,16 @@ void Title_Enter(ObjVramAllocator& vram)
     REG_WINOUT = 0;
 
     memcpy16(pal_bg_mem, title::kPalette, 176);
-    // 4bpp banks (colour index 1 = ink): 13 red prompt, 14 dim text, 15 white text.
-    pal_bg_mem[13 * 16 + 1] = RGB15(31, 4, 4);
-    pal_bg_mem[14 * 16 + 1] = RGB15(14, 17, 18);
-    pal_bg_mem[15 * 16 + 1] = RGB15(31, 31, 31);
+    pal_bg_mem[kTextBank * 16 + kInkGrey] = RGB15(15, 18, 18);  // Color(116, 140, 144)
+    pal_bg_mem[kTextBank * 16 + kInkWhite] = RGB15(31, 31, 31);
+    // the health boxes' colours (hud::kImgHealth uses 4 and 11-15 of the HUD's bank, as the HUD loads it)
+    pal_bg_mem[kTextBank * 16 + 4] = hud::kPalette14[3];
+    for (int i = 11; i < 16; i++)
+    {
+        pal_bg_mem[kTextBank * 16 + i] = hud::kPalette14[i - 1];
+    }
     LZ77UnCompVram(title::kTilesPacked, tile_mem[0]);
-    // Glyph tiles start at tile 1 (tile 0 stays blank).
-    memset32(&tile_mem[kCbbText][0], 0, 8);
-    memcpy32(&tile_mem[kCbbText][1], title::kFontTiles, sizeof(title::kFontTiles) / 4);
+    Canvas_Init();
 
     // Door map (SBB 29, 32x64: SBB 30 holds its lower half): the door's tiles in the top-left, the rest empty.
     memset16(se_mem[kSbDoor], 0, 32 * 64);
@@ -443,12 +920,10 @@ void Title_Enter(ObjVramAllocator& vram)
             se_mem[kSbDoor][y * 32 + x] = title::kDoorMap[y * title::kDoorTilesW + x];
         }
     }
-    ClearText();
 
     int oam = 0;
-    // The opaque glow disc takes the first slot: it sits in front of the (additive) rays, which then only show
-    // outside it, as in the C#.
-    // Inner rays (opaque, over the disc) take the very first slots, then the disc, then the additive outer rays.
+    // Inner rays (opaque, over the disc) take the very first slots, then the disc, then the additive outer rays,
+    // which then only show outside it, as in the C#.
     gHaveInner = Sprite_Create(gInner1, vram, "door_spinglow1_inner", 12, oam);
     oam += gHaveInner ? Sprite_OamCount(gInner1) : 0;
     gHaveInner = gHaveInner && Sprite_Create(gInner2, vram, "door_spinglow2_inner", 13, oam);
@@ -467,23 +942,16 @@ void Title_Enter(ObjVramAllocator& vram)
     oam += gHavePress ? Sprite_OamCount(gPressEnter) : 0;
     gHaveArrow = Sprite_Create(gArrow, vram, "arrows", 8, oam);
     oam += gHaveArrow ? Sprite_OamCount(gArrow) : 0;
-    gHaveBox = Sprite_Create(gBox, vram, "dialogue_box", 11, oam);
+    gHaveSubArrow = Sprite_Create(gSubArrow, vram, "arrows", 8, oam);
     if (gHaveArrow)
     {
         Sprite_Play(gArrow, "enabledRight");
     }
-    HideAllSprites();
 
-    gState = State::Credits;
-    CreditsStart(0);
-    gTimer = 0;
     gBgScroll = 0;
     gBgTopRow = -1;
-    gMenuIndex = 0;
-    gShowTitleSprites = false;
-    SetDoorY(180);
     UpdateBg(false);
-    Fade(3, 16);
+    StartTitle();
 
     const int32_t bgm = AudioManager_FindBgm("title");
     if (bgm >= 0)
@@ -498,128 +966,117 @@ bool Title_Update(int* slot)
     sFrames++;
     const bool anyKey = key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START);
     UpdateBg(true);
+    UpdateFlash();
     bool start = false;
+
+    // Any key before the title is up: PressStart, Flash(1.5s, White), and on its first (full) frame DisplayTitle.
+    const bool credits = gState == State::IntroFade || gState == State::CreditsWrite || gState == State::CreditsFade ||
+                         gState == State::CreditsFadeEnd || gState == State::ScrollUp;
+    if (credits && anyKey)
+    {
+        Canvas_Clear();
+        SetDoorY(kDoorEndY << 16);
+        StartFlash(90, true);
+        TintTitle(65536);
+        gGlint = 65536;
+        gPressVisible = true;
+        gBlinkTimer = 0;
+        gState = State::Title;
+        gTimer = 0;
+        DrawTitleSprites();
+        ApplyFade();
+        return false;
+    }
 
     switch (gState)
     {
-    case State::Credits:
-    {
-        // Fade in from black over the first two seconds (TitleState IntroFade: flash 2s from black).
-        gTimer++;
-        if (gTimer <= 120)
+    case State::IntroFade:
+        if (gFlash == 0)
         {
-            Fade(3, 16 - (gTimer * 16) / 120);
-        }
-        else
-        {
-            Fade(0, 0);
-        }
-        if (gCredPhase == 0)
-        {
-            if ((gTimer & 1) == 0 && gCredRemaining > 0)
-            {
-                gCredRng = gCredRng * 1664525u + 1013904223u;
-                const int pick = static_cast<int>((gCredRng >> 8) % static_cast<uint32_t>(gCredRemaining));
-                const uint8_t line = gCredOrder[pick][0];
-                const uint8_t col = gCredOrder[pick][1];
-                gCredShown[line][col] = title::kCreditLines[gCredSet * 3 + line][col];
-                gCredOrder[pick][0] = gCredOrder[gCredRemaining - 1][0];
-                gCredOrder[pick][1] = gCredOrder[gCredRemaining - 1][1];
-                gCredRemaining--;
-                CreditsDraw();
-            }
-            if (gCredRemaining == 0)
-            {
-                gCredPhase = 1;
-            }
-        }
-        else if (gCredPhase == 1)
-        {
-            gCredOpacity -= 3; // 1.0 -> 0.3 at 0.6/s
-            if (gCredOpacity <= 77)
-            {
-                gCredOpacity = 77;
-                gCredPhase = 2;
-                gCredTimer = 0;
-            }
-            CreditsColour();
-        }
-        else
-        {
-            gCredOpacity -= 9; // then to 0 at 2/s, and a 1s wait
-            if (gCredOpacity < 0)
-            {
-                gCredOpacity = 0;
-            }
-            CreditsColour();
-            gCredTimer++;
-            if (gCredTimer >= 60)
-            {
-                if (gCredSet == 0)
-                {
-                    CreditsStart(1);
-                }
-                else
-                {
-                    ClearText();
-                    pal_bg_mem[14 * 16 + 1] = RGB15(14, 17, 18);
-                    gState = State::Rise;
-                    gTimer = 0;
-                }
-            }
-        }
-        if (anyKey)
-        {
-            ClearText();
-            pal_bg_mem[14 * 16 + 1] = RGB15(14, 17, 18);
-            Fade(0, 0);
-            gState = State::Flash;
+            CreditsStart(0);
+            gState = State::CreditsWrite;
             gTimer = 0;
         }
         break;
-    }
-    case State::Rise:
-    {
-        Fade(0, 0);
-        gDoorSub += kDoorRiseSpeed * 256 / 60;
-        gDoorY -= gDoorSub >> 8;
-        gDoorSub &= 255;
-        if (gDoorY <= kDoorEndY)
-        {
-            gDoorY = kDoorEndY;
-        }
-        SetDoorY(gDoorY);
+    case State::CreditsWrite:
+        // TextDrawTimer: a character every 0.03s, which at 60fps comes to every other frame
         gTimer++;
-        if (anyKey || gDoorY <= kDoorEndY)
+        if ((gTimer & 1) == 0 && gCredRemaining > 0)
         {
-            gState = State::Flash;
+            gCredRng = gCredRng * 1664525u + 1013904223u;
+            const int pick = static_cast<int>((gCredRng >> 8) % static_cast<uint32_t>(gCredRemaining));
+            const uint8_t line = gCredOrder[pick][0];
+            const uint8_t col = gCredOrder[pick][1];
+            Canvas_Char(title::kCreditLines[gCredSet * 3 + line][col], gCredX[line] + col * kCharW, gCredY[line],
+                        kInkCredits, kViewY);
+            gCredOrder[pick][0] = gCredOrder[gCredRemaining - 1][0];
+            gCredOrder[pick][1] = gCredOrder[gCredRemaining - 1][1];
+            gCredRemaining--;
+        }
+        if (gCredRemaining == 0)
+        {
+            gState = State::CreditsFade;
+        }
+        break;
+    case State::CreditsFade:
+        gCredOpacity -= 65536 * 6 / 600; // 0.6/s down to 0.3
+        if (gCredOpacity <= 65536 * 3 / 10)
+        {
+            gCredOpacity = 65536 * 3 / 10;
+            gState = State::CreditsFadeEnd;
+            gTimer = 0;
+        }
+        SetCreditsOpacity(gCredOpacity);
+        break;
+    case State::CreditsFadeEnd:
+        gCredOpacity -= 65536 * 2 / 60; // then to 0 at 2/s, for 1s (TextFadeTimer)
+        if (gCredOpacity < 0)
+        {
+            gCredOpacity = 0;
+        }
+        SetCreditsOpacity(gCredOpacity);
+        gTimer++;
+        if (gTimer >= 60)
+        {
+            if (gCredSet == 0)
+            {
+                CreditsStart(1);
+                gState = State::CreditsWrite;
+            }
+            else
+            {
+                Canvas_Clear();
+                gState = State::ScrollUp;
+            }
             gTimer = 0;
         }
         break;
-    }
-    case State::Flash:
-    {
-        // Instantly white with the title already swapped in, then fading out.
-        if (gTimer == 0)
+    case State::ScrollUp:
+        SetDoorY(gDoorY - kDoorRise);
+        if (DoorY() <= kDoorEndY)
         {
-            EnterTitleLayout();
-        }
-        Fade(2, 16 - (gTimer * 16) / kFlashFrames);
-        DrawTitleSprites(false, false);
-        gTimer++;
-        if (gTimer >= kFlashFrames)
-        {
-            Fade(0, 0);
+            SetDoorY(kDoorEndY << 16);
+            StartFlash(90, true);
+            TintTitle(65536);
+            gGlint = 65536;
+            gPressVisible = true;
+            gBlinkTimer = 0;
             gState = State::Title;
             gTimer = 0;
+            DrawTitleSprites();
         }
         break;
-    }
     case State::Title:
     {
-        gBlink = (gTimer / kBlinkFrames) & 1;
-        DrawTitleSprites(!gBlink);
-        gTimer++;
+        // DisplayTitle: the white glint fades at 0.4/s, "press enter" blinks every second
+        gGlint = gGlint > 65536 * 4 / 600 ? gGlint - 65536 * 4 / 600 : 0;
+        TintTitle(gGlint);
+        if (++gBlinkTimer >= kBlinkFrames)
+        {
+            gBlinkTimer = 0;
+            gPressVisible = !gPressVisible;
+        }
+        DrawTitleSprites();
         if (anyKey)
         {
             PlaySfx("menu_select");
@@ -634,9 +1091,8 @@ bool Title_Update(int* slot)
     case State::FadeOut:
     {
         // TitleState Pixelate/FadeOut: pixelation +15 block-px/s throughout; the black overlay +0.36/s until the
-        // pixelation reaches 15, then +0.72/s until fully black.
-        gBlink = (gTimer / kBlinkFrames) & 1;
-        DrawTitleSprites(!gBlink);
+        // pixelation reaches 15, then +0.72/s until fully black. (The glint and the blink stop where they are.)
+        DrawTitleSprites();
         gTimer++;
         gPix += 15 * 256 / 60;
         gDark += (gState == State::Pixelate ? 36 : 72) * 65536 / 100 / 60;
@@ -648,182 +1104,105 @@ bool Title_Update(int* slot)
         {
             gDark = 65536;
         }
-        Fade(3, (gDark * 16) >> 16);
         MosaicBgOffsets offsets;
         offsets.x[3] = static_cast<int16_t>(-kViewX); // BG3 background, BG2 door (see UpdateBg / SetDoorY)
         offsets.y[3] = static_cast<int16_t>((gBgScroll >> 8) - kViewY);
         offsets.x[2] = static_cast<int16_t>(-kViewX);
-        offsets.y[2] = static_cast<int16_t>(-(gDoorY + kViewY));
+        offsets.y[2] = static_cast<int16_t>(-(DoorY() + kViewY));
         offsets.originY = kViewY; // the title draws on the C# screen directly, no HUD header
         Mosaic_Apply(gPix, offsets);
         if (gState == State::FadeOut && gDark >= 65536)
         {
-            // The menu: background only (door and title art hidden), labels on BG1.
+            // MainMenuState, at once: black overlay, pixelation and flash off; only the labels and selectors.
             Mosaic_End();
-            REG_DISPCNT &= ~DCNT_BG2;
+            REG_DISPCNT = DCNT_MODE0 | DCNT_BG1 | DCNT_OBJ | DCNT_OBJ_1D | DCNT_WIN0;
             HideAllSprites();
-            gShowTitleSprites = false;
-            gState = State::MenuFadeIn;
+            gDark = 0;
+            gFlash = 0;
+            gInSub = false;
+            if (gHaveArrow)
+            {
+                Sprite_Play(gArrow, "enabledRight");
+            }
+            LoadFile();
+            gState = State::Menu;
             gTimer = 0;
             DrawMenu();
+            DrawSelectors();
         }
-        break;
-    }
-    case State::MenuFadeIn:
-    {
-        Fade(3, 16 - (gTimer * 16) / kFadeFrames);
-        gTimer++;
-        if (gTimer >= kFadeFrames)
-        {
-            Fade(0, 0);
-            gState = State::Menu;
-        }
-        Sprite_Update(gArrow);
-        DrawMenu();
         break;
     }
     case State::Menu:
     {
-        if (key_hit(KEY_UP) && gMenuIndex > 0)
+        if (gInSub)
         {
-            gMenuIndex--;
-            PlaySfx("menu_move");
-        }
-        else if (key_hit(KEY_DOWN) && gMenuIndex < kMenuItems - 1)
-        {
-            gMenuIndex++;
-            PlaySfx("menu_move");
-        }
-        else if (key_hit(KEY_A) || key_hit(KEY_START))
-        {
-            PlaySfx("menu_select");
-            if (gMenuIndex < 3)
+            if (FileInput())
             {
                 Rng_SeedFromPlayer(sFrames * 2654435761u ^ REG_VCOUNT);
                 *slot = gMenuIndex;
-                if (Save_Exists(gMenuIndex))
-                {
-                    return true; // (the file is loaded: no intro)
-                }
-                gState = State::IntroFade;
-                gTimer = 0;
+                gState = State::LoadFade;
+                gDark = 0;
             }
         }
         else if (key_hit(KEY_B))
         {
             PlaySfx("pause_sound");
-            REG_DISPCNT |= DCNT_BG2;
-            EnterTitleLayout();
-            gState = State::Title;
-            gTimer = 0;
+            StartTitle();
+            break;
         }
-        if (gHaveArrow)
+        else if (key_hit(KEY_A) || key_hit(KEY_START) || key_hit(KEY_RIGHT))
         {
-            Sprite_Update(gArrow);
+            PlaySfx("menu_select");
+            if (gMenuIndex < 3)
+            {
+                EnterSub();
+            }
+        }
+        else if (key_hit(KEY_UP))
+        {
+            PlaySfx("menu_move");
+            if (gMenuIndex > 0)
+            {
+                gMenuIndex--;
+                LoadFile();
+            }
+        }
+        else if (key_hit(KEY_DOWN))
+        {
+            PlaySfx("menu_move");
+            if (gMenuIndex < kMenuItems - 1)
+            {
+                gMenuIndex++;
+                LoadFile();
+            }
         }
         DrawMenu();
+        DrawSelectors();
         break;
     }
-    case State::IntroFade:
-    {
-        Fade(3, (gTimer * 16) / kFadeFrames);
-        gTimer++;
-        if (gTimer >= kFadeFrames)
+    case State::LoadFade:
+        gDark += 72 * 65536 / 100 / 60;
+        DrawMenu();
+        DrawSelectors();
+        if (gDark >= 65536)
         {
-            REG_DISPCNT = (REG_DISPCNT & ~DCNT_BG3) | DCNT_BG2;
-            REG_BG2CNT = BG_CBB(kCbbText) | BG_SBB(kSbDoor) | BG_4BPP | BG_REG_32x32 | BG_PRIO(0);
-            REG_BG2HOFS = 0;
-            REG_BG2VOFS = static_cast<uint16_t>(-4);
-            HideAllSprites();
-            ClearText();
-            const int32_t bgm = AudioManager_FindBgm("blank");
-            if (bgm >= 0)
-            {
-                AudioManager_PlayBGM(static_cast<uint32_t>(bgm));
-            }
-            Fade(0, 0);
-            gPage = 0;
-            LoadPage();
-            StartBox();
-            gState = State::IntroBox;
-            gTimer = 0;
-        }
-        break;
-    }
-    case State::IntroBox:
-    {
-        const bool full = gReveal >= gBoxChars;
-        if (!full)
-        {
-            gReveal += kCharsPerFrame;
-            PlaySfx("dialogue_blip");
-            if (key_hit(KEY_A) || key_hit(KEY_B))
-            {
-                PlaySfx("dialogue_bloop");
-                gReveal = gBoxChars;
-            }
-            if (gReveal > gBoxChars)
-            {
-                gReveal = gBoxChars;
-            }
-        }
-        DrawBoxText();
-        if (gHaveBox)
-        {
-            Sprite_Draw(gBox, kBoxX, kBoxY);
-        }
-        if (full)
-        {
-            gTimer++;
-            // The intro's prompt: the interact key in red, blinking every 0.4s (C# TextBox.introPrompt).
-            PutText((kBoxX + 156 - 12) / 8, (kBoxY + 44 - 14) / 8, ((gTimer / 24) & 1) ? " " : "A", 13);
-            if (key_hit(KEY_A) || key_hit(KEY_B))
-            {
-                PlaySfx("dialogue_bloop");
-                gTimer = 0;
-                gBoxFirstLine += kTextLines;
-                if (gBoxFirstLine >= gLineCount)
-                {
-                    gPage++;
-                    if (gPage >= title::kIntroPageCount)
-                    {
-                        HideAllSprites();
-                        ClearText();
-                        for (int i = 0; i < 32 * 32; i++)
-                        {
-                            se_mem[kSbDoor][i] = 0; // line 1 of the box lives on BG2
-                        }
-                        gState = State::IntroWait;
-                        break;
-                    }
-                    LoadPage();
-                }
-                StartBox();
-            }
-        }
-        break;
-    }
-    case State::IntroWait:
-    {
-        gTimer++;
-        if (gTimer >= 90)
-        {
+            gDark = 65536;
             start = true;
         }
         break;
     }
-    }
+    ApplyFade();
     return start;
 }
 
 void Title_Exit(ObjVramAllocator& vram)
 {
-    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gInner1, &gInner2, &gSpin1, &gSpin2, &gBox };
+    Sprite* all[] = { &gTitleText, &gRemake, &gPressEnter, &gGlow, &gArrow, &gSubArrow, &gInner1, &gInner2, &gSpin1, &gSpin2 };
     for (Sprite* s : all)
     {
         Sprite_Destroy(*s, vram);
     }
-    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSpin = gHaveBox = gHaveInner = false;
+    gHaveText = gHaveRemake = gHavePress = gHaveGlow = gHaveArrow = gHaveSubArrow = gHaveSpin = gHaveInner = false;
     REG_DISPCNT |= DCNT_BG3;
     REG_BLDCNT = 0;
     REG_BLDY = 0;

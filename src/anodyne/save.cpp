@@ -1,5 +1,6 @@
 #include "save.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "dialog.h"
@@ -193,6 +194,52 @@ bool Save_QuickRead(int& map, int& x, int& y)
 bool Save_Exists(int slot)
 {
     return ReadSlot(slot) >= 0;
+}
+
+bool Save_Peek(int slot, SaveInfo& info)
+{
+    const int len = ReadSlot(slot);
+    if (len < static_cast<int>(sizeof(GameState)) + static_cast<int>(sizeof(int)))
+    {
+        return false;
+    }
+    // (the body starts with the GameState and ends with the deaths, see WriteState: read its fields in place)
+    memcpy(&info.mPlayFrames, gBuf + offsetof(GameState, mPlayFrames), sizeof(info.mPlayFrames));
+    memcpy(&info.mCurHealth, gBuf + offsetof(GameState, mCurHealth), sizeof(info.mCurHealth));
+    memcpy(&info.mMaxHealth, gBuf + offsetof(GameState, mMaxHealth), sizeof(info.mMaxHealth));
+    info.mCards = 0;
+    const uint8_t* cards = gBuf + offsetof(GameState, mCardStatus);
+    for (size_t i = 0; i < sizeof(GameState::mCardStatus); i++)
+    {
+        info.mCards += cards[i] ? 1 : 0;
+    }
+    memcpy(&info.mDeaths, gBuf + len - sizeof(int), sizeof(int));
+    return true;
+}
+
+void Save_Delete(int slot)
+{
+    if (slot < 0 || slot >= kSaveSlots)
+    {
+        return;
+    }
+    const uint8_t header[kHeaderSize] = {};
+    SramWrite(slot * kSlotSize, header, kHeaderSize);
+}
+
+bool Save_Copy(int from, int to)
+{
+    const int len = ReadSlot(from);
+    if (len < 0 || to < 0 || to >= kSaveSlots || to == from)
+    {
+        return false;
+    }
+    uint8_t header[kHeaderSize];
+    SramRead(from * kSlotSize, header, kHeaderSize);
+    Save_Delete(to); // (invalid while its body is rewritten)
+    SramWrite(to * kSlotSize + kHeaderSize, gBuf, len);
+    SramWrite(to * kSlotSize, header, kHeaderSize);
+    return true;
 }
 
 bool Save_Read(int slot)
