@@ -7,7 +7,8 @@
 //   dotnet run -- ./mgba_link <port> --replay ...   (SimHost, with ANODYNE_LINK_ROM set)
 //
 // It takes the simulator's arguments so SimHost can start it in the simulator's place (--headless and --no-render
-// change nothing here). "quit" ends it; so does the socket closing.
+// change nothing here). "quit" ends it; so does the socket closing. With --shots it draws the screen, and "shot <ppm>"
+// saves the last frame (the ROM has no screen of its own to save), as the simulator's "shot" does.
 #include <mgba/flags.h>
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
@@ -98,11 +99,49 @@ static int ReadSocketLine(char* line, int cap)
     }
 }
 
+static color_t gVideo[256 * 256];
+static unsigned gVideoW, gVideoH;
+static int gShots; // --shots: the screen is drawn
+
+// "shot <path>": the last frame as a binary PPM.
+static void SaveShot(const char* line)
+{
+    char path[1024];
+    FILE* f = NULL;
+    if (gShots && sscanf(line, "shot %1023s", path) == 1)
+    {
+        f = fopen(path, "wb");
+    }
+    if (!f)
+    {
+        const char* err = gShots ? "error can't write the shot\n" : "error no screen without --shots\n";
+        SendAll(err, (int)strlen(err));
+        return;
+    }
+    fprintf(f, "P6\n%u %u\n255\n", gVideoW, gVideoH);
+    for (unsigned y = 0; y < gVideoH; y++)
+    {
+        for (unsigned x = 0; x < gVideoW; x++)
+        {
+            const uint32_t c = (uint32_t)gVideo[y * gVideoW + x];
+            const unsigned char rgb[3] = { (unsigned char)c, (unsigned char)(c >> 8), (unsigned char)(c >> 16) };
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
+    SendAll("ok\n", 3);
+}
+
 // The ROM asked for a line: queue the bot's next one as JOY Bus words.
 static void QueueLine(void)
 {
     char line[4096];
-    const int len = ReadSocketLine(line, sizeof(line));
+    int len = ReadSocketLine(line, sizeof(line));
+    while (!strncmp(line, "shot ", 5))
+    {
+        SaveShot(line);
+        len = ReadSocketLine(line, sizeof(line));
+    }
     if (!strcmp(line, "quit\n") || !strcmp(line, "quit\r\n"))
     {
         exit(0);
@@ -214,6 +253,10 @@ int main(int argc, char** argv)
         {
             rom = argv[++i];
         }
+        else if (!strcmp(argv[i], "--shots"))
+        {
+            gShots = 1;
+        }
     }
     if (port < 0 || !rom)
     {
@@ -229,13 +272,14 @@ int main(int argc, char** argv)
         Fatal("can't start mGBA");
     }
     mCoreInitConfig(gCore, NULL);
-    // (nothing looks at the screen: don't draw it)
-    mCoreConfigSetDefaultIntValue(&gCore->config, "frameskip", 1 << 30);
+    if (!gShots)
+    {
+        // (nothing looks at the screen: don't draw it)
+        mCoreConfigSetDefaultIntValue(&gCore->config, "frameskip", 1 << 30);
+    }
     mCoreLoadConfig(gCore);
-    unsigned w, h;
-    gCore->desiredVideoDimensions(gCore, &w, &h);
-    static color_t video[256 * 256];
-    gCore->setVideoBuffer(gCore, video, w);
+    gCore->desiredVideoDimensions(gCore, &gVideoW, &gVideoH);
+    gCore->setVideoBuffer(gCore, gVideo, gVideoW);
     if (!mCoreLoadFile(gCore, rom))
     {
         Fatal("can't load the ROM");

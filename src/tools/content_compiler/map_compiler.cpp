@@ -514,9 +514,18 @@ RGBATile Quarter(const RGBATile& tile, int q)
 void MapCompiler::CompileTileAnims(const std::vector<TileAnimSpec>& anims, TileDedupResult& dedup,
                                    MapCompileResult& ret)
 {
-    // The 8bpp tileset has to end below the screenblocks (0xE000): if the new slots don't fit, the animated tiles the BG
-    // layer doesn't use are left out.
-    constexpr uint32_t kMaxTiles = 0xE000 / 64;
+    // The 8bpp tileset has to end below the screenblocks: one each, from 31 down, for the BG layer, the BG2/FG layers
+    // the map has and the scroll role (world.cpp LoadMapGraphics). If the new slots don't fit, the animated tiles the
+    // BG layer doesn't use are left out.
+    uint32_t screenblocks = 2;
+    for (int layer = 1; layer < 3; ++layer)
+    {
+        if (ret.layers[layer].Width() != 0 && ret.layers[layer].Height() != 0)
+        {
+            ++screenblocks;
+        }
+    }
+    const uint32_t kMaxTiles = (32 - screenblocks) * 0x800 / 64;
     if (!CompileTileAnims(anims, dedup, ret, false, kMaxTiles))
     {
         ret.anims.clear();

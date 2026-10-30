@@ -58,8 +58,11 @@ constexpr uint32_t kMaxLayerBytes = kMaxCollisionCells * 2;
 constexpr int kLayerCount = 3;                 // BG, BG2, FG: the layers made from the map's own CSVs
 constexpr int kRoleCount = 4;                  // + the scrolling background / overlay
 constexpr int kRoleScroll = 3;
-constexpr int kRoleScreenblock[kRoleCount] = { 31, 30, 29, 28 }; // the tileset must end below 0xE000
-constexpr uint32_t kMaxTilesetBytes = 0xE000;
+// Each role's screenblock, from 31 down: a layer the map doesn't have takes none, so its tileset can grow into it
+// (MapCompiler::CompileTileAnims counts the same way). The scroll role always keeps one.
+int gRoleSb[kRoleCount] = { 31, 30, 29, 28 };
+bool gLayerOn[kLayerCount] = { true, true, true };
+uint32_t gTilesetMaxBytes = 0xE000; // where the lowest screenblock in use starts
 
 // Uninitialised EWRAM (".sbss" in gba_cart.ld): the current map's unpacked layers and collision cells.
 alignas(4) uint8_t gLayerBuffer[kLayerCount][kMaxLayerBytes] __attribute__((section(".sbss")));
@@ -158,7 +161,10 @@ void WriteBgTile(int mx, int my)
     const int slot = (my & 31) * 32 + (mx & 31);
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        se_mem[kRoleScreenblock[layer]][slot] = LayerEntry(layer, mx, my);
+        if (gLayerOn[layer])
+        {
+            se_mem[gRoleSb[layer]][slot] = LayerEntry(layer, mx, my);
+        }
     }
 }
 
@@ -424,7 +430,7 @@ int FloorMod(int value, int divisor)
 // The 20x20-tile pattern repeats every 160px, so tile (mx, my) is pattern[my mod 20][mx mod 20].
 void WriteScrollTile(int mx, int my)
 {
-    se_mem[kRoleScreenblock[kRoleScroll]][(my & 31) * 32 + (mx & 31)] =
+    se_mem[gRoleSb[kRoleScroll]][(my & 31) * 32 + (mx & 31)] =
         gScroll->mPattern[FloorMod(my, 20) * 20 + FloorMod(mx, 20)];
 }
 
@@ -573,15 +579,19 @@ void ApplyDisplayRegs(bool windowOn)
 
     for (int role = 0; role < kRoleCount; role++)
     {
-        REG_BGCNT[gHw[role]] = BG_CBB(0) | BG_SBB(kRoleScreenblock[role]) | BG_PRIO(gPrio[role]) | BG_8BPP | BG_REG_32x32;
+        REG_BGCNT[gHw[role]] = BG_CBB(0) | BG_SBB(gRoleSb[role]) | BG_PRIO(gPrio[role]) | BG_8BPP | BG_REG_32x32;
     }
 
-    uint16_t dispcnt = DCNT_MODE0 | DCNT_BG0 | DCNT_BG1 | DCNT_BG2 | DCNT_OBJ | DCNT_OBJ_1D;
-    uint16_t winin = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
-    if (gScroll)
+    uint16_t dispcnt = DCNT_MODE0 | DCNT_OBJ | DCNT_OBJ_1D;
+    uint16_t winin = WIN_OBJ;
+    for (int role = 0; role < kRoleCount; role++)
     {
-        dispcnt |= DCNT_BG3;
-        winin |= WIN_BG3;
+        // (a missing layer's screenblock is tileset: it must not be shown)
+        if (role == kRoleScroll ? gScroll != nullptr : gLayerOn[role])
+        {
+            dispcnt |= DCNT_BG0 << gHw[role];
+            winin |= WIN_BG0 << gHw[role];
+        }
     }
     if (windowOn)
     {
@@ -1878,9 +1888,9 @@ void World_ReloadTileset()
         return;
     }
     uint32_t tilesetBytes = gMap->mTileSetData.mTileSetSize;
-    if (tilesetBytes > kMaxTilesetBytes)
+    if (tilesetBytes > gTilesetMaxBytes)
     {
-        tilesetBytes = kMaxTilesetBytes;
+        tilesetBytes = gTilesetMaxBytes;
     }
     memcpy16(tile_mem, gMap->mTileSetData.mTileSetData, tilesetBytes / 2);
 }
@@ -1910,14 +1920,34 @@ bool World_TakeQuickLoad()
 // The map's palette, tileset and layers (into VRAM / EWRAM): what the BG layers draw.
 static void LoadMapGraphics(const MapEntry& map)
 {
-    // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 28-31
-    // (0x0600E000 and up), which the layers use for their maps.
+    // Screenblocks from 31 down for the layers the map has (and the scroll role), then the tileset below them.
+    int sb = 31;
+    for (int layer = 0; layer < kLayerCount; layer++)
+    {
+        const MapLayerData& data = map.mScreenBlockData.mLayers[layer];
+        gLayerOn[layer] = layer == 0 || (data.mWidth != 0 && data.mUnpackedSize != 0);
+        if (gLayerOn[layer])
+        {
+            gRoleSb[layer] = sb--;
+        }
+    }
+    gRoleSb[kRoleScroll] = sb;
+    gTilesetMaxBytes = static_cast<uint32_t>(sb) * 0x800;
+    for (int layer = 0; layer < kLayerCount; layer++)
+    {
+        if (!gLayerOn[layer])
+        {
+            gRoleSb[layer] = gRoleSb[kRoleScroll]; // (never written or shown)
+        }
+    }
+
+    // Palette (halfwords) and 8bpp tileset into BG VRAM, clear of those screenblocks.
     TexDark_SetBgColours(static_cast<int>(map.mPalData.mPalSize)); // (first: it puts the old colours back)
     memcpy16(pal_bg_mem, map.mPalData.mPalData, map.mPalData.mPalSize);
     uint32_t tilesetBytes = map.mTileSetData.mTileSetSize;
-    if (tilesetBytes > kMaxTilesetBytes)
+    if (tilesetBytes > gTilesetMaxBytes)
     {
-        tilesetBytes = kMaxTilesetBytes;
+        tilesetBytes = gTilesetMaxBytes;
     }
     memcpy16(tile_mem, map.mTileSetData.mTileSetData, tilesetBytes / 2);
     LoadTileAnims(map.mTileAnims);
