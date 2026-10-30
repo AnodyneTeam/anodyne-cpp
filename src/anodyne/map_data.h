@@ -120,10 +120,11 @@ struct MapDarkData final
     const MapDarkArea* mAreas;
     uint32_t mEventCount;
     const MapDarkEvent* mEvents;
+    int8_t mExtraBlend; // Settings.json ExtraBlend (GlobalState.extraBlend), a kDarkTextures index; -1: none
 };
 
-// A darkness texture (Darkness.SetTex): the 160x160 playfield's 8px bands, each one colour and alpha (RGBA8), blended
-// over the screen in the overlay or (mHardLight) hard light way.
+// A darkness (Darkness.SetTex) or ExtraBlend (Blend.SetTex) texture: the 160x160 playfield's 8px bands, each one
+// colour and alpha (RGBA8), blended over the screen in the overlay or (mHardLight) hard light way.
 constexpr int kDarkBands = 20;
 struct DarkTexture final
 {

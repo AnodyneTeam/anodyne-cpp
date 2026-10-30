@@ -723,9 +723,29 @@ void ApplyWindows()
     }
 }
 
+// The map's ExtraBlend texture (GlobalState.extraBlend), nullptr if it has none.
+const DarkTexture* ExtraBlend()
+{
+    return gDarkData && gDarkData->mExtraBlend >= 0 && gDarkTextures ? &gDarkTextures[gDarkData->mExtraBlend] : nullptr;
+}
+
+// TexDark draws this frame: a darkness texture, or the ExtraBlend.
+bool TexDarkOn()
+{
+    return (gDarkTex && gDark.mAlpha > 0) || ExtraBlend();
+}
+
+// Plain darkness under an ExtraBlend goes into TexDark's colours too: the overlay brightens the darkened screen (the
+// C# blends after the darkness), which a BLD over the blended colours can't give. Not with the player's light on: its
+// hole in the darkness needs the BLD and windows.
+bool PlainDarkInTexDark()
+{
+    return !gDarkTex && ExtraBlend() && !(gPlayerLight && gPlayerLight->mExists);
+}
+
 int DarkLevel()
 {
-    if (gDarkTex)
+    if (gDarkTex || PlainDarkInTexDark())
     {
         return 0; // (TexDark draws it)
     }
@@ -2371,7 +2391,7 @@ void World_Update()
             {
                 int level = FxFloor(gFlash.mAlpha * 32 + kFxOne / 2);
                 level = level > 32 ? 32 : level;
-                if (gDarkTex && gDark.mAlpha > 0)
+                if (TexDarkOn())
                 {
                     gTintLevel = level; // (TexDark tints its own colours)
                 }
@@ -2416,11 +2436,12 @@ void World_Update()
     }
     else
     {
-        if (gDarkTex && gDark.mAlpha > 0)
+        if (TexDarkOn())
         {
             UntintPalettes(); // (from before the texture: TexDark takes the plain colours)
         }
-        TexDark_Frame(gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2), gTintLevel, gFlash.mColour);
+        TexDark_Frame(PlainDarkInTexDark() ? TexDark_Plain() : gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2),
+                      gTintLevel, gFlash.mColour, ExtraBlend());
     }
     gTintLevel = 0;
     if (MenuDraw_IsOpen())

@@ -31,6 +31,7 @@ int NextEntry(int i)
 volatile bool gActive = false;
 volatile int gShown = 0; // the band in palette RAM
 const DarkTexture* gTexture = nullptr;
+const DarkTexture* gExtra = nullptr;
 int gAlpha = -1;
 int gTint = -1;
 uint16_t gTintColour = 0;
@@ -81,34 +82,45 @@ int Overlay(int base, int blend)
     return base < 128 ? TwiceDiv255(base * blend) : 255 - TwiceDiv255((255 - base) * (255 - blend));
 }
 
-// The LUTs in two steps: the texture blended over each colour (redone only for a new texture), then the alpha mix
-// and the flash (a fade changes the alpha every frame, a flash the tint).
+// The LUTs in two steps: the texture blended over each colour (redone only for a new texture), then the alpha mix,
+// the ExtraBlend over that and the flash (a fade changes the alpha every frame, a flash the tint).
 uint8_t gTexMix[kDarkBands][3][32] __attribute__((section(".sbss")));
 const DarkTexture* gMixTexture = nullptr;
+bool gMixValid = false;
 
 int Colour8(int c5)
 {
     return (c5 * 255 * 0x2109) >> 18; // c5 * 255 / 31
 }
 
-void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintColour)
+const DarkTexture kPlain = {};
+
+// blend.fx: the texture's band colour over `c` (0-255), mixed in by the band's alpha.
+int TextureOver(const DarkTexture& texture, int band, int ch, int c)
 {
-    if (&texture != gMixTexture)
+    const uint8_t* t = texture.mBands[band];
+    const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
+    return Div255(f * t[3] + c * (255 - t[3]));
+}
+
+void BuildLuts(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour, const DarkTexture* extra)
+{
+    if (!gMixValid || texture != gMixTexture)
     {
         for (int band = 0; band < kDarkBands; band++)
         {
-            const uint8_t* t = texture.mBands[band];
             for (int ch = 0; ch < 3; ch++)
             {
                 for (int c5 = 0; c5 < 32; c5++)
                 {
                     const int c = Colour8(c5);
-                    const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
-                    gTexMix[band][ch][c5] = static_cast<uint8_t>(Div255(f * t[3] + c * (255 - t[3])));
+                    gTexMix[band][ch][c5] = static_cast<uint8_t>(
+                        texture == &kPlain ? 0 : (texture ? TextureOver(*texture, band, ch, c) : c));
                 }
             }
         }
-        gMixTexture = &texture;
+        gMixTexture = texture;
+        gMixValid = true;
     }
     for (int band = 0; band < kDarkBands; band++)
     {
@@ -118,7 +130,11 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintCol
             for (int c5 = 0; c5 < 32; c5++)
             {
                 const int c = Colour8(c5);
-                const int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
+                int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
+                if (extra)
+                {
+                    final8 = TextureOver(*extra, band, ch, final8); // (a full screen effect: after the darkness)
+                }
                 int v = Div255(final8 * 31 + 127);
                 // the flash after it (FadeEffect, as TintPalettes)
                 v += (target - v) * tint / 32;
@@ -143,6 +159,11 @@ void BlendEntry(int i)
     }
 }
 } // namespace
+
+const DarkTexture* TexDark_Plain()
+{
+    return &kPlain;
+}
 
 void TexDark_Init()
 {
@@ -182,22 +203,29 @@ void TexDark_Off()
     }
     REG_IME = ime;
     gTexture = nullptr;
+    gExtra = nullptr;
 }
 
-void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour)
+void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour, const DarkTexture* extra)
 {
     if (!texture || alpha <= 0)
     {
-        TexDark_Off();
-        return;
+        texture = nullptr;
+        alpha = 0;
+        if (!extra)
+        {
+            TexDark_Off();
+            return;
+        }
     }
     const bool starting = !gActive;
-    const bool lutChanged =
-        starting || texture != gTexture || alpha != gAlpha || tint != gTint || (tint && tintColour != gTintColour);
+    const bool lutChanged = starting || texture != gTexture || extra != gExtra || alpha != gAlpha || tint != gTint ||
+                            (tint && tintColour != gTintColour);
     if (lutChanged)
     {
-        BuildLuts(*texture, alpha, tint, tintColour);
+        BuildLuts(texture, alpha, tint, tintColour, extra);
         gTexture = texture;
+        gExtra = extra;
         gAlpha = alpha;
         gTint = tint;
         gTintColour = tintColour;
