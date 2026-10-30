@@ -124,6 +124,424 @@ index 63d7d6e..e834af0 100644
  
              foreach(Entity e in _keepOnScreen.Where(e=>e.exists))
              {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/SplitBoss.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/SplitBoss.cs
+index bbabb94..60aeba3 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/SplitBoss.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Apartment/SplitBoss.cs
+@@ -83,7 +83,7 @@ namespace AnodyneSharp.Entities.Enemy.Apartment
+         IEnumerator state;
+ 
+         //top left of main fight area
+-        Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(32, 48);
++        RoomFrame tl = RoomFrame.Current(new Vector2(32, 48));
+ 
+         bool hit_this_frame = false;
+         bool vulnerable = false;
+@@ -612,7 +612,7 @@ namespace AnodyneSharp.Entities.Enemy.Apartment
+                     MathUtilities.MoveTo(ref opacity, 0, 0.3f);
+                 }
+ 
+-                if (opacity == 1f && MapUtilities.GetInGridPosition(Position).Y > 8 * 16)
++                if (opacity == 1f && MapUtilities.GetInGridPosition160(Position).Y > 8 * 16)
+                 {
+                     Play("fizzle");
+                 }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Circus/CircusFolks.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Circus/CircusFolks.cs
+index 11cd57b..70be969 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Circus/CircusFolks.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Circus/CircusFolks.cs
+@@ -39,7 +39,7 @@ namespace AnodyneSharp.Entities.Enemy.Circus
+ 
+         private IEnumerator _stateLogic;
+ 
+-        private Vector2 _topLeft;
++        private RoomFrame _topLeft;
+ 
+         private int health;
+ 
+@@ -67,7 +67,7 @@ namespace AnodyneSharp.Entities.Enemy.Circus
+             _preset = preset;
+             _player = p;
+ 
+-            _topLeft = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(16);
++            _topLeft = RoomFrame.Current(new Vector2(16));
+ 
+             _player.grid_entrance = _topLeft + new Vector2(75, 16 * 7 + 4);
+ 
+@@ -864,7 +864,7 @@ namespace AnodyneSharp.Entities.Enemy.Circus
+ 
+         protected void WalkAboutParameter(Fix speed, bool playAnim = true)
+         {
+-            Vector2 center = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.One * 80;
++            Vector2 center = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, Vector2.One * 80);
+ 
+             facing = touching switch
+             {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/WallBoss.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/WallBoss.cs
+index 9c55530..87108d8 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/WallBoss.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Crowd/WallBoss.cs
+@@ -59,7 +59,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+ 
+             state = StateLogic();
+ 
+-            p.grid_entrance = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(86, 81);
++            p.grid_entrance = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(86, 81));
+         }
+ 
+         public override void Update()
+@@ -73,7 +73,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+             VolumeEvent volume = new(0f, 0.3f);
+             GlobalState.SpawnEntity(volume);
+ 
+-            while (MapUtilities.GetInGridPosition(player.Position).Y > 80)
++            while (MapUtilities.GetInGridPosition160(player.Position).Y > 80)
+             {
+                 yield return null;
+             }
+@@ -385,7 +385,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+ 
+         public void Spawn()
+         {
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+             Position = tl + new Vector2(GlobalState.RNG.Next(0, 160 - 24), GlobalState.RNG.Next(0, 32));
+             Play("explode");
+         }
+@@ -407,7 +407,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+         {
+             exists = false;
+             visible = false;
+-            start_loc = Position = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(48, 32 + 11);
++            start_loc = Position = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(48, 32 + 11));
+         }
+ 
+         public override void Update()
+@@ -434,19 +434,19 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+             Play("attack");
+ 
+             velocity.Y = 50;
+-            while (MapUtilities.GetInGridPosition(Position).Y < 16 * 6 + 11)
++            while (MapUtilities.GetInGridPosition160(Position).Y < 16 * 6 + 11)
+             {
+                 yield return null;
+             }
+ 
+             velocity.Y = -65;
+-            while (MapUtilities.GetInGridPosition(Position).Y > 45)
++            while (MapUtilities.GetInGridPosition160(Position).Y > 45)
+             {
+                 yield return null;
+             }
+ 
+             velocity.Y = 80;
+-            while (MapUtilities.GetInGridPosition(Position).Y < 16 * 6 + 11)
++            while (MapUtilities.GetInGridPosition160(Position).Y < 16 * 6 + 11)
+             {
+                 yield return null;
+             }
+@@ -490,7 +490,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+ 
+         public Hand(bool right) : base(Vector2.Zero, GetSprite(), Drawing.DrawOrder.ENTITIES)
+         {
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+             if (right)
+             {
+                 _flip = Microsoft.Xna.Framework.Graphics.SpriteEffects.FlipHorizontally;
+@@ -531,7 +531,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+                 velocity.X *= -1;
+             }
+ 
+-            while (MapUtilities.GetInGridPosition(Position).Y < 6 * 16)
++            while (MapUtilities.GetInGridPosition160(Position).Y < 6 * 16)
+             {
+                 yield return null;
+             }
+@@ -698,8 +698,8 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+             shadow.visible = true;
+             while (true)
+             {
+-                if ((velocity.X < 0 && MapUtilities.GetInGridPosition(Position).X < 16)
+-                    || (velocity.X > 0 && MapUtilities.GetInGridPosition(Position).X > 16 * 9 - width))
++                if ((velocity.X < 0 && MapUtilities.GetInGridPosition160(Position).X < 16)
++                    || (velocity.X > 0 && MapUtilities.GetInGridPosition160(Position).X > 16 * 9 - width))
+                 {
+                     velocity *= -1;
+                 }
+@@ -733,7 +733,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+             new Anim("shoot", new int[] { 4 }, 1)
+             );
+ 
+-        public Face() : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.UnitX * (160 - 64) / 2, GetSprite(), Drawing.DrawOrder.ENTITIES)
++        public Face() : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.UnitX * (GameConstants.SCREEN_WIDTH_IN_PIXELS - 64) / 2, GetSprite(), Drawing.DrawOrder.ENTITIES)
+         {
+             state = StateLogic();
+ 
+@@ -874,7 +874,7 @@ namespace AnodyneSharp.Entities.Enemy.Crowd
+     [Collision(PartOfMap = true)]
+     public class Wall : Entity
+     {
+-        public Wall() : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid), new AnimatedSpriteRenderer("wallboss_wall", 160, 32, new Anim("move", new int[] { 0, 1 }, 4)), Drawing.DrawOrder.VERY_BG_ENTITIES)
++        public Wall() : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.UnitX * ((GameConstants.SCREEN_WIDTH_IN_PIXELS - 160) / 2), new AnimatedSpriteRenderer("wallboss_wall", 160, 32, new Anim("move", new int[] { 0, 1 }, 4)), Drawing.DrawOrder.VERY_BG_ENTITIES)
+         {
+             immovable = true;
+         }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SageBoss.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SageBoss.cs
+index f58ede9..3a4a2d0 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SageBoss.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Etc/SageBoss.cs
+@@ -25,7 +25,7 @@ namespace AnodyneSharp.Entities.Enemy.Etc
+         public const string EdgeDamageDealer = "Sage edge";
+         public const string LaserDamageDealer = "Sage laser";
+ 
+-        private Vector2 _topLeft;
++        private RoomFrame _topLeft;
+ 
+         private EntityPool<ShortAttack> _sBullets;
+         private EntityPool<LongAttack> _lBullets;
+@@ -52,7 +52,7 @@ namespace AnodyneSharp.Entities.Enemy.Etc
+         public SageBoss(EntityPreset preset, Player p)
+             : base(preset.Position, GetSprite(), Drawing.DrawOrder.ENTITIES)
+         {
+-            _topLeft = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            _topLeft = RoomFrame.Current();
+ 
+             width = height = 10;
+             offset.X = 3;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BlueThorn.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BlueThorn.cs
+index d634d9d..6e0818e 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BlueThorn.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BlueThorn.cs
+@@ -82,7 +82,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+ 
+             public void Start(int phase, Player p)
+             {
+-                Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++                RoomFrame tl = RoomFrame.Current();
+                 Play("grow");
+                 Position = tl + (phase == 0 ? new Vector2(70, 80) : new Vector2(50, 100));
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossBody.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossBody.cs
+index caab982..37585f1 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossBody.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossBody.cs
+@@ -165,7 +165,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+             public override void Update()
+             {
+                 base.Update();
+-                if (MapUtilities.GetInGridPosition(Position).Y > 150)
++                if (MapUtilities.GetInGridPosition160(Position).Y > 150)
+                     exists = false;
+             }
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossFight.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossFight.cs
+index 1b76f3b..f9d1622 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossFight.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossFight.cs
+@@ -32,7 +32,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+         bool bossRush;
+ 
+         public BriarBossFight(Player p, bool bossRush) 
+-            : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid), "briar_overhang", 160, 48, Drawing.DrawOrder.BG_ENTITIES)
++            : base(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.UnitX * ((GameConstants.SCREEN_WIDTH_IN_PIXELS - 160) / 2), "briar_overhang", 160, 48, Drawing.DrawOrder.BG_ENTITIES)
+         {
+             body = new(Position + Vector2.UnitX * 16, p);
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossMain.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossMain.cs
+index b2bb970..6cdf1c6 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossMain.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Go/BriarBossMain.cs
+@@ -28,7 +28,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+         public const string IceDamageDealer = "Briar ice crystal";
+ 
+ 
+-        Vector2 tl;
++        RoomFrame tl;
+         ThornGate gate;
+         VolumeEvent volume;
+ 
+@@ -57,7 +57,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+ 
+         public BriarBossMain(EntityPreset preset, Player p) : base(Vector2.Zero, GetSprite(), Drawing.DrawOrder.ENTITIES)
+         {
+-            tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            tl = RoomFrame.Current();
+             Position = tl + new Vector2(80 - width / 2, 32);
+             gate = new(tl + Vector2.UnitX * 64);
+             volume = new(0, 0.6f);
+@@ -145,7 +145,7 @@ namespace AnodyneSharp.Entities.Enemy.Go
+ 
+             SoundManager.PlaySong("briar-fight");
+             visible = false;
+-            (GlobalState.Map as Map).offset.X = 160 * 2;
++            (GlobalState.Map as Map).offset.X = GameConstants.SCREEN_WIDTH_IN_PIXELS * 2;
+ 
+             gate.Position.Y += 9 * 16;
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/LandPhase.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/LandPhase.cs
+index cc9ed43..29a2e6a 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/LandPhase.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/LandPhase.cs
+@@ -33,7 +33,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+ 
+         const bool TEST_LAND = false;
+ 
+-        Vector2 tl;
++        RoomFrame tl;
+ 
+         Player player;
+         EntityPreset preset;
+@@ -60,7 +60,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+             }
+             (GlobalState.Map as MapData.Map).IgnoreMusicNextUpdate(); //Make sure music doesn't change back if player moves back up
+ 
+-            tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.One * 16;
++            tl = RoomFrame.Current(Vector2.One * 16);
+ 
+             this.preset = preset;
+             player = p;
+@@ -87,7 +87,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+             bossRush = preset.TypeValue == "boss_rush";
+         }
+ 
+-        IEnumerator ToLand(EntityPreset preset, Player p, Vector2 tl)
++        IEnumerator ToLand(EntityPreset preset, Player p, RoomFrame tl)
+         {
+             Play("closed");
+             Solid = false; //No collision during this part
+@@ -139,7 +139,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+             yield break;
+         }
+ 
+-        IEnumerator LandLogic(EntityPreset preset, Player p, Vector2 tl)
++        IEnumerator LandLogic(EntityPreset preset, Player p, RoomFrame tl)
+         {
+             Solid = true;
+             height = 11;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/WaterPhase.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/WaterPhase.cs
+index 95f9f58..fcbd5e4 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/WaterPhase.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Hotel/Boss/WaterPhase.cs
+@@ -63,7 +63,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+                 preset.Alive = true;
+             }
+ 
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.One * 16;
++            RoomFrame tl = RoomFrame.Current(Vector2.One * 16);
+ 
+             p.grid_entrance = tl + new Vector2(80, 20);
+             
+@@ -91,7 +91,7 @@ namespace AnodyneSharp.Entities.Enemy.Hotel.Boss
+             return ret;
+         }
+ 
+-        IEnumerator State(Vector2 tl, EntityPreset preset, Player p)
++        IEnumerator State(RoomFrame tl, EntityPreset preset, Player p)
+         {
+             VolumeEvent quiet = new(0, 0.007f * 60);
+             GlobalState.SpawnEntity(quiet);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Redcave/Red_Boss.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Redcave/Red_Boss.cs
+index fd926bb..74cd3a6 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Redcave/Red_Boss.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Enemy/Redcave/Red_Boss.cs
+@@ -87,7 +87,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+             offset = new Vector2(3, 13);
+ 
+             ripple = new(this);
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+             Point splash_start = new(2, 2);
+             splash_bullets = new(4, () =>
+             {
+@@ -157,11 +157,11 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+             Fix push_timer = 0f;
+ 
+             y_push = sprite.Height;
+-            player.grid_entrance = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + Vector2.One * 20;
++            player.grid_entrance = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, Vector2.One * 20);
+ 
+             GlobalState.SpawnEntity(new VolumeEvent(0, 3));
+ 
+-            while (MapUtilities.GetInGridPosition(player.Position).X < 48)
++            while (MapUtilities.GetInGridPosition160(player.Position).X < 48)
+             {
+                 yield return null;
+             }
+@@ -243,8 +243,8 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+                     .Update((s, _) =>
+                        {
+                            Drawing.Effects.ScreenShake.Directions dirs = new();
+-                           Vector2 tl = MapUtilities.GetInGridPosition(Position);
+-                           Vector2 br = MapUtilities.GetInGridPosition(Position + new Vector2(width, height));
++                           Vector2 tl = MapUtilities.GetInGridPosition160(Position);
++                           Vector2 br = MapUtilities.GetInGridPosition160(Position + new Vector2(width, height));
+                            if (tl.Y < 2 * 16)
+                            {
+                                velocity.Y = 60;
+@@ -402,7 +402,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+ 
+             amp = 5;
+ 
+-            Vector2 target = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(6, 4) * 16;
++            Vector2 target = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(6, 4)) * 16;
+ 
+             small_wave.Rise();
+ 
+@@ -467,7 +467,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+ 
+         public SmallWave(Red_Boss parent) : base(Vector2.Zero, GetSprite(), Drawing.DrawOrder.BG_ENTITIES)
+         {
+-            spawn_point = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(96, 48);
++            spawn_point = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(96, 48));
+ 
+             exists = false;
+             immovable = true;
+@@ -503,7 +503,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+                 return;
+             }
+ 
+-            if (MapUtilities.GetInGridPosition(Position).X < 32)
++            if (MapUtilities.GetInGridPosition160(Position).X < 32)
+             {
+                 Play("fall");
+             }
+@@ -524,7 +524,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+ 
+         public BigWave(Red_Boss parent) : base(Vector2.Zero, GetSprite(), Drawing.DrawOrder.BG_ENTITIES)
+         {
+-            spawn_point = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(80, 48);
++            spawn_point = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(80, 48));
+ 
+             exists = false;
+             immovable = true;
+@@ -552,7 +552,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+             {
+                 SoundManager.PlaySoundEffect("player_hit_1");
+                 Vector2 targetInGrid = new(16, 8 * 16);
+-                Vector2 target = p.Position + (targetInGrid - MapUtilities.GetInGridPosition(p.Position));
++                Vector2 target = MapUtilities.RoomPos(MapUtilities.GetRoomCoordinate(p.Position), targetInGrid);
+                 p.AutoJump(1, target, 50, -500);
+                 disable_player_hit = true;
+             }
+@@ -575,7 +575,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+                 }
+             }
+ 
+-            if (MapUtilities.GetInGridPosition(Position).X < 32)
++            if (MapUtilities.GetInGridPosition160(Position).X < 32)
+             {
+                 Play("fall");
+                 disable_player_hit = true;
+@@ -625,7 +625,7 @@ namespace AnodyneSharp.Entities.Enemy.Redcave
+             else
+             {
+                 //player isn't close in any direction, so random locations
+-                Vector2 ul = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++                RoomFrame ul = RoomFrame.Current();
+                 Position.X = ul.X + 16 + 12 * (1 + t_index) + GlobalState.RNG.Next(-5, 6);
+                 Position.Y = ul.Y + 16 * GlobalState.RNG.Next(1, 4) + GlobalState.RNG.Next(-5, 6) + tentacle.height - height;
+             }
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs
 index ba3e7dc..27f1c18 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Events/Checkpoint.cs
@@ -137,6 +555,416 @@ index ba3e7dc..27f1c18 100644
              new Anim("a", new int[] { 0, 1, 2, 3, 4, 5 },8)), DrawOrder.TEXT)
          {
              SetTexture("autosave_icon", 64, 16); //Disable chaos mode
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Gadget/Treasures/CardTreasure.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Gadget/Treasures/CardTreasure.cs
+index ad8efed..67f0ab7 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Gadget/Treasures/CardTreasure.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Gadget/Treasures/CardTreasure.cs
+@@ -70,7 +70,7 @@ namespace AnodyneSharp.Entities.Gadget.Treasures
+ 
+                     state++;
+                     velocity.Y = -24;
+-                    if (Position.Y <= GlobalState.CURRENT_GRID_Y * 160 + 80)
++                    if (Position.Y <= MapUtilities.RoomPos(GlobalState.CurrentMapGrid, 0, 80).Y)
+                     {
+                         velocity.Y *= -1;
+                     }
+@@ -95,7 +95,7 @@ namespace AnodyneSharp.Entities.Gadget.Treasures
+                         angularVelocity = MathHelper.ToRadians(50);
+                         angularAcceleration = MathHelper.ToRadians(200);
+ 
+-                        if (Position.Y <= GlobalState.CURRENT_GRID_Y * 160 + 80)
++                        if (Position.Y <= MapUtilities.RoomPos(GlobalState.CurrentMapGrid, 0, 80).Y)
+                         {
+                             acceleration.Y *= -1;
+                             angularVelocity *= -1;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/HealthUpgrade/HealthCicada.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/HealthUpgrade/HealthCicada.cs
+index df23644..df9833f 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/HealthUpgrade/HealthCicada.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/HealthUpgrade/HealthCicada.cs
+@@ -19,7 +19,7 @@ namespace AnodyneSharp.Entities.Interactive
+         private static readonly Fix Movement = 30f;
+         private HealthCicadaSentinel _sentinel;
+         private bool drawInGameCoordinates = true;
+-        private Vector2 gameOffset = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) - Vector2.UnitY * 20;
++        private Vector2 gameOffset = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) - Vector2.UnitY * GameConstants.HEADER_HEIGHT;
+ 
+         private EntityPreset _preset;
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Blue/BlueBriar.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Blue/BlueBriar.cs
+index c01d532..eb67578 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Blue/BlueBriar.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Blue/BlueBriar.cs
+@@ -35,7 +35,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+             visible = false;
+             state = State();
+ 
+-            Vector2 topLeft = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame topLeft = RoomFrame.Current();
+ 
+             _mitra = new BlueMitra(new Vector2(topLeft.X + 160, topLeft.Y + 33), this);
+         }
+@@ -56,7 +56,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+ 
+         IEnumerator<string> State()
+         {
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+ 
+             while (_player.Position.X >= tl.X + 76 || _player.Position.Y >= tl.Y + 47 || _player.state != PlayerState.GROUND)
+             {
+@@ -77,7 +77,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+ 
+         IEnumerator<CutsceneEvent> Entrance()
+         {
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+ 
+             VolumeEvent volume = new(0, 0.6f);
+             yield return new EntityEvent(Enumerable.Repeat(volume, 1));
+@@ -100,7 +100,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+ 
+             water_anim = CoroutineUtils.OnceEvery(WaterAnim.DoWaterAnim(Position), 0.3f);
+ 
+-            while (MapUtilities.GetInGridPosition(Position).Y < 44)
++            while (MapUtilities.GetInGridPosition160(Position).Y < 44)
+             {
+                 MathUtilities.MoveTo(ref opacity, 1f, appearance_vel);
+                 yield return null;
+@@ -110,7 +110,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+             velocity = -20 * Vector2.UnitX;
+             Play("walk_l");
+ 
+-            while (MapUtilities.GetInGridPosition(Position).X >= tl.X -16) //wraps around when off screen
++            while (MapUtilities.GetInGridPosition160(Position).X >= tl.X -16) //wraps around when off screen
+                 yield return null;
+ 
+             exists = preset.Alive = false;
+@@ -157,7 +157,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Blue
+ 
+             private IEnumerator<CutsceneEvent> Event()
+             {
+-                Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++                RoomFrame tl = RoomFrame.Current();
+                 visible = true;
+ 
+                 VolumeEvent volume = new(0, 2.4f);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Circus/ArthurDanger.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Circus/ArthurDanger.cs
+index a490408..378d486 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Circus/ArthurDanger.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Circus/ArthurDanger.cs
+@@ -58,7 +58,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Circus
+ 
+             _initPos = Position;
+ 
+-            _dustPillow = new Dust(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(46, 16), p);
++            _dustPillow = new Dust(MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(46, 16)), p);
+ 
+             _stateLogic = StateLogic();
+         }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/Bunny.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/Bunny.cs
+index 6ae831e..38b84ff 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/Bunny.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/Bunny.cs
+@@ -85,7 +85,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Forest
+ 
+             if (velocity != Vector2.Zero)
+             {
+-                Rectangle screen = new(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid).ToPoint(), new(160, 160));
++                Rectangle screen = new(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid).ToPoint(), new(GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS));
+                 if (!screen.Intersects(Hitbox))
+                 {
+                     exists = false;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/ForestBriar.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/ForestBriar.cs
+index 7a9f000..04e734a 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/ForestBriar.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/ForestBriar.cs
+@@ -26,7 +26,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Forest
+ 
+             MathUtilities.MoveTo(ref opacity, 1, 0.3f);
+ 
+-            Rectangle screen = new(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid).ToPoint(), new(160, 160));
++            Rectangle screen = new(MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid).ToPoint(), new(GameConstants.SCREEN_WIDTH_IN_PIXELS, GameConstants.SCREEN_HEIGHT_IN_PIXELS));
+             if (!screen.Intersects(Hitbox))
+             {
+                 exists = false;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/SkittishSecret.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/SkittishSecret.cs
+index bb36d81..fb5fe74 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/SkittishSecret.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Forest/SkittishSecret.cs
+@@ -48,7 +48,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Forest
+                 {
+                     lol_timer = 80f;
+                     GlobalState.PUZZLES_SOLVED = 1;
+-                    if (Position.X - initial_pos > 160)
++                    if (Position.X - initial_pos > GameConstants.SCREEN_WIDTH_IN_PIXELS)
+                     {
+                         GlobalState.PUZZLES_SOLVED = 2;
+                         exists = false;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/EndingSage.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/EndingSage.cs
+index e108ab7..512a8af 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/EndingSage.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/EndingSage.cs
+@@ -53,7 +53,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Go
+ 
+     public class EndingSage : UIEntity
+     {
+-        Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++        RoomFrame tl = RoomFrame.Current();
+         Player _player;
+ 
+         bool started = false;
+@@ -145,7 +145,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Go
+ 
+             while (briar.Position.Y > tl.Y - 16) yield return null;
+ 
+-            Position = new(160, MapUtilities.GetInGridPosition(standin.Position).Y + 20);
++            Position = new(GameConstants.SCREEN_WIDTH_IN_PIXELS, MapUtilities.GetInGridPosition(standin.Position).Y + 20);
+             visible = true;
+             Play("walk_l");
+             velocity = Vector2.UnitX * -24;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/PostBlue.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/PostBlue.cs
+index 88dbbd5..87ee553 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/PostBlue.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Go/PostBlue.cs
+@@ -19,12 +19,12 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Go
+     {
+         PostBlueSage sage;
+ 
+-        Vector2 tl;
++        RoomFrame tl;
+         bool started = false;
+ 
+         public PostBlue(EntityPreset preset, Player p) : base(preset,p,!preset.Activated)
+         {
+-            tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            tl = RoomFrame.Current();
+             Position = tl + new Vector2(6 * 16 + 2, 8 * 16);
+             bike.Position = tl + new Vector2(6 * 16 + 2, 7 * 16);
+             sage = new(preset, p);
+@@ -255,7 +255,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Go
+         {
+             _facePlayer = preset.Activated;
+             this.preset = preset;
+-            Position = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(40, 7 * 16 + 2) + offset;
++            Position = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(40, 7 * 16 + 2)) + offset;
+             if(!preset.Activated)
+             {
+                 visible = false;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyBriar.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyBriar.cs
+index 3a8a7a3..9b2ec5d 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyBriar.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyBriar.cs
+@@ -66,7 +66,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Happy
+ 
+             water_anim = CoroutineUtils.OnceEvery(WaterAnim.DoWaterAnim(Position), 0.3f);
+ 
+-            while(MapUtilities.GetInGridPosition(Position).Y < 44)
++            while(MapUtilities.GetInGridPosition160(Position).Y < 44)
+             {
+                 MathUtilities.MoveTo(ref opacity, 1f, appearance_vel);
+                 yield return null;
+@@ -75,7 +75,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Happy
+             opacity = 1f;
+             velocity = 20 * Vector2.UnitX;
+             Play("walk_r");
+-            while (MapUtilities.GetInGridPosition(Position).X > 20) //wraps around when off screen
++            while (MapUtilities.GetInGridPosition160(Position).X > 20) //wraps around when off screen
+                 yield return null;
+ 
+             exists = preset.Alive = false;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
+index 0f15fe1..01d5e83 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Happy/HappyEventTrigger.cs
+@@ -36,7 +36,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Happy
+ 
+         IEnumerator<string> StateLogic()
+         {
+-            while(MapUtilities.GetInGridPosition(_p.Position).X > 80)
++            while(MapUtilities.GetInGridPosition160(_p.Position).X > 80)
+             {
+                 volume.Update();
+                 yield return "Waiting";
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Mitra.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Mitra.cs
+index f7e7da9..3e05496 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Mitra.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Mitra.cs
+@@ -160,11 +160,11 @@ namespace AnodyneSharp.Entities.Interactive.Npc
+                 player_jumped = true;
+             }
+ 
+-            Vector2 player_grid_pos = MapUtilities.GetInGridPosition(_player.Position);
++            Vector2 player_grid_pos = MapUtilities.GetInGridPosition160(_player.Position);
+ 
+             if (!visible && player_grid_pos.Y > 50)
+             {
+-                Position = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid) + new Vector2(180, 80);
++                Position = MapUtilities.RoomPos(GlobalState.CurrentMapGrid, new Vector2(180, 80));
+                 visible = true;
+                 GlobalState.StartCutscene = Entrance();
+             }
+@@ -217,7 +217,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc
+             velocity.X = 37;
+             Solid = false; //disable collisions to not push player out of the screen
+ 
+-            while (MapUtilities.GetInGridPosition(Position).X > 10) //until wrap around from exiting the screen
++            while (MapUtilities.GetInGridPosition160(Position).X > 10) //until wrap around from exiting the screen
+             {
+                 yield return null;
+             }
+@@ -308,7 +308,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc
+ 
+         IEnumerator<CutsceneEvent> Entrance()
+         {
+-            Vector2 UL = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame UL = RoomFrame.Current();
+             Position.X -= 20;
+ 
+             SoundManager.PlaySong("mitra");
+@@ -320,7 +320,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc
+             visible = true;
+ 
+             //Get at least a quarter into the screen, and relatively close to the player
+-            while ((Position - UL).X < 40 || _player.Position.X - Position.X > 24)
++            while (Position.X < UL.X + 40 || _player.Position.X - Position.X > 24)
+             {
+                 yield return null;
+             }
+@@ -394,9 +394,9 @@ namespace AnodyneSharp.Entities.Interactive.Npc
+             //go off-screen
+             velocity = Vector2.UnitY * 50;
+ 
+-            Vector2 UL = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame UL = RoomFrame.Current();
+ 
+-            while ((Position - UL).Y < 190)
++            while (Position.Y < UL.Y + 190)
+                 yield return null;
+ 
+             volume.SetTarget(0.2f);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/InsideMonster.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/InsideMonster.cs
+index 2fa274c..1e0d53d 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/InsideMonster.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/InsideMonster.cs
+@@ -32,12 +32,12 @@ namespace AnodyneSharp.Entities.Interactive.Npc.RunningTradeNPCs
+             }
+             else
+             {
+-                Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++                RoomFrame tl = RoomFrame.Current();
+                 _extra_dust = new()
+                 {
+                     new Dust(tl + Vector2.One * 16,p),
+-                    new Dust(tl + Vector2.One * 16 + Vector2.UnitY * 32, p),
+-                    new Dust(tl + Vector2.One * 16 + Vector2.UnitY * 64, p)
++                    new Dust(tl + (Vector2.One * 16 + Vector2.UnitY * 32), p),
++                    new Dust(tl + (Vector2.One * 16 + Vector2.UnitY * 64), p)
+                 };
+             }
+         }
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/OutsideMonster.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/OutsideMonster.cs
+index 12420ee..4003177 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/OutsideMonster.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/RunningTradeNPCs/OutsideMonster.cs
+@@ -70,13 +70,13 @@ namespace AnodyneSharp.Entities.Interactive.Npc.RunningTradeNPCs
+             velocity = -Vector2.UnitY * 40;
+             Play("walk_u");
+ 
+-            while (MapUtilities.GetInGridPosition(Position).Y > 6 * 16)
++            while (MapUtilities.GetInGridPosition160(Position).Y > 6 * 16)
+                 yield return null;
+ 
+             velocity = Vector2.UnitX * 40;
+             Play("walk_r");
+ 
+-            while (MapUtilities.GetInGridPosition(Position).X > 10) //wraps around when on next screen
++            while (MapUtilities.GetInGridPosition160(Position).X > 10) //wraps around when on next screen
+                 yield return null;
+ 
+             exists = false;
+@@ -184,7 +184,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.RunningTradeNPCs
+             velocity = Vector2.UnitX * 20;
+             Play("walk_r");
+ 
+-            while (MapUtilities.GetInGridPosition(Position).X < 85)
++            while (MapUtilities.GetInGridPosition160(Position).X < 85)
+                 yield return null;
+ 
+             velocity = Vector2.Zero;
+@@ -202,7 +202,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.RunningTradeNPCs
+             velocity = Vector2.UnitX * 20;
+             Play("walk_r");
+ 
+-            while (MapUtilities.GetInGridPosition(Position).X < 6 * 16)
++            while (MapUtilities.GetInGridPosition160(Position).X < 6 * 16)
+                 yield return null;
+ 
+             velocity = Vector2.Zero;
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Sage.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Sage.cs
+index de4a3ce..85197f5 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Sage.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Sage.cs
+@@ -248,7 +248,7 @@ namespace AnodyneSharp.Entities
+ 
+             GlobalState.FireEvent(new ChangeCardCount(92));
+ 
+-            Vector2 tl = MapUtilities.GetRoomUpperLeftPos(GlobalState.CurrentMapGrid);
++            RoomFrame tl = RoomFrame.Current();
+             while (_player.Position.Y > tl.Y + 55) yield return null;
+ 
+             GlobalState.Dialogue = DialogueManager.GetDialogue("sage", "etc", 1);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Suburb/SuburbWalker.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Suburb/SuburbWalker.cs
+index d4ead3e..9efc9e4 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Suburb/SuburbWalker.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Suburb/SuburbWalker.cs
+@@ -63,7 +63,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Suburb
+                     walk_t = 0;
+                 }
+ 
+-                Vector2 grid = MapUtilities.GetInGridPosition(Position);
++                Vector2 grid = MapUtilities.GetInGridPosition160(Position);
+                 if ((grid.X < 5 && velocity.X < 0) || (grid.X + width > 155 && velocity.X > 0)
+                   || (grid.Y < 5 && velocity.Y < 0) || (grid.Y + height > 155 && velocity.Y > 0))
+                 {
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Console.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Console.cs
+index 47a4b38..16fca8b 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Console.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Console.cs
+@@ -73,7 +73,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Windmill
+             for (int i = 0; i < 3; ++i)
+             {
+                 var (map, grid, tile) = locs[i];
+-                statue.Position = MapUtilities.GetRoomUpperLeftPos(grid) + tile * 16;
++                statue.Position = MapUtilities.RoomPos(map, grid, tile * 16);
+                 statue.SetFrame(i);
+                 statue.visible = true;
+                 yield return new WarpEvent(map, grid);
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Shell.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Shell.cs
+index 7e0a4a5..0709221 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Shell.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Npc/Windmill/Shell.cs
+@@ -21,7 +21,7 @@ namespace AnodyneSharp.Entities.Interactive.Npc.Windmill
+         Blade[] blades;
+ 
+         public Shell(EntityPreset preset, Player p)
+-            : base(new Vector2(160 + 32, 320 + 48), "windmill_shell", 48, 48, DrawOrder.FG_SPRITES)
++            : base(Utilities.MapUtilities.RemapWorld(new Vector2(160 + 32, 320 + 48)), "windmill_shell", 48, 48, DrawOrder.FG_SPRITES)
+         {
+             Vector2 center = Position;
+ 
+diff --git a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Red_Pillar.cs b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Red_Pillar.cs
+index d85a05f..97fd26f 100644
+--- a/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Red_Pillar.cs
++++ b/AnodyneSharp/AnodyneSharp.Shared/Entities/Interactive/Red_Pillar.cs
+@@ -80,7 +80,7 @@ namespace AnodyneSharp.Entities
+                     'l' => new(2, 4),
+                     _ => new(4, 4),
+                 };
+-                Entity door = new(warp.ToVector2() * 160 + new Vector2(48,48), "red_cave_left", 64, 64, Drawing.DrawOrder.ENTITIES);
++                Entity door = new(MapUtilities.RoomPos("REDSEA", warp, new Vector2(48, 48)), "red_cave_left", 64, 64, Drawing.DrawOrder.ENTITIES);
+                 door.y_push = door.height;
+ 
+                 yield return new EntityEvent(Enumerable.Repeat(door, 1));
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs b/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs
 index d9bc73a..7a34c08 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Registry/GameConstants.cs
@@ -309,7 +1137,7 @@ index 6db175f..7e6cd52 100644
  #nullable restore
  }
 diff --git a/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs b/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
-index e3b6a80..70205e7 100644
+index e3b6a80..828e379 100644
 --- a/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
 +++ b/AnodyneSharp/AnodyneSharp.Shared/Utilities/MapUtilities.cs
 @@ -21,7 +21,7 @@ namespace AnodyneSharp.Utilities
@@ -321,13 +1149,199 @@ index e3b6a80..70205e7 100644
          }
  
          public static Vector2 GetInGridPosition(Vector2 pos)
-@@ -31,7 +31,8 @@ namespace AnodyneSharp.Utilities
+@@ -31,7 +31,137 @@ namespace AnodyneSharp.Utilities
  
          public static Microsoft.Xna.Framework.Vector2 GetInGridPosition(Microsoft.Xna.Framework.Vector2 pos)
          {
 -            return pos - GetRoomCoordinate(pos).ToVector2() * SCREEN_WIDTH_IN_PIXELS;
 +            Point r = GetRoomCoordinate(pos);
 +            return pos - new Microsoft.Xna.Framework.Vector2(r.X * SCREEN_WIDTH_IN_PIXELS, r.Y * SCREEN_HEIGHT_IN_PIXELS);
++        }
++
++        // Wide rooms: positions written for the 160x160 rooms (offsets into a room, or world positions), moved the
++        // way tools/wide_rooms/remap.py moved the map's tiles (its remap.json). Both are as-is without wide rooms.
++        public static Vector2 RoomPos(Point grid, Vector2 local160)
++        {
++            return GetRoomUpperLeftPos(grid) + RemapLocal(grid, local160);
++        }
++
++        public static Vector2 RoomPos(Point grid, Fix x, Fix y) => RoomPos(grid, new Vector2(x, y));
++
++        // (map: another map than the current one's tables)
++        public static Vector2 RoomPos(string map, Point grid, Vector2 local160)
++        {
++            return GetRoomUpperLeftPos(grid) + RemapLocal(grid, local160, map);
++        }
++
++        public static Vector2 RemapLocal(Point grid, Vector2 local160, string map = null)
++        {
++            if (!WIDE_ROOMS)
++            {
++                return local160;
++            }
++            (int[][] cols, int[][] rows) = Tables(map ?? GlobalState.CURRENT_MAP_NAME);
++            return new Vector2(Axis(local160.X, cols, grid.X, SCREEN_WIDTH_IN_TILES), Axis(local160.Y, rows, grid.Y, SCREEN_HEIGHT_IN_TILES));
++        }
++
++        public static Vector2 RemapWorld(Vector2 world160)
++        {
++            if (!WIDE_ROOMS)
++            {
++                return world160;
++            }
++            Point grid = new(Fix.Floor(world160.X / 160), Fix.Floor(world160.Y / 160));
++            return RoomPos(grid, world160 - new Vector2(grid.X * 160, grid.Y * 160));
++        }
++
++        // The other way: where in its 160x160 room a position in a wide room was (for checks written against those)
++        public static Vector2 GetInGridPosition160(Vector2 pos)
++        {
++            Vector2 local = GetInGridPosition(pos);
++            if (!WIDE_ROOMS)
++            {
++                return local;
++            }
++            Point grid = GetRoomCoordinate(pos);
++            (int[][] cols, int[][] rows) = Tables(GlobalState.CURRENT_MAP_NAME);
++            return new Vector2(Unaxis(local.X, cols, grid.X, SCREEN_WIDTH_IN_TILES), Unaxis(local.Y, rows, grid.Y, SCREEN_HEIGHT_IN_TILES));
++        }
++
++        private static Fix Unaxis(Fix v, int[][] maps, int g, int tiles)
++        {
++            if (maps == null || g < 0 || g >= maps.Length)
++            {
++                return v * 10 / tiles;
++            }
++            int[] src = maps[g];
++            int i = Math.Clamp(Fix.Floor(v / 16), 0, src.Length - 1);
++            Fix sub = v - i * 16;
++            if (i + 1 < src.Length && src[i + 1] == src[i])
++            {
++                return src[i] * 16 + sub / 2; // (first of a doubled pair)
++            }
++            if (i > 0 && src[i - 1] == src[i])
++            {
++                return src[i] * 16 + (sub + 16) / 2;
++            }
++            return src[i] * 16 + sub;
++        }
++
++        // A length across a room (an arena's width, say), scaled to the wide room's
++        public static Fix RemapWidth(Fix w160) => WIDE_ROOMS ? w160 * SCREEN_WIDTH_IN_TILES / 10 : w160;
++        public static Fix RemapHeight(Fix h160) => WIDE_ROOMS ? h160 * SCREEN_HEIGHT_IN_TILES / 10 : h160;
++
++        private static Fix Axis(Fix v, int[][] maps, int g, int tiles)
++        {
++            if (v < 0)
++            {
++                return v;
++            }
++            if (v >= 160)
++            {
++                return v - 160 + tiles * 16;
++            }
++            int tile = Fix.Floor(v / 16);
++            Fix sub = v - tile * 16;
++            if (maps == null || g < 0 || g >= maps.Length)
++            {
++                return v * tiles / 10; // (no table: spread it out)
++            }
++            int[] src = maps[g];
++            int i = Array.IndexOf(src, tile);
++            if (i < 0)
++            {
++                // (a dropped row: the row above it, or below for the top one)
++                i = Array.IndexOf(src, tile - 1) >= 0 ? Array.IndexOf(src, tile - 1) : Array.IndexOf(src, tile + 1);
++            }
++            else if (i + 1 < src.Length && src[i + 1] == tile)
++            {
++                // a doubled column: the middle of the pair, so a thing centred on it stays centred
++                return i * 16 + sub * 2;
++            }
++            return i * 16 + sub;
++        }
++
++        private static readonly System.Collections.Generic.Dictionary<string, (int[][], int[][])> _tables = new();
++
++        private static (int[][], int[][]) Tables(string map)
++        {
++            if (_tables.TryGetValue(map ?? "", out var t))
++            {
++                return t;
++            }
++            t = (null, null);
++            string dir = Environment.GetEnvironmentVariable("ANODYNE_WIDE_CONTENT");
++            string file = dir == null ? null : System.IO.Path.Combine(dir, "remap.json");
++            if (file != null && System.IO.File.Exists(file))
++            {
++                using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(file));
++                if (map != null && doc.RootElement.TryGetProperty(map, out var m))
++                {
++                    static int[][] Read(System.Text.Json.JsonElement e) =>
++                        System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(e.EnumerateArray(),
++                            a => System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(a.EnumerateArray(), x => x.GetInt32()))));
++                    t = (Read(m.GetProperty("cols")), Read(m.GetProperty("rows")));
++                }
++            }
++            _tables[map ?? ""] = t;
++            return t;
          }
  
          public static int GetMapID(string mapName)
+@@ -40,3 +170,56 @@ namespace AnodyneSharp.Utilities
+         }
+     }
+ }
++
++namespace AnodyneSharp.Utilities
++{
++    // A room's corner (plus an offset written for the 160x160 rooms), standing in for a Vector2 in code that adds
++    // positions to it: tl + offset and tl.X + n land where remap.py moved that spot in the wide room. Without wide
++    // rooms it's the same sums as the Vector2 it replaces.
++    public readonly struct RoomFrame
++    {
++        public readonly Microsoft.Xna.Framework.Point Grid;
++        public readonly FixVector2 Offset;
++
++        public RoomFrame(Microsoft.Xna.Framework.Point grid, FixVector2 offset)
++        {
++            Grid = grid;
++            Offset = offset;
++        }
++
++        public static RoomFrame Current(FixVector2 offset = default) => new(Registry.GlobalState.CurrentMapGrid, offset);
++
++        public FixVector2 At(FixVector2 local) => MapUtilities.RoomPos(Grid, Offset + local);
++        public FixVector2 Origin => At(FixVector2.Zero);
++        public RoomAxis X => new(this, true);
++        public RoomAxis Y => new(this, false);
++
++        public static FixVector2 operator +(RoomFrame f, FixVector2 v) => f.At(v);
++        public static FixVector2 operator -(RoomFrame f, FixVector2 v) => f.At(-v);
++        public static implicit operator FixVector2(RoomFrame f) => f.Origin;
++        public Microsoft.Xna.Framework.Point ToPoint() => Origin.ToPoint();
++    }
++
++    public readonly struct RoomAxis
++    {
++        private readonly RoomFrame _f;
++        private readonly bool _x;
++
++        public RoomAxis(RoomFrame f, bool x)
++        {
++            _f = f;
++            _x = x;
++        }
++
++        private Fix At(Fix v)
++        {
++            FixVector2 p = _f.At(_x ? new FixVector2(v, 0) : new FixVector2(0, v));
++            return _x ? p.X : p.Y;
++        }
++
++        public static Fix operator +(RoomAxis a, Fix v) => a.At(v);
++        public static Fix operator +(Fix v, RoomAxis a) => a.At(v);
++        public static Fix operator -(RoomAxis a, Fix v) => a.At(-v);
++        public static implicit operator Fix(RoomAxis a) => a.At(0);
++    }
++}
