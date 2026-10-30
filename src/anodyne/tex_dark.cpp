@@ -1,7 +1,5 @@
 #include "tex_dark.h"
 
-#include <string.h>
-
 #include "ecs.h"
 #include "tonc.h"
 
@@ -83,12 +81,10 @@ int Overlay(int base, int blend)
     return base < 128 ? TwiceDiv255(base * blend) : 255 - TwiceDiv255((255 - base) * (255 - blend));
 }
 
-// The LUTs in three steps, each redone only when what it depends on changes (a fade changes the alpha every frame,
-// a flash the tint): the texture blended over each colour, then the alpha mix, then the flash.
+// The LUTs in two steps: the texture blended over each colour (redone only for a new texture), then the alpha mix
+// and the flash (a fade changes the alpha every frame, a flash the tint).
 uint8_t gTexMix[kDarkBands][3][32] __attribute__((section(".sbss")));
-uint8_t gUntinted[kDarkBands][3][32] __attribute__((section(".sbss")));
 const DarkTexture* gMixTexture = nullptr;
-int gUntintedAlpha = -1;
 
 int Colour8(int c5)
 {
@@ -113,28 +109,6 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintCol
             }
         }
         gMixTexture = &texture;
-        gUntintedAlpha = -1;
-    }
-    if (alpha != gUntintedAlpha)
-    {
-        for (int band = 0; band < kDarkBands; band++)
-        {
-            for (int ch = 0; ch < 3; ch++)
-            {
-                for (int c5 = 0; c5 < 32; c5++)
-                {
-                    const int c = Colour8(c5);
-                    const int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
-                    gUntinted[band][ch][c5] = static_cast<uint8_t>(Div255(final8 * 31 + 127));
-                }
-            }
-        }
-        gUntintedAlpha = alpha;
-    }
-    if (tint == 0)
-    {
-        memcpy(gLut, gUntinted, sizeof(gLut));
-        return;
     }
     for (int band = 0; band < kDarkBands; band++)
     {
@@ -143,7 +117,9 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintCol
             const int target = (tintColour >> (5 * ch)) & 31;
             for (int c5 = 0; c5 < 32; c5++)
             {
-                int v = gUntinted[band][ch][c5];
+                const int c = Colour8(c5);
+                const int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
+                int v = Div255(final8 * 31 + 127);
                 // the flash after it (FadeEffect, as TintPalettes)
                 v += (target - v) * tint / 32;
                 gLut[band][ch][c5] = static_cast<uint8_t>(v);
