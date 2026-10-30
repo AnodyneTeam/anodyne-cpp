@@ -474,6 +474,12 @@ int main()
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
     GameState_Reset();
+#ifdef ANODYNE_SIM
+    if (const char* wide = getenv("ANODYNE_WIDE"))
+    {
+        gSettings.mWideView = wide[0] == '1'; // (as the C#'s wide.diff)
+    }
+#endif
     World_Init(objVram);
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
@@ -802,6 +808,11 @@ int main()
                     World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
+                    if (gSettings.mWideView)
+                    {
+                        offsets.originX = offsets.viewX = 0;
+                        offsets.viewW = 240;
+                    }
                     Mosaic_Apply(warpPix, offsets);
                     warpShown = true;
                 }

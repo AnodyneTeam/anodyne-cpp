@@ -55,6 +55,12 @@ if(ANODYNE_PERF)
     target_compile_options(first_lib PRIVATE -g)
 endif()
 
+# -DANODYNE_WIDE_VIEW=ON: the ROM starts in the wide view (world.h; the pause menu's graphics page switches it).
+option(ANODYNE_WIDE_VIEW "Start the ROM in the wide view" OFF)
+if(ANODYNE_WIDE_VIEW)
+    target_compile_definitions(first_lib PRIVATE ANODYNE_WIDE_VIEW)
+endif()
+
 # -DANODYNE_LINK=ON: the bot link over the link port (link_ipc.h), for tools/link's mGBA bridge. Not for release:
 # the ROM waits on the cable every frame.
 option(ANODYNE_LINK "Build the ROM with the bot link over the link port" OFF)

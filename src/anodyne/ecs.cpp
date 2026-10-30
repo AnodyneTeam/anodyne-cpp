@@ -1756,7 +1756,8 @@ void Ecs_SetCutsceneView(bool on)
     gCutsceneView = on;
 }
 
-ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY)
+ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY,
+                             bool wide)
 {
     if (!gVram)
     {
@@ -1764,6 +1765,8 @@ ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int en
     }
     gDrawTick++;
     DrawItem* const gDraw = gScratch.mDraw.mSorted;
+    const int clipL = wide ? 0 : viewX;
+    const int clipR = wide ? 240 : viewX + 160;
     int count = 0;
     for (Entity* e = gHead; e && count < kMaxVisuals; e = e->mNext)
     {
@@ -1828,7 +1831,7 @@ ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int en
         const int sw = unscaled ? fw : FxTrunc(FxMul(Fx(fw), v.mScale));
         const int sh = unscaled ? fh : FxTrunc(FxMul(Fx(fh), v.mScale));
         // Off the playfield entirely: skip.
-        if (v.mLayer != LAYER_UI && (sx + sw <= viewX || sx >= viewX + 160 || sy + sh <= 0 || sy >= 160))
+        if (v.mLayer != LAYER_UI && (sx + sw <= clipL || sx >= clipR || sy + sh <= 0 || sy >= 160))
         {
             continue;
         }

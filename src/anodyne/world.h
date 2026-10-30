@@ -8,6 +8,12 @@
 // the 240x160 GBA screen, a player with the C# hitbox/walk speed colliding with the map's tiles (TileData.col),
 // and screen-to-screen scrolling when the player crosses an edge.
 
+// The wide view (gSettings.mWideView): the map fills the whole 240px screen, showing 40px of the rooms either side.
+// Only the drawing changes: the room stays at kViewX, the camera on its grid and every game rule on the 160px room;
+// the HUD sits in two black boxes in the top corners (hud.h) over the map instead of the side bars.
+// Re-applies the play state's windows after the setting changes.
+void World_ApplyWindows();
+
 // Creates the player sprite and its overlays. The world uses OAM slots 0-9 and OBJ palette banks 0-3.
 bool World_Init(ObjVramAllocator& vram);
 // The title screen starts a new play state: what the C# makes afresh with it (the player's light).

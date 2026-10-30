@@ -13,8 +13,7 @@ namespace
 // blocks need one palette entry each (255 at most), which is what limits how small they can go: at 11px the playfield
 // is 15 columns x 17 rows = 255 blocks.
 constexpr int kHardwareMax = 10;
-constexpr int kPlayfieldX = 40;  // the playfield on the 240x160 screen
-constexpr int kPlayfieldW = 160;
+constexpr int kHardwareMaxWide = 16; // (the GBA's biggest)
 constexpr int kPlayfieldH = 160;
 constexpr int kMaxCols = 15;     // at the smallest software stride
 constexpr int kMaxRows = 17;     // (the grid can start above the playfield, see MosaicBgOffsets::originY)
@@ -357,19 +356,20 @@ void Begin()
     memset32(MapDst(), 0, 32 * 32 / 4);
 
     REG_BG2CNT = BG_CBB(kTexCbb) | BG_SBB(kMapSbb) | BG_AFF_32x32 | BG_PRIO(0);
-    REG_DISPCNT = DCNT_MODE2 | DCNT_BG2 | (gDispcnt & DCNT_WIN0);
+    // (the wide view's HUD boxes are windows 0 and 1)
+    REG_DISPCNT = DCNT_MODE2 | DCNT_BG2 | (gDispcnt & (gOffsets.viewW > 160 ? DCNT_WIN0 | DCNT_WIN1 : DCNT_WIN0));
     gActive = true;
 }
 
 // Samples the screen at the top-left of every block into out[by * kMaxCols + bx].
 MOSAIC_IWRAM_CALL
-void SampleGrid(int stride, int cols, int rows, int originX, int originY, uint16_t* out)
+void SampleGrid(int stride, int cols, int rows, const MosaicBgOffsets& off, uint16_t* out)
 {
     uint8_t order[128 + 4];
     for (int by = 0; by < kMaxRows; by++)
     {
         // The layers that can reach this row (the same rejects SampleScreen makes, once a row rather than a block).
-        const int sy = originY + by * stride;
+        const int sy = off.originY + by * stride;
         int count = 0;
         for (int i = 0; i < gOrderCount; i++)
         {
@@ -390,9 +390,9 @@ void SampleGrid(int stride, int cols, int rows, int originX, int originY, uint16
             uint16_t colour = 0;
             if (bx < cols && by < rows)
             {
-                const int sx = originX + bx * stride;
+                const int sx = off.originX + bx * stride;
                 // Outside the playfield is the C# HUD / margin, which the GBA doesn't draw: black.
-                if (sx >= kPlayfieldX && sx < kPlayfieldX + kPlayfieldW && sy >= 0 && sy < kPlayfieldH)
+                if (sx >= off.viewX && sx < off.viewX + off.viewW && sy >= 0 && sy < kPlayfieldH)
                 {
                     colour = SampleScreen(sx, sy, order, count);
                 }
@@ -409,7 +409,7 @@ void Compute(int stride, const MosaicBgOffsets& offsets)
     BuildOrder();
     // The shader's blocks start at the grid origin (top-left of the C# screen) and run on to the right and down;
     // the origin can be above the playfield (the C# draws a 20px HUD header there).
-    const int cols = (kPlayfieldW + stride - 1) / stride;
+    const int cols = (offsets.viewX + offsets.viewW - offsets.originX + stride - 1) / stride;
     const int rows = (kPlayfieldH - offsets.originY + stride - 1) / stride;
     // Few blocks: make each one m x m tiles so the affine scale (8.8 fixed point) has more precision and the block
     // edges land on the right pixel. The texture is 32 tiles across.
@@ -436,7 +436,7 @@ void Compute(int stride, const MosaicBgOffsets& offsets)
         }
     }
     gBlockM[gWrite] = m;
-    SampleGrid(stride, cols, rows, offsets.originX, offsets.originY, gBlockColours[gWrite]);
+    SampleGrid(stride, cols, rows, offsets, gBlockColours[gWrite]);
     gBlockStride[gWrite] = stride;
     gBlockOriginX[gWrite] = offsets.originX;
     gBlockOriginY[gWrite] = offsets.originY;
@@ -483,12 +483,13 @@ void Mosaic_OnVBlank()
 void Mosaic_Apply(int pix, const MosaicBgOffsets& offsets)
 {
     const int stride = pix >> 8;
-    if (stride <= kHardwareMax)
+    const int hardwareMax = offsets.viewW > 160 ? kHardwareMaxWide : kHardwareMax;
+    if (stride <= hardwareMax)
     {
         // (Its grid starts at the screen's corner, so it only lines up with the shader's when the block size divides
         // the playfield position and the grid origin.)
         ApplyMosaic(stride);
-        if (stride == kHardwareMax && !gSaved && !gVramSaved)
+        if (stride == hardwareMax && !gSaved && !gVramSaved)
         {
             SaveVram(); // (the software blocks are likely next)
         }
@@ -512,7 +513,7 @@ void Mosaic_Apply(int pix, const MosaicBgOffsets& offsets)
         }
         else
         {
-            ApplyMosaic(kHardwareMax); // nothing computed yet: hold the hardware blocks
+            ApplyMosaic(hardwareMax); // nothing computed yet: hold the hardware blocks
         }
     }
     Compute(stride, offsets);

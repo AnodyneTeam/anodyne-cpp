@@ -22,6 +22,8 @@ src/build-sim/
 src/build-sim-fast/
 src/build-perf/
 src/build-link/
+src/build-linkwide/
+src/build-wide/
 !Mods/
 # Build results
 [Dd]ebug/

@@ -803,9 +803,18 @@ namespace AnodyneSharp.Recording
             return next;
         }
 
+        private static readonly HashSet<long> _shotAt = (Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOT_AT") ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries).Select(long.Parse).ToHashSet();
+
         /// <summary>Call after the game state update, once per frame.</summary>
         public static void Trace()
         {
+            // ANODYNE_BOT_SHOT_AT=F1,F2...: frame F's screen to /tmp/bot/at_fF.png (it was drawn after F's Trace; with
+            // ANODYNE_BOT_DRAW_EVERY=1 every frame is), to set beside the port's (SimHost's SIMHOST_SHOT)
+            if (_shotAt.Contains(_frame))
+            {
+                try { AnodyneSharp.Drawing.SpriteDrawer.SaveRender($"/tmp/bot/at_f{_frame}.png"); } catch { }
+            }
             _frame++;
             if (_trace == null)
             {

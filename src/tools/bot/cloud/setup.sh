@@ -1,8 +1,8 @@
 #!/bin/bash
 # Sets up a headless Linux box (e.g. a Claude Code cloud session) to run the bot without the private AnodyneSharp checkout:
 # clones upstream AnodyneSharp, applies glue.diff (a reconstruction of the recording/bot hooks that only exist in the
-# unpublished checkout) and fix16.diff (the determinism hooks and the gameplay maths in Fix16, matching the port's fx),
-# copies the bot sources from ../csharp, compiles the shaders under wine and builds the game.
+# unpublished checkout), fix16.diff (the determinism hooks and the gameplay maths in Fix16, matching the port's fx) and
+# wide.diff (the wide view: a 240px game screen, the graphics menu's "Wide view" or ANODYNE_WIDE=1), copies the bot sources from ../csharp, compiles the shaders under wine and builds the game.
 # usage: setup.sh [dest]   (default /home/snake/dev/AnodyneSharp, the path every other bot script expects)
 # Afterwards: start Xvfb + pulseaudio (headless.sh) and use run_bot.sh / from.sh / part.sh as usual.
 set -e
@@ -11,6 +11,8 @@ DEST=${1:-/home/snake/dev/AnodyneSharp}
 # The upstream commit glue.diff was made against.
 BASE=0b038d0be87b740578ab55061add0a3098e8c71f
 
+# (a fresh container's package lists are empty)
+sudo apt-get update -qq >/dev/null
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb x11-utils libgl1-mesa-dri libglx-mesa0 libopenal1 libsdl2-2.0-0 \
     pulseaudio wine64 wine p7zip-full >/dev/null
 
@@ -29,6 +31,7 @@ git checkout -q -B bot $BASE
 git submodule update --init
 git apply "$HERE/glue.diff"
 git apply "$HERE/fix16.diff"
+git apply "$HERE/wide.diff"
 sed -i 's#<TargetFramework>net6.0</TargetFramework>#<TargetFramework>net10.0</TargetFramework>#' Fluent-State-Machine/*.csproj
 mkdir -p AnodyneSharp/AnodyneSharp.Shared/Recording
 cp "$HERE"/../csharp/*.cs "$HERE"/RecordingManager.cs AnodyneSharp/AnodyneSharp.Shared/Recording/

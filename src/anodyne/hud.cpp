@@ -374,6 +374,25 @@ void Hud_Draw(bool healthHidden)
     SetObj(1, h.mCanvas[CANVAS_LEFT_ICON].mBlock, kPalBankLeft, false, kLeftX, kLeftY);
     SetObj(2, h.mCanvas[CANVAS_HEALTH].mBlock, kPalBankOther, true, kHealthX, kHealthY);
     int oam = 3;
+    if (gSettings.mWideView)
+    {
+        // Just the boxes (world.cpp's windows 0/1): a 32x64 panel and one 8px on, ending at the box's bottom (the
+        // right box's start above the screen and wrap round off it).
+        const int bottoms[2] = {kHudWideLeftH, kHudWideRightH};
+        for (int bar = 0; bar < 2; bar++)
+        {
+            for (int col = 0; col < 2; col++)
+            {
+                SetObj(oam++, h.mBlackBlock, kPalBankOther, false, bar * (240 - kHudBarW) + col * 8, bottoms[bar] - 64);
+            }
+        }
+        while (oam < kHudOamCount)
+        {
+            obj_hide(&oam_mem[oam++]);
+        }
+        h.mShown = true;
+        return;
+    }
     for (int bar = 0; bar < 2; bar++)
     {
         for (int col = 0; col < 2; col++)

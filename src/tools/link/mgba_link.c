@@ -6,15 +6,20 @@
 //   ANODYNE_LINK_ROM=first.gba ./mgba_link [--headless] --ipc <port> [--no-render]
 //   dotnet run -- ./mgba_link <port> --replay ...   (SimHost, with ANODYNE_LINK_ROM set)
 //
-// It takes the simulator's arguments so SimHost can start it in the simulator's place (--headless and --no-render
-// change nothing here). "quit" ends it; so does the socket closing.
+// It takes the simulator's arguments so SimHost can start it in the simulator's place (--headless changes nothing
+// here; --no-render skips drawing the screen). "quit" ends it; so does the socket closing. "shot <file.png>" is
+// answered here, not by the ROM: it saves the last frame mGBA drew (SimHost's SIMHOST_SHOT, which also turns the
+// drawing on).
 #include <mgba/flags.h>
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
 #include <mgba/gba/interface.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/sio.h>
+#include <mgba-util/png-io.h>
+#include <mgba-util/vfs.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <stdio.h>
@@ -32,6 +37,8 @@ enum
 
 static struct mCore* gCore;
 static struct GBASIODriver gJoy;
+static color_t gVideo[256 * 256];
+static unsigned gVideoW, gVideoH;
 static int gConn = -1;
 
 // What the ROM has sent of its current line.
@@ -98,11 +105,33 @@ static int ReadSocketLine(char* line, int cap)
     }
 }
 
+static bool SavePng(const char* path)
+{
+    struct VFile* vf = VFileOpen(path, O_CREAT | O_TRUNC | O_WRONLY);
+    if (!vf)
+    {
+        return false;
+    }
+    png_structp png = PNGWriteOpen(vf);
+    png_infop info = PNGWriteHeader(png, gVideoW, gVideoH);
+    const bool ok = PNGWritePixels(png, gVideoW, gVideoH, gVideoW, gVideo);
+    PNGWriteClose(png, info);
+    vf->close(vf);
+    return ok;
+}
+
 // The ROM asked for a line: queue the bot's next one as JOY Bus words.
 static void QueueLine(void)
 {
     char line[4096];
-    const int len = ReadSocketLine(line, sizeof(line));
+    int len = ReadSocketLine(line, sizeof(line));
+    while (!strncmp(line, "shot ", 5))
+    {
+        line[strcspn(line, "\r\n")] = '\0';
+        const char* reply = SavePng(line + 5) ? "ok\n" : "error can't save the shot\n";
+        SendAll(reply, (int)strlen(reply));
+        len = ReadSocketLine(line, sizeof(line));
+    }
     if (!strcmp(line, "quit\n") || !strcmp(line, "quit\r\n"))
     {
         exit(0);
@@ -203,6 +232,7 @@ static void Quiet(struct mLogger* logger, int category, enum mLogLevel level, co
 int main(int argc, char** argv)
 {
     int port = -1;
+    bool render = true;
     const char* rom = getenv("ANODYNE_LINK_ROM");
     for (int i = 1; i < argc; i++)
     {
@@ -213,6 +243,10 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--rom") && i + 1 < argc)
         {
             rom = argv[++i];
+        }
+        else if (!strcmp(argv[i], "--no-render"))
+        {
+            render = false;
         }
     }
     if (port < 0 || !rom)
@@ -229,13 +263,14 @@ int main(int argc, char** argv)
         Fatal("can't start mGBA");
     }
     mCoreInitConfig(gCore, NULL);
-    // (nothing looks at the screen: don't draw it)
-    mCoreConfigSetDefaultIntValue(&gCore->config, "frameskip", 1 << 30);
+    if (!render)
+    {
+        // (nothing looks at the screen: don't draw it)
+        mCoreConfigSetDefaultIntValue(&gCore->config, "frameskip", 1 << 30);
+    }
     mCoreLoadConfig(gCore);
-    unsigned w, h;
-    gCore->desiredVideoDimensions(gCore, &w, &h);
-    static color_t video[256 * 256];
-    gCore->setVideoBuffer(gCore, video, w);
+    gCore->desiredVideoDimensions(gCore, &gVideoW, &gVideoH);
+    gCore->setVideoBuffer(gCore, gVideo, gVideoW);
     if (!mCoreLoadFile(gCore, rom))
     {
         Fatal("can't load the ROM");

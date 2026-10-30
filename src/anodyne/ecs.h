@@ -735,13 +735,14 @@ void Ecs_FireEvent(int gameEvent);
 int Ecs_KilledEnemies();
 void Ecs_SetBaseKilledEnemies(int count);
 
-// Draws every visible entity: camX/camY = camera top-left in map pixels, viewX = playfield left edge on screen.
+// Draws every visible entity: camX/camY = camera top-left in map pixels, viewX = playfield left edge on screen
+// (wide: the whole 240px screen shows, not just the 160px from viewX; world.h).
 // OAM entries firstOam .. endOam-1 are the renderer's (sorted by layer and depth, front first).
 // CutsceneState.Warp: only the cutscene's own entities are drawn (the play state isn't).
 void Ecs_SetCutsceneView(bool on);
 // The OBJ palette banks Ecs_Draw used this frame end before this one.
 int Ecs_ObjBanksInUse();
-void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY);
+void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int endOam, int shakeX, int shakeY, bool wide);
 // The OBJ VRAM the renderer caches frames in and the OBJ palette banks it may use.
 class ObjVramAllocator;
 void Ecs_SetRenderer(ObjVramAllocator& vram, int firstPalBank, int palBankCount);

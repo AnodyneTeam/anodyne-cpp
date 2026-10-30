@@ -704,6 +704,19 @@ void ApplyWindows()
     {
         return; // windows are off (the sprite gallery)
     }
+    if (gSettings.mWideView)
+    {
+        // Windows 0/1 are the HUD's boxes (OBJ only, never darkened); the rest of the screen is the playfield, as
+        // the margins-and-lights case below. The lights, if any, are the OBJ window.
+        REG_DISPCNT = (REG_DISPCNT & ~DCNT_WINOBJ) | DCNT_WIN1 | (gLightWindows ? DCNT_WINOBJ : 0);
+        REG_WIN0H = (0 << 8) | kHudBarW;
+        REG_WIN1H = static_cast<uint16_t>(((240 - kHudBarW) << 8) | 240);
+        REG_WIN0V = (0 << 8) | kHudWideLeftH;
+        REG_WIN1V = (0 << 8) | kHudWideRightH;
+        REG_WININ = WIN_OBJ | (WIN_OBJ << 8);
+        REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
+        return;
+    }
     if (gLightWindows)
     {
         REG_DISPCNT = REG_DISPCNT | DCNT_WIN1 | DCNT_WINOBJ;
@@ -1403,7 +1416,7 @@ void DrawWorld()
 {
     UpdateBackground(false);
     Hud_Draw(gDeath.mActive);
-    Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY);
+    Entities_Draw(FxFloor(gCamX), FxFloor(gCamY), kViewX, gShake.mX, gShake.mY, gSettings.mWideView);
     gShown = true;
 }
 // TileMap.changedTiles / oldChangedTiles: each tile's value from before its first change on this screen. As a screen
@@ -2078,6 +2091,11 @@ int World_CellsW()
 int World_CellsH()
 {
     return gCellsH;
+}
+
+void World_ApplyWindows()
+{
+    ApplyWindows();
 }
 
 void World_ReloadSettings()
