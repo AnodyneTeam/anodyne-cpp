@@ -1982,9 +1982,9 @@ void World_QuickSave()
 // The player's light also takes BG3 (static and lights never show together): a shade layer, solid but for a hole
 // round the player where the light's alpha (kLightShade) dithers it, alpha blended at 0 over the screen. A second,
 // dark layer over it (BG0, the FG layer's, empty on the maps with the player's light) is solid black where the light
-// is out, so the dither steps lit / half / dark (the shade at half, the dark black) while the darkness is deep; when
-// it's light enough to see past the light (fading in), the dark layer goes and the shade gives what the darkness
-// leaves of the screen. So the light fades out pixel by pixel, where the OBJ window's light sprite, scaled up 2x,
+// is out, so the dither steps lit / half / dark (the shade at half, the dark black) while the darkness leaves
+// nothing to see past the light (DRAWER); where it leaves some (SUBURB's dark rooms, or fading in), the dark layer
+// goes and the shade gives what the darkness leaves of the screen. So the light fades out pixel by pixel, where the OBJ window's light sprite, scaled up 2x,
 // could only fade in 2px dots.
 namespace
 {
@@ -2046,7 +2046,7 @@ void LoadShadeVram()
     {
         return;
     }
-    for (int layer = 0; layer < (gShadeDark ? 2 : 1); layer++)
+    for (int layer = 0; layer < 2; layer++)
     {
         const int first = gShadeTile + layer * kShadeTiles;
         memset32(&tile_mem[0][first], 0x11111111, 32 / 4);
@@ -2134,7 +2134,6 @@ void World_ApplyBlendLayers()
                          !Mosaic_Active();
     if (shadeOn)
     {
-        REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kShadeSbb[0]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
         // the hole's middle (map px 64, 64) on the light
         const int x = FxTrunc(gPlayerLight->mT->mX) - FxFloor(gCamX) + kViewX + gShake.mX;
         const int y = FxTrunc(gPlayerLight->mT->mY) - FxFloor(gCamY) + gShake.mY;
@@ -2144,8 +2143,10 @@ void World_ApplyBlendLayers()
         const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
         const fx half = kFxOne - FxMul(gDark.mAlpha, Fx(510 - kPlayerLightGreen) / 510);
         const int halfLevel = FxFloor(FxDiv(half, lit) * 16 + kFxOne / 2);
-        const int darkLevel = 16 - DarkLevel();
-        const bool dark = gShadeDark && darkLevel <= 3;
+        // (2/3 of it: measured against the C#'s SUBURB dark rooms, whose grayscale rounds down and vignette darkens
+        // the edges, the full 3/16 came out twice as bright)
+        const int darkLevel = (16 - DarkLevel()) * 2 / 3;
+        const bool dark = gShadeDark && darkLevel <= 1; // (SUBURB's dark rooms leave 3/16: their killers show)
         REG_BLDCNT = shadeBldcnt;
         REG_BLDALPHA = BLDA_BUILD(0, dark ? (halfLevel > 16 ? 16 : halfLevel) : darkLevel);
         if (dark)
@@ -2162,6 +2163,8 @@ void World_ApplyBlendLayers()
             }
             ApplyWindows();
         }
+        // (without the dark layer, the shade takes its hole: lit and half lit both show what the darkness leaves)
+        REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kShadeSbb[dark ? 0 : 1]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
         if (!gShadeShown)
         {
             gShadeShown = true;
