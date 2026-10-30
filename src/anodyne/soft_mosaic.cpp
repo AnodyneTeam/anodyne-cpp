@@ -262,13 +262,14 @@ MOSAIC_IWRAM inline bool SampleBg(const Bg& b, int sx, int sy, uint16_t& colour)
     return true;
 }
 
-// What the screen shows at (sx, sy): the first layer in draw order with an opaque pixel there.
-MOSAIC_IWRAM uint16_t SampleScreen(int sx, int sy)
+// What the screen shows at (sx, sy): the first layer in draw order with an opaque pixel there, of the `count` in
+// `order` (indices into gOrder: those that can reach row sy).
+MOSAIC_IWRAM uint16_t SampleScreen(int sx, int sy, const uint8_t* order, int count)
 {
     uint16_t colour = 0;
-    for (int i = 0; i < gOrderCount; i++)
+    for (int k = 0; k < count; k++)
     {
-        const Layer& l = gOrder[i];
+        const Layer& l = gOrder[order[k]];
         if (l.isObj)
         {
             const Obj& o = gObjs[l.index];
@@ -315,6 +316,18 @@ alignas(4) uint8_t gMap[2][32 * 32] __attribute__((section(".sbss")));
 int gWrite = 0;
 volatile int gReady = -1; // buffer index waiting for the next VBlank, or -1
 
+// The VRAM the blocks borrow: copied a frame early when it can be (the last hardware frame has time to spare, and the
+// first software one has none). Only put back if the blocks took the display (Mosaic_End), so an early copy that
+// isn't used is harmless.
+bool gVramSaved = false;
+
+void SaveVram()
+{
+    memcpy16(gSavedTiles, TileDst(), kTileHalfwords);
+    memcpy16(gSavedMap, MapDst(), kMapHalfwords);
+    gVramSaved = true;
+}
+
 void Save()
 {
     gDispcnt = REG_DISPCNT;
@@ -324,8 +337,10 @@ void Save()
     }
     TexDark_Off(); // (its plain colours: it stays off until the display is handed back)
     memcpy16(gSavedPal, pal_bg_mem, 256);
-    memcpy16(gSavedTiles, TileDst(), kTileHalfwords);
-    memcpy16(gSavedMap, MapDst(), kMapHalfwords);
+    if (!gVramSaved)
+    {
+        SaveVram();
+    }
     gSaved = true;
 }
 
@@ -350,19 +365,36 @@ void Begin()
 MOSAIC_IWRAM_CALL
 void SampleGrid(int stride, int cols, int rows, int originX, int originY, uint16_t* out)
 {
+    uint8_t order[128 + 4];
     for (int by = 0; by < kMaxRows; by++)
     {
+        // The layers that can reach this row (the same rejects SampleScreen makes, once a row rather than a block).
+        const int sy = originY + by * stride;
+        int count = 0;
+        for (int i = 0; i < gOrderCount; i++)
+        {
+            const Layer& l = gOrder[i];
+            if (l.isObj)
+            {
+                const Obj& o = gObjs[l.index];
+                const int ext = o.w > o.h ? o.w : o.h;
+                if (o.affine ? (sy < o.cy - ext || sy > o.cy + ext) : (sy < o.y || sy >= o.y + o.h))
+                {
+                    continue;
+                }
+            }
+            order[count++] = static_cast<uint8_t>(i);
+        }
         for (int bx = 0; bx < kMaxCols; bx++)
         {
             uint16_t colour = 0;
             if (bx < cols && by < rows)
             {
                 const int sx = originX + bx * stride;
-                const int sy = originY + by * stride;
                 // Outside the playfield is the C# HUD / margin, which the GBA doesn't draw: black.
                 if (sx >= kPlayfieldX && sx < kPlayfieldX + kPlayfieldW && sy >= 0 && sy < kPlayfieldH)
                 {
-                    colour = SampleScreen(sx, sy);
+                    colour = SampleScreen(sx, sy, order, count);
                 }
             }
             out[by * kMaxCols + bx] = colour;
@@ -383,16 +415,23 @@ void Compute(int stride, const MosaicBgOffsets& offsets)
     // edges land on the right pixel. The texture is 32 tiles across.
     int m = 32 / (cols > rows ? cols : rows);
     m = m < 1 ? 1 : (m > 8 ? 8 : m);
+    // (the block map only changes with the block count and size: most frames reuse the buffer's)
+    static int sMapShape[2] = { -1, -1 };
+    const int shape = (cols << 16) | (rows << 8) | m;
     uint8_t* map = gMap[gWrite];
-    memset(map, 0, 32 * 32);
-    for (int by = 0; by < rows; by++)
+    if (sMapShape[gWrite] != shape)
     {
-        for (int bx = 0; bx < cols; bx++)
+        sMapShape[gWrite] = shape;
+        memset(map, 0, 32 * 32);
+        for (int by = 0; by < rows; by++)
         {
-            const uint8_t id = static_cast<uint8_t>(1 + by * kMaxCols + bx);
-            for (int ty = 0; ty < m; ty++)
+            for (int bx = 0; bx < cols; bx++)
             {
-                memset(&map[(by * m + ty) * 32 + bx * m], id, static_cast<size_t>(m));
+                const uint8_t id = static_cast<uint8_t>(1 + by * kMaxCols + bx);
+                for (int ty = 0; ty < m; ty++)
+                {
+                    memset(&map[(by * m + ty) * 32 + bx * m], id, static_cast<size_t>(m));
+                }
             }
         }
     }
@@ -449,6 +488,10 @@ void Mosaic_Apply(int pix, const MosaicBgOffsets& offsets)
         // (Its grid starts at the screen's corner, so it only lines up with the shader's when the block size divides
         // the playfield position and the grid origin.)
         ApplyMosaic(stride);
+        if (stride == kHardwareMax && !gSaved && !gVramSaved)
+        {
+            SaveVram(); // (the software blocks are likely next)
+        }
         return;
     }
     if (!gSaved)
@@ -465,6 +508,7 @@ void Mosaic_Apply(int pix, const MosaicBgOffsets& offsets)
             const int buffer = gReady;
             gReady = -1;
             Present(buffer);
+            return; // (taking over costs about what sampling does: these blocks stay up a frame longer instead)
         }
         else
         {
@@ -491,6 +535,7 @@ void Mosaic_End()
         REG_DISPCNT = gDispcnt;
     }
     gSaved = false;
+    gVramSaved = false;
     gReady = -1;
     ClearMosaic();
 }

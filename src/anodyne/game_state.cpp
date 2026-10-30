@@ -297,8 +297,10 @@ void Preset_ReviveMap(const MapEntityList& list)
 
 bool Preset_OnGrid(const MapEntity& preset, int gx, int gy)
 {
-    // Positions are never negative in Entities.xml, so division is the floor.
-    return preset.mX / 160 == gx && preset.mY / 160 == gy;
+    // Positions are never negative in Entities.xml, so division is the floor. (x / 160 as a multiply: exact for the
+    // int16 range, and Thumb has no divide)
+    const auto screen = [](int v) { return static_cast<int>((static_cast<uint32_t>(v) * 52429u) >> 23); };
+    return screen(preset.mX) == gx && screen(preset.mY) == gy;
 }
 
 void Preset_ReviveGrid(const MapEntityList& list, int gx, int gy)

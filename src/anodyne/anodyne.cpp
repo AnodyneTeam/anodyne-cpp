@@ -434,7 +434,6 @@ int main()
     Link_Init();
 #endif
 #ifdef ANODYNE_PERF
-    PaintStack();
     {
         uint32_t bad = 0;
         uint32_t samples = 0;
@@ -443,6 +442,7 @@ int main()
         gPerfProbe.mAudioSamples = samples;
     }
     CheckFxDiv();
+    PaintStack(); // (after the checks, which use a lot of stack once)
 #endif
     REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
     ScreenBlack(true);
