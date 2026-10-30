@@ -125,10 +125,10 @@ constexpr int kMaxTile16 = 1024;
 uint8_t gTileAnimOf[kMaxTile16] __attribute__((section(".sbss")));
 const MapTileAnimData* gTileAnimData = nullptr;
 
-uint16_t LayerEntry(int layer, int mx, int my)
+// The 16x16 tile at map cell (cx, cy) of a layer, after the tile replacements: 0 for none.
+uint32_t CellTile(int layer, int cx, int cy)
 {
-    const int cx = (mx >> 1) + gMapOffCells;
-    const int cy = my >> 1;
+    cx += gMapOffCells;
     if (cx < 0 || cy < 0 || cx >= gLayerW[layer] || cy >= gLayerH[layer])
     {
         return 0;
@@ -142,15 +142,26 @@ uint16_t LayerEntry(int layer, int mx, int my)
             break;
         }
     }
-    if (tile == 0 || tile >= gTile16Count)
+    return tile < gTile16Count ? tile : 0;
+}
+
+// One of a 16x16 tile's four screen entries (sub: x + 2 * y within it).
+uint16_t TileEntry(int layer, uint32_t tile, int sub)
+{
+    if (tile == 0)
     {
         return 0;
     }
     if (layer == 0 && gTileAnimOf[tile] != kNoTileAnim)
     {
-        return gTileAnimData->mAnims[gTileAnimOf[tile] * 8 + 1 + (mx & 1) + 2 * (my & 1)]; // (its own VRAM tiles)
+        return gTileAnimData->mAnims[gTileAnimOf[tile] * 8 + 1 + sub]; // (its own VRAM tiles)
     }
-    return gTile16Entries[tile * 4 + (mx & 1) + 2 * (my & 1)];
+    return gTile16Entries[tile * 4 + sub];
+}
+
+uint16_t LayerEntry(int layer, int mx, int my)
+{
+    return TileEntry(layer, CellTile(layer, mx >> 1, my >> 1), (mx & 1) + 2 * (my & 1));
 }
 
 void WriteBgTile(int mx, int my)
@@ -166,11 +177,32 @@ void BgFull(int tx, int ty)
 {
     gBgTX = tx;
     gBgTY = ty;
-    for (int j = 0; j < 32; j++)
+    // (a row of 16x16 cells at a time: each cell's tile is looked up once for its four entries)
+    const int c0 = tx >> 1;
+    const int cells = ((tx + 31) >> 1) - c0 + 1;
+    uint32_t tiles[17];
+    for (int layer = 0; layer < kLayerCount; layer++)
     {
-        for (int i = 0; i < 32; i++)
+        uint16_t* const sb = se_mem[kRoleScreenblock[layer]];
+        for (int cy = ty >> 1; cy <= (ty + 31) >> 1; cy++)
         {
-            WriteBgTile(tx + i, ty + j);
+            for (int k = 0; k < cells; k++)
+            {
+                tiles[k] = CellTile(layer, c0 + k, cy);
+            }
+            for (int sy = 0; sy < 2; sy++)
+            {
+                const int my = 2 * cy + sy;
+                if (my < ty || my >= ty + 32)
+                {
+                    continue;
+                }
+                uint16_t* const row = sb + (my & 31) * 32;
+                for (int mx = tx; mx < tx + 32; mx++)
+                {
+                    row[mx & 31] = TileEntry(layer, tiles[(mx >> 1) - c0], (mx & 1) + 2 * sy);
+                }
+            }
         }
     }
 }
@@ -1978,6 +2010,12 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     gScrollUnwrapY = 0;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
 
+    if (!loadEntities)
+    {
+        // (World_PlaceAt follows: it places the player and draws that screen, so don't pick one and draw it too)
+        UpdateAmbience();
+        return;
+    }
     PickSpawn();
     MoveCameraToGrid();
     UpdateBackground(true);
@@ -1988,10 +2026,7 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     UpdateDarkness(false);
     gDeathFallbackX = Player_Entity()->mT->mX;
     gDeathFallbackY = Player_Entity()->mT->mY;
-    if (loadEntities)
-    {
-        Entities_LoadGrid(gGridX, gGridY, true);
-    }
+    Entities_LoadGrid(gGridX, gGridY, true);
 }
 
 void World_GetBgOffsets(int16_t x[4], int16_t y[4])

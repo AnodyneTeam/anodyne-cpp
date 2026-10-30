@@ -205,8 +205,9 @@ static void AudioManager_OnVBlank()
 // slices, words and frames at different points): the samples that differ, and how many were compared.
 static void CheckTracks(const AudioTrackData* tracks, uint32_t count, uint32_t& bad, uint32_t& samples)
 {
-    static int32_t sA[512] EWRAM_BSS;
-    static int32_t sB[512] EWRAM_BSS;
+    // (on the stack, which is ~4KB: this runs once at boot, before the stack is painted, and EWRAM has no room to spare)
+    int32_t sA[256];
+    int32_t sB[256];
     for (uint32_t t = 0; t < count; t++)
     {
         DecodeCursor a;
@@ -216,7 +217,7 @@ static void CheckTracks(const AudioTrackData* tracks, uint32_t count, uint32_t& 
         const bool up2 = tracks[t].sampleRate != AUDIO_SAMPLE_RATE;
         for (uint32_t chunk = 0; chunk < 40 && (a.active || b.active); chunk++)
         {
-            const uint32_t n = 2 + ((chunk * 74) % 440); // (even)
+            const uint32_t n = 2 + ((chunk * 74) % 240); // (even)
             memset(sA, 0, sizeof(sA));
             memset(sB, 0, sizeof(sB));
             const uint32_t gotA = up2 ? DecodeCursor_Mix16Up2(&a, sA, n) : DecodeCursor_Mix16(&a, sA, n);

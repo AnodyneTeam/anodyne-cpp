@@ -1,5 +1,7 @@
 #include "tex_dark.h"
 
+#include <string.h>
+
 #include "ecs.h"
 #include "tonc.h"
 
@@ -81,22 +83,69 @@ int Overlay(int base, int blend)
     return base < 128 ? TwiceDiv255(base * blend) : 255 - TwiceDiv255((255 - base) * (255 - blend));
 }
 
+// The LUTs in three steps, each redone only when what it depends on changes (a fade changes the alpha every frame,
+// a flash the tint): the texture blended over each colour, then the alpha mix, then the flash.
+uint8_t gTexMix[kDarkBands][3][32] __attribute__((section(".sbss")));
+uint8_t gUntinted[kDarkBands][3][32] __attribute__((section(".sbss")));
+const DarkTexture* gMixTexture = nullptr;
+int gUntintedAlpha = -1;
+
+int Colour8(int c5)
+{
+    return (c5 * 255 * 0x2109) >> 18; // c5 * 255 / 31
+}
+
 void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintColour)
 {
+    if (&texture != gMixTexture)
+    {
+        for (int band = 0; band < kDarkBands; band++)
+        {
+            const uint8_t* t = texture.mBands[band];
+            for (int ch = 0; ch < 3; ch++)
+            {
+                for (int c5 = 0; c5 < 32; c5++)
+                {
+                    const int c = Colour8(c5);
+                    const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
+                    gTexMix[band][ch][c5] = static_cast<uint8_t>(Div255(f * t[3] + c * (255 - t[3])));
+                }
+            }
+        }
+        gMixTexture = &texture;
+        gUntintedAlpha = -1;
+    }
+    if (alpha != gUntintedAlpha)
+    {
+        for (int band = 0; band < kDarkBands; band++)
+        {
+            for (int ch = 0; ch < 3; ch++)
+            {
+                for (int c5 = 0; c5 < 32; c5++)
+                {
+                    const int c = Colour8(c5);
+                    const int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
+                    gUntinted[band][ch][c5] = static_cast<uint8_t>(Div255(final8 * 31 + 127));
+                }
+            }
+        }
+        gUntintedAlpha = alpha;
+    }
+    if (tint == 0)
+    {
+        memcpy(gLut, gUntinted, sizeof(gLut));
+        return;
+    }
     for (int band = 0; band < kDarkBands; band++)
     {
-        const uint8_t* t = texture.mBands[band];
         for (int ch = 0; ch < 3; ch++)
         {
+            const int target = (tintColour >> (5 * ch)) & 31;
             for (int c5 = 0; c5 < 32; c5++)
             {
-                const int c = (c5 * 255 * 0x2109) >> 18; // c5 * 255 / 31
-                const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
-                const int g = Div255(f * t[3] + c * (255 - t[3]));
-                const int final8 = (g * alpha + c * (256 - alpha)) >> 8;
-                int v = Div255(final8 * 31 + 127);
+                int v = gUntinted[band][ch][c5];
                 // the flash after it (FadeEffect, as TintPalettes)
-                v += (((tintColour >> (5 * ch)) & 31) - v) * tint / 32;
+                v += (target - v) * tint / 32;
                 gLut[band][ch][c5] = static_cast<uint8_t>(v);
             }
         }
