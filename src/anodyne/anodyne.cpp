@@ -478,6 +478,7 @@ int main()
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
     World_SetDarkTextures(kDarkTextures);
+    World_SetLightShade(kLightShade);
     Dialog_Init(objVram);
     Hud_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator

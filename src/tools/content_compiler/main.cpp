@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <map>
 #include <unordered_set>
@@ -770,6 +771,61 @@ static bool MapHasFgBlend(const std::string& mapName)
     return false;
 }
 
+// The player's light as a shade layer (world.cpp): player-light.png at its scale of 2 (128x128), a pixel shaded
+// (4bpp colour 1) unless the light's alpha beats its spot in a 4x4 ordered (Bayer) pattern. Only the top-left
+// quarter (8x8 tiles, row by row): the rest is it flipped.
+constexpr int kLightShadeTiles = 8;
+
+static void EmitLightShade(const ContentPaths& contentPaths, FILE* f)
+{
+    std::vector<uint8_t> px;
+    unsigned w = 0;
+    unsigned h = 0;
+    const std::string path = contentPaths.FindTexturePath("player-light");
+    std::vector<uint8_t> out(kLightShadeTiles * kLightShadeTiles * 32, 0x11);
+    if (path.empty() || lodepng::decode(px, w, h, path, LCT_RGBA, 8) || w != 64 || h != 64)
+    {
+        printf("ERROR: player-light.png not found/readable\n");
+    }
+    else
+    {
+        static const int kBayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+        auto alpha = [&](int x, int y) {
+            x = x < 0 ? 0 : (x > 63 ? 63 : x);
+            y = y < 0 ? 0 : (y > 63 ? 63 : y);
+            return static_cast<double>(px[(y * 64 + x) * 4 + 3]);
+        };
+        for (int y = 0; y < kLightShadeTiles * 8; y++)
+        {
+            for (int x = 0; x < kLightShadeTiles * 8; x++)
+            {
+                // (bilinear: the texture's pixel centres sit at 2i + 1)
+                const double u = (x - 0.5) / 2;
+                const double v = (y - 0.5) / 2;
+                const int u0 = static_cast<int>(std::floor(u));
+                const int v0 = static_cast<int>(std::floor(v));
+                const double fu = u - u0;
+                const double fv = v - v0;
+                const double a = (alpha(u0, v0) * (1 - fu) + alpha(u0 + 1, v0) * fu) * (1 - fv) +
+                                 (alpha(u0, v0 + 1) * (1 - fu) + alpha(u0 + 1, v0 + 1) * fu) * fv;
+                const bool lit = a * 16 > (kBayer[y & 3][x & 3] * 2 + 1) * 255 / 2.0;
+                const int tile = (y / 8) * kLightShadeTiles + x / 8;
+                uint8_t& b = out[tile * 32 + (y % 8) * 4 + (x % 8) / 2];
+                if (lit)
+                {
+                    b = static_cast<uint8_t>(b & (x % 2 ? 0x0F : 0xF0));
+                }
+            }
+        }
+    }
+    fprintf(f, "alignas(4) static const unsigned char kLightShade[%zu] = {", out.size());
+    for (size_t i = 0; i < out.size(); i++)
+    {
+        fprintf(f, "%s0x%02X,", i % 32 == 0 ? "\n    " : "", out[i]);
+    }
+    fprintf(f, "\n};\n\n");
+}
+
 // Darkness.Render with a texture: each 8px band of the 160x160 playfield as one colour and alpha (the median of the
 // texture's colours, which keeps the middle of a vignette as it is, and its average alpha), what the GBA swaps the
 // palettes by down the screen. An ExtraBlend texture covers the 160x180 UI screen: its playfield is the last 160 rows.
@@ -1001,6 +1057,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         DarkTextureBands(contentPaths, texture, bands);
     }
     fprintf(f, "%s};\n\n", bands.c_str());
+    EmitLightShade(contentPaths, f);
     // Scrolling backgrounds, one entry per map (null pattern = none).
     fprintf(f, "static const MapScrollData kMapScroll[] =\n{\n");
     for (const auto& name : mapNames)
