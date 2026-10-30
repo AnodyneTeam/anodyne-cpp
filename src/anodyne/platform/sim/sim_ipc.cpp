@@ -235,6 +235,10 @@ void Ipc_OnFrame(uint64_t frame, const uint32_t* pixels)
             GameProbe_SetEvent(arg, static_cast<int>(a));
             SendLine("ok");
         }
+        else if (!strcmp(cmd, "give") && sscanf(line.c_str(), "give %63s %u", arg, &a) >= 1)
+        {
+            SendLine(GameProbe_Give(arg, static_cast<int>(a)) ? "ok" : "error give brooms|jump|cards N|hearts N");
+        }
         else if (!strcmp(cmd, "heal"))
         {
             GameProbe_Heal();

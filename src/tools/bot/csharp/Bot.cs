@@ -187,6 +187,14 @@ namespace AnodyneSharp.Recording
             }
         }
 
+        /// <summary>Notes in the GBA input file that the bot set GlobalState.checkpoint itself (a replay on the port sets the
+        /// same one at this frame).</summary>
+        public static void NoteCheckpoint()
+        {
+            var cp = GlobalState.checkpoint;
+            _gba?.WriteLine($"# checkpoint {_gbaFrames + 1} {cp.map} {(int)cp.Position.ToXna().X} {(int)cp.Position.ToXna().Y}");
+        }
+
         public static void OpenGbaInput(string path)
         {
             _gba = new StreamWriter(path);
@@ -662,8 +670,7 @@ namespace AnodyneSharp.Recording
                 if (RespawnPoint != null && GlobalState.checkpoint != RespawnPoint)
                 {
                     GlobalState.checkpoint = RespawnPoint;
-                    // (a replay on the port sets the same checkpoint at this frame)
-                    _gba?.WriteLine($"# checkpoint {_gbaFrames + 1} {RespawnPoint.map} {(int)RespawnPoint.Position.ToXna().X} {(int)RespawnPoint.Position.ToXna().Y}");
+                    NoteCheckpoint();
                 }
                 NotStuck();
                 _deathMenuFrames++;
@@ -902,7 +909,10 @@ namespace AnodyneSharp.Recording
                 // Dev: snapshot a save at the start of every section so a failing section can be tried again from there (scene.sh).
                 try
                 {
-                    GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, BotRunner.Player.Position.ToXna());
+                    // (whole pixels, as the port's checkpoints: and noted, so a replay of the run respawns where it did)
+                    var p = BotRunner.Player.Position.ToXna();
+                    GlobalState.checkpoint = new GlobalState.CheckPoint(Gs.Map, new Vector2(MathF.Floor(p.X), MathF.Floor(p.Y)));
+                    BotRunner.NoteCheckpoint();
                     GlobalState.SaveGame();
                     var dest = System.IO.Path.Combine(secDir, $"{_secIndex++:00}_{_name.Replace(' ', '_')}");
                     CopyDir(saveDir, dest);
@@ -2958,6 +2968,7 @@ namespace AnodyneSharp.Recording
             "endgame" => new Endgame(),
             "postgame" => new Postgame(),
             "extras" => new Extras(),
+            "bossrush" => new BossRush(),
             _ => throw new ArgumentException(name)
         };
 
@@ -2989,6 +3000,7 @@ namespace AnodyneSharp.Recording
                 case "nexus": return new StartToNexus().Run();
                 case "keys": return new KeysScript().Run();
                 case "keysonly": return new KeysOnlyScript().Run();
+                case "bossrush": return OnlyPart("bossrush"); // (off the route: always from a save beside its portal)
                 default:
                     if (Array.IndexOf(PartNames, name.ToLowerInvariant()) >= 0)
                     {

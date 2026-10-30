@@ -32,6 +32,9 @@ int GameProbe_Warp(const char* map, int x, int y);
 int GameProbe_SetCheckpoint(const char* map, int x, int y);
 // Test shortcut: back to full health.
 void GameProbe_Heal(void);
+// Parity replays from a saved game (the C# bot's parts that start from a save): gives what the save has. `what` is
+// "brooms" (all four), "jump" (the boots), "cards" (the first n) or "hearts" (n, full). 0 if `what` is none of those.
+int GameProbe_Give(const char* what, int n);
 // Test shortcut: sets an EventRegister value (seen by entities made from then on).
 void GameProbe_SetEvent(const char* name, int value);
 // Parity replays: GlobalState.RNG as the C#'s is after `draws` numbers (reseeded with the deterministic seed). The

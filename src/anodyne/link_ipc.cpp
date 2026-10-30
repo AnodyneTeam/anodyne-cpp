@@ -200,6 +200,10 @@ void Link_OnFrame()
             GameProbe_SetEvent(arg, static_cast<int>(a));
             SendLine("ok");
         }
+        else if (!strcmp(cmd, "give") && sscanf(gLine, "give %63s %u", arg, &a) >= 1)
+        {
+            SendLine(GameProbe_Give(arg, static_cast<int>(a)) ? "ok" : "error give brooms|jump|cards N|hearts N");
+        }
         else if (!strcmp(cmd, "heal"))
         {
             GameProbe_Heal();

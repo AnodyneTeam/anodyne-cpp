@@ -69,6 +69,8 @@ int World_CellsH();
 void World_CutsceneWarp(int map, int gx, int gy);
 void World_CutsceneReturn();
 // GlobalState.WARP: a warp is under way (asked for, or fading out and in).
+// A warp is under way: asked for, or the screen still fading out or in.
+bool World_Warping();
 bool World_WarpPending();
 // GlobalState.ScreenTransition: the camera is scrolling to the next screen.
 bool World_InTransition();

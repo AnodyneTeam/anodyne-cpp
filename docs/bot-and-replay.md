@@ -263,3 +263,28 @@ card). Goldens in `src/tools/bot/golden/`: 98,463 frames in total for `beach`, e
 - GBA parity: title, intro text, BLANK consoles/gates/tutorial boxes, teleporters and the Nexus arrival match the C# run
   (`compare_milestones.py`); the Nexus Sage, Roadway and later have no behaviour on the GBA yet, so the later routes are the target
   the GBA port should reproduce as it grows.
+
+## Boss Rush (not on the route)
+
+Part `bossrush` (`BossRush` in `Temple.cs`) is a test of the port's BOSSRUSH map: in by the Nexus portal, every boss room (Red boss,
+Wall, Seer, Hotel eye boss, Watcher, Circus, Sage, Shadow Briar), both key-block halls, the secret chest and the portal back out.
+It starts from a save with every broom, the boots, 49 cards and 16 hearts:
+
+```
+cd src/tools/bot
+cloud/bossrush_save.py <any save dir whose checkpoint is in the Nexus> /tmp/bot/keep/br_start
+ANODYNE_BOT_MAX_AVG_MS=60 SECS=4000 ./part.sh bossrush /tmp/bot/keep/br_start end_bossrush
+```
+
+`golden/bossrush.*` is one such run (80,705 frames; it dies once at the Briar and respawns): the keys, the C# trace, the save it
+started from and its first entity row (the RNG position to start the port from). The port has no saves to load, so SimHost's
+`SIMHOST_SAVE=<save>` starts a new game, gives the port what the save holds (`give`/`event`/`checkpoint`/`warp` on the bot link) and
+lines the frame count back up:
+
+```
+SIMHOST_SAVE=golden/bossrush.save.json SIMHOST_ENTS=golden/bossrush.ents.tsv \
+  simhost/bin/Release/net10.0/SimHost <anodyne_sim or mgba_link> 47231 --replay golden/bossrush.gbainput golden/bossrush.trace.tsv 6
+```
+
+(part.sh's section snapshots set the checkpoint where each section starts; the bot notes that in the `.gbainput` as a
+`# checkpoint` line so a replay respawns at the same place.)

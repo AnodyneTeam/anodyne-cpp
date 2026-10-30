@@ -189,7 +189,11 @@ void BgFull(int tx, int ty)
     uint32_t tiles[17];
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        uint16_t* const sb = se_mem[kRoleScreenblock[layer]];
+        if (!gLayerOn[layer])
+        {
+            continue; // (its screenblock is the tileset's or the scroll layer's)
+        }
+        uint16_t* const sb = se_mem[gRoleSb[layer]];
         for (int cy = ty >> 1; cy <= (ty + 31) >> 1; cy++)
         {
             for (int k = 0; k < cells; k++)
@@ -645,13 +649,18 @@ void PlaySfx(const char* name)
 // after IgnoreMusicNextUpdate leaves the music be.
 void UpdateMusic(bool screenTransition = false)
 {
-    if (!gAudio)
-    {
-        return;
-    }
     const bool ignore = screenTransition && gIgnoreMusic;
     gIgnoreMusic = false;
     if (ignore)
+    {
+        return;
+    }
+    // (and it puts Map.offset back: a death in the Briar's arena respawns on the same map, with the fight's offset gone)
+    if (gMapOffCells != 0)
+    {
+        World_SetMapOffsetX(0);
+    }
+    if (!gAudio)
     {
         return;
     }
@@ -2498,6 +2507,11 @@ bool World_InTransition()
 bool World_WarpPending()
 {
     return gWarp.mPending;
+}
+
+bool World_Warping()
+{
+    return gWarp.mPending || gWarp.mState != WARP_NONE;
 }
 
 void World_DropChildStates()
