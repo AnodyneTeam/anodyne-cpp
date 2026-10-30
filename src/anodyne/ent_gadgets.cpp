@@ -9,6 +9,7 @@
 #include "entities.h"
 #include "pause_draw.h"
 #include "player.h"
+#include "room.h"
 
 namespace
 {
@@ -138,7 +139,7 @@ void TreasureUpdate(Entity& self)
         // CardTreasure.GrowthAnim
         Transform& t = *self.mT;
         Visual& v = *self.mV;
-        const fx gridMiddle = Fx(gGame.mGridY * 160 + 80);
+        const fx gridMiddle = Room_Top(gGame.mGridY) + Fx(80);
         switch (d.mCardState)
         {
         case 0:
@@ -1511,7 +1512,7 @@ bool RedPillarCutscene(Entity& self)
         d.mWarp = c;
         const int gx = c == 'n' ? 3 : (c == 'l' ? 2 : 4);
         const int gy = c == 'n' ? 3 : 4;
-        d.mDoor = Ecs_Create(kPlainEntity, Fx(gx * 160 + 48), Fx(gy * 160 + 48), PART_VISUAL);
+        d.mDoor = Ecs_Create(kPlainEntity, Room_XIn("REDSEA", gx, Fx(48)), Room_YIn("REDSEA", gy, Fx(48)), PART_VISUAL);
         if (d.mDoor)
         {
             d.mDoor->mCutsceneOwned = true;
@@ -1925,7 +1926,7 @@ Entity* Spawn_Treasure(const MapEntity& preset, Entity&)
     else
     {
         // (the screen it's on: gGame's grid is still the last one while this one loads)
-        Minimap_AddInterest(preset.mX / 160, preset.mY / 160, 1);
+        Minimap_AddInterest(preset.mX / kRoomW, preset.mY / kRoomH, 1);
     }
     Ecs_SetFrame(*e, frame);
     return e;

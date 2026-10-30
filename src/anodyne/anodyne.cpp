@@ -178,6 +178,7 @@ static void LoadWorldMap(bool placedAfter = false)
     {
         SetReturnTargetToNexus();
     }
+    Room_SetTables(kRoomRemap, kMapNames, static_cast<int>(kMapCount));
     Room_SetRemap(kRoomRemap[gCurrentMap]);
     // Entities first: World_Load places the player and loads the screen's entities.
     Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
@@ -810,10 +811,12 @@ int main()
                     World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
-                    if (gSettings.mWideView)
+                    if (gSettings.mWideView || kWideRooms)
                     {
                         offsets.originX = offsets.viewX = 0;
                         offsets.viewW = 240;
+                        // (wide rooms: the C# screen is the GBA's, its header row at the top)
+                        offsets.originY = kWideRooms ? 0 : offsets.originY;
                     }
                     Mosaic_Apply(warpPix, offsets);
                     warpShown = true;

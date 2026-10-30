@@ -8,6 +8,7 @@
 #include "credits.h"
 #include "dialog.h"
 #include "player.h"
+#include "room.h"
 
 namespace
 {
@@ -247,7 +248,7 @@ void SageTerminalStep(Entity& self)
         d.mStep = 4;
         // fall through
     case 4:
-        if (World_Player()->mT->mY > Fx(gGame.mGridY * 160 + 55))
+        if (World_Player()->mT->mY > Room_Top(gGame.mGridY) + Fx(55))
         {
             return;
         }
@@ -756,8 +757,8 @@ void CicadaPlaceDrawing(Entity& self)
     Entity& c = *d.mCicada;
     if (d.mGameCoords)
     {
-        c.mV->mOffX = -Fx(gGame.mGridX * 160);
-        c.mV->mOffY = -Fx(gGame.mGridY * 160 - 20);
+        c.mV->mOffX = -Fx(gGame.mGridX * kRoomW + kUiX);
+        c.mV->mOffY = -Fx(gGame.mGridY * kRoomH - kHeaderH);
     }
     else
     {
@@ -805,8 +806,8 @@ void CicadaUpdate(Entity& self)
         {
             break;
         }
-        d.mTargetX = self.mT->mX - Fx(gGame.mGridX * 160);
-        d.mTargetY = self.mT->mY - Fx(gGame.mGridY * 160) + Fx(20);
+        d.mTargetX = self.mT->mX - Fx(gGame.mGridX * kRoomW + kUiX);
+        d.mTargetY = self.mT->mY - Fx(gGame.mGridY * kRoomH) + Fx(kHeaderH);
         v.mVisible = true;
         Ecs_Play(c, "fly");
         d.mChirp = true;
@@ -1187,7 +1188,7 @@ bool MitraEntrance(Entity& self)
     MitraData& d = self.Data<MitraData>();
     Transform& t = *self.mT;
     Entity& p = *World_Player();
-    const fx left = Fx(gGame.mGridX * 160);
+    const RoomEdgeX left = Room_Left(gGame.mGridX);
     switch (d.mStep)
     {
     case 0:
@@ -1305,7 +1306,7 @@ bool MitraExit(Entity& self)
         d.mStep++;
         [[fallthrough]];
     case 3:
-        if (t.mY - Fx(gGame.mGridY * 160) < Fx(190))
+        if (t.mY < Room_Top(gGame.mGridY) + Fx(190))
         {
             return false;
         }
@@ -1446,7 +1447,7 @@ bool MitraCliffExit(Entity& self)
         [[fallthrough]];
     case 2:
         // until it wraps round, off the screen (MapUtilities.GetInGridPosition)
-        if (t.mX - Fx(FxFloor(t.mX / 160) * 160) > Fx(10))
+        if (Room_GridX160(t.mX) > Fx(10))
         {
             return false;
         }
@@ -1467,12 +1468,12 @@ void MitraCliffUpdate(Entity& self)
     {
         d.mPlayerJumped = true;
     }
-    const fx gx = p.mT->mX - Fx(gGame.mGridX * 160);
-    const fx gy = p.mT->mY - Fx(gGame.mGridY * 160);
+    const fx gx = Room_LocalX160(gGame.mGridX, p.mT->mX);
+    const fx gy = Room_LocalY160(gGame.mGridY, p.mT->mY);
     if (!self.mV->mVisible && gy > Fx(50))
     {
-        self.mT->mX = Fx(gGame.mGridX * 160 + 180);
-        self.mT->mY = Fx(gGame.mGridY * 160 + 80);
+        self.mT->mX = Room_Left(gGame.mGridX) + Fx(180);
+        self.mT->mY = Room_Top(gGame.mGridY) + Fx(80);
         self.mT->mLastX = self.mT->mX;
         self.mT->mLastY = self.mT->mY;
         self.mV->mVisible = true;
@@ -1956,12 +1957,6 @@ struct TradeData final
     const MapEntity* mPreset; // the box: the monster's preset
 };
 
-// MapUtilities.GetInGridPosition
-fx InGrid(fx v)
-{
-    return v - Fx(FxTrunc(v / 160) * 160);
-}
-
 void TradeCollided(Entity& self, Entity& other)
 {
     Ecs_Separate(self, other);
@@ -1985,7 +1980,7 @@ bool OutsideMonsterCutscene(Entity& self)
         d.mStep = 2;
         [[fallthrough]];
     case 2:
-        if (InGrid(t.mY) > Fx(6 * 16))
+        if (Room_GridY160(t.mY) > Fx(6 * 16))
         {
             return false;
         }
@@ -1995,7 +1990,7 @@ bool OutsideMonsterCutscene(Entity& self)
         d.mStep = 3;
         [[fallthrough]];
     default:
-        if (InGrid(t.mX) > Fx(10)) // wraps around when on next screen
+        if (Room_GridX160(t.mX) > Fx(10)) // wraps around when on next screen
         {
             return false;
         }
@@ -2033,7 +2028,7 @@ bool BoxIckyCutscene(Entity& self)
         d.mStep = 1;
         [[fallthrough]];
     case 1:
-        if (InGrid(t.mX) < Fx(85))
+        if (Room_GridX160(t.mX) < Fx(85))
         {
             return false;
         }
@@ -2104,7 +2099,7 @@ void BoxIckyUpdate(Entity& self)
             t.mVelX = Fx(20);
             Ecs_Play(self, "walk_r");
         }
-        if (InGrid(t.mX) >= Fx(6 * 16))
+        if (Room_GridX160(t.mX) >= Fx(6 * 16))
         {
             t.mVelX = 0;
             Ecs_Play(self, "walk_d");
@@ -2420,8 +2415,8 @@ Entity* Spawn_InsideMonster(const MapEntity& preset, Entity&)
     }
     else
     {
-        const fx left = Fx(preset.mX / 160 * 160);
-        const fx top = Fx(preset.mY / 160 * 160);
+        const RoomEdgeX left = Room_Left(preset.mX / kRoomW);
+        const RoomEdgeY top = Room_Top(preset.mY / kRoomH);
         for (int i = 0; i < 3; i++)
         {
             Spawn_DustAt(left + Fx(16), top + Fx(16 + 32 * i));
@@ -2445,8 +2440,8 @@ Entity* Spawn_MiaoXiao(const MapEntity& preset, Entity&)
         MiaoData& fd = f->Data<MiaoData>();
         fd.mTimer = kMiaoHintTimeout;
         fd.mDiag = -1;
-        fd.mBoundX = preset.mX / 160; // (CURRENT_GRID_X/Y: the screen it is made on)
-        fd.mBoundY = preset.mY / 160 - 1;
+        fd.mBoundX = preset.mX / kRoomW; // (CURRENT_GRID_X/Y: the screen it is made on)
+        fd.mBoundY = preset.mY / kRoomH - 1;
         Ecs_KeepPooled(*f);
         Entity* dust = Ecs_Create(kMiaoDust, 0, 0, PART_VISUAL);
         if (dust)
@@ -2550,7 +2545,7 @@ Entity* Spawn_Rock(const MapEntity& preset, Entity&)
     if (e)
     {
         e->mB->mImmovable = true;
-        Ecs_SetFrame(*e, space ? (preset.mX / 160 > 5 ? 31 : 30) : (Game_IsCell() ? 1 : 0));
+        Ecs_SetFrame(*e, space ? (preset.mX / kRoomW > 5 ? 31 : 30) : (Game_IsCell() ? 1 : 0));
     }
     return e;
 }
@@ -2934,7 +2929,7 @@ void BunnyRunUpdate(Entity& self)
     Transform& t = *self.mT;
     if (t.mVelX != 0 || t.mVelY != 0)
     {
-        const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+        const Rect screen = { gGame.mGridX * kRoomW, gGame.mGridY * kRoomH, kRoomW, kRoomH };
         if (!Ecs_Intersects(screen, Ecs_Hitbox(self)))
         {
             self.mExists = false;
@@ -3125,8 +3120,8 @@ bool WindmillCutsceneStep(Entity& self)
             const StatueLoc& loc = kLocs[d.mStatue];
             if (statue)
             {
-                statue->mT->mX = Fx(loc.mGx * 160 + loc.mTx * 16);
-                statue->mT->mY = Fx(loc.mGy * 160 + loc.mTy * 16);
+                statue->mT->mX = Room_XIn(loc.mMap, loc.mGx, Fx(loc.mTx * 16));
+                statue->mT->mY = Room_YIn(loc.mMap, loc.mGy, Fx(loc.mTy * 16));
                 Ecs_SetFrame(*statue, d.mStatue);
                 statue->mV->mVisible = true;
             }
@@ -3308,8 +3303,8 @@ void SuburbWalkerUpdate(Entity& self)
         {
             d.mWalk = 0;
         }
-        const fx gx = InGrid(t.mX);
-        const fx gy = InGrid(t.mY);
+        const fx gx = Room_GridX160(t.mX);
+        const fx gy = Room_GridY160(t.mY);
         if ((gx < Fx(5) && t.mVelX < 0) || (gx + Fx(self.mB->mW) > Fx(155) && t.mVelX > 0) ||
             (gy < Fx(5) && t.mVelY < 0) || (gy + Fx(self.mB->mH) > Fx(155) && t.mVelY > 0))
         {
@@ -3793,7 +3788,7 @@ void ForestBriarUpdate(Entity& self)
 {
     Ecs_BaseUpdate(self);
     MoveTo(self.mV->mOpacity, kFxOne, FxF(0.3f));
-    const Rect screen = { gGame.mGridX * 160, gGame.mGridY * 160, 160, 160 };
+    const Rect screen = { gGame.mGridX * kRoomW, gGame.mGridY * kRoomH, kRoomW, kRoomH };
     if (!Ecs_Intersects(screen, Ecs_Hitbox(self)))
     {
         self.mExists = false;
@@ -4440,7 +4435,7 @@ const EntityClass kBlade = {
 
 Entity* Spawn_Shell(const MapEntity& preset, Entity&)
 {
-    Entity* e = Ecs_Create(kShell, Fx(160 + 32), Fx(320 + 48), PART_VISUAL, &preset);
+    Entity* e = Ecs_Create(kShell, Room_WorldX(160 + 32), Room_WorldY(320 + 48), PART_VISUAL, &preset);
     if (!e)
     {
         return nullptr;
@@ -4621,7 +4616,7 @@ struct CutsceneVolume final
 // ---- WaterAnim (Gadget/WaterAnim.cs): the BG tiles take the BG2 water pattern, tile by tile along its channel ------
 bool WaterInGrid(const WaterFlow& w, int x, int y)
 {
-    return x / 10 == w.mGridX && y / 10 == w.mGridY;
+    return x / kRoomTilesW == w.mGridX && y / kRoomTilesH == w.mGridY;
 }
 
 } // namespace
@@ -4634,12 +4629,12 @@ bool WaterStep(WaterFlow& w, fx startX, fx startY)
         w.mStarted = true;
         w.mX = FxFloor(startX) / 16;
         w.mY = FxFloor(startY) / 16;
-        w.mGridX = w.mX / 10;
-        w.mGridY = w.mY / 10;
+        w.mGridX = w.mX / kRoomTilesW;
+        w.mGridY = w.mY / kRoomTilesH;
         w.mCurrent = World_GetTile(1, w.mX, w.mY);
         const bool horiz = (w.mCurrent % 2) == 0;
-        w.mDirX = horiz ? ((w.mX + 1) / 10 == w.mGridX ? 1 : -1) : 0;
-        w.mDirY = horiz ? 0 : ((w.mY + 1) / 10 == w.mGridY ? 1 : -1);
+        w.mDirX = horiz ? ((w.mX + 1) / kRoomTilesW == w.mGridX ? 1 : -1) : 0;
+        w.mDirY = horiz ? 0 : ((w.mY + 1) / kRoomTilesH == w.mGridY ? 1 : -1);
     }
     World_ChangeTile(0, w.mX, w.mY, w.mCurrent);
     w.mX += w.mDirX;
@@ -4802,7 +4797,7 @@ void HappyTriggerUpdate(Entity& self)
     switch (d.mStep)
     {
     case 0:
-        if (InGrid(p.mT->mX) > Fx(80))
+        if (Room_GridX160(p.mT->mX) > Fx(80))
         {
             // its VolumeEvent(0, 0.9f)
             fx volume = Game_SongVolume();
@@ -4850,8 +4845,8 @@ const EntityClass kGoHappyBlocker = {
 // ---- BlueBriar + BlueMitra (Npc/Blue/BlueBriar.cs): Mitra rides in and talks, then the Briar walks out of the wall --
 struct BlueBriarData final
 {
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     Entity* mMitra;
     fx mOpacityTimer; // BlueMitra's timer
     WaterFlow mWater;
@@ -4982,7 +4977,7 @@ bool BlueBriarEntrance(Entity& self)
         d.mCutStep = 3;
         [[fallthrough]];
     case 3:
-        if (InGrid(t.mY) < Fx(44))
+        if (Room_GridY160(t.mY) < Fx(44))
         {
             MoveTo(v.mOpacity, kFxOne, kAppearanceVel);
             break;
@@ -4995,7 +4990,7 @@ bool BlueBriarEntrance(Entity& self)
         [[fallthrough]];
     default:
         // (wraps around when off screen)
-        if (d.mHappy ? InGrid(t.mX) > Fx(20) : InGrid(t.mX) >= d.mTopLeftX - Fx(16))
+        if (d.mHappy ? Room_GridX160(t.mX) > Fx(20) : Room_GridX160(t.mX) >= d.mTopLeftX - Fx(16))
         {
             break;
         }
@@ -5110,8 +5105,8 @@ struct PostBlueData final
     Entity* mStandin;
     Entity* mBullet;
     Entity* mExplosion;
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     uint8_t mStep;
     uint8_t mTalks;
     bool mStarted;
@@ -5564,8 +5559,8 @@ Entity* Spawn_BlueBriar(const MapEntity& preset, Entity&)
     }
     BlueBriarData& d = e->Data<BlueBriarData>();
     d = BlueBriarData();
-    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
-    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX));
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY));
     Ecs_SetSolid(*e, false);
     Ecs_Play(*e, "idle_d");
     e->mV->mVisible = false;
@@ -5602,8 +5597,8 @@ Entity* Spawn_PostBlue(const MapEntity& preset, Entity&)
     const bool activated = Preset_Activated(preset);
     PostBlueData& d = e->Data<PostBlueData>();
     d = PostBlueData();
-    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
-    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX));
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY));
     e->mB->mImmovable = true;
     d.mMitra.mFacePlayer = true;
     d.mMitra.mVolReached = true;
@@ -5727,7 +5722,7 @@ Entity* Spawn_DeathPlace(const MapEntity& preset, Entity&)
     {
         return nullptr;
     }
-    e->Data<DeathPlaceData>().mBottom = (gGame.mGridY + 1) * 160;
+    e->Data<DeathPlaceData>().mBottom = (gGame.mGridY + 1) * kRoomH;
     e->mExists = gGame.mInDeathRoom;
     return e;
 }
@@ -5765,8 +5760,8 @@ struct SageSentinelData final
     Entity* mSage;
     Entity* mBriar;
     Entity* mStandin;
-    fx mTopLeftX;
-    fx mTopLeftY;
+    RoomEdgeX mTopLeftX;
+    RoomEdgeY mTopLeftY;
     fx mTimer;
     fx mWhite; // gameScreenFade.alpha
     fx mBlack; // black_overlay.alpha
@@ -5794,8 +5789,8 @@ bool EndingCutscene(Entity& self)
     Transform& pt = *p.mT;
     Entity& briar = *d.mBriar;
     Entity& sage = *d.mSage;
-    const fx tlx = d.mTopLeftX;
-    const fx tly = d.mTopLeftY;
+    const RoomEdgeX tlx = d.mTopLeftX;
+    const RoomEdgeY tly = d.mTopLeftY;
     switch (d.mStep)
     {
     case 0:
@@ -5895,7 +5890,7 @@ bool EndingCutscene(Entity& self)
         }
         // (UI space: x 160, InGrid(y) + 20 under the header)
         sage.mT->mX = tlx + Fx(160);
-        sage.mT->mY = tly + fx(InGrid(d.mStandin->mT->mY));
+        sage.mT->mY = tly + fx(Room_GridY160(d.mStandin->mT->mY));
         sage.mV->mVisible = true;
         Ecs_Play(sage, "walk_l");
         FlipForLeft(sage);
@@ -6037,8 +6032,8 @@ Entity* Spawn_SageSentinel(const MapEntity& preset, Entity&)
     }
     SageSentinelData& d = e->Data<SageSentinelData>();
     d = SageSentinelData();
-    d.mTopLeftX = Fx(preset.mX) - fx(InGrid(Fx(preset.mX)));
-    d.mTopLeftY = Fx(preset.mY) - fx(InGrid(Fx(preset.mY)));
+    d.mTopLeftX = Room_LeftOf(Fx(preset.mX));
+    d.mTopLeftY = Room_TopOf(Fx(preset.mY));
     d.mSage = Ecs_Create(kEndingSage, 0, 0, PART_VISUAL, &preset, e);
     d.mBriar = Ecs_Create(kEndingBriar, d.mTopLeftX + Fx(4 * 16), d.mTopLeftY + Fx(60), PART_VISUAL, &preset, e);
     if (!d.mSage || !d.mBriar)

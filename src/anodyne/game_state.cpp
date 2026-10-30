@@ -6,6 +6,7 @@
 #include "dialog.h"
 #include "ecs.h"
 #include "pause.h"
+#include "room.h"
 #include "save.h"
 
 
@@ -298,7 +299,13 @@ void Preset_ReviveMap(const MapEntityList& list)
 bool Preset_OnGrid(const MapEntity& preset, int gx, int gy)
 {
     // Positions are never negative in Entities.xml, so division is the floor. (x / 160 as a multiply: exact for the
-    // int16 range, and Thumb has no divide)
+    // int16 range, and Thumb has no divide; wide rooms: x / 240 and y / 144, room.h)
+    if (kWideRooms)
+    {
+        const int sx = static_cast<int>((static_cast<uint32_t>(preset.mX) * 34953u) >> 23);
+        const int sy = static_cast<int>((static_cast<uint32_t>(preset.mY) * 3641u) >> 19);
+        return sx == gx && sy == gy;
+    }
     const auto screen = [](int v) { return static_cast<int>((static_cast<uint32_t>(v) * 52429u) >> 23); };
     return screen(preset.mX) == gx && screen(preset.mY) == gy;
 }

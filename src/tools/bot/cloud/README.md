@@ -38,3 +38,12 @@ beside SimHost's `SIMHOST_SHOT` screens of a replay.
 `wide_rooms.diff`: with `ANODYNE_WIDE_ROOMS=1` the world is cut into 15x9-tile rooms (240x144) under a 16px HUD row.
 The maps and Entities.xml then come from `ANODYNE_WIDE_CONTENT` (the anodyne-cpp checkout's `old/ContentWide`, made by
 `src/tools/wide_rooms/remap.py`) instead of the built-in ones. Saves hold positions, so use a new game (or a wide save).
+Positions the code has of its own (boss arenas, cutscene spots) were written for the 160x160 rooms: they go through
+the same remap (`MapUtilities.RoomPos`/`RemapWorld`/`GetInGridPosition160`, and `RoomFrame` in place of a room corner
+`Vector2`), and are the same sums without wide rooms (the bot run to REDSEA is byte-identical).
+
+The port: `cmake -DANODYNE_WIDE_ROOMS=ON` in its own build directory (the content and the code both change). The
+content compiler then reads `old/ContentWide` (`--wide-rooms`) and writes remap.txt's tables into the registry;
+`anodyne/room.h` has the room size and `Room_X`/`Room_GridX160`/`RoomEdge`, the port's versions of the above. The HUD
+goes back to the C#'s header row. The bot's routes are for the old rooms, so it can't play wide rooms: check them with
+warps (the C#'s `scene.sh` w tokens, or the link ROM's `warp` command).

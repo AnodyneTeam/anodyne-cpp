@@ -6,6 +6,7 @@
 
 #include "audio_manager.h"
 #include "dialog.h"
+#include "room.h"
 
 namespace
 {
@@ -181,8 +182,8 @@ void DropSquares()
 // The squares' and labels' looks, after their updates.
 void PlaceSquares()
 {
-    const fx left = Fx(gGame.mGridX * 160);
-    const fx top = Fx(gGame.mGridY * 160 - 20);
+    const fx left = Fx(gGame.mGridX * kRoomW + kUiX); // (UI space: room.h)
+    const fx top = Fx(gGame.mGridY * kRoomH - kHeaderH);
     for (int i = 0; i < gScene.mCount; i++)
     {
         Square& s = gScene.mSquares[i];
@@ -443,8 +444,8 @@ bool OpenCutscene(Entity& self)
         }
         DropSquares();
         // MapUtilities.GetInGridPosition(Position) + width / 2, taken as UI coordinates
-        sc.mTargetX = self.mT->mX - Fx(gGame.mGridX * 160) + Fx(16);
-        sc.mTargetY = self.mT->mY - Fx(gGame.mGridY * 160);
+        sc.mTargetX = self.mT->mX - Fx(gGame.mGridX * kRoomW) + Fx(16);
+        sc.mTargetY = self.mT->mY - Fx(gGame.mGridY * kRoomH);
         sc.mGo = false;
         MakeSquares(kRandSquares);
         for (int i = 0; i < kRandSquares; i++)
