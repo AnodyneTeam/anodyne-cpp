@@ -771,9 +771,10 @@ static bool MapHasFgBlend(const std::string& mapName)
     return false;
 }
 
-// The player's light as a shade layer (world.cpp): player-light.png at its scale of 2 (128x128), a pixel shaded
-// (4bpp colour 1) unless the light's alpha beats its spot in a 4x4 ordered (Bayer) pattern. Only the top-left
-// quarter (8x8 tiles, row by row): the rest is it flipped.
+// The player's light as two shade layers (world.cpp): player-light.png at its scale of 2 (128x128), each pixel lit,
+// half lit or dark as twice the light's alpha beats its spot in a 4x4 ordered (Bayer) pattern by 1 or 0. The first
+// layer shades (4bpp colour 1) all but the lit pixels, the second the dark ones. Only their top-left quarters (8x8
+// tiles, row by row; the first layer's, then the second's): the rest is them flipped.
 constexpr int kLightShadeTiles = 8;
 
 static void EmitLightShade(const ContentPaths& contentPaths, FILE* f)
@@ -782,7 +783,8 @@ static void EmitLightShade(const ContentPaths& contentPaths, FILE* f)
     unsigned w = 0;
     unsigned h = 0;
     const std::string path = contentPaths.FindTexturePath("player-light");
-    std::vector<uint8_t> out(kLightShadeTiles * kLightShadeTiles * 32, 0x11);
+    const size_t layerBytes = kLightShadeTiles * kLightShadeTiles * 32;
+    std::vector<uint8_t> out(2 * layerBytes, 0x11);
     if (path.empty() || lodepng::decode(px, w, h, path, LCT_RGBA, 8) || w != 64 || h != 64)
     {
         printf("ERROR: player-light.png not found/readable\n");
@@ -808,12 +810,18 @@ static void EmitLightShade(const ContentPaths& contentPaths, FILE* f)
                 const double fv = v - v0;
                 const double a = (alpha(u0, v0) * (1 - fu) + alpha(u0 + 1, v0) * fu) * (1 - fv) +
                                  (alpha(u0, v0 + 1) * (1 - fu) + alpha(u0 + 1, v0 + 1) * fu) * fv;
-                const bool lit = a * 16 > (kBayer[y & 3][x & 3] * 2 + 1) * 255 / 2.0;
+                const double spot = (kBayer[y & 3][x & 3] * 2 + 1) / 32.0;
+                const double level = a * 2 / 255; // 0-2
                 const int tile = (y / 8) * kLightShadeTiles + x / 8;
-                uint8_t& b = out[tile * 32 + (y % 8) * 4 + (x % 8) / 2];
-                if (lit)
+                const size_t at = tile * 32 + (y % 8) * 4 + (x % 8) / 2;
+                const uint8_t keep = x % 2 ? 0x0F : 0xF0;
+                if (level > 1 + spot)
                 {
-                    b = static_cast<uint8_t>(b & (x % 2 ? 0x0F : 0xF0));
+                    out[at] = static_cast<uint8_t>(out[at] & keep); // lit: neither layer
+                }
+                if (level > spot)
+                {
+                    out[layerBytes + at] = static_cast<uint8_t>(out[layerBytes + at] & keep); // not dark
                 }
             }
         }

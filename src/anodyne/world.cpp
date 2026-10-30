@@ -577,6 +577,7 @@ void UpdateScroll(bool advance, bool force)
 
 bool gLightWindows = false; // the darkness's lights are on (see Darkness below)
 bool gShadeShown = false;   // the player's light's shade layer is up (World_ApplyBlendLayers)
+bool gShadeDarkShown = false; // and its dark layer
 uint16_t gWinLayers = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
 void ApplyWindows();
 
@@ -714,7 +715,8 @@ void ApplyWindows()
         REG_WIN0V = REG_WIN1V = (0 << 8) | kScreenPx;
         REG_WININ = WIN_OBJ | (WIN_OBJ << 8); // the side bars: the HUD, never darkened (hud.h)
         // (the other lights' windows: not under the player's light's shade either)
-        const uint16_t lit = gShadeShown ? gWinLayers & ~WIN_BG3 : gWinLayers;
+        const uint16_t lit = static_cast<uint16_t>(gWinLayers & ~(gShadeShown ? WIN_BG3 : 0) &
+                                                   ~(gShadeDarkShown ? WIN_BG0 : 0));
         REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (lit << 8));
     }
     else
@@ -1978,20 +1980,25 @@ void World_QuickSave()
 // (faint pixels the GBA draws solid) blends the same way.
 //
 // The player's light also takes BG3 (static and lights never show together): a shade layer, solid but for a hole
-// round the player that's dithered from the light's alpha (kLightShade), alpha blended at 0 over the screen at what
-// the darkness leaves of it. So the light fades out pixel by pixel, where the OBJ window's light sprite, scaled up
-// 2x, could only fade in 2px dots.
+// round the player where the light's alpha (kLightShade) dithers it, alpha blended at 0 over the screen. A second,
+// dark layer over it (BG0, the FG layer's, empty on the maps with the player's light) is solid black where the light
+// is out, so the dither steps lit / half / dark (the shade at half, the dark black) while the darkness is deep; when
+// it's light enough to see past the light (fading in), the dark layer goes and the shade gives what the darkness
+// leaves of the screen. So the light fades out pixel by pixel, where the OBJ window's light sprite, scaled up 2x,
+// could only fade in 2px dots.
 namespace
 {
 constexpr int kStaticTiles = 32;          // 8bpp noise tiles after the map's tileset
 constexpr int kStaticFirstColour = 240;   // its 16 greys (0 to 30/31), past the map's colours
 constexpr uint32_t kStaticVramEnd = 0x8000; // (the warp mosaic borrows CBB2)
 int gStaticTile = -1; // the first noise tile, -1: none on this map
-constexpr int kShadeTiles = 1 + 64;  // a solid tile, then the hole's top-left quarter (4bpp, after the noise)
-constexpr int kShadeSbb = 26;
-constexpr int kShadeBank = 15;
+constexpr int kShadeTiles = 1 + 64;  // per layer: a solid tile, then the hole's top-left quarter (4bpp, after the noise)
+constexpr int kShadeSbb[2] = { 26, 25 };
+constexpr int kShadeBank[2] = { 15, 14 };
+constexpr int kShadeDarkColour = 14 * 16 + 1; // the dark layer's black
 const uint8_t* gLightShade = nullptr; // kLightShade
 int gShadeTile = -1;                  // the shade's first 4bpp tile, -1: none on this map
+bool gShadeDark = false;              // the dark layer too (the FG layer's BG is free, the colour too)
 bool gShadeHidLight = false;          // it hid the player's light sprite (its window would cut the shade)
 int gStaticFrames = 0;
 int gStaticStep = 0;
@@ -2039,25 +2046,33 @@ void LoadShadeVram()
     {
         return;
     }
-    memset32(&tile_mem[0][gShadeTile], 0x11111111, 32 / 4);
-    memcpy32(&tile_mem[0][gShadeTile + 1], gLightShade, (kShadeTiles - 1) * 32 / 4);
-    // The hole in map tiles 0-15 (each quarter the top-left one flipped), solid round it.
-    uint16_t* const sb = se_mem[kShadeSbb];
-    for (int ty = 0; ty < 32; ty++)
+    for (int layer = 0; layer < (gShadeDark ? 2 : 1); layer++)
     {
-        for (int tx = 0; tx < 32; tx++)
+        const int first = gShadeTile + layer * kShadeTiles;
+        memset32(&tile_mem[0][first], 0x11111111, 32 / 4);
+        memcpy32(&tile_mem[0][first + 1], gLightShade + layer * (kShadeTiles - 1) * 32, (kShadeTiles - 1) * 32 / 4);
+        // The hole in map tiles 0-15 (each quarter the top-left one flipped), solid round it.
+        uint16_t* const sb = se_mem[kShadeSbb[layer]];
+        for (int ty = 0; ty < 32; ty++)
         {
-            uint16_t entry = static_cast<uint16_t>(gShadeTile);
-            if (tx < 16 && ty < 16)
+            for (int tx = 0; tx < 32; tx++)
             {
-                const int qx = tx < 8 ? tx : 15 - tx;
-                const int qy = ty < 8 ? ty : 15 - ty;
-                entry = static_cast<uint16_t>(gShadeTile + 1 + qy * 8 + qx);
-                entry |= tx < 8 ? 0 : SE_HFLIP;
-                entry |= ty < 8 ? 0 : SE_VFLIP;
+                uint16_t entry = static_cast<uint16_t>(first);
+                if (tx < 16 && ty < 16)
+                {
+                    const int qx = tx < 8 ? tx : 15 - tx;
+                    const int qy = ty < 8 ? ty : 15 - ty;
+                    entry = static_cast<uint16_t>(first + 1 + qy * 8 + qx);
+                    entry |= tx < 8 ? 0 : SE_HFLIP;
+                    entry |= ty < 8 ? 0 : SE_VFLIP;
+                }
+                sb[ty * 32 + tx] = static_cast<uint16_t>(entry | SE_PALBANK(kShadeBank[layer]));
             }
-            sb[ty * 32 + tx] = static_cast<uint16_t>(entry | SE_PALBANK(kShadeBank));
         }
+    }
+    if (gShadeDark)
+    {
+        pal_bg_mem[kShadeDarkColour] = 0;
     }
 }
 
@@ -2077,9 +2092,10 @@ void LoadStatic(const MapEntry& map, bool on)
         light = light || gDarkData->mAreas[i].mPlayerLight > 0;
     }
     const uint32_t shadeBytes = tilesetBytes + (gStaticTile >= 0 ? kStaticTiles * 64 : 0);
-    gShadeTile = light && gLightShade && !gScroll && shadeBytes + kShadeTiles * 32 <= kStaticVramEnd
+    gShadeTile = light && gLightShade && !gScroll && shadeBytes + 2 * kShadeTiles * 32 <= kStaticVramEnd
                      ? static_cast<int>(shadeBytes / 32)
                      : -1;
+    gShadeDark = gShadeTile >= 0 && gLayerW[2] == 0 && map.mPalData.mPalSize <= kShadeDarkColour;
     LoadShadeVram();
 }
 } // namespace
@@ -2118,13 +2134,34 @@ void World_ApplyBlendLayers()
                          !Mosaic_Active();
     if (shadeOn)
     {
-        REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kShadeSbb) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
+        REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kShadeSbb[0]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
         // the hole's middle (map px 64, 64) on the light
         const int x = FxTrunc(gPlayerLight->mT->mX) - FxFloor(gCamX) + kViewX + gShake.mX;
         const int y = FxTrunc(gPlayerLight->mT->mY) - FxFloor(gCamY) + gShake.mY;
         SetBgOffset(3, 64 - x, 64 - y);
+        // What's left of the screen half lit and dark, as a part of lit: (1 - alpha + alpha L a) / (1 - alpha +
+        // alpha L) for the light's alpha a = 1/2, 0 (L its green, player-light.png's 111/255)
+        const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
+        const fx half = kFxOne - FxMul(gDark.mAlpha, Fx(510 - kPlayerLightGreen) / 510);
+        const int halfLevel = FxFloor(FxDiv(half, lit) * 16 + kFxOne / 2);
+        const int darkLevel = 16 - DarkLevel();
+        const bool dark = gShadeDark && darkLevel <= 3;
         REG_BLDCNT = shadeBldcnt;
-        REG_BLDALPHA = BLDA_BUILD(0, 16 - DarkLevel());
+        REG_BLDALPHA = BLDA_BUILD(0, dark ? (halfLevel > 16 ? 16 : halfLevel) : darkLevel);
+        if (dark)
+        {
+            REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kShadeSbb[1]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
+            SetBgOffset(0, 64 - x, 64 - y);
+        }
+        if (dark != gShadeDarkShown)
+        {
+            gShadeDarkShown = dark;
+            if (!dark)
+            {
+                REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kRoleScreenblock[2]) | BG_PRIO(gPrio[2]) | BG_8BPP | BG_REG_32x32;
+            }
+            ApplyWindows();
+        }
         if (!gShadeShown)
         {
             gShadeShown = true;
@@ -2139,6 +2176,11 @@ void World_ApplyBlendLayers()
         }
         gStaticShown = false;
         return;
+    }
+    if (gShadeDarkShown)
+    {
+        gShadeDarkShown = false;
+        REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kRoleScreenblock[2]) | BG_PRIO(gPrio[2]) | BG_8BPP | BG_REG_32x32;
     }
     if (gShadeShown)
     {
