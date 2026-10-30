@@ -107,6 +107,7 @@ void Json(Out& o)
           Str(gGame.mMapName), p.mGridX, p.mGridY, p.mTransition ? "true" : "false", Dialog_IsOpen() ? "true" : "false");
     // GlobalState.Dialogue is set: a box that is not a cutscene's DialogueEvent
     o.Add("\"rng\":%u,", static_cast<unsigned>(Rng_Calls()));
+    o.Add("\"warping\":%s,", World_Warping() ? "true" : "false");
     // (the pause menu's text box is its own, not GlobalState.Dialogue)
     o.Add("\"globalDialog\":%s,", Dialog_IsOpen() && !Game_DialogueIsCutscene() && !Pause_IsOpen() ? "true" : "false");
     const Entity& pe = *Player_Entity();
@@ -272,6 +273,37 @@ int GameProbe_SetCheckpoint(const char* map, int x, int y)
 void GameProbe_Heal(void)
 {
     gGame.mCurHealth = gGame.mMaxHealth;
+}
+
+int GameProbe_Give(const char* what, int n)
+{
+    if (!strcmp(what, "brooms"))
+    {
+        for (int b = BROOM_NORMAL; b < BROOM_TYPE_COUNT; b++)
+        {
+            gGame.mHasBroom[b] = true;
+        }
+    }
+    else if (!strcmp(what, "jump"))
+    {
+        gGame.mCanJump = true;
+    }
+    else if (!strcmp(what, "cards"))
+    {
+        for (int c = 0; c < static_cast<int>(sizeof(gGame.mCardStatus)); c++)
+        {
+            gGame.mCardStatus[c] = c < n ? 1 : 0;
+        }
+    }
+    else if (!strcmp(what, "hearts"))
+    {
+        gGame.mMaxHealth = gGame.mCurHealth = n;
+    }
+    else
+    {
+        return 0;
+    }
+    return 1;
 }
 
 void GameProbe_SetEvent(const char* name, int value)

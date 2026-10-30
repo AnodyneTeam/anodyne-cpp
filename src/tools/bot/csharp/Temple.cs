@@ -597,4 +597,57 @@ namespace AnodyneSharp.Recording
             yield return Section("circus lion card", () => Exec("O1 X1 >504,24 W30 >552,200 >580,270 F >552,340 F >606,440 + W30 `cc_lion"));
         }
     }
+
+    /// <summary>
+    /// Boss Rush (not part of the route: a test of the port's BOSSRUSH map). Run from a save with every broom, the boots and 49 cards
+    /// in the Nexus (cloud/bossrush_save.py makes one). Its bosses are the game's, each in its own room, and each drops a
+    /// key: Red boss, Wall and Seer open the first key blocks; Hotel eye boss, Watcher and Circus the second; then the Sage, Shadow
+    /// Briar and the way out.
+    /// </summary>
+    public class BossRush : BotScript
+    {
+        private static IEnumerable<object> IntoBossRush()
+        {
+            if (Map == "BOSSRUSH")
+            {
+                yield break;
+            }
+            // (the portal at the east end of the Nexus's lower corridor: walk onto it from above)
+            yield return Exec("O1 X1 >878,552 W10 D14 L4");
+            yield return Until(() => Map == "BOSSRUSH" && !Gs.ScreenTransition, 300, "into Boss Rush");
+            yield return Wait(60);
+        }
+
+        // (it strikes only when the Seer settles after each dive, so a hit can take a few of them: longer than the Bedroom's timeout)
+        private static IEnumerable<object> SeerRoom()
+        {
+            yield return Exec("g0 O1 X0 H3,6 H2,6 H1,6 H1,5 W30");
+            yield return SeerFight(40000);
+            yield return Exec("W60 G228,822 W20 `br_seer");
+        }
+
+        public override IEnumerable<object> Run()
+        {
+            yield return Say("Boss Rush");
+            yield return Section("boss rush in", IntoBossRush);
+            // Red boss (4,6): its pool has no shore near it, so ride a raft in from (3,6) and stay on it for the fight.
+            yield return Section("boss rush red boss", () => Exec("g0 O1 X0 H2,6 H3,6 >656,1060 W10 ~712,1064 W5 rb1 F rb0 W200 >678,982 W20 `br_red"));
+            yield return Section("boss rush wall", () => Exec("g0 O1 X0 H3,6 H3,5 W30 x W60 G564,822 W20 `br_wall"));
+            yield return Section("boss rush seer", SeerRoom);
+            // (2,6)'s three key blocks, then up to the second hub (2,4)
+            yield return Section("boss rush first key blocks", () => Exec("g0 O1 X0 H2,6 G389,1012,ku G389,996,ku G389,980,ku H2,5 H2,4 W20 `br_hub2"));
+            // Hotel eye boss: west through (1,4) and (0,4), down into (0,5) (its water phase), then (0,6) (its land phase) and its key.
+            // (it hits hard here: the water phase's eyes over a narrow strip of floor; and the land phase runs on a while after its key)
+            yield return Section("boss rush eye boss", () => Exec("g6 O1 X1 H1,4 H0,4 H0,5 W30 F20000 W60 H0,6 W30 F20000 W60 >116,1046 W200 `br_eye"));
+            yield return Section("boss rush watcher", () => Exec("g6 O1 X1 H0,5 H0,4 H1,4 H1,3 W30 F W60 >260,612 W20 `br_watcher"));
+            yield return Section("boss rush circus", () => Exec("g6 O1 X1 H1,4 H2,4 H3,4 H3,3 W30 F W60 >564,500 W20 `br_circus"));
+            // (2,4)'s three key blocks, then up to the Sage's hall
+            yield return Section("boss rush second key blocks", () => Exec("g4 O1 X1 H3,4 H2,4 G389,692,ku G389,676,ku G389,660,ku H2,3 W20 `br_23"));
+            yield return Section("boss rush sage", () => Exec("g4 O1 X1 H2,2 W30 F20000 W60 `br_sage"));
+            yield return Section("boss rush briar", () => Exec("g6 O1 X1 H2,1 W30 F40000 W60 `br_briar"));
+            // the way out: the chest (a secret), then the portal back to the Nexus
+            yield return Section("boss rush exit", () => Exec("O1 X1 H2,0 W30 >371,114 U4 A1 W90 T W60 >403,68 U40 W120 `br_out"));
+            yield return Until(() => Map == "NEXUS" && !Gs.ScreenTransition, 300, "back in the Nexus");
+        }
+    }
 }

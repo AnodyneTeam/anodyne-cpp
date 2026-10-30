@@ -13557,6 +13557,7 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100;
             int lastHearts = Gs.Health;
             var sageFace = Facing.UP;
+            int jumpAt = -1; // (a swing made only because a jump straight after gets us clear: when to jump)
             for (int i = 0; i < timeoutFrames; i++)
             {
                 if (Talking || Gs.ScreenTransition)
@@ -13602,7 +13603,34 @@ namespace AnodyneSharp.Recording
                         {
                             if (th.At[f] is Rectangle r)
                             {
-                                r.Inflate(th.Margin, th.Margin);
+                                if (th.Source != sage || sage.velocity.ToXna() != Vector2.Zero)
+                                {
+                                    r.Inflate(th.Margin, th.Margin); // (a still sage hurts only by touch: no margin, or we land just too near it to swing)
+                                }
+                                if (pb.Intersects(r))
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                // A swing then a jump straight after (a jump drops the broom at once): safe for the swing's first frames on the ground,
+                // from what hurts in the air for the jump, and where we land. (In a narrow hall the lanes leave no 22 frames standing.)
+                bool SwingThenJumpSafe()
+                {
+                    const int swing = 7, land = 34; // (we jump by the 7th frame; a jump lasts 28)
+                    for (int f = 1; f <= Math.Min(land + 6, Horizon); f++)
+                    {
+                        foreach (var th in threats)
+                        {
+                            if ((f <= swing || f >= land || th.HurtsInAir) && th.At[f] is Rectangle r)
+                            {
+                                if (th.Source != sage || sage.velocity.ToXna() != Vector2.Zero)
+                                {
+                                    r.Inflate(th.Margin, th.Margin); // (a still sage hurts only by touch: no margin, or we land just too near it to swing)
+                                }
                                 if (pb.Intersects(r))
                                 {
                                     return false;
@@ -13620,8 +13648,28 @@ namespace AnodyneSharp.Recording
                     yield return K(turnTo == Facing.UP ? KeyFunctions.Up : turnTo == Facing.DOWN ? KeyFunctions.Down : turnTo == Facing.LEFT ? KeyFunctions.Left : KeyFunctions.Right);
                     continue;
                 }
-                if (Player.state == PlayerState.GROUND && vulnerable && BroomRect(Player.facing).Intersects(sageAt8) && StandingSafe(22) && i - lastSwing > 24)
+                if (jumpAt >= 0)
                 {
+                    // hold still until the broom lands its hit (or has had its frames), then jump clear of the lanes
+                    if (Player.state != PlayerState.GROUND || i >= jumpAt + 6 || sage._flickering)
+                    {
+                        jumpAt = -1;
+                        if (Player.state == PlayerState.GROUND)
+                        {
+                            yield return K(KeyFunctions.Cancel);
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        yield return K();
+                        continue;
+                    }
+                }
+                if (Player.state == PlayerState.GROUND && vulnerable && BroomRect(Player.facing).Intersects(sageAt8) && i - lastSwing > 24
+                    && (StandingSafe(22) || SwingThenJumpSafe()))
+                {
+                    jumpAt = StandingSafe(22) ? -1 : i;
                     lastSwing = i;
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
@@ -14666,7 +14714,9 @@ namespace AnodyneSharp.Recording
                 // Stage 2 plan: it dives through the whole room, so never strike while it moves. After its wave it drifts back to its post
                 // (nearly still, high up): that is when to hit it, from just under its orbs, then step out of the column before it dives.
                 var seerSpeed = _seerVel.TryGetValue(seer, out var seerV0) ? seerV0.Length() : 9f;
-                bool settle = stage2 && waveE == null && seerSpeed < 0.45f && seer.Hitbox.Center.ToXna().Y <= 66;
+                // (room-relative: the Bedroom's arena is screen 2,0; Boss Rush has its own)
+                var seerRoom = new Point(Grid.X * 160, Grid.Y * 160);
+                bool settle = stage2 && waveE == null && seerSpeed < 0.45f && seer.Hitbox.Center.ToXna().Y - seerRoom.Y <= 66;
                 if (settle)
                 {
                     foreach (var th in threats) { th.Margin = 1; } // it is not going anywhere: no buffer needed for prediction error
@@ -14759,7 +14809,7 @@ namespace AnodyneSharp.Recording
                 if (waveE != null && !charge && waveE.Hitbox.Bottom < pb.Top + 60 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
                 {
                     // The wave sweeps down the whole floor-plan width and dies on the first dust it meets: the only safe place is below the dust line.
-                    goal = new Vector2(Math.Clamp(pb.X, 338, 450), 131);
+                    goal = new Vector2(Math.Clamp(pb.X, seerRoom.X + 18, seerRoom.X + 130), seerRoom.Y + 131);
                     BotRunner.Status = "Seer fight: ducking the wave";
                 }
                 var keys = SpaceTimeMove(goal, threats, useCache: false);
@@ -14772,7 +14822,7 @@ namespace AnodyneSharp.Recording
                 {
                     System.Console.Error.WriteLine($"  seer f{i} hp={hp} vuln={vulnerable} settle={settle} spd={seerSpeed:0.00} wave={(waveE != null ? 1 : 0)} P={pb} S={sb} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}]");
                 }
-                if ((keys == null || keys.Length == 0) && !StandingSafe(12) && !(waveE != null && pb.Y >= 129))
+                if ((keys == null || keys.Length == 0) && !StandingSafe(12) && !(waveE != null && pb.Y >= seerRoom.Y + 129))
                 {
                     // Nothing safe was found and the boss is about to reach us: standing still is the one sure way to be hit. Run for the
                     // direction that keeps us clear of the predicted boss/orb boxes the longest, and furthest from them.

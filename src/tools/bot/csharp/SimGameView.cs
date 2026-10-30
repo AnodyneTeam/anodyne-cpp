@@ -67,6 +67,14 @@ namespace AnodyneSharp.Recording
             return _in.ReadLine() == "ok";
         }
 
+        /// <summary>Parity replays from a saved game: what the save holds ("give brooms", "give cards 49", "warp NEXUS 740 540",
+        /// "event NAME 1"...: see the port's sim_ipc.cpp).</summary>
+        public bool Command(string line)
+        {
+            _out.WriteLine(line);
+            return _in.ReadLine() == "ok";
+        }
+
         /// <summary>Saves the current frame as a PNG.</summary>
         public bool Shot(string path)
         {
@@ -148,6 +156,7 @@ namespace AnodyneSharp.Recording
             }
         }
         public bool ScreenTransition => Bool("transition");
+        public bool Warping => Bool("warping"); // (a door warp still fading out or in)
         public int Health => _state.GetProperty("player").GetProperty("health").GetInt32();
         public long RngCalls => _state.TryGetProperty("rng", out var r) ? r.GetInt64() : -1;
         public string PlayerRaw => Player != null && _state.GetProperty("player").GetProperty("fx16") is var fx ? $"{fx[0].GetInt32()},{fx[1].GetInt32()}" : "-";

@@ -1,4 +1,4 @@
-using AnodyneSharp.Recording;
+﻿using AnodyneSharp.Recording;
 using System;
 using System.Diagnostics;
 using System.Linq;
@@ -178,6 +178,48 @@ void Replay(string inputPath, string tracePath, int show)
         view.Hold(0, 11);
     }
     Console.WriteLine($"port in {view.Map} at its f{view.Frame}; the C# game at f{csFrame}");
+    // SIMHOST_SAVE=the Save_1.dat a C# part started from (part.sh): the port has no saves to load, so it starts a new game and
+    // is given what the save holds, then warped to its checkpoint; its own frame count is put back to what it was before.
+    if (Environment.GetEnvironmentVariable("SIMHOST_SAVE") is string savePath)
+    {
+        long before = view.GameFrame();
+        using var save = System.Text.Json.JsonDocument.Parse(File.ReadAllText(savePath));
+        var root = save.RootElement;
+        var inv = root.GetProperty("inventory");
+        var said = new List<string>();
+        if (inv.GetProperty("HasTransformer").GetBoolean())
+        {
+            said.Add("give brooms");
+        }
+        if (inv.GetProperty("CanJump").GetBoolean())
+        {
+            said.Add("give jump");
+        }
+        said.Add($"give cards {inv.GetProperty("CardStatus").EnumerateArray().TakeWhile(c => c.GetBoolean()).Count()}");
+        said.Add($"give hearts {root.GetProperty("max_health").GetInt32()}");
+        foreach (var ev in root.GetProperty("events").GetProperty("eventKeys").EnumerateObject())
+        {
+            said.Add($"event {ev.Name} {ev.Value.GetInt32()}");
+        }
+        var cp = root.GetProperty("checkpoint");
+        string cpMap = cp.GetProperty("map").GetString();
+        int cpX = cp.GetProperty("Position").GetProperty("X").GetInt32(), cpY = cp.GetProperty("Position").GetProperty("Y").GetInt32();
+        said.Add($"checkpoint {cpMap} {cpX} {cpY}");
+        said.Add($"warp {cpMap} {cpX} {cpY}");
+        foreach (var line in said)
+        {
+            if (!view.Command(line))
+            {
+                throw new InvalidOperationException($"port refused '{line}'");
+            }
+        }
+        for (int n = 0; n < 600 && !(view.Map == cpMap && view.Mode == "play" && !view.ScreenTransition && !view.Warping && n > 2); n++)
+        {
+            view.Hold(0, 1);
+        }
+        Console.WriteLine($"port given the save's things and warped to {view.Map} {view.Player?.Position}; frame count back to {before}");
+        view.GameFrame(before);
+    }
     long frameLead = view.GameFrame() - csFrame; // (the port's RecordingManager.Now frames, against the C#'s)
     // (the title screens draw random numbers differently: start play from the C#'s RNG position)
     var csEnts = new Dictionary<long, string[]>();

@@ -1318,7 +1318,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "9-constexpr";
+        const std::string kMapFormatVersion = "10-free-screenblocks";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))
