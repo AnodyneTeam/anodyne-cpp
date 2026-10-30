@@ -2143,10 +2143,11 @@ void World_ApplyBlendLayers()
         const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
         const fx half = kFxOne - FxMul(gDark.mAlpha, Fx(510 - kPlayerLightGreen) / 510);
         const int halfLevel = FxFloor(FxDiv(half, lit) * 16 + kFxOne / 2);
-        // (2/3 of it: measured against the C#'s SUBURB dark rooms, whose grayscale rounds down and vignette darkens
-        // the edges, the full 3/16 came out twice as bright)
-        const int darkLevel = (16 - DarkLevel()) * 2 / 3;
-        const bool dark = gShadeDark && darkLevel <= 1; // (SUBURB's dark rooms leave 3/16: their killers show)
+        const int outLevel = 16 - DarkLevel();
+        const bool dark = gShadeDark && outLevel <= 1; // (SUBURB's dark rooms leave 3/16: their killers show)
+        // (1/3 of it: the C#'s SUBURB dark rooms, whose grayscale rounds down and vignette darkens the edges, only just
+        // show the killers; the full 3/16 came out far too bright)
+        const int darkLevel = outLevel / 3 > 0 ? outLevel / 3 : 1;
         REG_BLDCNT = shadeBldcnt;
         REG_BLDALPHA = BLDA_BUILD(0, dark ? (halfLevel > 16 ? 16 : halfLevel) : darkLevel);
         if (dark)
