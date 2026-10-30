@@ -697,6 +697,19 @@ MapCompileResult MapCompiler::Load(const std::string& mapName, const std::string
                     {
                         tile = scrollSet.GetTiles().Get(tx, ty);
                     }
+                    // (the windmill's rain is all faint pixels: drawn solid, the GBA alpha blends the layer)
+                    for (uint32_t y = 0; y < tile.mData.Height(); ++y)
+                    {
+                        for (uint32_t x = 0; x < tile.mData.Width(); ++x)
+                        {
+                            RGBA p = tile.mData.Get(x, y);
+                            if (p.a > 0)
+                            {
+                                p.a = 255;
+                                tile.mData.Set(x, y, p);
+                            }
+                        }
+                    }
                     scrollTiles.push_back(tile);
                 }
             }

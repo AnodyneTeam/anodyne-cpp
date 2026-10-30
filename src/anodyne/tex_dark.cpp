@@ -17,6 +17,8 @@ uint8_t gLut[kDarkBands][3][32] __attribute__((section(".sbss")));
 
 // The BG colours in use (the map's palette, rounded up to a word): the rest of the 256 are left alone.
 int gBgCount = 256;
+// The BG colours from here on are the FG layer's own (FG_Blend leaves them alone).
+int gFgFrom = 256;
 
 // The end of the OBJ colours blended: the banks the entities have drawn with since the texture went on (they take
 // the lowest free bank, so usually only a few of the 13).
@@ -31,6 +33,8 @@ int NextEntry(int i)
 volatile bool gActive = false;
 volatile int gShown = 0; // the band in palette RAM
 const DarkTexture* gTexture = nullptr;
+const DarkTexture* gExtra = nullptr;
+const DarkTexture* gFg = nullptr;
 int gAlpha = -1;
 int gTint = -1;
 uint16_t gTintColour = 0;
@@ -81,34 +85,106 @@ int Overlay(int base, int blend)
     return base < 128 ? TwiceDiv255(base * blend) : 255 - TwiceDiv255((255 - base) * (255 - blend));
 }
 
-// The LUTs in two steps: the texture blended over each colour (redone only for a new texture), then the alpha mix
-// and the flash (a fade changes the alpha every frame, a flash the tint).
-uint8_t gTexMix[kDarkBands][3][32] __attribute__((section(".sbss")));
+// The LUTs in two steps: the FG_Blend and the texture over it blended over each colour (redone only for new
+// textures), then the alpha mix, the ExtraBlend over that and the flash (a fade changes the alpha every frame, a
+// flash the tint).
+// With colours the FG_Blend leaves alone, their LUT (gLut without it) takes the cache's room instead (the link-cable
+// build's EWRAM has none to spare) and the cache isn't kept; with the grayscale, its second step's LUT does.
+union
+{
+    uint8_t mTexMix[kDarkBands][3][32];
+    uint8_t mLutNoFg[kDarkBands][3][32];
+    uint8_t mLutGray[kDarkBands][3][32]; // per grey level (0-25): the ExtraBlend and the flash over it, 0-31
+} gShared __attribute__((section(".sbss")));
+uint8_t (&gTexMix)[kDarkBands][3][32] = gShared.mTexMix;
+uint8_t (&gLutNoFg)[kDarkBands][3][32] = gShared.mLutNoFg;
+uint8_t (&gLutGray)[kDarkBands][3][32] = gShared.mLutGray;
+constexpr int kGrayLevels = 25; // blackwhite.fx: int(average * 25) / 25
+// The static (on with the grayscale): static.fx's average, c * 0.845 + 0.024, goes in before the grayscale; the
+// world's noise layer adds its own average back on top (World_ApplyBlendLayers: 2/16 of greys 0-30/31).
+constexpr int kStaticLift = 2; // (0-31)
 const DarkTexture* gMixTexture = nullptr;
+const DarkTexture* gMixFg = nullptr;
+bool gMixValid = false;
 
 int Colour8(int c5)
 {
     return (c5 * 255 * 0x2109) >> 18; // c5 * 255 / 31
 }
 
-void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintColour)
+const DarkTexture kPlain = {};
+
+// blend.fx: the texture's band colour over `c` (0-255), mixed in by the band's alpha.
+int TextureOver(const DarkTexture& texture, int band, int ch, int c)
 {
-    if (&texture != gMixTexture)
+    const uint8_t* t = texture.mBands[band];
+    const int f = texture.mHardLight == kTexMultiply ? Div255(c * t[ch])
+                  : texture.mHardLight                ? Overlay(t[ch], c)
+                                                      : Overlay(c, t[ch]);
+    return Div255(f * t[3] + c * (255 - t[3]));
+}
+
+// The darkness texture over `c` (0-255).
+int DarkOver(const DarkTexture* texture, int band, int ch, int c)
+{
+    return texture == &kPlain ? 0 : (texture ? TextureOver(*texture, band, ch, c) : c);
+}
+
+// The alpha mix of `tex` (the darkness texture over `c`) into `c`, 0-255.
+int Mix(int tex, int c, int alpha)
+{
+    return (tex * alpha + c * (256 - alpha)) >> 8;
+}
+
+// The ExtraBlend and the flash over `final8`, in 0-31.
+int Over(int final8, int band, int ch, const DarkTexture* extra, int target, int tint)
+{
+    if (extra)
+    {
+        final8 = TextureOver(*extra, band, ch, final8); // (a full screen effect: after the darkness)
+    }
+    int v = Div255(final8 * 31 + 127);
+    // the flash after it (FadeEffect, as TintPalettes)
+    v += (target - v) * tint / 32;
+    return v;
+}
+
+int Finish(int tex, int c, int alpha, int band, int ch, const DarkTexture* extra, int target, int tint)
+{
+    return Over(Mix(tex, c, alpha), band, ch, extra, target, tint);
+}
+
+bool gGray = false; // the LUTs were built for the grayscale
+
+// With the grayscale (GrayScale, on with the static: a full screen effect after the darkness, before the
+// ExtraBlend) gLut holds the colours up to the darkness, 0-255, and gLutGray the rest per grey level.
+void BuildLuts(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour, const DarkTexture* extra,
+               const DarkTexture* fg, bool gray)
+{
+    // (FG_Blend: a game effect, before the darkness)
+    auto fgOver = [fg](int band, int ch, int c) { return fg ? TextureOver(*fg, band, ch, c) : c; };
+    const bool noFg = fg && gFgFrom < gBgCount && !gray;
+    gGray = gray;
+    if (noFg || gray)
+    {
+        gMixValid = false;
+    }
+    else if (!gMixValid || texture != gMixTexture || fg != gMixFg)
     {
         for (int band = 0; band < kDarkBands; band++)
         {
-            const uint8_t* t = texture.mBands[band];
             for (int ch = 0; ch < 3; ch++)
             {
                 for (int c5 = 0; c5 < 32; c5++)
                 {
-                    const int c = Colour8(c5);
-                    const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
-                    gTexMix[band][ch][c5] = static_cast<uint8_t>(Div255(f * t[3] + c * (255 - t[3])));
+                    gTexMix[band][ch][c5] =
+                        static_cast<uint8_t>(DarkOver(texture, band, ch, fgOver(band, ch, Colour8(c5))));
                 }
             }
         }
-        gMixTexture = &texture;
+        gMixTexture = texture;
+        gMixFg = fg;
+        gMixValid = true;
     }
     for (int band = 0; band < kDarkBands; band++)
     {
@@ -118,31 +194,56 @@ void BuildLuts(const DarkTexture& texture, int alpha, int tint, uint16_t tintCol
             for (int c5 = 0; c5 < 32; c5++)
             {
                 const int c = Colour8(c5);
-                const int final8 = (gTexMix[band][ch][c5] * alpha + c * (256 - alpha)) >> 8;
-                int v = Div255(final8 * 31 + 127);
-                // the flash after it (FadeEffect, as TintPalettes)
-                v += (target - v) * tint / 32;
-                gLut[band][ch][c5] = static_cast<uint8_t>(v);
+                const int fgc = fgOver(band, ch, c);
+                const int tex = noFg || gray ? DarkOver(texture, band, ch, fgc) : gTexMix[band][ch][c5];
+                gLut[band][ch][c5] = static_cast<uint8_t>(
+                    gray ? (Mix(tex, fgc, alpha) * 216 + 6 * 256) >> 8 // (the static's average)
+                         : Finish(tex, fgc, alpha, band, ch, extra, target, tint));
+                if (gray && c5 <= kGrayLevels)
+                {
+                    int v = Over(c5 * 255 / kGrayLevels, band, ch, extra, 0, 0) - kStaticLift;
+                    v = v < 0 ? 0 : v;
+                    gLutGray[band][ch][c5] = static_cast<uint8_t>(v + (target - v) * tint / 32);
+                }
+                if (noFg)
+                {
+                    gLutNoFg[band][ch][c5] = static_cast<uint8_t>(
+                        Finish(DarkOver(texture, band, ch, c), c, alpha, band, ch, extra, target, tint));
+                }
             }
         }
     }
 }
 
-uint16_t Blend(int band, uint16_t colour)
+uint16_t Blend(int band, uint16_t colour, bool fg)
 {
-    const uint8_t(&lut)[3][32] = gLut[band];
+    if (gGray)
+    {
+        const uint8_t(&lut)[3][32] = gLut[band];
+        const int sum = lut[0][colour & 31] + lut[1][(colour >> 5) & 31] + lut[2][(colour >> 10) & 31];
+        const int level = sum * kGrayLevels / (3 * 255);
+        const uint8_t(&gray)[3][32] = gLutGray[band];
+        return static_cast<uint16_t>(gray[0][level] | (gray[1][level] << 5) | (gray[2][level] << 10));
+    }
+    const uint8_t(&lut)[3][32] = fg ? gLut[band] : gLutNoFg[band];
     return static_cast<uint16_t>(lut[0][colour & 31] | (lut[1][(colour >> 5) & 31] << 5) |
                                  (lut[2][(colour >> 10) & 31] << 10));
 }
 
 void BlendEntry(int i)
 {
+    const bool fg = !gFg || i < gFgFrom || i >= 256;
     for (int band = 0; band < kDarkBands; band++)
     {
-        gBands[band][i] = i == 0 ? gBase[0] : Blend(band, gBase[i]);
+        gBands[band][i] = i == 0 ? gBase[0] : Blend(band, gBase[i], fg);
     }
 }
 } // namespace
+
+const DarkTexture* TexDark_Plain()
+{
+    return &kPlain;
+}
 
 void TexDark_Init()
 {
@@ -150,10 +251,12 @@ void TexDark_Init()
     irq_disable(II_VCOUNT);
 }
 
-void TexDark_SetBgColours(int count)
+void TexDark_SetBgColours(int count, int fgFrom)
 {
     TexDark_Off(); // (the bands were built for the old count)
     gBgCount = count < 2 ? 2 : (count > 256 ? 256 : (count + 1) & ~1);
+    gFgFrom = fgFrom;
+    gMixValid = false;
 }
 
 bool TexDark_Active()
@@ -182,22 +285,32 @@ void TexDark_Off()
     }
     REG_IME = ime;
     gTexture = nullptr;
+    gExtra = nullptr;
+    gFg = nullptr;
 }
 
-void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour)
+void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour, const DarkTexture* extra,
+                   const DarkTexture* fg, bool gray)
 {
     if (!texture || alpha <= 0)
     {
-        TexDark_Off();
-        return;
+        texture = nullptr;
+        alpha = 0;
+        if (!extra && !fg && !gray)
+        {
+            TexDark_Off();
+            return;
+        }
     }
     const bool starting = !gActive;
-    const bool lutChanged =
-        starting || texture != gTexture || alpha != gAlpha || tint != gTint || (tint && tintColour != gTintColour);
+    const bool lutChanged = starting || texture != gTexture || extra != gExtra || fg != gFg || gray != gGray ||
+                            alpha != gAlpha || tint != gTint || (tint && tintColour != gTintColour);
     if (lutChanged)
     {
-        BuildLuts(*texture, alpha, tint, tintColour);
+        BuildLuts(texture, alpha, tint, tintColour, extra, fg, gray);
         gTexture = texture;
+        gExtra = extra;
+        gFg = fg;
         gAlpha = alpha;
         gTint = tint;
         gTintColour = tintColour;

@@ -36,6 +36,20 @@ bool Save_Exists(int slot);
 // GlobalState.LoadSave: reads the slot back into the state (false, and the state untouched, if it isn't valid).
 bool Save_Read(int slot);
 
+// What the title's file menu shows of a save (FileSubstate), read without touching the state.
+struct SaveInfo final
+{
+    uint32_t mPlayFrames;
+    int mDeaths;
+    int mCards;
+    int mCurHealth;
+    int mMaxHealth;
+};
+bool Save_Peek(int slot, SaveInfo& info);
+// The file menu's "New Game" on a used file (File.Delete) and "Copy save" (Save.SaveTo).
+void Save_Delete(int slot);
+bool Save_Copy(int from, int to);
+
 // The pause menu's quick save (GlobalState.serialized_quicksave): the progress and where the player stands, in RAM.
 void Save_QuickWrite(int map, int x, int y);
 bool Save_QuickExists();

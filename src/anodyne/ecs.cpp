@@ -521,7 +521,7 @@ int64_t FrameTicks(uint32_t frame)
     static const uint32_t sBehind = sOffset ? static_cast<uint32_t>(atoi(sOffset)) : 0;
     frame -= sBehind;
 #elif defined(ANODYNE_LINK)
-    frame -= 340; // (what SimHost tells the simulator: the C# game's frames start 340 after the port's)
+    frame -= 4; // (what SimHost tells the simulator: the C# game's frames start 4 after the port's)
 #endif
     return static_cast<int64_t>(frame) * 10000000 / 60;
 }
@@ -1777,7 +1777,9 @@ ECS_IWRAM_CODE void Ecs_Draw(int camX, int camY, int viewX, int firstOam, int en
             continue;
         }
         gDraw[count].mEntity = e;
-        gDraw[count].mKey = DepthKey(*e, 0);
+        // (lights first: a normal sprite in an earlier OAM slot takes its pixels out of the OBJ window, so the player
+        // stood dark in the middle of its own light)
+        gDraw[count].mKey = e->mV->mWindow ? INT32_MAX : DepthKey(*e, 0);
         count++;
     }
     // Insertion sort, front (highest key) first; stable so list order breaks ties like the C#'s SpriteBatch.

@@ -10,6 +10,7 @@ struct MapPalData final
 {
     uint32_t mPalSize = 0;
     const uint16_t* mPalData = nullptr;
+    uint32_t mFgFrom = 0; // the colours from here on are only the FG layer's, which FG_Blend leaves alone
 };
 
 struct MapTileSetData final
@@ -101,6 +102,7 @@ struct MapDarkArea final
     int8_t mPlayerLight;
     int8_t mTexture;
     const char* mReplace; // "a-b;c-d": BG tile a draws as b... ("": none)
+    int8_t mFgBlend;      // FG_Blend, a kDarkTextures index; -1: not set
 };
 
 struct MapDarkEvent final
@@ -120,11 +122,15 @@ struct MapDarkData final
     const MapDarkArea* mAreas;
     uint32_t mEventCount;
     const MapDarkEvent* mEvents;
+    int8_t mExtraBlend; // Settings.json ExtraBlend (GlobalState.extraBlend), a kDarkTextures index; -1: none
+    int8_t mFgBlend;    // Settings.json FG_Blend (GlobalState.fgBlend), a kDarkTextures index; -1: none
+    bool mStatic;       // Settings.json Static (GlobalState.staticEffect)
 };
 
-// A darkness texture (Darkness.SetTex): the 160x160 playfield's 8px bands, each one colour and alpha (RGBA8), blended
-// over the screen in the overlay or (mHardLight) hard light way.
+// A darkness (Darkness.SetTex) or ExtraBlend (Blend.SetTex) texture: the 160x160 playfield's 8px bands, each one
+// colour and alpha (RGBA8), blended over the screen in the overlay or (mHardLight) hard light way.
 constexpr int kDarkBands = 20;
+constexpr uint8_t kTexMultiply = 2; // mHardLight: multiplied in (the player's light, tex_dark.h)
 struct DarkTexture final
 {
     uint8_t mHardLight;

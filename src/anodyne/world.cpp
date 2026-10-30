@@ -576,6 +576,8 @@ void UpdateScroll(bool advance, bool force)
 }
 
 bool gLightWindows = false; // the darkness's lights are on (see Darkness below)
+bool gShadeShown = false;   // the player's light's shade layer is up (World_ApplyBlendLayers)
+bool gShadeDarkShown = false; // and its dark layer
 uint16_t gWinLayers = WIN_BG0 | WIN_BG1 | WIN_BG2 | WIN_OBJ;
 void ApplyWindows();
 
@@ -692,6 +694,7 @@ Darkness gDark = { 0, 0, FxF(0.8f) };
 const MapDarkData* gDarkData = nullptr;
 const DarkTexture* gDarkTextures = nullptr;
 const DarkTexture* gDarkTex = nullptr; // the darkness's texture (tex_dark.h); nullptr: it darkens plainly
+const DarkTexture* gFgBlendTex = nullptr; // the FG_Blend where the player is (GlobalState.fgBlend); nullptr: none
 int gTintLevel = 0;                    // this frame's tinting flash, when TexDark tints
 bool gDarkWritten = false; // the last frame's BLD came from the darkness
 Entity* gPlayerLight = nullptr;
@@ -711,7 +714,10 @@ void ApplyWindows()
         REG_WIN1H = static_cast<uint16_t>(((kViewX + kScreenPx) << 8) | 240);
         REG_WIN0V = REG_WIN1V = (0 << 8) | kScreenPx;
         REG_WININ = WIN_OBJ | (WIN_OBJ << 8); // the side bars: the HUD, never darkened (hud.h)
-        REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (gWinLayers << 8));
+        // (the other lights' windows: not under the player's light's shade either)
+        const uint16_t lit = static_cast<uint16_t>(gWinLayers & ~(gShadeShown ? WIN_BG3 : 0) &
+                                                   ~(gShadeDarkShown ? WIN_BG0 : 0));
+        REG_WINOUT = static_cast<uint16_t>((gWinLayers | WIN_BLD) | (lit << 8));
     }
     else
     {
@@ -723,11 +729,69 @@ void ApplyWindows()
     }
 }
 
+// The map's ExtraBlend texture (GlobalState.extraBlend), nullptr if it has none.
+const DarkTexture* ExtraBlend()
+{
+    return gDarkData && gDarkData->mExtraBlend >= 0 && gDarkTextures ? &gDarkTextures[gDarkData->mExtraBlend] : nullptr;
+}
+
+// The player's light (player-light.png: (111, 111, 214), fading out to its edge) multiplies the screen inside it, so
+// the C#'s lit circle is dim and blue. The GBA's palettes take that multiply, mixed in by the darkness's alpha, over
+// the whole screen; outside the light's (dithered) window shape the BLD darkens the rest of the way to 1 - alpha.
+constexpr int kPlayerLightGreen = 111;
+constexpr DarkTexture MakePlayerLightTex()
+{
+    DarkTexture t = {};
+    t.mHardLight = kTexMultiply;
+    for (auto& band : t.mBands)
+    {
+        band[0] = 111;
+        band[1] = kPlayerLightGreen;
+        band[2] = 214;
+        band[3] = 255;
+    }
+    return t;
+}
+constexpr DarkTexture kPlayerLightTex = MakePlayerLightTex();
+
+bool PlayerLightDim()
+{
+    return !gDarkTex && gPlayerLight && gPlayerLight->mExists && gDark.mAlpha > 0;
+}
+
+// The map's static turns the screen gray (GrayScale.Active), in TexDark's colours.
+bool Grayscale()
+{
+    return gDarkData && gDarkData->mStatic;
+}
+
+// TexDark draws this frame: a darkness texture, the ExtraBlend, the FG_Blend or the grayscale.
+bool TexDarkOn()
+{
+    return (gDarkTex && gDark.mAlpha > 0) || ExtraBlend() || gFgBlendTex || Grayscale() || PlayerLightDim();
+}
+
+// Plain darkness under an ExtraBlend goes into TexDark's colours too: the overlay brightens the darkened screen (the
+// C# blends after the darkness), which a BLD over the blended colours can't give. Not with the player's light on: its
+// hole in the darkness needs the BLD and windows.
+bool PlainDarkInTexDark()
+{
+    return !gDarkTex && ExtraBlend() && !(gPlayerLight && gPlayerLight->mExists);
+}
+
 int DarkLevel()
 {
-    if (gDarkTex)
+    if (gDarkTex || PlainDarkInTexDark())
     {
         return 0; // (TexDark draws it)
+    }
+    if (PlayerLightDim())
+    {
+        // the palettes give 1 - alpha (1 - light): the rest of the way to 1 - alpha (green's)
+        const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
+        const fx left = kFxOne - FxDiv(kFxOne - gDark.mAlpha, lit);
+        const int y = FxFloor(left * 16 + kFxOne / 2);
+        return y < 0 ? 0 : (y > 16 ? 16 : y);
     }
     const int y = FxFloor(gDark.mAlpha * 16 + kFxOne / 2);
     return y < 0 ? 0 : (y > 16 ? 16 : y);
@@ -741,11 +805,13 @@ void UpdateDarkness(bool transition)
     int light = -1;
     int texture = -1;
     const char* replace = nullptr;
-    auto take = [&](int a, int l, int t, const char* r) {
+    int fgBlend = -1;
+    auto take = [&](int a, int l, int t, const char* r, int fg) {
         alpha = alpha < 0 ? a : alpha;
         light = light < 0 ? l : light;
         texture = texture < 0 ? t : texture;
         replace = replace ? replace : r;
+        fgBlend = fgBlend < 0 ? fg : fgBlend;
     };
     if (gDarkData)
     {
@@ -756,7 +822,7 @@ void UpdateDarkness(bool transition)
             const MapDarkArea& a = gDarkData->mAreas[i];
             if (px >= a.mX && px < a.mX + a.mWidth && py >= a.mY && py < a.mY + a.mHeight)
             {
-                take(a.mAlpha, a.mPlayerLight, a.mTexture, a.mReplace);
+                take(a.mAlpha, a.mPlayerLight, a.mTexture, a.mReplace, a.mFgBlend);
             }
         }
         for (uint32_t i = 0; i < gDarkData->mEventCount; i++)
@@ -764,12 +830,13 @@ void UpdateDarkness(bool transition)
             const MapDarkEvent& e = gDarkData->mEvents[i];
             if (Event_Get(e.mEvent) != 0)
             {
-                take(e.mAlpha, -1, e.mTexture, e.mReplace);
+                take(e.mAlpha, -1, e.mTexture, e.mReplace, -1);
             }
         }
-        take(gDarkData->mAlpha, gDarkData->mPlayerLight ? 1 : 0, gDarkData->mTexture, "");
+        take(gDarkData->mAlpha, gDarkData->mPlayerLight ? 1 : 0, gDarkData->mTexture, "", gDarkData->mFgBlend);
     }
     gDarkTex = texture >= 0 && gDarkTextures ? &gDarkTextures[texture] : nullptr;
+    gFgBlendTex = fgBlend >= 0 && gDarkTextures ? &gDarkTextures[fgBlend] : nullptr;
     // (no DarknessAlpha: fully dark with a texture, none without)
     const fx target = alpha >= 0 ? alpha * (kFxOne / 256) : (gDarkTex ? kFxOne : 0);
     if (transition)
@@ -1903,6 +1970,136 @@ void World_QuickSave()
     Save_QuickWrite(gGame.mCurrentMap, FxTrunc(p.mT->mX), FxTrunc(p.mT->mY));
 }
 
+// ---- Static (GlobalState.staticEffect, static.fx) -------------------------------------------------------------
+// Grey noise over the game screen, a new pattern every 1/8 s: static.fx mixes each pixel by a random alpha (0-0.31)
+// towards a random grey (0-0.31). Its average darkening goes in TexDark's colours (with the grayscale it comes
+// with); the GBA adds the noise around it, a layer of noise tiles (BG3: the maps with static have no scrolling
+// background) added over everything at 2/16 of random greys (a little under the C#'s spread, which lifts the blacks
+// less), and moves the layer to show another pattern. Only while nothing else wants the blend registers (the
+// darkness, fades, flashes, the dialog box, the pause menu): they take over and the noise goes. The windmill's rain
+// (faint pixels the GBA draws solid) blends the same way.
+//
+// The player's light also takes BG3 (static and lights never show together): a shade layer, solid but for a hole
+// round the player where the light's alpha (kLightShade) dithers it, alpha blended at 0 over the screen. A second,
+// dark layer over it (BG0, the FG layer's, empty on the maps with the player's light) is solid black where the light
+// is out, so the dither steps lit / half / dark (the shade at half, the dark black) while the darkness leaves
+// nothing to see past the light (DRAWER); where it leaves some (SUBURB's dark rooms, or fading in), the dark layer
+// goes and the shade gives what the darkness leaves of the screen. So the light fades out pixel by pixel, where the OBJ window's light sprite, scaled up 2x,
+// could only fade in 2px dots.
+namespace
+{
+constexpr int kStaticTiles = 32;          // 8bpp noise tiles after the map's tileset
+constexpr int kStaticFirstColour = 240;   // its 16 greys (0 to 30/31), past the map's colours
+constexpr uint32_t kStaticVramEnd = 0x8000; // (the warp mosaic borrows CBB2)
+int gStaticTile = -1; // the first noise tile, -1: none on this map
+constexpr int kShadeTiles = 1 + 64;  // per layer: a solid tile, then the hole's top-left quarter (4bpp, after the noise)
+constexpr int kShadeSbb[2] = { 26, 25 };
+constexpr int kShadeBank[2] = { 15, 14 };
+constexpr int kShadeDarkColour = 14 * 16 + 1; // the dark layer's black
+const uint8_t* gLightShade = nullptr; // kLightShade
+int gShadeTile = -1;                  // the shade's first 4bpp tile, -1: none on this map
+bool gShadeDark = false;              // the dark layer too (the FG layer's BG is free, the colour too)
+bool gShadeHidLight = false;          // it hid the player's light sprite (its window would cut the shade)
+int gStaticFrames = 0;
+int gStaticStep = 0;
+bool gStaticShown = false;
+
+// Its own generator, so the noise doesn't move the game's Rng (the parity replays follow that).
+uint32_t StaticRand(uint32_t& state)
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+void LoadStaticVram()
+{
+    if (gStaticTile < 0)
+    {
+        return;
+    }
+    uint32_t rng = 0x2545F491u;
+    alignas(4) uint8_t tile[64];
+    for (int t = 0; t < kStaticTiles; t++)
+    {
+        for (int i = 0; i < 64; i++)
+        {
+            tile[i] = static_cast<uint8_t>(kStaticFirstColour + (StaticRand(rng) & 15));
+        }
+        memcpy32(&tile8_mem[0][gStaticTile + t], tile, 64 / 4);
+    }
+    for (int i = 0; i < 16; i++)
+    {
+        pal_bg_mem[kStaticFirstColour + i] = RGB15(2 * i, 2 * i, 2 * i);
+    }
+    uint16_t* const sb = se_mem[kRoleScreenblock[kRoleScroll]];
+    for (int i = 0; i < 32 * 32; i++)
+    {
+        sb[i] = static_cast<uint16_t>(gStaticTile + StaticRand(rng) % kStaticTiles);
+    }
+}
+
+void LoadShadeVram()
+{
+    if (gShadeTile < 0)
+    {
+        return;
+    }
+    for (int layer = 0; layer < 2; layer++)
+    {
+        const int first = gShadeTile + layer * kShadeTiles;
+        memset32(&tile_mem[0][first], 0x11111111, 32 / 4);
+        memcpy32(&tile_mem[0][first + 1], gLightShade + layer * (kShadeTiles - 1) * 32, (kShadeTiles - 1) * 32 / 4);
+        // The hole in map tiles 0-15 (each quarter the top-left one flipped), solid round it.
+        uint16_t* const sb = se_mem[kShadeSbb[layer]];
+        for (int ty = 0; ty < 32; ty++)
+        {
+            for (int tx = 0; tx < 32; tx++)
+            {
+                uint16_t entry = static_cast<uint16_t>(first);
+                if (tx < 16 && ty < 16)
+                {
+                    const int qx = tx < 8 ? tx : 15 - tx;
+                    const int qy = ty < 8 ? ty : 15 - ty;
+                    entry = static_cast<uint16_t>(first + 1 + qy * 8 + qx);
+                    entry |= tx < 8 ? 0 : SE_HFLIP;
+                    entry |= ty < 8 ? 0 : SE_VFLIP;
+                }
+                sb[ty * 32 + tx] = static_cast<uint16_t>(entry | SE_PALBANK(kShadeBank[layer]));
+            }
+        }
+    }
+    if (gShadeDark)
+    {
+        pal_bg_mem[kShadeDarkColour] = 0;
+    }
+}
+
+// The map's static, if it has it (and the room for its tiles and colours).
+void LoadStatic(const MapEntry& map, bool on)
+{
+    const uint32_t tilesetBytes = (map.mTileSetData.mTileSetSize + 63) & ~63u;
+    gStaticTile = on && !gScroll && map.mPalData.mPalSize <= kStaticFirstColour &&
+                          tilesetBytes + kStaticTiles * 64 <= kStaticVramEnd
+                      ? static_cast<int>(tilesetBytes / 64)
+                      : -1;
+    LoadStaticVram();
+    // the shade, on a map with the player's light somewhere
+    bool light = gDarkData && gDarkData->mPlayerLight;
+    for (uint32_t i = 0; gDarkData && i < gDarkData->mAreaCount; i++)
+    {
+        light = light || gDarkData->mAreas[i].mPlayerLight > 0;
+    }
+    const uint32_t shadeBytes = tilesetBytes + (gStaticTile >= 0 ? kStaticTiles * 64 : 0);
+    gShadeTile = light && gLightShade && !gScroll && shadeBytes + 2 * kShadeTiles * 32 <= kStaticVramEnd
+                     ? static_cast<int>(shadeBytes / 32)
+                     : -1;
+    gShadeDark = gShadeTile >= 0 && gLayerW[2] == 0 && map.mPalData.mPalSize <= kShadeDarkColour;
+    LoadShadeVram();
+}
+} // namespace
+
 void World_ReloadTileset()
 {
     if (!gMap)
@@ -1915,6 +2112,135 @@ void World_ReloadTileset()
         tilesetBytes = kMaxTilesetBytes;
     }
     memcpy16(tile_mem, gMap->mTileSetData.mTileSetData, tilesetBytes / 2);
+    LoadStaticVram();
+    LoadShadeVram();
+}
+
+void World_SetLightShade(const uint8_t* tiles)
+{
+    gLightShade = tiles;
+}
+
+void World_ApplyBlendLayers()
+{
+    if (MenuDraw_IsOpen())
+    {
+        return; // (it has the display for itself, and gives it back as it was)
+    }
+    // The player's light's shade: while the darkness's lights are on (its BLD darkening, given over to the shade)
+    const uint16_t shadeBldcnt = BLD_BG3 | BLD_STD | ((BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_OBJ | BLD_BACKDROP) << 8);
+    const bool shadeOn = gShadeTile >= 0 && gLightWindows && gPlayerLight && gPlayerLight->mExists &&
+                         (REG_BLDCNT == 0xFF || REG_BLDCNT == shadeBldcnt) && !gDeath.mActive && !Dialog_IsOpen() &&
+                         !Mosaic_Active();
+    if (shadeOn)
+    {
+        // the hole's middle (map px 64, 64) on the light
+        const int x = FxTrunc(gPlayerLight->mT->mX) - FxFloor(gCamX) + kViewX + gShake.mX;
+        const int y = FxTrunc(gPlayerLight->mT->mY) - FxFloor(gCamY) + gShake.mY;
+        SetBgOffset(3, 64 - x, 64 - y);
+        // What's left of the screen half lit and dark, as a part of lit: (1 - alpha + alpha L a) / (1 - alpha +
+        // alpha L) for the light's alpha a = 1/2, 0 (L its green, player-light.png's 111/255)
+        const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
+        const fx half = kFxOne - FxMul(gDark.mAlpha, Fx(510 - kPlayerLightGreen) / 510);
+        const int halfLevel = FxFloor(FxDiv(half, lit) * 16 + kFxOne / 2);
+        const int outLevel = 16 - DarkLevel();
+        const bool dark = gShadeDark && outLevel <= 1; // (SUBURB's dark rooms leave 3/16: their killers show)
+        // (1/3 of it: the C#'s SUBURB dark rooms, whose grayscale rounds down and vignette darkens the edges, only just
+        // show the killers; the full 3/16 came out far too bright)
+        const int darkLevel = outLevel / 3 > 0 ? outLevel / 3 : 1;
+        REG_BLDCNT = shadeBldcnt;
+        REG_BLDALPHA = BLDA_BUILD(0, dark ? (halfLevel > 16 ? 16 : halfLevel) : darkLevel);
+        if (dark)
+        {
+            REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kShadeSbb[1]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
+            SetBgOffset(0, 64 - x, 64 - y);
+        }
+        if (dark != gShadeDarkShown)
+        {
+            gShadeDarkShown = dark;
+            if (!dark)
+            {
+                REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kRoleScreenblock[2]) | BG_PRIO(gPrio[2]) | BG_8BPP | BG_REG_32x32;
+            }
+            ApplyWindows();
+        }
+        // (without the dark layer, the shade takes its hole: lit and half lit both show what the darkness leaves)
+        REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kShadeSbb[dark ? 0 : 1]) | BG_PRIO(0) | BG_4BPP | BG_REG_32x32;
+        if (!gShadeShown)
+        {
+            gShadeShown = true;
+            REG_DISPCNT = REG_DISPCNT | DCNT_BG3;
+            gWinLayers = gWinLayers | WIN_BG3;
+            ApplyWindows();
+        }
+        if (gPlayerLight->mV->mVisible)
+        {
+            gPlayerLight->mV->mVisible = false;
+            gShadeHidLight = true;
+        }
+        gStaticShown = false;
+        return;
+    }
+    if (gShadeDarkShown)
+    {
+        gShadeDarkShown = false;
+        REG_BGCNT[0] = BG_CBB(0) | BG_SBB(kRoleScreenblock[2]) | BG_PRIO(gPrio[2]) | BG_8BPP | BG_REG_32x32;
+    }
+    if (gShadeShown)
+    {
+        gShadeShown = false;
+        REG_DISPCNT = REG_DISPCNT & ~DCNT_BG3;
+        gWinLayers = gWinLayers & ~WIN_BG3;
+        ApplyWindows();
+    }
+    if (gShadeHidLight)
+    {
+        gShadeHidLight = false;
+        gPlayerLight->mV->mVisible = !gDeath.mActive;
+    }
+    // Static.Update: the next of its 4 patterns every 1/8 s (8 updates)
+    if (++gStaticFrames >= 8)
+    {
+        gStaticFrames = 0;
+        gStaticStep = (gStaticStep + 1) % 4;
+    }
+    // The layer blended over the others: the static's, or the windmill's rain (its pixels at alpha 59/255)
+    const bool rain = gScroll && gScroll->mOverlay;
+    const int hw = gStaticTile >= 0 ? 3 : (rain ? gHw[kRoleScroll] : -1);
+    if (hw < 0)
+    {
+        return;
+    }
+    const uint16_t bldcnt = static_cast<uint16_t>((BLD_BG0 << hw) | BLD_STD |
+                                                  (((BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3) & ~(BLD_BG0 << hw)) << 8) |
+                                                  ((BLD_OBJ | BLD_BACKDROP) << 8));
+    const bool bldFree = REG_BLDCNT == 0 || REG_BLDCNT == bldcnt;
+    const bool on = bldFree && !gDeath.mActive && !Dialog_IsOpen() && !Mosaic_Active() && !gLightWindows &&
+                    (REG_DISPCNT & DCNT_WIN0) != 0;
+    if (on)
+    {
+        if (!rain)
+        {
+            static const int16_t kSteps[4][2] = { { 0, 0 }, { 83, 51 }, { 37, 141 }, { 119, 23 } };
+            REG_BGCNT[3] = BG_CBB(0) | BG_SBB(kRoleScreenblock[kRoleScroll]) | BG_PRIO(0) | BG_8BPP | BG_REG_32x32;
+            SetBgOffset(3, kSteps[gStaticStep][0], kSteps[gStaticStep][1]);
+        }
+        REG_BLDCNT = bldcnt;
+        // the rain * 4/16 + the screen * 12/16; the noise * 2/16 added to the screen
+        REG_BLDALPHA = rain ? BLDA_BUILD(4, 12) : BLDA_BUILD(2, 16);
+    }
+    // Off, it hides (drawn solid, the layer would cover the screen). Only a layer it showed: the rain is on when the
+    // map loads.
+    const uint16_t bit = static_cast<uint16_t>(DCNT_BG0 << hw);
+    const bool shown = (REG_DISPCNT & bit) != 0;
+    if (on != shown && (on || gStaticShown || rain))
+    {
+        REG_DISPCNT = on ? (REG_DISPCNT | bit) : (REG_DISPCNT & ~bit);
+        const uint16_t win = static_cast<uint16_t>(WIN_BG0 << hw);
+        gWinLayers = on ? (gWinLayers | win) : (gWinLayers & ~win);
+        ApplyWindows();
+    }
+    gStaticShown = on;
 }
 
 void World_ForceTextureReload()
@@ -1944,7 +2270,8 @@ static void LoadMapGraphics(const MapEntry& map)
 {
     // Palette (halfwords) and 8bpp tileset into BG VRAM. The tileset must stay clear of screenblocks 28-31
     // (0x0600E000 and up), which the layers use for their maps.
-    TexDark_SetBgColours(static_cast<int>(map.mPalData.mPalSize)); // (first: it puts the old colours back)
+    // (first: it puts the old colours back)
+    TexDark_SetBgColours(static_cast<int>(map.mPalData.mPalSize), static_cast<int>(map.mPalData.mFgFrom));
     memcpy16(pal_bg_mem, map.mPalData.mPalData, map.mPalData.mPalSize);
     uint32_t tilesetBytes = map.mTileSetData.mTileSetSize;
     if (tilesetBytes > kMaxTilesetBytes)
@@ -2009,6 +2336,7 @@ void World_Load(const MapEntry& map, const char* mapName, const MapAudioData& au
     gScrollUnwrapX = 0;
     gScrollUnwrapY = 0;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+    LoadStatic(map, dark.mStatic);
 
     if (!loadEntities)
     {
@@ -2106,6 +2434,7 @@ void World_CutsceneWarp(int map, int gx, int gy)
     LoadMapGraphics(gMapTable[map]);
     gScroll = nullptr;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+    gStaticTile = -1;
     gCamX = Fx(gx * kScreenPx);
     gCamY = Fx(gy * kScreenPx);
     UpdateBackground(true);
@@ -2122,6 +2451,7 @@ void World_CutsceneReturn()
     LoadMapGraphics(*gMap);
     gScroll = gView.mScroll;
     ApplyDisplayRegs((REG_DISPCNT & DCNT_WIN0) != 0);
+    LoadStatic(*gMap, gDarkData && gDarkData->mStatic);
     MoveCameraToGrid();
     UpdateBackground(true);
     UpdateScroll(false, true);
@@ -2371,7 +2701,7 @@ void World_Update()
             {
                 int level = FxFloor(gFlash.mAlpha * 32 + kFxOne / 2);
                 level = level > 32 ? 32 : level;
-                if (gDarkTex && gDark.mAlpha > 0)
+                if (TexDarkOn())
                 {
                     gTintLevel = level; // (TexDark tints its own colours)
                 }
@@ -2416,11 +2746,13 @@ void World_Update()
     }
     else
     {
-        if (gDarkTex && gDark.mAlpha > 0)
+        if (TexDarkOn())
         {
             UntintPalettes(); // (from before the texture: TexDark takes the plain colours)
         }
-        TexDark_Frame(gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2), gTintLevel, gFlash.mColour);
+        TexDark_Frame(PlainDarkInTexDark() ? TexDark_Plain() : (PlayerLightDim() ? &kPlayerLightTex : gDarkTex),
+                      FxFloor(gDark.mAlpha * 256 + kFxOne / 2),
+                      gTintLevel, gFlash.mColour, ExtraBlend(), gFgBlendTex, Grayscale());
     }
     gTintLevel = 0;
     if (MenuDraw_IsOpen())

@@ -273,7 +273,7 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
 
     // Soft glows (alpha gradient of one gold colour): drawn as additive semi-transparent OBJs (BLDALPHA 16/16) behind
     // the opaque glow-disc sprite, so they only show outside the disc - like the C# alpha blend of gold over orange,
-    // which is nearly invisible on the disc. Store gold * alpha (a little reduced); near-zero alpha is transparent.
+    // which is nearly invisible on the disc. Store gold * alpha; near-zero alpha is transparent.
     const std::string texName = spec.mTexture;
     if (texName.rfind("door_spinglow", 0) == 0 && texName.size() > 6 && texName.compare(texName.size() - 6, 6, "_inner") == 0)
     {
@@ -307,14 +307,15 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
         for (size_t i = 0; i + 3 < raw.size(); i += 4)
         {
             const int a = raw[i + 3];
-            if (a < 14) // short rays: the C# ones only just reach the floor
+            if (a < 4) // (gold * alpha rounds to black below this)
             {
                 raw[i + 3] = 0;
                 continue;
             }
+            // gold * alpha added onto the dark background is what the C#'s alpha blend gives there
             for (int ch = 0; ch < 3; ch++)
             {
-                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a * 6 / (255 * 10));
+                raw[i + ch] = static_cast<uint8_t>(raw[i + ch] * a / 255);
             }
             raw[i + 3] = 255;
         }
@@ -350,16 +351,20 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
     {
         image[i] = { raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3] };
     }
-    // Lights only ever draw as OBJ-window shapes (Darkness), so their soft glow becomes a hard disc: everything a
-    // quarter bright or more is lit.
+    // Lights only ever draw as OBJ-window shapes (Darkness), lit or not, so their soft glow is dithered: a pixel is
+    // lit when its alpha beats its spot in a 4x4 ordered (Bayer) pattern, the fewer lit the fainter the glow.
     static const char* const kLightSheets[] = { "glow-light", "player-light", "5-frame-glow", "5-frame-glow-bright" };
+    static const int kBayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
     for (const char* light : kLightSheets)
     {
         if (strcmp(spec.mTexture, light) == 0)
         {
-            for (Pixel& p : image)
+            for (size_t i = 0; i < image.size(); i++)
             {
-                p.a = p.a >= 64 ? 255 : 0;
+                const int x = static_cast<int>(i % pngW);
+                const int y = static_cast<int>(i / pngW);
+                Pixel& p = image[i];
+                p.a = p.a * 16 > (kBayer[y & 3][x & 3] * 2 + 1) * 255 / 2 ? 255 : 0;
             }
         }
     }

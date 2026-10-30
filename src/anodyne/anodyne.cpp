@@ -478,6 +478,7 @@ int main()
     World_SetMapLoader(LoadWarpMap);
     World_SetMapTable(kMaps, kMapCount);
     World_SetDarkTextures(kDarkTextures);
+    World_SetLightShade(kLightShade);
     Dialog_Init(objVram);
     Hud_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
@@ -666,6 +667,11 @@ int main()
                 mode = AppMode::Intro;
                 introPhase = 0;
                 introTimer = 90;
+                const int32_t blank = AudioManager_FindBgm("blank"); // (IntroState WaitStart)
+                if (blank >= 0)
+                {
+                    AudioManager_PlayBGM(static_cast<uint32_t>(blank));
+                }
             }
         }
         else if (mode == AppMode::Credits)
@@ -863,6 +869,10 @@ int main()
         if (blackFrames > 0 && --blackFrames == 0)
         {
             ScreenBlack(false);
+        }
+        if (mode == AppMode::MapViewer && !galleryOn)
+        {
+            World_ApplyBlendLayers();
         }
 
         AudioManager_Update();

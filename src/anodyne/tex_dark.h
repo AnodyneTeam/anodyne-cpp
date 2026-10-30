@@ -9,11 +9,17 @@
 // base colours.
 
 void TexDark_Init();
-// Once a frame while the play state draws: the texture (nullptr: none), its alpha (Darkness.alpha, 0-256) and a
-// tinting flash over it (FadeEffect: 0-32 of the way to tintColour).
-void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour);
-// How many of the BG colours the map uses (from 0): only those are blended.
-void TexDark_SetBgColours(int count);
+// Once a frame while the play state draws: the texture (nullptr: none), its alpha (Darkness.alpha, 0-256), the map's
+// ExtraBlend over it and its FG_Blend under it (nullptr: none), the grayscale between the darkness and the
+// ExtraBlend (any of these on alone runs without a darkness texture) and a tinting flash over all (FadeEffect: 0-32 of
+// the way to tintColour).
+void TexDark_Frame(const DarkTexture* texture, int alpha, int tint, uint16_t tintColour,
+                   const DarkTexture* extra = nullptr, const DarkTexture* fg = nullptr, bool gray = false);
+// A stand-in texture for Darkness.Render without one: the screen mixed towards black by alpha.
+const DarkTexture* TexDark_Plain();
+// How many of the BG colours the map uses (from 0): only those are blended. Those from fgFrom on are only the FG
+// layer's, which the FG_Blend leaves alone.
+void TexDark_SetBgColours(int count, int fgFrom);
 bool TexDark_Active();
 // Puts the plain colours back and stops (another screen takes over the palettes).
 void TexDark_Off();
