@@ -34,6 +34,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "annoyer", 16, 16, {
         { "flap", { 0, 1, 2, 3, 4, 5 }, 8.0f, true },
         { "flap_super", { 12, 13, 14, 15, 16, 17 }, 8.0f, true },
+        { "flap@cell", { 6, 7 }, 4.0f, true },
     } },
     { "arrows", 7, 7, {
         { "disabledRight", { 2 }, 1.0f, true },
@@ -77,6 +78,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "big_door", 32, 32, {
     } },
     { "big_health_pickup", 16, 16, {
+        { "float", { 0, 1, 2, 3 }, 5.0f, true },  // variant-relative
     } },
     { "big_statue", 32, 48, {
     } },
@@ -116,7 +118,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "active", { 4, 5 }, 5.0f, true },
     } },
     { "briar_arm_right", 64, 80, {
-        { "off", { 0, 1, 2, 3 }, 4.0f, true },  // variant-relative
+        { "off", { 1, 2, 3, 0 }, 4.0f, true },
         { "hit", { 4, 6, 4, 6, 4, 6, 4, 6, 4, 6, 4, 6 }, 15.0f, false },
         { "hitloop", { 4, 6 }, 15.0f, true },
         { "hurt", { 7, 8 }, 4.0f, true },
@@ -158,10 +160,13 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "briar_thorn_bullet", 16, 16, {
         { "move", { 0, 1 }, 10.0f, true },
     } },
+    { "broom_reflection", 16, 16, {
+    } },
     { "broom", 16, 16, {
         { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "broom_cell", 16, 16, {
+        { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "burst_plant", 16, 16, {
         { "idle", { 0 }, 1.0f, true },
@@ -216,10 +221,10 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
     { "crackedtiles", 16, 16, {
     } },
     { "dame-switch-pillar", 16, 16, {
-        { "up", { 0 }, 1.0f, false },  // variant-relative
-        { "down", { 0 }, 1.0f, false },  // variant-relative
-        { "dissolve", { 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0 }, 15.0f, false },  // variant-relative
-        { "solidify", { 0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 0 }, 15.0f, false },  // variant-relative
+        { "up", { 0 }, 1.0f, false },
+        { "down", { 1 }, 1.0f, false },
+        { "dissolve", { 0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 1 }, 15.0f, false },
+        { "solidify", { 1, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 0 }, 15.0f, false },
     } },
     { "dash_pads", 16, 16, {
     } },
@@ -356,6 +361,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "closed", { 31 }, 1.0f, true },
         { "open", { 32 }, 1.0f, true },
         { "a", { 50, 51 }, 4.0f, true },
+        { "a@2", { 0, 1 }, 4.0f, true },  // variant-relative
     } },
     { "fields_npcs", 32, 32, {
         { "a", { 15, 15, 15, 15, 15, 15, 15, 15, 16, 17, 17, 18, 18 }, 18.0f, true },
@@ -436,6 +442,9 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "walk_l", { 6, 7 }, 4.0f, true },  // variant-relative
     } },
     { "health_piece", 11, 6, {
+        { "full", { 0 }, 1.0f, true },
+        { "empty", { 1 }, 1.0f, true },
+        { "flash", { 0, 2 }, 7.0f, true },
     } },
     { "hole", 16, 16, {
     } },
@@ -476,11 +485,14 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "Open", { 16, 17, 18, 19, 20 }, 10.0f, false },
     } },
     { "knife", 16, 16, {
+        { "stab", { 1, 2, 2, 1, 0, 0 }, 20.0f, false },
     } },
     { "life_cicada", 16, 16, {
         { "idle", { 2, 3, 2, 3, 2, 2, 2, 2 }, 8.0f, true },  // variant-relative
         { "fly", { 0, 1 }, 14.0f, true },  // variant-relative
         { "gnaw", { 2, 3 }, 14.0f, true },  // variant-relative
+    } },
+    { "life_cicada_particle", 4, 4, {
     } },
     { "light_orb", 16, 16, {
         { "glow", { 0, 1, 2, 3, 0 }, 10.0f, true },  // variant-relative
@@ -530,6 +542,15 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "bike_r", { 2, 3 }, 8.0f, true },
         { "bike_l", { 2, 3 }, 8.0f, true },
         { "idle", { 22 }, 1.0f, true },
+        // Mitra.OnBike swaps the texture under the walking sprite's anims (Mitra.GetSprite).
+        { "walk_d", { 0, 1 }, 8.0f, true },
+        { "walk_l", { 2, 3 }, 8.0f, true },
+        { "walk_r", { 2, 3 }, 8.0f, true },
+        { "walk_u", { 4, 5 }, 8.0f, true },
+        { "idle_d", { 6 }, 8.0f, true },
+        { "idle_l", { 7 }, 8.0f, true },
+        { "idle_r", { 7 }, 8.0f, true },
+        { "idle_u", { 8 }, 8.0f, true },
     } },
     { "moving_platform", 16, 16, {
         { "unpressed-inactive", { 0 }, 1.0f, true },  // variant-relative
@@ -656,6 +677,7 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "walk_l", { 6, 7 }, 4.0f, true },
     } },
     { "redwalker", 32, 48, {
+        { "walk", { 0, 1, 2, 3, 4 }, 5.0f, true }, // (RedWalker starts it on a random frame)
     } },
     { "sadman", 16, 16, {
         { "a", { 0, 1 }, 2.0f, true },
@@ -719,6 +741,17 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "Move", { 0, 1 }, 3.0f, true },  // variant-relative
         { "Hurt", { 0, 6, 0, 6 }, 15.0f, false },  // variant-relative
         { "Dying", { 0, 6, 0, 6 }, 12.0f, false },  // variant-relative
+        { "Move@cell", { 4, 5 }, 3.0f, true },
+        { "Hurt@cell", { 4, 6, 4, 6 }, 15.0f, false },
+        { "Dying@cell", { 4, 6, 4, 6 }, 12.0f, false },
+    } },
+    // SolidColorRenderer squares (made by the content compiler): black and yellow 20x20, a red dot, and black, red,
+    // green and blue 32x32.
+    { "solid_square", 20, 20, {
+    } },
+    { "solid_dot", 2, 2, {
+    } },
+    { "solid_32", 32, 32, {
     } },
     { "slime_bullet", 8, 8, {
         { "move", { 0, 1 }, 10.0f, true },
@@ -728,11 +761,14 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "splash", { 0 }, 1.0f, true },  // variant-relative
     } },
     { "small_health_pickup", 10, 16, {
+        { "float", { 0, 1, 2, 3 }, 5.0f, true },  // variant-relative
     } },
     { "smoke_red", 32, 32, {
     } },
     { "space_npcs", 16, 16, {
         { "a", { 20, 21 }, 6.0f, true },
+        { "a@2", { 22, 23 }, 6.0f, true },
+        { "a@3", { 0, 10, 1, 11 }, 10.0f, true },
         { "walk_d", { 0, 1 }, 4.0f, true },  // variant-relative
         { "walk_r", { 2, 3 }, 4.0f, true },  // variant-relative
         { "walk_u", { 4, 5 }, 4.0f, true },  // variant-relative
@@ -829,12 +865,21 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "whirl_red", { 4, 5 }, 6.0f, true },
     } },
     { "whiteportal", 16, 16, {
+        { "a", { 0, 1, 2 }, 8.0f, true },
+        { "a@cell", { 4, 5 }, 8.0f, true },
     } },
     { "wide_attack_v", 12, 24, {
         { "a", { 0, 1, 2, 3, 4 }, 14.0f, false },
     } },
+    // Shell.Blade: one idle/rotate pair per blade (its start frame); rotate runs on 32 frames, 24 to a quarter turn.
+    // Frames 24-47 are the compiler's quarter-turned copies.
     { "windmill_blade", 192, 192, {
-        { "idle", { 0 }, 1.0f, true },  // variant-relative
+        { "idle", { 0 }, 1.0f, true },
+        { "rotate", { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7 }, 20.0f, true },
+        { "idle@8", { 8 }, 1.0f, true },
+        { "rotate@8", { 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }, 20.0f, true },
+        { "idle@16", { 16 }, 1.0f, true },
+        { "rotate@16", { 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23 }, 20.0f, true },
     } },
     { "windmill_inside", 48, 48, {
         { "idle", { 1 }, 1.0f, true },
@@ -868,6 +913,29 @@ const std::vector<SpriteSheetSpec>& GetSpriteSheetSpecs()
         { "die", { 25, 26, 27, 24, 25, 26, 27, 24, 25, 26, 27, 32 }, 12.0f, false },
     } },
     { "young_player_cell", 16, 16, {
+        { "walk_d", { 1, 0 }, 6.0f, true },
+        { "walk_r", { 2, 3 }, 8.0f, true },
+        { "walk_u", { 4, 5 }, 6.0f, true },
+        { "walk_l", { 6, 7 }, 8.0f, true },
+        { "attack_d", { 8, 9 }, 10.0f, false },
+        { "attack_r", { 10, 11 }, 10.0f, false },
+        { "attack_u", { 12, 13 }, 10.0f, false },
+        { "attack_l", { 14, 15 }, 10.0f, false },
+        { "fall", { 28, 29, 30, 31 }, 5.0f, false },
+        { "slumped", { 32 }, 1.0f, true },
+        { "whirl", { 25, 26, 27, 24 }, 12.0f, true },
+        { "idle_d", { 24 }, 4.0f, true },
+        { "idle_r", { 25 }, 4.0f, true },
+        { "idle_u", { 26 }, 4.0f, true },
+        { "idle_l", { 27 }, 4.0f, true },
+        { "jump_d", { 16, 17 }, 4.0f, true },
+        { "jump_r", { 18, 19 }, 4.0f, true },
+        { "jump_u", { 20, 21 }, 4.0f, true },
+        { "jump_l", { 22, 23 }, 4.0f, true },
+        { "enter_fall", { 2 }, 1.0f, true },
+        { "idle_climb", { 33 }, 1.0f, true },
+        { "climb", { 34, 35 }, 8.0f, true },
+        { "die", { 25, 26, 27, 24, 25, 26, 27, 24, 25, 26, 27, 32 }, 12.0f, false },
     } },
     { "young_player_reflection", 16, 16, {
     } },

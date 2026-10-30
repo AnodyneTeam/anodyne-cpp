@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "entity_types.h"
+
 // Layout of the content-compiler generated map registry (map_registry.h).
 
 struct MapPalData final
@@ -44,6 +46,18 @@ struct MapCollisionData final
     uint32_t mUnpackedSize = 0;
     const uint8_t* mClasses = nullptr;
     const uint8_t* mPacked = nullptr;
+    uint16_t mTileCount = 0;          // every tile of the tileset:
+    const uint8_t* mTiles = nullptr; // its own (allow, event, direction), for ChangeTile
+};
+
+// The BG layer's animated tiles (Map's AnimatedTile): mAnims holds 8 u16s each (the 16x16 tile; the four 8x8 VRAM tiles
+// its frames go in and the BG layer draws it from, TL TR BL BR; the frame count; fps; the first frame), mFrames each
+// frame's four 8bpp tiles.
+struct MapTileAnimData final
+{
+    uint32_t mCount = 0;
+    const uint16_t* mAnims = nullptr;
+    const uint8_t* mFrames = nullptr;
 };
 
 struct MapEntry final
@@ -52,6 +66,7 @@ struct MapEntry final
     MapTileSetData mTileSetData;
     MapScreenBlockData mScreenBlockData;
     MapCollisionData mCollision;
+    MapTileAnimData mTileAnims;
 };
 
 // Map music/ambience (from the map's Settings.json). An area is a world-pixel rectangle that overrides the music
@@ -71,6 +86,49 @@ struct MapAudioData final
     const char* mAmbience;
     uint32_t mAreaCount;
     const MapAudioArea* mAreas;
+};
+
+// Map darkness (Settings.json DarknessAlpha / PlayerLight / Darkness / ReplaceTiles). Alphas are in 1/256ths and
+// textures index kDarkTextures; -1 (or a null mReplace) means not set there, so the next settings' value applies: the
+// areas the player is in first, then the events that are set, then the map's own.
+struct MapDarkArea final
+{
+    int16_t mX;
+    int16_t mY;
+    int16_t mWidth;
+    int16_t mHeight;
+    int16_t mAlpha;
+    int8_t mPlayerLight;
+    int8_t mTexture;
+    const char* mReplace; // "a-b;c-d": BG tile a draws as b... ("": none)
+};
+
+struct MapDarkEvent final
+{
+    const char* mEvent;
+    int16_t mAlpha;
+    int8_t mTexture;
+    const char* mReplace;
+};
+
+struct MapDarkData final
+{
+    int16_t mAlpha;
+    bool mPlayerLight;
+    int8_t mTexture;
+    uint32_t mAreaCount;
+    const MapDarkArea* mAreas;
+    uint32_t mEventCount;
+    const MapDarkEvent* mEvents;
+};
+
+// A darkness texture (Darkness.SetTex): the 160x160 playfield's 8px bands, each one colour and alpha (RGBA8), blended
+// over the screen in the overlay or (mHardLight) hard light way.
+constexpr int kDarkBands = 20;
+struct DarkTexture final
+{
+    uint8_t mHardLight;
+    uint8_t mBands[kDarkBands][4];
 };
 
 // A background that scrolls at a fixed speed behind the map (or, with mOverlay, over everything: the windmill's
@@ -98,6 +156,9 @@ struct MapDoor final
     uint8_t mFacing;
     uint8_t mInteract;
     uint8_t mPortal;
+    int16_t mSrcX; // the Door preset's own position (its entity finds its trigger by it)
+    int16_t mSrcY;
+    uint8_t mType; // the Door "type" attribute (the C# class)
 };
 
 struct MapDoorList final
@@ -106,25 +167,47 @@ struct MapDoorList final
     const MapDoor* mDoors;
 };
 
-// A placeholder sprite for a map entity (Entities.xml): static frame `mFrame` of sheet kEntitySheets[mSheet],
-// top-left at (mX, mY) in map pixels.
-// What an entity does (everything else is a static placeholder sprite).
-enum EntityKind : uint8_t
+// SwapperControl (the map's Swapper.dat): where the transformer may swap tiles. A region is a map-pixel rectangle; the
+// first one holding a tile's top-left decides, none = default.
+enum SwapperState : uint8_t
 {
-    ENT_STATIC = 0,
-    ENT_CONSOLE = 1, // solid; Accept while facing it turns it green and counts as a solved puzzle
-    ENT_GATE = 2,    // solid until enough puzzles are solved / enemies killed (mArg = the XML "frame" condition)
-    ENT_BLANK_SAGE = 3, // BLANK's invisible Sage: when the camera arrives on its screen it says sage/intro line mArg+1
+    SWAP_DEFAULT,
+    SWAP_ALLOW,
+    SWAP_DISALLOW,
+    SWAP_DISALLOW_SILENTLY,
 };
 
+struct MapSwapRegion final
+{
+    uint8_t mState; // SwapperState
+    int16_t mX;
+    int16_t mY;
+    int16_t mW;
+    int16_t mH;
+};
+
+struct MapSwapperList final
+{
+    uint32_t mCount;
+    const MapSwapRegion* mRegions;
+};
+
+// A map entity preset (Entities.xml, resolved to a class by the content compiler like the C# EntityManager).
+// Positions are map pixels. mGlobalId indexes the game's per-preset state (EntityPreset.Alive / Activated) and is
+// unique over all maps. A placeholder (an entity the port doesn't implement yet) draws static frame mLookFrame of
+// kEntitySheets[mSheet].
 struct MapEntity final
 {
     int16_t mX;
     int16_t mY;
+    int16_t mFrame;  // the XML "frame" (DungeonEntranceRef: its entrance's x)
+    int16_t mLinkId; // -1: none (DungeonEntranceRef: its entrance's y; Treasure: the card of its screen)
+    uint16_t mGlobalId;
+    uint8_t mType;       // EntityPresetType
+    uint8_t mPermanence; // EntityPermanence
     uint8_t mSheet;
-    uint8_t mFrame;
-    uint8_t mKind;
-    uint8_t mArg;
+    uint8_t mLookFrame;
+    uint8_t mTypeValue; // kEntityTypeValues index: the XML "type" string
 };
 
 struct MapEntityList final

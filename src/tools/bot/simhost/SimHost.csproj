@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Plays the GBA port's simulator with the C# bot: the bot (and SimGameView, its view of the simulator) are compiled
+       into the C# game's assembly, which this references; it runs the bot's frames without running the game. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <!-- The C# game built with the bot in it (see ../cloud). -->
+    <AnodyneSharpDll Condition="'$(AnodyneSharpDll)' == ''">/home/snake/dev/AnodyneSharp/AnodyneSharp/AnodyneSharp.Multiplatform/bin/Debug/net10.0/AnodyneSharp.dll</AnodyneSharpDll>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.1.303" />
+    <Reference Include="AnodyneSharp">
+      <HintPath>$(AnodyneSharpDll)</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

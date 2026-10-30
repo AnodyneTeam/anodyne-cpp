@@ -5,10 +5,13 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
+#include "ecs.h"
+#include "game_state.h"
+#include "save.h"
 #include "screen_fx.hpp"
 #include "soft_mosaic.hpp"
 #include "sprite.h"
-#include "../build/tools/title_data.h"
+#include "title_data.h"
 
 namespace
 {
@@ -89,11 +92,7 @@ bool gShowTitleSprites = false;
 
 void PlaySfx(const char* name)
 {
-    const int32_t id = AudioManager_FindSfx(name);
-    if (id >= 0)
-    {
-        AudioManager_PlaySFX(static_cast<uint32_t>(id));
-    }
+    Game_PlaySfx(name);
 }
 
 // Semi-transparent OBJs (the door's spinning glow) add onto BG2/BG3/OBJ/backdrop at full weight.
@@ -286,7 +285,7 @@ void CreditsStart(int set)
 }
 
 // ---- new-game intro dialogue ----
-char gLines[48][kTextCols + 1];
+char gLines[48][kTextCols + 1] __attribute__((section(".sbss")));
 int gLineCount = 0;
 int gPage = 0;
 int gBoxFirstLine = 0;
@@ -312,7 +311,8 @@ void LoadPage()
         }
         if (*p == ' ')
         {
-            if (col > 0)
+            // A space never goes past the last column: index kTextCols is the line's terminator.
+            if (col > 0 && col < kTextCols)
             {
                 gLines[gLineCount][col++] = ' ';
             }
@@ -390,7 +390,7 @@ void DrawMenu()
     }
     if (gMenuIndex < 3)
     {
-        PutText(kViewX / 8 + 6, 5 + gMenuIndex * 2, "New Game", 15);
+        PutText(kViewX / 8 + 6, 5 + gMenuIndex * 2, Save_Exists(gMenuIndex) ? "Continue" : "New Game", 15);
     }
     PutText(kViewX / 8 + 1, 17, "A: select  B: back", 14);
     if (gHaveArrow)
@@ -434,11 +434,8 @@ void Title_Enter(ObjVramAllocator& vram)
     memset32(&tile_mem[kCbbText][0], 0, 8);
     memcpy32(&tile_mem[kCbbText][1], title::kFontTiles, sizeof(title::kFontTiles) / 4);
 
-    // Door map (SBB 29): the door's tiles in the top-left, the rest empty.
-    for (int i = 0; i < 32 * 64; i++)
-    {
-        se_mem[kSbDoor][i] = 0;
-    }
+    // Door map (SBB 29, 32x64: SBB 30 holds its lower half): the door's tiles in the top-left, the rest empty.
+    memset16(se_mem[kSbDoor], 0, 32 * 64);
     for (int y = 0; y < title::kDoorTilesH; y++)
     {
         for (int x = 0; x < title::kDoorTilesW; x++)
@@ -497,6 +494,8 @@ void Title_Enter(ObjVramAllocator& vram)
 
 bool Title_Update(int* slot)
 {
+    static uint32_t sFrames = 0; // (the seed: frames on the title, and where in the frame the press was read)
+    sFrames++;
     const bool anyKey = key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START);
     UpdateBg(true);
     bool start = false;
@@ -700,7 +699,12 @@ bool Title_Update(int* slot)
             PlaySfx("menu_select");
             if (gMenuIndex < 3)
             {
+                Rng_SeedFromPlayer(sFrames * 2654435761u ^ REG_VCOUNT);
                 *slot = gMenuIndex;
+                if (Save_Exists(gMenuIndex))
+                {
+                    return true; // (the file is loaded: no intro)
+                }
                 gState = State::IntroFade;
                 gTimer = 0;
             }

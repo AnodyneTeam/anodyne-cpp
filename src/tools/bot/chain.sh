@@ -9,7 +9,7 @@ for i in "${!PARTS[@]}"; do
   if [ $go = 0 ]; then prev=$p; continue; fi
   echo "== $p $(date +%H:%M)"
   if [ $i = 0 ]; then
-    rm -rf /tmp/bot/sd_nexus /tmp/bot/sec/end_nexus; mkdir -p /tmp/bot/sd_nexus /tmp/bot/sec
+    rm -rf /tmp/bot/sd_nexus /tmp/bot/sec/end_nexus; mkdir -p /tmp/bot/sd_nexus /tmp/bot/sec /tmp/bot/keep
     ANODYNE_BOT_SAVEDIR=/tmp/bot/sd_nexus ANODYNE_BOT_SECSAVE=/tmp/bot/sec ANODYNE_BOT_END_SNAP=end_nexus ANODYNE_BOT_DEBUG=1 timeout 3000 ./run_bot.sh nexus /tmp/bot/g_nexus 2>&1 | grep -aE "BOT FAILED" | head -2
     rm -rf /tmp/bot/keep/end_nexus; [ -d /tmp/bot/sec/end_nexus ] && cp -r /tmp/bot/sec/end_nexus /tmp/bot/keep/end_nexus
   else

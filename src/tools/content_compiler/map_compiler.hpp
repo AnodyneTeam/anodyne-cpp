@@ -212,6 +212,8 @@ public:
     // Adds tiles after the existing ones (growing the grid by whole rows, padded with empty tiles); returns the index
     // of the first added tile, i.e. width * old height.
     uint32_t AppendTiles(const std::vector<RGBATile>& tiles);
+    // The same for a one-row set (a de-duplicated one): it just gets wider, no padding.
+    uint32_t AppendTilesToRow(const std::vector<RGBATile>& tiles);
 
     TileSplitResult Make8x8WithRemap() const;
     TileDedupResult Deduplicate() const;
@@ -253,6 +255,28 @@ struct TileSplitResult final
     std::vector<std::array<uint32_t,4>> remap16to8;
 };
 
+// A map's animated tile (Maps/<MAP>/TileAnims/*.dat, TileData.GetAnimData): on the BG layer, 16x16 tile `tile` gets the
+// texture's 16x16 frames drawn over it in turn, `fps` a second.
+struct TileAnimSpec final
+{
+    uint32_t tile = 0;
+    int fps = 0;
+    std::vector<int> frames;
+    std::string texturePath;
+};
+
+// One compiled: on the BG layer its four 8x8 tiles are drawn from VRAM slots of their own (TL, TR, BL, BR, unique tile
+// indices; unflipped) that the frames are copied into; frame N is animFrameTiles[(firstFrame + N) * 4 ..] (the tile
+// with the texture frame over it). The other layers keep the plain tile.
+struct TileAnimOut final
+{
+    uint32_t tile = 0;
+    int fps = 0;
+    uint32_t slots[4] = {};
+    uint32_t firstFrame = 0;
+    uint32_t frameCount = 0;
+};
+
 struct MapCompileResult final
 {
     MapCompileResult()
@@ -273,6 +297,8 @@ struct MapCompileResult final
     uint32_t tile16Count = 0;
     // The scrolling background's 20x20 tile pattern (160x160 px), as (variant << 16) | unique 8x8 tile index; empty if none.
     std::vector<uint32_t> scrollPattern;
+    std::vector<TileAnimOut> anims;
+    std::vector<RGBATile> animFrameTiles;
 };
 
 class MapCompiler final
@@ -287,7 +313,8 @@ public:
     // bg2CSVPath / fgCSVPath may be missing files (the layer is then empty).
     MapCompileResult Load(const std::string& mapName, const std::string& mapBGCSVPath, const std::string& bg2CSVPath,
                           const std::string& fgCSVPath, const std::string& mapTilesetPath,
-                          const std::string& scrollTexturePath = std::string());
+                          const std::string& scrollTexturePath = std::string(),
+                          const std::vector<TileAnimSpec>& anims = {});
 
 private:
     void SaveMapAsPNG(const std::string& pngName, Array2D<uint32_t>& map, TileSet& tileSet);
@@ -298,6 +325,9 @@ private:
                                 const std::vector<DedupEntry>& remap8toUnique);
 
     void SaveTileSetAsPNG(const std::string& pngName, const TileSet& tileSet);
+    void CompileTileAnims(const std::vector<TileAnimSpec>& anims, TileDedupResult& dedup, MapCompileResult& ret);
+    bool CompileTileAnims(const std::vector<TileAnimSpec>& anims, TileDedupResult& dedup, MapCompileResult& ret,
+                          bool onlyUsed, uint32_t maxTiles);
 
     Array2D<uint32_t> mMap16;
     TileSet mTileSet16;

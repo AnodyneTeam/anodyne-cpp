@@ -32,14 +32,17 @@ struct DecodeCursor final
 {
     const AudioTrackData* track = nullptr;
     const uint8_t* slicePtr = nullptr; // next unread 8-byte slice of the current frame
-    uint64_t sliceBits = 0;            // current slice's remaining 3-bit residuals, MSB-first
-    const int16_t* dequantRow = nullptr; // dequant table row for the current slice's scalefactor
+    uint32_t sliceWords[2] = {};       // the slice's 3-bit residuals 0-9 and 10-19, each word MSB-first, as used
+    uint32_t sliceUsed = 0;            // residuals of the current slice decoded so far
+    const int32_t* dequantRow = nullptr; // dequant table row for the current slice's scalefactor
     uint32_t frameSamplesLeft = 0;     // samples in the current frame not yet loaded into a slice
     uint32_t sliceSamplesLeft = 0;     // samples left to decode in the current slice
     int32_t history[4] = {};
     int32_t weights[4] = {};
     int32_t lastSample = 0;  // previous decoded sample (for 2x upsampling's interpolation)
     uint32_t frameIndex = 0; // index of the NEXT frame to start
+    const int8_t* pcm = nullptr; // PCM8: the next sample
+    uint32_t pcmLeft = 0;        // PCM8: samples before the end
     uint8_t active = 0;
     uint8_t loop = 0;
 };
@@ -53,7 +56,9 @@ void DecodeCursor_Start(DecodeCursor* c, const AudioTrackData* track, bool loop)
 #if defined(__arm__)
 #define AUDIO_DECODE_IWRAM_DECL __attribute__((long_call))
 #define AUDIO_DECODE_IWRAM_DEF __attribute__((section(".iwram"), target("arm"), long_call))
+#define AUDIO_DECODE_IWRAM_DATA __attribute__((section(".iwram.data")))
 #else
+#define AUDIO_DECODE_IWRAM_DATA
 #define AUDIO_DECODE_IWRAM_DECL
 #define AUDIO_DECODE_IWRAM_DEF
 #endif
@@ -69,6 +74,12 @@ AUDIO_DECODE_IWRAM_DECL uint32_t DecodeCursor_Mix16(DecodeCursor* c, int32_t* ac
 // previous sample, the second the sample itself) into accum[0..outCount).
 // Returns output samples written. outCount must be even.
 AUDIO_DECODE_IWRAM_DECL uint32_t DecodeCursor_Mix16Up2(DecodeCursor* c, int32_t* accum, uint32_t outCount);
+
+#ifdef ANODYNE_PERF
+// The C++ loop alone (no qoa_run.s), for the perf build's check of the hand-written one.
+uint32_t DecodeCursor_Mix16Ref(DecodeCursor* c, int32_t* accum, uint32_t count);
+uint32_t DecodeCursor_Mix16Up2Ref(DecodeCursor* c, int32_t* accum, uint32_t outCount);
+#endif
 
 // The GBA outputs DirectSound at 8 bits per FIFO, but its mixer computes
 // 4*A + 2*B (FIFO A at 100% volume, FIFO B at 50%) and the default SOUNDBIAS

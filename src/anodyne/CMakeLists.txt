@@ -19,19 +19,14 @@ set(LIBTONC_DIR "${SOURCEDIR}/3rdParty/libtonc")
 # ------------------------------------------------------------
 # Sources
 # ------------------------------------------------------------
+include(${CMAKE_CURRENT_SOURCE_DIR}/sources.cmake)
 set(FIRST_SOURCES
     ${SOURCEDIR}/anodyne/platform/gba/sys/syscalls.c
     ${SOURCEDIR}/anodyne/platform/gba/sys/gba_crt0.s
-    anodyne.cpp
-    dialog.cpp
-    audio_manager.cpp
-    audio_decode_core.cpp
-    sprite.cpp
-    entities.cpp
-    title.cpp
-    soft_mosaic.cpp
-    pixelate_test.cpp
-    world.cpp
+    ${SOURCEDIR}/anodyne/platform/gba/sys/qoa_run.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/lmul_arm.s
+    ${SOURCEDIR}/anodyne/platform/gba/sys/fx_div_arm.s
+    ${ANODYNE_GAME_SOURCES}
 )
 
 # ------------------------------------------------------------
@@ -52,7 +47,24 @@ target_compile_options(first_lib PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++14 -O3 -Wall -fno-exceptions -fno-rtti>
 )
 
+# -DANODYNE_PERF=ON: the perf probe (PerfProbe in anodyne.cpp) that tools/perf's mGBA harness drives.
+option(ANODYNE_PERF "Build the ROM with the perf probe" OFF)
+if(ANODYNE_PERF)
+    target_compile_definitions(first_lib PRIVATE ANODYNE_PERF)
+    # (line numbers for the profiler: tools/perf/symbolise.py --lines; the ROM itself is the same)
+    target_compile_options(first_lib PRIVATE -g)
+endif()
+
+# -DANODYNE_LINK=ON: the bot link over the link port (link_ipc.h), for tools/link's mGBA bridge. Not for release:
+# the ROM waits on the cable every frame.
+option(ANODYNE_LINK "Build the ROM with the bot link over the link port" OFF)
+if(ANODYNE_LINK)
+    target_sources(first_lib PRIVATE ${SOURCEDIR}/anodyne/link_ipc.cpp)
+    target_compile_definitions(first_lib PRIVATE ANODYNE_LINK)
+endif()
+
 target_include_directories(first_lib PRIVATE
+    "${CMAKE_BINARY_DIR}/tools" # content-compiler output (map_registry.h, sprite_registry.h, ...)
     "${LIBTONC_DIR}/include"
     "${SOURCEDIR}/3rdParty/qoa"
 )
@@ -109,6 +121,8 @@ add_custom_command(
         "$<TARGET_FILE:first_lib>"
         "$<TARGET_FILE:tonc>"
         -lc
+        # libm: the game's float maths (sqrtf/sinf/cosf/floorf/ceilf, as the C# uses MathF)
+        -lm
         -Wl,--end-group
         "${CMAKE_BINARY_DIR}/tools/audio_blob.bin.o"
         -o first.elf

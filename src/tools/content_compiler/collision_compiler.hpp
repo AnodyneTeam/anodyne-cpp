@@ -13,5 +13,6 @@
 // are OR-ed; BG2's event/direction wins when it has one). The byte grid is BIOS-LZ77 compressed.
 //
 // Writes <MAP>_col.h (namespace <MAP>: gColWidth/gColHeight in cells, gColClassCount, gColClasses[3 * count],
-// gColUnpackedSize, gColPacked[]). Returns false if the map's BG.csv can't be read.
+// gColTileCount, gColTiles[3 * tiles] (each tile's own collision, for ChangeTile), gColUnpackedSize,
+// gColPacked[]). Returns false if the map's BG.csv can't be read.
 bool CompileMapCollision(const ContentPaths& contentPaths, const std::string& mapName);

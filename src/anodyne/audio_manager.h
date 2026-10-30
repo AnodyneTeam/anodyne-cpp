@@ -15,11 +15,15 @@ typedef struct AudioTrackData
 {
     const char* name;      // debug-HUD only
     uint32_t sampleRate;
-    uint32_t totalSamples; // debug-HUD only (duration display)
+    uint32_t totalSamples;
     uint32_t frameCount;
     uint8_t loopEnabled;
-    uint32_t loopStartFrame; // index into `frames`, meaningful only if loopEnabled
+    uint32_t loopStartFrame; // index into `frames` (PCM8: the first sample), meaningful only if loopEnabled
     const AudioFrameRef* frames;
+    // PCM8 (short SFX): frames[0] holds the samples, a signed byte each, each worth byte << (8 - pcmShift) at
+    // 16-bit scale. Mixed with an add rather than decoded.
+    uint8_t pcm8;
+    uint8_t pcmShift;
 } AudioTrackData;
 
 // Must be >= AudioCompilerOptions::frameLenSamples (see audio_compiler.hpp) -
@@ -49,6 +53,12 @@ uint32_t AudioManager_GetBgmCount(void);
 // CPU cycles the audio VBlank ISR took (last call / max since reset). One
 // VBlank period is 280896 cycles; this needs to stay a small fraction of it.
 uint32_t AudioManager_GetIsrCyclesLast(void);
+// The free-running CPU cycle counter (timers 2+3).
+uint32_t AudioManager_Cycles(void);
+#ifdef ANODYNE_PERF
+// Checks the hand-written QOA loop against the C++ one over every sound: the samples that differ, of how many.
+void AudioManager_SelfTest(uint32_t* bad, uint32_t* samples);
+#endif
 uint32_t AudioManager_GetIsrCyclesMax(void);
 void AudioManager_ResetIsrCyclesMax(void);
 uint32_t AudioManager_GetSfxCount(void);

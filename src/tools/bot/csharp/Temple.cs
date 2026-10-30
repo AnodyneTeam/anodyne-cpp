@@ -256,7 +256,8 @@ namespace AnodyneSharp.Recording
                 ">642,818 W10 `h2_45"));
             // (4,5), first visit: its dust onto the DOWN platform to the pocket, hop the hole to the bullet Slimes and kill them (that opens the
             // north gate for good), their dust back over the hole onto the UP platform, and up. A fight may end with us back in the pocket.
-            yield return Section("hotel2 (4,5) slimes", () => Exec("O1 X0 J41,51,r+ W10 J42,51,d- W20 (42,52 W10 )712,920,40 G690,915 W5 er697 W20 G752,915 X1 F W60 X0 " +
+            // (fight from where the hop lands before walking on: a bullet Slime in the way of the walk pushed us back into the pocket)
+            yield return Section("hotel2 (4,5) slimes", () => Exec("O1 X0 J41,51,r+ W10 J42,51,d- W20 (42,52 W10 )712,920,40 G690,915 W5 er697 W20 X1 F G752,915 F W60 X0 " +
                 "'43,57,5 )712,920,40 G690,915 W5 er697 W30 J47,58,r+ W10 G722,915 W5 el W30 J43,57,u- W20 (43,56 W10 `h2_45b"));
             // (4,5) again: out west and back puts its dust back; onto the RIGHT platform this time, across to the open gate, and (4,4)'s Dog.
             yield return Section("hotel2 (4,5) to (4,4) and its dog", () => Exec("O1 X0 G691,822 W5 G660,822 W5 G610,820 W20 G660,820 W20 J41,51,r+ W10 " +
@@ -410,10 +411,13 @@ namespace AnodyneSharp.Recording
             yield return Section("hotel floor 3 key", () => Exec("g4 O1 X1 >440,872 W30 lift3 W30 H3,10 W20 >555,1675 G553,1676 W20 I608,1616,d W60 T W30"));
             yield return Section("hotel dasher card", () => Exec("g4 O1 X1 H2,9 W20 >339,1458 G339,1458,kl W30 g0 O1 X0 G300,1458 sight243,1458 W10 U30 W30 g2 O1 X0 W5 sight291,1314 J18,82,u W60 T W30"));
             yield return Section("hotel back from the dasher", () => Exec("g2 O1 X0 sight243,1412 D20 W5 sight307,1458 W10"));
-            yield return Section("hotel to the burst plant chasm", () => Exec("g3 O1 X1 door27 W30 H8,1 W30 H8,2 W30"));
+            // (heal on the way: past the chasm there is no way back to a checkpoint, the floor-3 fights leave us on half hearts, and
+            // (9,2)'s Slime by the burst plant takes 4-5 more)
+            yield return Section("hotel to the burst plant chasm", () => Exec("heal W30 g3 O1 X1 door27 W30 H8,1 W30 H8,2 W30"));
             string wade = string.Concat(System.Linq.Enumerable.Repeat("D2 RD4 ", 18));
             yield return Section("hotel burst plant chasm", () => Exec("D16 er1327 R60 +k W10 G1408,452 L7 " + wade + "R20 >1456,560"));
-            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F W20 +s W60"));
+            // ((9,3)'s Dog darts about the chest's ledge and can outlast a fight: a soft one, and the chest is opened either way)
+            yield return Section("hotel burst plant card", () => Exec("J92,35,d+ J92,35,d- F W20 dust:92,30 U70 L14 F W20 sweepup:92,28 J92,21,l- L10 U80 dust:93,13 R10 F W20 ~1544,552 F3600 W20 +s W60"));
         }
     }
 
@@ -427,15 +431,16 @@ namespace AnodyneSharp.Recording
         public override IEnumerable<object> Run()
         {
             yield return Say("Extras: menus, cheats, the death screen");
-            yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
-            yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
-            yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
-            // Debug World, where the last card left us (a pocket ringed with pits: wade its channel north). The big door (step on its
+            // Debug World first, where the last card left us (a pocket ringed with pits: wade its channel north); the death screen
+            // and the title both come back at the Nexus checkpoint, with no way into Debug on foot. The big door (step on its
             // sill, off, on again: the card count lock, then it opens), the keys lying about, the sound test console (the music and
             // sound lists), the test NPC, and the black thing: jump in it 50 times. Out by the menu.
             yield return Section("extras debug world", () => Exec("O1 X1 a1 P720,440 a0 W10 >714,90 W5 G714,64 W400 D24 W30 U30 W400 P56,40 W5 P88,56 W5 P56,184 W5"
                 + " I32,192,d W30 A1 W10 R1 W8 R1 W8 A1 W60 C1 W10 D1 W8 A1 W10 R1 W8 A1 W30 C1 W10 C1 W10 C1 W10 C1 W30 I96,240,d W20 T W20 P872,232 W10"
                 + string.Concat(System.Linq.Enumerable.Repeat(" C1 W10", 52)) + " W30 n0 W120 `x_debug"));
+            yield return Section("extras menu tour", () => Exec("O1 X1 menutour W30"));
+            yield return Section("extras cheats and the death screen", () => Exec("O1 X1 cheats W30 `x_died"));
+            yield return Section("extras the title and back", () => Exec("O1 X1 title W30 `x_title"));
             // The Go quest: a word with each of its NPCs in turn (each one's talk moves it on: Cliff, Beach, Forest, Fields, Cell, Suburb,
             // Space), which opens Go's door 71 (walled in: dug to) up to the note rock. On the way: the Cliff dog, Mitra in Fields, the
             // Space cube kings.
@@ -453,14 +458,29 @@ namespace AnodyneSharp.Recording
 
     public class Postgame : BotScript
     {
+        /// <summary>
+        /// After the credits the game can go on from a save in BLUE (3,0): the way to the Nexus pad is back up (2,0)'s
+        /// laser column, its dust plugs gone with the reload. Plug them again as the endgame did (nothing to do from anywhere else).
+        /// </summary>
+        private static IEnumerable<object> OutOfBlue()
+        {
+            if (Map != "BLUE")
+            {
+                yield break;
+            }
+            yield return Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10");
+        }
+
         public override IEnumerable<object> Run()
         {
             yield return Say("The post-game cards");
+            yield return Section("out of blue", OutOfBlue);
             // Hotel (5,0) City Man: from the roof (the Hotel's menu warp lands there), dig east into the Teleguy room, clear it for its
             // kill gate and open the chest. (4,0) on the way is left alone: its Burst Plant sits in the ceiling between two Pew Lasers,
             // and fighting it under them cost the whole health bar; walking straight through costs a bolt from each. The menu warp
-            // lands back on the roof, which has no way down to the portal, so out the way the endgame leaves.
-            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 X0 >800,100 W5 X1 g6 F W60"
+            // lands back on the roof, which has no way down to the portal, so out the way the endgame leaves. (Hearts topped up first: the
+            // game goes on after the credits with what the endgame left, 8 of 14 once, and (4,0)'s bolts took the rest.)
+            yield return Section("hotel city man card", () => Exec("O1 X1 viaHOTEL W30 heal W30 n0 W120 >384,420 U30 W90 H3,0 W30 dig40,6 W30 X0 >800,100 W5 X1 g6 F W60"
                 + " g0 I928,80,d W60 T W30 X0 n0 W120 H2,3 W10 (25,33 W10 D20 W30 >387,656 W10 ed W120 D30 W30 >441,872 W30 A W200 X1"));
             // Street (1,6) Follower: dig down through the hedge to the chest.
             yield return Section("street follower card", () => Exec("O1 X1 viaSTREET W30 dig17,64 W10 I272,1008,d W60 T W30"));
@@ -525,8 +545,9 @@ namespace AnodyneSharp.Recording
             // forth over the edge, no map collision on either frame of it) holding Up climbs the edge line through the walls into the
             // room, and holding Down back out again after the chest. Post-game only, with the swap broom.
             yield return Section("nexus sealed card", () => Exec("O1 X1 >788,548 W10 wigU@408 W10 I832,400,d W60 T W30 >805,410 W10 wigD@546 W10"));
+            // (d1200: (1,3)'s Annoyers first, from the bank: dodging them off the raft sent it round the current's loop for good)
             yield return Section("debug green man card", () => Exec("O1 X1 door90 W60 >40,440 W10 ~40,470 W5 ~40,530 W5 ~150,600 W5"
-                + " ~340,500 W5 ~485,612 O0 rhop31,38/31,36/33,36/35,36/35,34/37,34/37,32/38,31;p;t12;rR O1 ~720,570 W10 I720,592,d W60 T W30"));
+                + " ~340,500 W5 d1200 W10 ~485,612 O0 rhop31,38/31,36/33,36/35,36/35,34/37,34/37,32/38,31;p;t12;rR O1 ~720,570 W10 I720,592,d W60 T W30"));
         }
     }
 
@@ -547,7 +568,8 @@ namespace AnodyneSharp.Recording
             yield return Section("blue (2,0) lasers", () => Exec("g6 O1 X1 >456,150 W10 dust:28,7 W10 G452,100 W10 dust:28,5 W10 G452,68 W10 dust:28,3 W10 G452,24 W10"));
             yield return Section("blue mitra buttons", () => Exec("g6 O1 X1 b150,40 W30 G72,36 W1500"));
             yield return Section("blue back to go", () => Exec("g6 O1 X1 >36,84 W5 L40 W200 g6 O1 X1 >40,408 W30 L60 W100"));
-            yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,60 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
+            // (b60,57, not 60,60: a box at y 60 reaches the 2x2 pit's core corner, and a fight that left us below it stood at the lip)
+            yield return Section("happy", () => Exec("g6 O1 X1 b230,390 W30 b60,57 W30 b340,84 W30 b550,180 W30 b516,292 W30 b708,180 W30"));
             yield return Section("happy back to go", () => Exec("g6 O1 X1 W30 >764,244 W10 R40 W150 >392,300 W30"));
             yield return Section("briar", () => Exec("g6 O1 X1 F40000 W600 ending credits"));
         }
@@ -555,7 +577,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Up the pixel seam between (4,0)'s pits, with steam pushing off it (a fall puts us back at the bottom: again), then west along the top.</summary>
         private static IEnumerable<object> BlueSteamClimb()
         {
-            for (int t = 0; t < 4 && Player.Position.Y > 40; t++)
+            for (int t = 0; t < 4 && Player.Position.ToXna().Y > 40; t++)
             {
                 yield return Exec("O1 X0 !1 R32 !0 @x731,u ^x731,u,140 W5");
                 yield return Wait(60); // (a fall: back at the bottom by now)

@@ -64,6 +64,13 @@ namespace AnodyneSharp.Recording
                     yield return Heal(); // heal: top the hearts up at a checkpoint we did not save at last
                     continue;
                 }
+                if (tok.StartsWith("sweepup:"))
+                {
+                    // sweepup:<x>,<y>: sweep up the loose dust nearest tile x,y, from the floor beside it (nothing if we carry dust already)
+                    var a = tok.Substring(8).Split(',');
+                    yield return CrowdPlatforms.SweepUpNear(int.Parse(a[0]), int.Parse(a[1]));
+                    continue;
+                }
                 if (tok.StartsWith("dust:"))
                 {
                     // dust:<x>,<y>: carry a dust of this screen onto tile x,y; dust:<Type>: onto the thing of that type here (dust:ArthurDanger:
@@ -78,7 +85,7 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         var thing = BotRunner.Entities().First(e => e.exists && e.GetType().Name == arg);
-                        target = new Point((int)Math.Floor(thing.Hitbox.Center.X / 16f), (int)Math.Floor(thing.Hitbox.Center.Y / 16f));
+                        target = new Point((int)Math.Floor(thing.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(thing.Hitbox.Center.ToXna().Y / 16f));
                     }
                     yield return DustOnto(target);
                     continue;
@@ -181,7 +188,7 @@ namespace AnodyneSharp.Recording
                                 yield return Wait(20);
                                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                                 {
-                                    System.Console.Error.WriteLine($"  dd: from {here} toward {t}: me {Pos} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}"))}");
+                                    System.Console.Error.WriteLine($"  dd: from {here} toward {t}: me {Pos} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position.ToXna()}{(e.exists ? "" : "x")}"))}");
                                 }
                                 break;
                             }
@@ -215,16 +222,16 @@ namespace AnodyneSharp.Recording
                     if (tok == "ca1")
                     {
                         BotNav.HardAvoid = new HashSet<Point>();
-                        foreach (var c in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser && e.velocity == Vector2.Zero))
+                        foreach (var c in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Cell.Chaser && e.velocity.ToXna() == Vector2.Zero))
                         {
-                            bool horiz = ChaserHorizField?.GetValue(c) is true;
+                            bool horiz = ChaserHorizField?.GetValueF(c) is true;
                             for (int k = 0; k < 10; k++)
                             {
                                 for (int j = 0; j < 10; j++)
                                 {
                                     var t = new Point(Grid.X * 10 + k, Grid.Y * 10 + j);
-                                    bool on = horiz ? t.Y * 16 + 4 > c.Position.Y - 14 && t.Y * 16 - 2 < c.Position.Y + 8
-                                                    : t.X * 16 + 8 > c.Position.X - 10 && t.X * 16 - 2 < c.Position.X + 8;
+                                    bool on = horiz ? t.Y * 16 + 4 > c.Position.ToXna().Y - 14 && t.Y * 16 - 2 < c.Position.ToXna().Y + 8
+                                                    : t.X * 16 + 8 > c.Position.ToXna().X - 10 && t.X * 16 - 2 < c.Position.ToXna().X + 8;
                                     if (on)
                                     {
                                         BotNav.HardAvoid.Add(t);
@@ -288,7 +295,7 @@ namespace AnodyneSharp.Recording
                     int frames = int.Parse(seam.Groups[4].Value);
                     for (int w = 0; w < frames; w++)
                     {
-                        float e = (xAxis ? Player.Position.X : Player.Position.Y) - want; // (on the line while 0 <= e < 1)
+                        float e = (xAxis ? Player.Position.ToXna().X : Player.Position.ToXna().Y) - want; // (on the line while 0 <= e < 1)
                         ExactKeysUntil = BotRunner.Frame + 1;
                         if (e >= 0 && e < 1)
                         {
@@ -338,7 +345,7 @@ namespace AnodyneSharp.Recording
                         var a = tok.Substring(1).Split(',').Select(float.Parse).ToArray();
                         var at = new Vector2(a[0], a[1]);
                         int most = a.Length > 3 ? (int)a[3] : 600;
-                        for (int w = 0; w < most && Enemies().Any(e => (e.Hitbox.Center.ToVector2() - at).Length() < a[2]); w++)
+                        for (int w = 0; w < most && Enemies().Any(e => (e.Hitbox.Center.ToXna().ToVector2() - at).Length() < a[2]); w++)
                         {
                             BotRunner.Status = $"wait for the enemies to leave {at}";
                             BotRunner.NotStuck();
@@ -360,7 +367,7 @@ namespace AnodyneSharp.Recording
                             break;
                         }
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
-                        var here = BotNav.TileOf(Player.Position);
+                        var here = BotNav.TileOf(Player.Position.ToXna());
                         var to = new Point(a[0], a[1]);
                         if (here != to && BotNav.FindPath(here, to) == null)
                         {
@@ -409,7 +416,7 @@ namespace AnodyneSharp.Recording
                         var sb = new System.Text.StringBuilder($"ENTITIES grid {Grid} player {Pos}\n");
                         foreach (var e in BotRunner.Entities())
                         {
-                            sb.Append($"  {e.GetType().Name} pos={e.Position} size={e.width}x{e.height} exists={e.exists} solid={e.Solid}\n");
+                            sb.Append($"  {e.GetType().Name} pos={e.Position.ToXna()} size={e.width}x{e.height} exists={e.exists} solid={e.Solid}\n");
                         }
                         System.Console.Error.WriteLine(sb.ToString());
                         break;
@@ -439,7 +446,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Dev only (experiments, never in a recorded route): put the player at x,y.
                         var a = tok.Substring(1).Split(',');
-                        Player.Position = new Vector2(float.Parse(a[0]), float.Parse(a[1]));
+                        Player.Native.Position = new Vector2(float.Parse(a[0]), float.Parse(a[1]));
                         yield return Wait(5);
                         break;
                     }
@@ -521,7 +528,7 @@ namespace AnodyneSharp.Recording
                     }
                     case '#': yield return TempleButtonRoom(); break;
                     case 'N':
-                        System.Console.Error.WriteLine("LANES: " + string.Join(" ", BotNav.LaneAxes().Keys.Select(q => $"{q.X},{q.Y}")) + " EMITTERS: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").Select(e => $"{(int)e.Position.X / 16},{(int)e.Position.Y / 16}{e.facing}")));
+                        System.Console.Error.WriteLine("LANES: " + string.Join(" ", BotNav.LaneAxes().Keys.Select(q => $"{q.X},{q.Y}")) + " EMITTERS: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").Select(e => $"{(int)e.Position.ToXna().X / 16},{(int)e.Position.ToXna().Y / 16}{e.facing}")));
                         System.Console.Error.WriteLine("BLOCKED: " + string.Join(" ", BotNav.Blocked.Select(q => $"{q.X},{q.Y}")));
                         for (int r = int.Parse(Environment.GetEnvironmentVariable("NR0") ?? "20"); r <= int.Parse(Environment.GetEnvironmentVariable("NR1") ?? "28"); r++) { System.Console.Error.WriteLine($"{r,3} " + BotNav.DebugRow(r, int.Parse(Environment.GetEnvironmentVariable("NC0") ?? "14"), int.Parse(Environment.GetEnvironmentVariable("NC1") ?? "30"))); }
                         break;
@@ -562,11 +569,11 @@ namespace AnodyneSharp.Recording
                             throw new InvalidOperationException("bot: token c grants cards: development only (ANODYNE_BOT_DEV=1)");
                         }
                         var cs = GlobalState.inventory.CardStatus;
-                        for (int ci = 0; ci < cs.Length && GlobalState.inventory.CardCount < n; ci++)
+                        for (int ci = 0; ci < cs.Length && Gs.CardCount < n; ci++)
                         {
                             cs[ci] = true;
                         }
-                        System.Console.Error.WriteLine($"DEV: cards topped up to {GlobalState.inventory.CardCount} (not earned)");
+                        System.Console.Error.WriteLine($"DEV: cards topped up to {Gs.CardCount} (not earned)");
                         break;
                     }
                     case '>':
@@ -583,15 +590,15 @@ namespace AnodyneSharp.Recording
                         var goalT = BotNav.TileOf(new Vector2(float.Parse(a[0]), float.Parse(a[1])));
                         BotNav.AllowWater = true;
                         BotNav.AllowJump = true;
-                        var rp = a.Length > 2 ? BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), goalT, GlobalState.inventory.CanJump) : BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalT, goalT);
+                        var rp = a.Length > 2 ? BotNav.RaftPath(BotNav.TileOf(Pos), OnConveyor(BotNav.TileOf(Pos)), goalT, Gs.CanJump) : BotNav.FindPath(BotNav.TileOf(Pos), t => t == goalT, goalT);
                         BotNav.AllowWater = false;
                         BotNav.AllowJump = false;
                         if (rp == null)
                         {
-                            System.Console.Error.WriteLine($"ROUTE to {goalT}: none (CanJump={GlobalState.inventory.CanJump})");
+                            System.Console.Error.WriteLine($"ROUTE to {goalT}: none (CanJump={Gs.CanJump})");
                             break;
                         }
-                        var sbr = new System.Text.StringBuilder($"ROUTE to {goalT} (CanJump={GlobalState.inventory.CanJump}): {rp.Count} tiles: ");
+                        var sbr = new System.Text.StringBuilder($"ROUTE to {goalT} (CanJump={Gs.CanJump}): {rp.Count} tiles: ");
                         string lastKind = "", lastScr = "";
                         foreach (var t in rp)
                         {
@@ -626,7 +633,7 @@ namespace AnodyneSharp.Recording
                     {
                         // h<sx>,<sy>,<ox>,<oy>: farm hearts by re-entering screen (sx,sy) (enemies respawn) from (ox,oy) until HP is full
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
-                        for (int i = 0; i < 10 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH; i++)
+                        for (int i = 0; i < 10 && Gs.Health < Gs.MaxHealth; i++)
                         {
                             yield return GoScreenTo(a[0], a[1]);
                             yield return CollectHearts();
@@ -662,7 +669,7 @@ namespace AnodyneSharp.Recording
                     {
                         // Debug: =x0,y0,x1,y1 prints the tiles of that rectangle: '#' solid, '+' partly solid, '.' floor, 'o' still water, U/D/L/R water flowing that way, else the event's initial (h hole, s spike...)
                         var a = tok.Substring(1).Split(',').Select(int.Parse).ToArray();
-                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(BotNav.CurrentMap);
+                        var tiles = (AnodyneSharp.MapData.Tiles.Tile[])typeof(AnodyneSharp.MapData.Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValueF(BotNav.NativeMap);
                         for (int ty = a[1]; ty <= a[3]; ty++)
                         {
                             var row = new System.Text.StringBuilder($"FLOW {ty,3} ");
@@ -685,7 +692,7 @@ namespace AnodyneSharp.Recording
                         }
                         GlobalState.events.ActivatedNexusPortals.Add(tok.Substring(1));
                         break;
-                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={GlobalState.inventory.CanJump} cards={GlobalState.inventory.CardCount} keys={GlobalState.inventory.GetCurrentMapKeys()} hp={GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} long={GlobalState.inventory.HasLengthen} wide={GlobalState.inventory.HasWiden} killed={GlobalState.ENEMIES_KILLED} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count} goquest={GlobalState.events.GetEvent("GoQuestProgress")}"); break;
+                    case 'q': System.Console.Error.WriteLine($"CARRYING {Player.broom.dust != null} raft={HasRaft()} grid={Grid} pos={Pos} portals={string.Join(",", GlobalState.events.ActivatedNexusPortals)} jump={Gs.CanJump} cards={Gs.CardCount} keys={Gs.MapKeys} hp={Gs.Health}/{Gs.MaxHealth} long={GlobalState.inventory.HasLengthen} wide={GlobalState.inventory.HasWiden} killed={Gs.EnemiesKilled} f{BotRunner.Frame} dm={Player.dontMove} st={Player.state} enemies={Enemies().Count} goquest={GlobalState.events.GetEvent("GoQuestProgress")}"); break;
                     case '?':
                     {
                         // Debug: tile class of tiles x,y[,x2,y2...]
@@ -740,11 +747,11 @@ namespace AnodyneSharp.Recording
                         // Debug: every entity preset of the current map whose type name contains the filter (empty = all), by screen.
                         string f = tok.Substring(1);
                         var sb = new System.Text.StringBuilder("PRESETS\n");
-                        foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME))
+                        foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map))
                         {
                             if (pr.Type.Name.Contains(f))
                             {
-                                sb.Append($"  {pr.Type.Name} screen {(int)pr.Position.X / 160},{(int)pr.Position.Y / 160} pos {(int)pr.Position.X},{(int)pr.Position.Y} frame {pr.Frame} tv {pr.TypeValue} act {pr.Activated} alive {pr.Alive}\n");
+                                sb.Append($"  {pr.Type.Name} screen {(int)pr.Position.ToXna().X / 160},{(int)pr.Position.ToXna().Y / 160} pos {(int)pr.Position.ToXna().X},{(int)pr.Position.ToXna().Y} frame {pr.Frame} tv {pr.TypeValue} act {pr.Activated} alive {pr.Alive}\n");
                             }
                         }
                         System.Console.Error.WriteLine(sb);
@@ -761,7 +768,7 @@ namespace AnodyneSharp.Recording
                         {
                             if (e.exists && e.width > 0)
                             {
-                                ents[new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16)] = e.GetType().Name[0];
+                                ents[new Point((int)(e.Position.ToXna().X + 8) / 16, (int)(e.Position.ToXna().Y + 8) / 16)] = e.GetType().Name[0];
                             }
                         }
                         var sb = new System.Text.StringBuilder();
@@ -822,7 +829,7 @@ namespace AnodyneSharp.Recording
                         int limit = a.Length > 5 ? int.Parse(a[5]) : 1200;
                         for (int i = 0; ; i++)
                         {
-                            if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == a[0] && r.Contains(new Point((int)e.Position.X, (int)e.Position.Y))))
+                            if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == a[0] && r.Contains(new Point((int)e.Position.ToXna().X, (int)e.Position.ToXna().Y))))
                             {
                                 break;
                             }
@@ -897,7 +904,7 @@ namespace AnodyneSharp.Recording
             {
                 throw new InvalidOperationException($"bot: no checkpoint on {Map} screen {Grid}");
             }
-            yield return GoTo(cp.Position.X - 1, cp.Position.Y - 3);
+            yield return GoTo(cp.Position.ToXna().X - 1, cp.Position.ToXna().Y - 3);
             yield return Wait(10);
             yield return Tap(KeyFunctions.Accept);
             yield return Wait(30);
@@ -913,7 +920,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> Heal(bool warp = true, int? budgetTiles = null)
         {
-            _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
+            _healOk = Gs.Health >= Gs.MaxHealth;
             if (_healOk || _healing)
             {
                 yield break;
@@ -926,13 +933,13 @@ namespace AnodyneSharp.Recording
                 {
                     var here = BotNav.TileOf(Pos);
                     var active = GlobalState.checkpoint;
-                    bool jump = GlobalState.inventory.CanJump;
+                    bool jump = Gs.CanJump;
                     Vector2? best = null;
                     int bestLen = int.MaxValue;
-                    foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Where(pr => pr.Type == typeof(AnodyneSharp.Entities.Events.Checkpoint)))
+                    foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Where(pr => pr.Type == typeof(AnodyneSharp.Entities.Events.Checkpoint)))
                     {
-                        var pos = pr.Position + new Vector2(4, 4);
-                        if (active != null && active.map == GlobalState.CURRENT_MAP_NAME && active.Position == pos)
+                        var pos = pr.Position.ToXna() + new Vector2(4, 4);
+                        if (active != null && active.map == Gs.Map && active.Position.ToXna() == pos)
                         {
                             continue; // the one we saved at last does not heal
                         }
@@ -941,7 +948,7 @@ namespace AnodyneSharp.Recording
                         {
                             continue; // (a top-up on this screen only: the next one over has its enemies back)
                         }
-                        if (_costlyCheckpoints.Contains((GlobalState.CURRENT_MAP_NAME, stand)))
+                        if (_costlyCheckpoints.Contains((Gs.Map, stand)))
                         {
                             continue; // (one that hurt us while we healed there: something guards it)
                         }
@@ -953,13 +960,13 @@ namespace AnodyneSharp.Recording
                         }
                     }
                     // A long trip for a heart or two is more hits than it wins back, unless the hearts are owed (past the chip allowance).
-                    int missing = GlobalState.MAX_HEALTH - GlobalState.CUR_HEALTH;
-                    int budget = budgetTiles ?? (BotRunner.DebtMissing > BotRunner.ChipLeft || GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2 ? 160 : 30 + 20 * missing);
+                    int missing = Gs.MaxHealth - Gs.Health;
+                    int budget = budgetTiles ?? (BotRunner.DebtMissing > BotRunner.ChipLeft || Gs.Health * 5 <= Gs.MaxHealth * 2 ? 160 : 30 + 20 * missing);
                     if (best is Vector2 far && bestLen > budget && bestLen <= 160)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: the checkpoint at {far} is {bestLen} tiles off, too far for {missing} heart(s): not now");
+                            System.Console.Error.WriteLine($"  heal: HP {Gs.Health}/{Gs.MaxHealth}: the checkpoint at {far} is {bestLen} tiles off, too far for {missing} heart(s): not now");
                         }
                         yield break;
                     }
@@ -967,7 +974,7 @@ namespace AnodyneSharp.Recording
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: to the checkpoint at {st} ({bestLen} tiles)");
+                            System.Console.Error.WriteLine($"  heal: HP {Gs.Health}/{Gs.MaxHealth}: to the checkpoint at {st} ({bestLen} tiles)");
                         }
                         BotRunner.Status = $"heal at the checkpoint {st}";
                         yield return GoGlobal(st.X, st.Y);
@@ -976,17 +983,17 @@ namespace AnodyneSharp.Recording
                         yield return Tap(KeyFunctions.Accept);
                         yield return Wait(30);
                         yield return ReadDialogue();
-                        _healOk = GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH;
+                        _healOk = Gs.Health >= Gs.MaxHealth;
                         if (!_healOk)
                         {
-                            _costlyCheckpoints.Add((GlobalState.CURRENT_MAP_NAME, st));
+                            _costlyCheckpoints.Add((Gs.Map, st));
                         }
                     }
-                    else if (warp && attempt == 0 && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad"))
+                    else if (warp && attempt == 0 && AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type?.Name == "NexusPad"))
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  heal: HP {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}: no checkpoint to heal at from {here}: back to the pad");
+                            System.Console.Error.WriteLine($"  heal: HP {Gs.Health}/{Gs.MaxHealth}: no checkpoint to heal at from {here}: back to the pad");
                         }
                         yield return BackToMapPad();
                     }
@@ -1006,7 +1013,7 @@ namespace AnodyneSharp.Recording
         private static bool _healOk;
         private static readonly HashSet<(string, Vector2)> _costlyCheckpoints = new();
 
-        protected static Point Grid => GlobalState.CurrentMapGrid;
+        protected static Point Grid => Gs.Grid;
 
         /// <summary>"Head north/east/south/west": walk to the nearest tile of the neighbouring 160x160 screen, then let the scroll finish.</summary>
         protected static IEnumerable<object> GoScreen(char dir)
@@ -1032,27 +1039,27 @@ namespace AnodyneSharp.Recording
             // and stopping there means a wade that runs on into the screen's water, or a raft for a hop that is not needed.
             Func<Point, bool> dry = t => inScreen(t) && !BotNav.IsConveyor(t);
             BotNav.AllowWater = true;
-            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            BotNav.AllowJump = Gs.CanJump;
             bool dryOk = BotNav.FindPath(BotNav.TileOf(Pos), t => dry(t)) != null;
             BotNav.AllowWater = false;
             BotNav.AllowJump = false;
             yield return GoToWhere(t => dryOk ? dry(t) : inScreen(t), $"screen {tx},{ty}");
-            yield return Until(() => !GlobalState.ScreenTransition && Grid == new Point(tx, ty), 600, $"arrive on screen {tx},{ty}");
+            yield return Until(() => !Gs.ScreenTransition && Grid == new Point(tx, ty), 600, $"arrive on screen {tx},{ty}");
             if (from != new Point(tx, ty))
             {
                 _cameFrom = from;
             }
-            if (!(AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0))
+            if (!(AutoFight && Gs.HasBroom && Enemies().Count > 0))
             {
                 yield return Wait(10); // let the scroll settle; with enemies about there is no time to stand around: straight into the fight
             }
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
-                System.Console.Error.WriteLine($"  -> screen {tx},{ty} on {Map}, hp {GlobalState.CUR_HEALTH}");
+                System.Console.Error.WriteLine($"  -> screen {tx},{ty} on {Map}, hp {Gs.Health}");
                 var interesting = BotRunner.Entities().Where(e => e.exists && !(e is Player) &&
                     System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "Chest|Gate|Button|Key|Switch|Dust|Door|Pillar|Statue|Console|NPC|Sage|Card|Treasure|Lever|Block|Portal|Checkpoint|Boss|Seer") ||
                     (e.exists && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)))
-                    .Select(e => $"{e.GetType().Name}@{(int)e.Position.X},{(int)e.Position.Y}");
+                    .Select(e => $"{e.GetType().Name}@{(int)e.Position.ToXna().X},{(int)e.Position.ToXna().Y}");
                 System.Console.Error.WriteLine("     " + string.Join(" ", interesting));
             }
             if (Player.raft == null && OnConveyor(BotNav.TileOf(Pos)))
@@ -1067,7 +1074,7 @@ namespace AnodyneSharp.Recording
                     yield return GoTo(land.X, land.Y);
                 }
             }
-            if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0)
+            if (AutoFight && Gs.HasBroom && Enemies().Count > 0)
             {
                 int closed() => BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Gate" && e.Solid);
                 int before = closed();
@@ -1122,8 +1129,8 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> OpenCardGate(Entity gate, bool fromBelow)
         {
-            BotRunner.Status = $"open the card gate at {gate.Position.X:0},{gate.Position.Y:0}";
-            float sx = gate.Position.X + 11, sy = fromBelow ? gate.Position.Y + 17 : gate.Position.Y - 13;
+            BotRunner.Status = $"open the card gate at {gate.Position.ToXna().X:0},{gate.Position.ToXna().Y:0}";
+            float sx = gate.Position.ToXna().X + 11, sy = fromBelow ? gate.Position.ToXna().Y + 17 : gate.Position.ToXna().Y - 13;
             yield return GoTo(sx, sy);
             yield return WalkTo(sx, sy, tol: 1.5f, timeout: 120);
             yield return Hold(8, fromBelow ? KeyFunctions.Up : KeyFunctions.Down);
@@ -1155,7 +1162,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (i % 100 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine("  buttons: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name == "Shieldy" || e.GetType().Name == "Button")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}({e.Hitbox.Width}x{e.Hitbox.Height}) v={e.velocity.X:0},{e.velocity.Y:0}")) + $" hp={GlobalState.CUR_HEALTH} solved={GlobalState.PUZZLES_SOLVED}");
+                    System.Console.Error.WriteLine("  buttons: " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && (e.GetType().Name == "Shieldy" || e.GetType().Name == "Button")).Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}({e.Hitbox.Width}x{e.Hitbox.Height}) v={e.velocity.ToXna().X:0},{e.velocity.ToXna().Y:0}")) + $" hp={Gs.Health} solved={Gs.PuzzlesSolved}");
                 }
                 // Stay on the button: nudge back if something pushed us off. With an exact spot the player stands off-centre on purpose (a
                 // Mover homes in on the player's position, so where we stand decides where it stops).
@@ -1192,7 +1199,7 @@ namespace AnodyneSharp.Recording
 
         private static float DashFactor()
         {
-            if (Player == null || DashStateField?.GetValue(Player) is not Vector2 ds)
+            if (Player == null || PlayerField(DashStateField) is not Vector2 ds)
             {
                 return 1f;
             }
@@ -1225,6 +1232,12 @@ namespace AnodyneSharp.Recording
             if (!BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e)))
             {
                 yield break;
+            }
+            // (a text box first: the dust pickup's one is still up here, and the jets' ~195 frames off are only just enough for the walk
+            // after, so they must not go on closing it)
+            if (Talking)
+            {
+                yield return ReadDialogue();
             }
             BotRunner.Status = "wait for the steam to burn and stop";
             yield return Until(Burning, 400, "steam jets burning");
@@ -1276,6 +1289,9 @@ namespace AnodyneSharp.Recording
         /// True if a steam jet lies over (or within 6px of) any of `tiles` and a crossing begun now could meet its burn: it is up (or rising),
         /// or it has been down for more than ~40 frames, or it has not been seen go down yet. A crossing of a few tiles takes well under a second.
         /// </summary>
+        /// <summary>True if our box is in a steam jet's line (up or not): waiting there for it is waiting for the burn.</summary>
+        protected static bool InSteamLine() => BotRunner.Entities().Any(e => e.exists && IsSteamBeam(e) && e.Hitbox.Intersects(Player.Hitbox));
+
         protected static bool SteamUnsafeOver(List<Point> tiles)
         {
             foreach (var e in BotRunner.Entities())
@@ -1336,7 +1352,7 @@ namespace AnodyneSharp.Recording
                     {
                         continue; // already in the jet: standing still is no better, let it walk out
                     }
-                    r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                    r.Offset((int)(d.velocity.ToXna().X * f / 60f), (int)(d.velocity.ToXna().Y * f / 60f));
                     // The beam's bullets are 8px apart-gaps of 12px for a 10px-wide player: no extra margin or it never fits.
                     bool bolt = d.GetType().Name.Contains("Laser");
                     int m = bolt ? LaserMargin : 2;
@@ -1377,7 +1393,7 @@ namespace AnodyneSharp.Recording
         private static bool Target_ColumnAboveClear(Entity e)
         {
             var lanes = BotNav.LaneTiles();
-            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Top));
+            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Top));
             for (int k = 1; k <= 4; k++)
             {
                 if (lanes.Contains(new Point(t.X, t.Y - k)))
@@ -1435,17 +1451,17 @@ namespace AnodyneSharp.Recording
         /// <summary>Does the broom reach e from where we stand, or from a few px nearer it (a raft drifts that far for a nudge)?</summary>
         private static bool RaftBroomReaches(Entity e)
         {
-            var v = e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2();
+            var v = e.Hitbox.Center.ToXna().ToVector2() - Player.Hitbox.Center.ToXna().ToVector2();
             var f = Math.Abs(v.X) > Math.Abs(v.Y) ? (v.X < 0 ? Facing.LEFT : Facing.RIGHT) : (v.Y < 0 ? Facing.UP : Facing.DOWN);
             var near = Player.Hitbox;
             // (the raft drifts the 4px nearer as we turn, but not against a current: Circus (2,3)'s channel runs up past a Frog, and the
             // bot swung at it from out of reach again and again while the current carried it back and the Frog spat)
             var flow = BotNav.FlowDir(BotNav.TileOf(Pos));
             bool against = f switch { Facing.UP => flow == Touching.DOWN, Facing.DOWN => flow == Touching.UP, Facing.LEFT => flow == Touching.RIGHT, _ => flow == Touching.LEFT };
-            var step = against ? Vector2.Zero : Entity.FacingDirection(f) * 4f;
+            var step = against ? Vector2.Zero : Entity.FacingDirection(f).ToXna() * 4f;
             near.Offset((int)step.X, (int)step.Y);
             // (no nearer through a wall: a Frog the far side of one is out of reach whatever the offset says)
-            return WallFree(near) && e.Hitbox.Intersects(BroomBoxAt(Player.Position + step, f));
+            return WallFree(near) && e.Hitbox.Intersects(BroomBoxAt(Player.Position.ToXna() + step, f));
         }
 
         private static bool WallFree(Rectangle r)
@@ -1500,12 +1516,12 @@ namespace AnodyneSharp.Recording
         {
             var t = new Threat { Name = "Lion", Source = d, Margin = 3, Stationary = false, HurtsInAir = true }; // (it hurts a jumper too)
             // (side-on 26x13, end-on 10x20, both from its position: it can turn any frame, so take both at once)
-            var box = new Rectangle((int)d.Position.X, (int)d.Position.Y, 26, 20);
+            var box = new Rectangle((int)d.Position.ToXna().X, (int)d.Position.ToXna().Y, 26, 20);
             var st = FsmStateLeft(d);
             string state = st?.Item1 ?? "PaceState";
             int left = st?.Item2 ?? 0;
             string anim = d.CurAnimName ?? "";
-            var me = Player.Hitbox.Center.ToVector2();
+            var me = Player.Hitbox.Center.ToXna().ToVector2();
             Rectangle Grow(Rectangle r, int by) { r.Inflate(by, by); return r; }
             for (int f = 0; f <= Horizon; f++)
             {
@@ -1513,7 +1529,7 @@ namespace AnodyneSharp.Recording
                 switch (state)
                 {
                     case "PaceState":
-                        r.Offset((int)(d.velocity.X * Math.Min(f, left) / 60f), (int)(d.velocity.Y * Math.Min(f, left) / 60f));
+                        r.Offset((int)(d.velocity.ToXna().X * Math.Min(f, left) / 60f), (int)(d.velocity.ToXna().Y * Math.Min(f, left) / 60f));
                         if (f > left)
                         {
                             r = Grow(r, (int)(43f * (f - left) / 60f));
@@ -1529,15 +1545,15 @@ namespace AnodyneSharp.Recording
                             // (in the air it keeps the way it faced as it set off, so its box is the one it has, not both: the
                             // union of the two left no room to sidestep it, and the bot froze in its path)
                             r = d.Hitbox;
-                            r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                            r.Offset((int)(d.velocity.ToXna().X * f / 60f), (int)(d.velocity.ToXna().Y * f / 60f));
                             break;
                         }
                         int start = state == "ChargeWalkState" ? left + 36 : left;
-                        r.Offset((int)(d.velocity.X * Math.Min(f, start) / 60f), (int)(d.velocity.Y * Math.Min(f, start) / 60f));
+                        r.Offset((int)(d.velocity.ToXna().X * Math.Min(f, start) / 60f), (int)(d.velocity.ToXna().Y * Math.Min(f, start) / 60f));
                         if (f >= start - 4)
                         {
                             // the pounce: along the line to us, 110px/s; a band round it, as we may still move before it sets off
-                            var dir = me - r.Center.ToVector2();
+                            var dir = me - r.Center.ToXna().ToVector2();
                             if (dir != Vector2.Zero)
                             {
                                 dir.Normalize();
@@ -1553,8 +1569,8 @@ namespace AnodyneSharp.Recording
                             r2.Offset((int)(dir.X * run), (int)(dir.Y * run));
                             // (it aims at where we are when it sets off, not where we are now: walking away as it warns, we drag the
                             // line with us, so take the line to where our walk takes us by then too)
-                            var later = me + Player.velocity * Math.Max(0, start) / 60f - r.Center.ToVector2();
-                            if (later != Vector2.Zero && Player.velocity != Vector2.Zero)
+                            var later = me + Player.velocity.ToXna() * Math.Max(0, start) / 60f - r.Center.ToXna().ToVector2();
+                            if (later != Vector2.Zero && Player.velocity.ToXna() != Vector2.Zero)
                             {
                                 later.Normalize();
                                 var r3 = r;
@@ -1587,12 +1603,12 @@ namespace AnodyneSharp.Recording
                 return list;
             }
             int left = st.Value.Item2;
-            int shots = LionShotsField?.GetValue(d) is int n ? n : 0;
+            int shots = LionShotsField?.GetValueF(d) is int n ? n : 0;
             int firstShot = st.Value.Item1 == "ShootState" ? left : left + 10;
             int lastShot = firstShot + (18 - shots - 1) * 10;
-            var dir = Player.Position - d.Position;
+            var dir = Player.Position.ToXna() - d.Position.ToXna();
             Facing fc = Math.Abs(dir.X) > Math.Abs(dir.Y) ? (dir.X > 0 ? Facing.RIGHT : Facing.LEFT) : (dir.Y > 0 ? Facing.DOWN : Facing.UP);
-            var p = d.Position;
+            var p = d.Position.ToXna();
             Vector2 mouth = fc switch
             {
                 Facing.UP => new Vector2(p.X + 8, p.Y - 2),
@@ -1600,7 +1616,7 @@ namespace AnodyneSharp.Recording
                 Facing.RIGHT => new Vector2(p.X + 30, p.Y + 2),
                 _ => new Vector2(p.X, p.Y + 2),
             };
-            var ax = Entity.FacingDirection(fc);
+            var ax = Entity.FacingDirection(fc).ToXna();
             float spread = fc is Facing.UP or Facing.DOWN ? 0.5f : 0.82f;
             const float speed = 88f / 60f;
             for (int b = 0; b < 4; b++)
@@ -1636,36 +1652,21 @@ namespace AnodyneSharp.Recording
         }
 
         // (debug) the entity's active state chain, by name
-        private static string FsmPath(Entity d)
-        {
-            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var names = new List<string>();
-            object st = d.GetType().GetField("_state", F)?.GetValue(d);
-            for (int k = 0; st != null && abs != null && k < 4; k++)
-            {
-                st = (abs.GetField("activeChildren", F)?.GetValue(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-                if (st != null)
-                {
-                    names.Add(st.GetType().GetProperty("Name")?.GetValue(st) as string ?? st.GetType().Name);
-                }
-            }
-            return string.Join("/", names) + $" exists={d.exists} solid={d.Solid} vel={d.velocity}";
-        }
+        private static string FsmPath(Entity d) => Gs.View.FsmPath(d) + $" exists={d.exists} solid={d.Solid} vel={d.velocity.ToXna()}";
 
         private static (string, int)? FsmStateLeft(Entity d)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
-            var root = d.GetType().GetField("_state", F)?.GetValue(d);
+            var root = d.GetType().GetField("_state", F)?.GetValueF(d);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top is not AnodyneSharp.FSM.TimerState || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top is not AnodyneSharp.FSM.TimerState || tt.GetField("current", F)?.GetValueF(top) is not float now || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
-            if (timers[0].GetType().GetField("current", FP)?.GetValue(timers[0]) is not float due)
+            if (timers[0].GetType().GetField("current", FP)?.GetValueF(timers[0]) is not float due)
             {
                 return null;
             }
@@ -1745,9 +1746,9 @@ namespace AnodyneSharp.Recording
 
         private static Threat PredictPatroller(Entity e)
         {
-            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero, Margin = e.velocity == Vector2.Zero ? 0 : 2 };
+            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity.ToXna() == Vector2.Zero, Margin = e.velocity.ToXna() == Vector2.Zero ? 0 : 2 };
             var r = e.Hitbox;
-            var v = e.velocity;
+            var v = e.velocity.ToXna();
             // (a bouncing spike roller spans pits and turns only at walls: its 128px bar always lies over some hole)
             bool rollsOverHoles = e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller;
             float fx = 0, fy = 0; // sub-pixel remainder
@@ -1790,15 +1791,15 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static Threat PredictBouncer(Entity e)
         {
-            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity == Vector2.Zero, Margin = 2 };
+            var t = new Threat { Name = e.GetType().Name, Source = e, Stationary = e.velocity.ToXna() == Vector2.Zero, Margin = 2 };
             var r = e.Hitbox;
-            var v = e.velocity;
+            var v = e.velocity.ToXna();
             int turnAt = int.MaxValue; // frame from which the heading is unknown
-            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall && SmallRollField?.GetValue(e) is float roll)
+            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall && SmallRollField?.GetValueF(e) is float roll)
             {
                 turnAt = Math.Max(0, (int)((0.8f - roll) * 60f));
             }
-            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort && v == Vector2.Zero && ContortDeathField?.GetValue(e) is float dt && dt > 0 && dt < 1)
+            if (e is AnodyneSharp.Entities.Enemy.Circus.Contort && v == Vector2.Zero && ContortDeathField?.GetValueF(e) is float dt && dt > 0 && dt < 1)
             {
                 turnAt = (int)(dt * 60f); // bursts then: the pieces fly ~40px/s every way
                 v = Vector2.Zero;
@@ -1860,7 +1861,7 @@ namespace AnodyneSharp.Recording
             }
             foreach (var e in BotRunner.Entities())
             {
-                if (e.exists && e.GetType().Name == "PewLaser" && BotNav.TileOf(e.Position + new Vector2(8, 8)) == t)
+                if (e.exists && e.GetType().Name == "PewLaser" && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) == t)
                 {
                     return true;
                 }
@@ -1880,16 +1881,16 @@ namespace AnodyneSharp.Recording
             {
                 yield break;
             }
-            var pool = (PewPoolField.GetValue(em) as System.Collections.Generic.IEnumerable<Entity>)
-                ?? (PewPoolField.GetValue(em)?.GetType().GetProperty("Entities")?.GetValue(PewPoolField.GetValue(em)) as System.Collections.Generic.IEnumerable<Entity>);
+            var pool = (PewPoolField.GetValueF(em) as System.Collections.Generic.IEnumerable<Entity>)
+                ?? (PewPoolField.GetValueF(em)?.GetType().GetProperty("Entities")?.GetValueF(PewPoolField.GetValueF(em)) as System.Collections.Generic.IEnumerable<Entity>);
             var sample = pool?.FirstOrDefault();
             if (sample == null)
             {
                 yield break;
             }
-            bool fast = LaserFastField != null && LaserFastField.GetValue(sample) is bool b && b;
+            bool fast = LaserFastField != null && LaserFastField.GetValueF(sample) is bool b && b;
             float speed = fast ? 70f : 40f;
-            float timer = (float)PewTimerField.GetValue(em);
+            float timer = (float)PewTimerField.GetValueF(em);
             int first = (int)Math.Floor(Math.Max(timer, 0f) * 60f) + 1;
             var dir = em.facing switch { Facing.RIGHT => new Vector2(1, 0), Facing.LEFT => new Vector2(-1, 0), Facing.UP => new Vector2(0, -1), _ => new Vector2(0, 1) };
             var spawnOffset = em.facing switch
@@ -1899,9 +1900,9 @@ namespace AnodyneSharp.Recording
                 Facing.LEFT => new Vector2(8, 0),
                 _ => Vector2.Zero
             };
-            var spawnPos = em.Position + spawnOffset;
+            var spawnPos = em.Position.ToXna() + spawnOffset;
             var box = sample.Hitbox;
-            var boxAtSpawn = new Rectangle((int)(box.X + (spawnPos.X - sample.Position.X)), (int)(box.Y + (spawnPos.Y - sample.Position.Y)), box.Width, box.Height);
+            var boxAtSpawn = new Rectangle((int)(box.X + (spawnPos.X - sample.Position.ToXna().X)), (int)(box.Y + (spawnPos.Y - sample.Position.ToXna().Y)), box.Width, box.Height);
             for (int s = first; s <= Horizon; s += 31)
             {
                 var bt = new Threat { Name = "Laser(future)", Margin = LaserMargin };
@@ -1911,7 +1912,7 @@ namespace AnodyneSharp.Recording
                     var r = boxAtSpawn;
                     r.Offset((int)off.X, (int)off.Y);
                     // The bullet is gone once it reaches a wall (or a dust plug): lanes only holds the open beam tiles.
-                    if (lanes.Count > 0 && !BeamTile(lanes, new Vector2(r.Center.X - 5, r.Center.Y - 6)))
+                    if (lanes.Count > 0 && !BeamTile(lanes, new Vector2(r.Center.ToXna().X - 5, r.Center.ToXna().Y - 6)))
                     {
                         break;
                     }
@@ -1940,11 +1941,11 @@ namespace AnodyneSharp.Recording
             {
                 yield break;
             }
-            float timer = (float)FourTimerField.GetValue(sh);
+            float timer = (float)FourTimerField.GetValueF(sh);
             var dirs = sh.Frame == 0
                 ? new[] { new Vector2(1, 0), new Vector2(-1, 0), new Vector2(0, 1), new Vector2(0, -1) }
                 : new[] { Vector2.Normalize(new Vector2(1, 1)), Vector2.Normalize(new Vector2(-1, -1)), Vector2.Normalize(new Vector2(-1, 1)), Vector2.Normalize(new Vector2(1, -1)) };
-            var c = new Vector2(sh.Hitbox.Center.X, sh.Hitbox.Center.Y);
+            var c = new Vector2(sh.Hitbox.Center.ToXna().X, sh.Hitbox.Center.ToXna().Y);
             int first = (int)Math.Floor(Math.Max(timer, 0f) * 60f) + 1;
             for (int s = first; s <= Horizon; s += 90)
             {
@@ -1974,7 +1975,7 @@ namespace AnodyneSharp.Recording
         {
             // (asked for again and again in one frame by the fight, its guards and dodges: the world has not moved, so neither have they.
             // A copy of the list: callers add their own to it.)
-            if (_threatsFrame == BotRunner.Frame && _threatsExcept == except && _threatsCached != null && Player != null && _threatsPlayer == Player.Position)
+            if (_threatsFrame == BotRunner.Frame && _threatsExcept == except && _threatsCached != null && Player != null && _threatsPlayer == Player.Position.ToXna())
             {
                 return new List<Threat>(_threatsCached);
             }
@@ -2054,7 +2055,7 @@ namespace AnodyneSharp.Recording
             var d = DirVector(way);
             var hb = Player.Hitbox;
             // (and as we really go: a raft on running water carries us far faster than a walk)
-            var seen = SeenVelocity(Player) / 60f;
+            var seen = SeenVelocity(Player.Native) / 60f;
             foreach (var mv in new[] { Vector2.Zero, d * WalkPxPerFrame, seen })
             {
                 for (int f = 1; f <= within; f++)
@@ -2083,18 +2084,18 @@ namespace AnodyneSharp.Recording
             me.Inflate(2, 2);
             foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
             {
-                foreach (var b in an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>())
+                foreach (var b in an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>())
                 {
-                    if (!b.exists || b.velocity == Vector2.Zero)
+                    if (!b.exists || b.velocity.ToXna() == Vector2.Zero)
                     {
                         continue;
                     }
                     for (int f = 0; f <= within; f++)
                     {
-                        var p = b.Position + b.velocity * (f / 60f);
+                        var p = b.Position.ToXna() + b.velocity.ToXna() * (f / 60f);
                         if (me.Intersects(new Rectangle((int)p.X, (int)p.Y, b.width, b.height)))
                         {
-                            return b.Hitbox.Center.ToVector2();
+                            return b.Hitbox.Center.ToXna().ToVector2();
                         }
                     }
                 }
@@ -2105,10 +2106,10 @@ namespace AnodyneSharp.Recording
         /// <summary>The centre of a super Annoyer within `near` px whose next shot is due within the given frames (null if none).</summary>
         private static Vector2? AnnoyerAboutToFire(int within, float near)
         {
-            var pc = Player.Hitbox.Center.ToVector2();
+            var pc = Player.Hitbox.Center.ToXna().ToVector2();
             foreach (var an in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Annoyer>())
             {
-                var ac = an.Hitbox.Center.ToVector2();
+                var ac = an.Hitbox.Center.ToXna().ToVector2();
                 if (an.exists && (ac - pc).Length() < near && AnnoyerFireDue(an) is int due && due <= within)
                 {
                     return ac;
@@ -2123,15 +2124,15 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static int? AnnoyerFireDue(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
-            if (!an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().Any())
+            if (!an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().Any())
             {
                 return null;
             }
-            var root = AnnStateField?.GetValue(an);
-            var top = (FsmActiveChildren?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
-            if (top == null || top.GetType().Name != "ActiveState" || TimerNowField?.GetValue(top) is not float now
-                || TimerListField?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0
-                || timers[0].GetType().GetField("current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(timers[0]) is not float due)
+            var root = AnnStateField?.GetValueF(an);
+            var top = (FsmActiveChildren?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            if (top == null || top.GetType().Name != "ActiveState" || TimerNowField?.GetValueF(top) is not float now
+                || TimerListField?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0
+                || timers[0].GetType().GetField("current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(timers[0]) is not float due)
             {
                 return null;
             }
@@ -2146,12 +2147,12 @@ namespace AnodyneSharp.Recording
 
         private static Threat AnnoyerNextFire(AnodyneSharp.Entities.Enemy.Annoyer an)
         {
-            var balls = an.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
+            var balls = an.Subs().OfType<AnodyneSharp.Entities.Enemy.Annoyer.Fireball>().ToList();
             if (balls.Count == 0)
             {
                 return null; // a plain one: no shots
             }
-            if (an.Hitbox.Center.ToVector2() is var ac && (ac - Player.Hitbox.Center.ToVector2()).Length() > 90)
+            if (an.Hitbox.Center.ToXna().ToVector2() is var ac && (ac - Player.Hitbox.Center.ToXna().ToVector2()).Length() > 90)
             {
                 return null; // asleep or far: its shot (if any) is seen in flight in time
             }
@@ -2163,8 +2164,8 @@ namespace AnodyneSharp.Recording
             {
                 return null;
             }
-            var from = an.Position;
-            var to = Player.Position;
+            var from = an.Position.ToXna();
+            var to = Player.Position.ToXna();
             var dir = to - from;
             if (dir.Length() < 0.01f)
             {
@@ -2173,7 +2174,7 @@ namespace AnodyneSharp.Recording
             dir = Vector2.Normalize(dir) * 0.5f;
             if (Environment.GetEnvironmentVariable("ANODYNE_ANN_TRACE") != null)
             {
-                System.Console.Error.WriteLine($"  annfire f{BotRunner.Frame} an={an.Position} next={next}");
+                System.Console.Error.WriteLine($"  annfire f{BotRunner.Frame} an={an.Position.ToXna()} next={next}");
             }
             var t = new Threat { Name = "Annoyer next fireball", Source = an, Margin = 3, HurtsInAir = true };
             // (the moment is a guess to a few frames: it starts a little early and its first stretch is drawn fat)
@@ -2231,7 +2232,7 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if (name == "OnSightDashTrap" && d.velocity == Vector2.Zero)
+                if (name == "OnSightDashTrap" && d.velocity.ToXna() == Vector2.Zero)
                 {
                     result.AddRange(PredictSightTrap(d));
                     continue;
@@ -2245,7 +2246,7 @@ namespace AnodyneSharp.Recording
                 if (d is AnodyneSharp.Entities.Enemy.Crowd.Dog && DogAttackPlan(d) != null)
                 {
                     // dashing: its three dashes are known from its Attack state (see DogPath); it only hurts on the ground
-                    var dp = DogPath(d, 0, Player.Position);
+                    var dp = DogPath(d, 0, Player.Position.ToXna());
                     var dt = new Threat { Name = "Dog", Source = d, Margin = 4 };
                     for (int f = 0; f <= Horizon; f++)
                     {
@@ -2258,7 +2259,7 @@ namespace AnodyneSharp.Recording
                 {
                     // barking (it has seen us): in a second it dashes at a point ~44px past us and 8 up, then twice more about us; taken
                     // from where we stand now (the later two are rolled at random: roughly)
-                    var dp = DogPath(d, -Math.Clamp(alertLeft, 1, 59), Player.Position);
+                    var dp = DogPath(d, -Math.Clamp(alertLeft, 1, 59), Player.Position.ToXna());
                     var dt = new Threat { Name = "Dog", Source = d, Margin = 4 };
                     for (int f = 0; f <= Horizon; f++)
                     {
@@ -2281,10 +2282,10 @@ namespace AnodyneSharp.Recording
                 {
                     // The Cell's Chaser (6 damage, never dies, hurts a jumper too): it paces its row or column, turning at walls, once it
                     // has seen us line up with it (at 15px/s, faster after each broom swing); until then it may set off along it any moment.
-                    if (d.velocity == Vector2.Zero)
+                    if (d.velocity.ToXna() == Vector2.Zero)
                     {
                         // (only along its own axis: a horizontal one paces its row, a vertical one its column)
-                        bool horiz = ChaserHorizontalField?.GetValue(d) is true;
+                        bool horiz = ChaserHorizontalField?.GetValueF(d) is true;
                         foreach (var ct in PredictSightTrap(d, 15f).Where((t, i) => horiz ? i == 0 : i == 1)) // (it yields its row band, then its column band)
                         {
                             ct.Name = "Chaser";
@@ -2311,19 +2312,19 @@ namespace AnodyneSharp.Recording
                     // It sets its position straight towards ours at 12px/s on each axis (velocity stays 0, so it would read as standing):
                     // it homes in on where we are now.
                     var gt = new Threat { Name = "GasGuy", Source = d, Margin = 2, HurtsInAir = true };
-                    var pp = Player.Position;
+                    var pp = Player.Position.ToXna();
                     for (int f = 0; f <= Horizon; f++)
                     {
                         float step = 12f * f / 60f;
-                        float gx = d.Position.X + Math.Clamp(pp.X - d.Position.X, -step, step), gy = d.Position.Y + Math.Clamp(pp.Y - d.Position.Y, -step, step);
+                        float gx = d.Position.ToXna().X + Math.Clamp(pp.X - d.Position.ToXna().X, -step, step), gy = d.Position.ToXna().Y + Math.Clamp(pp.Y - d.Position.ToXna().Y, -step, step);
                         var r = d.Hitbox;
-                        r.Offset((int)(gx - d.Position.X), (int)(gy - d.Position.Y));
+                        r.Offset((int)(gx - d.Position.ToXna().X), (int)(gy - d.Position.ToXna().Y));
                         gt.At[f] = r;
                     }
                     result.Add(gt);
                     continue;
                 }
-                if (BotNav.IsSuburbKiller(d) && _killerMoving?.GetValue(d) is not true)
+                if (BotNav.IsSuburbKiller(d) && _killerMoving?.GetValueF(d) is not true)
                 {
                     // Asleep it wakes once we come within 36px (top-left to top-left) and then creeps after us at 30px/s, re-aiming every
                     // half second, for good: asleep, its whole wake berth is the danger (a dog fight beside two of them woke both). (Awake, the
@@ -2345,18 +2346,18 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 bool bolt = name == "Laser";
-                if (bolt && d.velocity == Vector2.Zero)
+                if (bolt && d.velocity.ToXna() == Vector2.Zero)
                 {
                     continue; // a bullet that has hit something is poofing out: harmless (and standing still, it would look like a wall)
                 }
-                bool still = d.velocity == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
+                bool still = d.velocity.ToXna() == Vector2.Zero && d.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false);
                 var t = new Threat { Name = name, Margin = bolt ? LaserMargin : (still ? 0 : 2), Source = d, Stationary = still };
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = d.Hitbox;
-                    r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                    r.Offset((int)(d.velocity.ToXna().X * f / 60f), (int)(d.velocity.ToXna().Y * f / 60f));
                     if (bolt && lanes.Count > 0 && d.GetType().DeclaringType == typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser) &&
-                        !BeamTile(lanes, new Vector2(r.Center.X - 5, r.Center.Y - 6)))
+                        !BeamTile(lanes, new Vector2(r.Center.ToXna().X - 5, r.Center.ToXna().Y - 6)))
                     {
                         break;
                     }
@@ -2389,7 +2390,7 @@ namespace AnodyneSharp.Recording
         private static Threat PredictRat(Entity e)
         {
             var t = new Threat { Name = "Rat", Source = e, Margin = 1, HurtsInAir = true };
-            var path = SimRat(new Vector2(e.Hitbox.X, e.Hitbox.Y), e.velocity, e.Hitbox.Width, RatBlocks(), Horizon);
+            var path = SimRat(new Vector2(e.Hitbox.X, e.Hitbox.Y), e.velocity.ToXna(), e.Hitbox.Width, RatBlocks(), Horizon);
             for (int f = 0; f <= Horizon; f++)
             {
                 t.At[f] = RatBite(path[f].pos);
@@ -2407,9 +2408,9 @@ namespace AnodyneSharp.Recording
             foreach (var e in BotRunner.Entities().Where(x => x.exists && x is AnodyneSharp.Entities.Enemy.Apartment.DashTrap))
             {
                 var r = e.Hitbox;
-                if (e is AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap && TrapIdle?.GetValue(e) is Vector2 idle)
+                if (e is AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap && TrapIdle?.GetValueF(e) is Vector2 idle)
                 {
-                    r = new Rectangle((int)(idle.X + r.X - e.Position.X), (int)(idle.Y + r.Y - e.Position.Y), r.Width, r.Height);
+                    r = new Rectangle((int)(idle.X + r.X - e.Position.ToXna().X), (int)(idle.Y + r.Y - e.Position.ToXna().Y), r.Width, r.Height);
                 }
                 res.Add(r);
             }
@@ -2510,7 +2511,7 @@ namespace AnodyneSharp.Recording
             bool swung = false;
             for (int i = 0; i < 2400 && tg.exists && tg.CurAnimName != "dying"; i++)
             {
-                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && (e.Center - Player.Center).Length() < 44))
+                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && (e.Center.ToXna() - Player.Center.ToXna()).Length() < 44))
                 {
                     yield break; // a Gas Guy on us comes first (its gas hurts every 0.8s): back to the fight, which goes for it
                 }
@@ -2549,19 +2550,19 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 // Standing: walk up to it (not into it), face it and swing.
-                var tc = new Vector2(tb.Center.X, tb.Center.Y);
-                var pc = new Vector2(pb.Center.X, pb.Center.Y);
+                var tc = new Vector2(tb.Center.ToXna().X, tb.Center.ToXna().Y);
+                var pc = new Vector2(pb.Center.ToXna().X, pb.Center.ToXna().Y);
                 var off = pc - tc;
                 Vector2 spot;
                 KeyFunctions face;
                 if (Math.Abs(off.X) > Math.Abs(off.Y))
                 {
-                    spot = new Vector2(off.X > 0 ? tb.Right + 3 : tb.Left - 3 - 10, tb.Center.Y - 6);
+                    spot = new Vector2(off.X > 0 ? tb.Right + 3 : tb.Left - 3 - 10, tb.Center.ToXna().Y - 6);
                     face = off.X > 0 ? KeyFunctions.Left : KeyFunctions.Right;
                 }
                 else
                 {
-                    spot = new Vector2(tb.Center.X - 5, off.Y > 0 ? tb.Bottom + 3 : tb.Top - 3 - 12);
+                    spot = new Vector2(tb.Center.ToXna().X - 5, off.Y > 0 ? tb.Bottom + 3 : tb.Top - 3 - 12);
                     face = off.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down;
                 }
                 var lanes = BotNav.LaneTiles();
@@ -2573,10 +2574,10 @@ namespace AnodyneSharp.Recording
                     // spent standing there: Hotel (4,0)'s took ten hearts): the nearest side we can stand on, out of the beams if any is.
                     var sides = new (Vector2 at, KeyFunctions f)[]
                     {
-                        (new Vector2(tb.Right + 3, tb.Center.Y - 6), KeyFunctions.Left),
-                        (new Vector2(tb.Left - 13, tb.Center.Y - 6), KeyFunctions.Right),
-                        (new Vector2(tb.Center.X - 5, tb.Bottom + 3), KeyFunctions.Up),
-                        (new Vector2(tb.Center.X - 5, tb.Top - 15), KeyFunctions.Down),
+                        (new Vector2(tb.Right + 3, tb.Center.ToXna().Y - 6), KeyFunctions.Left),
+                        (new Vector2(tb.Left - 13, tb.Center.ToXna().Y - 6), KeyFunctions.Right),
+                        (new Vector2(tb.Center.ToXna().X - 5, tb.Bottom + 3), KeyFunctions.Up),
+                        (new Vector2(tb.Center.ToXna().X - 5, tb.Top - 15), KeyFunctions.Down),
                     };
                     var ok = sides.Where(sd => StandsSafe(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12)))
                         .OrderBy(sd => InBeam(new Rectangle((int)sd.at.X, (int)sd.at.Y, 10, 12)) ? 1 : 0).ThenBy(sd => (sd.at - me).Length()).ToList();
@@ -2624,7 +2625,7 @@ namespace AnodyneSharp.Recording
             int size = rat.Hitbox.Width;
             for (int attempt = 0; attempt < 3 && rat.exists; attempt++)
             {
-                var path = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity, size, RatBlocks(), 420);
+                var path = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity.ToXna(), size, RatBlocks(), 420);
                 var here = BotNav.TileOf(Pos);
                 var others = PredictThreats(rat); // the rest of the room (traps, bullets, other rats) must leave the spot alone too
                 (int f, Vector2 tl, KeyFunctions face)? pick = null;
@@ -2707,6 +2708,13 @@ namespace AnodyneSharp.Recording
                 if (pick == null)
                 {
                     System.Console.Error.WriteLine($"  rat: no ambush spot within reach of {rat.Hitbox}");
+                    if (attempt < 2)
+                    {
+                        // (the room's other rats and dash traps can cover every spot for this lap: a moment later they have moved on,
+                        // APARTMENT (5,1)'s kill gate stayed shut after two fights that each gave up at once)
+                        yield return Wait(30);
+                        continue;
+                    }
                     yield break;
                 }
                 var (pf, ptl, pface) = pick.Value;
@@ -2732,7 +2740,7 @@ namespace AnodyneSharp.Recording
                         KeyFunctions.Up => pb.Top - rb.Bottom,
                         _ => rb.Top - pb.Bottom
                     };
-                    bool inLine = pface is KeyFunctions.Left or KeyFunctions.Right ? Math.Abs(rb.Center.Y - pb.Center.Y) < 10 : Math.Abs(rb.Center.X - pb.Center.X) < 10;
+                    bool inLine = pface is KeyFunctions.Left or KeyFunctions.Right ? Math.Abs(rb.Center.ToXna().Y - pb.Center.ToXna().Y) < 10 : Math.Abs(rb.Center.ToXna().X - pb.Center.ToXna().X) < 10;
                     if (inLine && gap >= -2 && gap <= 9)
                     {
                         yield return Tap(KeyFunctions.Accept);
@@ -2755,7 +2763,7 @@ namespace AnodyneSharp.Recording
             var grid = Grid;
             var pswitch = BotRunner.Entities().First(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch);
             var button = BotRunner.Entities().First(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button);
-            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.ToXna().X / 16f), (int)Math.Floor(r.Center.ToXna().Y / 16f));
             bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.WalkableNoPillars(t);
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
             // steps along the floor to the button (pillars taken as down: they are what we change)
@@ -2799,7 +2807,7 @@ namespace AnodyneSharp.Recording
             yield return GoTo(fc.X, fc.Y);
             yield return WalkTo(fc.X, fc.Y, tol: 1f);
             yield return Hold(1, faceKey);
-            int start = GlobalState.PUZZLES_SOLVED;
+            int start = Gs.PuzzlesSolved;
             bool fight = AutoFight;
             AutoFight = false; // the rat is the tool here, not a target
             try
@@ -2807,7 +2815,7 @@ namespace AnodyneSharp.Recording
                 const int H = 240;
                 int lastFlip = -100;
                 var mine = new Rectangle(ff.X * 16 + 1, ff.Y * 16, 14, 16);
-                for (int f = 0; f < limit && GlobalState.PUZZLES_SOLVED == start; f++)
+                for (int f = 0; f < limit && Gs.PuzzlesSolved == start; f++)
                 {
                     BotRunner.NotStuck();
                     var rat = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Rat);
@@ -2818,7 +2826,7 @@ namespace AnodyneSharp.Recording
                     // (how near the button it gets in the next few seconds, and how soon; a bite on us counts against it)
                     (int d, int when, bool bites) Judge(bool flip)
                     {
-                        var run = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity, rat.Hitbox.Width, RatBlocks(flip), H);
+                        var run = SimRat(new Vector2(rat.Hitbox.X, rat.Hitbox.Y), rat.velocity.ToXna(), rat.Hitbox.Width, RatBlocks(flip), H);
                         int best = int.MaxValue, at = 0;
                         bool bit = false;
                         for (int k = 0; k <= H; k++)
@@ -2845,7 +2853,7 @@ namespace AnodyneSharp.Recording
                             BotRunner.Status = $"rat by the pillars: flip (to {flip.d} steps from the button in {flip.when}f, else {keep.d} in {keep.when}f)";
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
-                                System.Console.Error.WriteLine($"  {BotRunner.Status} rat {rat.Hitbox} v={rat.velocity}");
+                                System.Console.Error.WriteLine($"  {BotRunner.Status} rat {rat.Hitbox} v={rat.velocity.ToXna()}");
                             }
                             yield return K(KeyFunctions.Accept);
                             continue;
@@ -2854,7 +2862,7 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = $"rat by the pillars: wait (it gets to {keep.d} steps from the button in {keep.when}f)";
                     yield return Player.facing != FacingOf(faceKey) ? K(faceKey) : K();
                 }
-                if (GlobalState.PUZZLES_SOLVED == start)
+                if (Gs.PuzzlesSolved == start)
                 {
                     throw new Exception($"rat by the pillars: the rat did not get onto the button in {limit} frames");
                 }
@@ -2906,7 +2914,7 @@ namespace AnodyneSharp.Recording
             var grid = Grid;
             int size = rats[0].Hitbox.Width;
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
-            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.ToXna().X / 16f), (int)Math.Floor(r.Center.ToXna().Y / 16f));
             var buttonTiles = buttons.Select(b => TileAt(b.Hitbox)).ToList();
             var dustTiles = dustEs.Select(d => TileAt(d.Hitbox)).ToList();
             bool Floor(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10 && BotNav.WalkableNoPillars(t);
@@ -2951,7 +2959,7 @@ namespace AnodyneSharp.Recording
                     var ways = new List<(Vector2 pos, Vector2 v)[]>();
                     foreach (var r in rats)
                     {
-                        var p1 = SimRat(new Vector2(r.Hitbox.X, r.Hitbox.Y), r.velocity, size, before, Math.Max(b, 0));
+                        var p1 = SimRat(new Vector2(r.Hitbox.X, r.Hitbox.Y), r.velocity.ToXna(), size, before, Math.Max(b, 0));
                         var p2 = SimRat(p1[p1.Length - 1].pos, p1[p1.Length - 1].v, size, during, total - b);
                         var w = p1.Take(p1.Length - 1).Concat(p2).ToArray();
                         if (waitRect != null && Enumerable.Range(waitFrom, Math.Max(0, b + 30 - waitFrom)).Any(f => f < w.Length && RatBite(w[f].pos).Intersects(waitRect.Value)))
@@ -3158,7 +3166,7 @@ namespace AnodyneSharp.Recording
             var (m, flipIt, dIdx, dest, standAt, waitAt, wait0) = plan.Value;
             System.Console.Error.WriteLine($"  rat on button: " + (m < 0 ? $"rats on both (we wait at {waitAt})" : $"we hold {buttonTiles[m]}") + (flipIt ? ", pillars flipped" : "")
                 + (dIdx < 0 ? "" : $", dust {dustTiles[dIdx]} -> {dest} (from {standAt}" + (wait0 > 0 ? $", after waiting {wait0}f" : "") + ")") + $", works from {best:P0} of the rats' ways, within {bestWhen}f");
-            int start = GlobalState.PUZZLES_SOLVED;
+            int start = Gs.PuzzlesSolved;
             bool fight = AutoFight;
             AutoFight = false; // the rats are the tool here, not targets
             try
@@ -3185,17 +3193,17 @@ namespace AnodyneSharp.Recording
                     yield return GoTo(bc.X, bc.Y);
                     yield return WalkTo(bc.X, bc.Y, tol: 1f);
                 }
-                for (int f = 0; f < limit && GlobalState.PUZZLES_SOLVED < start + 2; f++)
+                for (int f = 0; f < limit && Gs.PuzzlesSolved < start + 2; f++)
                 {
                     yield return Wait(1);
                 }
-                if (GlobalState.PUZZLES_SOLVED < start + 2)
+                if (Gs.PuzzlesSolved < start + 2)
                 {
                     throw new Exception($"rat on button: the rats did not get onto the buttons in {limit} frames");
                 }
                 // Done (the gate stays open): get off the rats' way before one of them walks into us.
                 var blocks = RatBlocks();
-                var soon = rats.Where(r => r.exists).Select(r => SimRat(new Vector2(r.Hitbox.X, r.Hitbox.Y), r.velocity, size, blocks, 120)).ToList();
+                var soon = rats.Where(r => r.exists).Select(r => SimRat(new Vector2(r.Hitbox.X, r.Hitbox.Y), r.velocity.ToXna(), size, blocks, 120)).ToList();
                 bool Bitten(Point t) => soon.Any(w => w.Any(x => RatBite(x.pos).Intersects(StandRect(t))));
                 var me = BotNav.TileOf(Pos);
                 if (Bitten(me))
@@ -3244,7 +3252,7 @@ namespace AnodyneSharp.Recording
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
             var grid = Grid;
-            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.ToXna().X / 16f), (int)Math.Floor(r.Center.ToXna().Y / 16f));
             bool OnScreen(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10;
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
             for (int round = 0; round < 12; round++)
@@ -3364,15 +3372,15 @@ namespace AnodyneSharp.Recording
                 var here = BotNav.TileOf(Pos);
                 var grid = Grid;
                 bool OnScreen(Point t) => t.X / 10 == grid.X && t.Y / 10 == grid.Y;
-                if (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f)) == target))
+                if (BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && new Point((int)Math.Floor(e.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(e.Hitbox.Center.ToXna().Y / 16f)) == target))
                 {
                     yield break; // there already
                 }
-                BotNav.AllowJump = GlobalState.inventory.CanJump;
+                BotNav.AllowJump = Gs.CanJump;
                 (Point dt, Point pick, Point stand, int cost)? best = null;
                 foreach (var d in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust && Player.broom.dust != e))
                 {
-                    var dt = new Point((int)Math.Floor(d.Hitbox.Center.X / 16f), (int)Math.Floor(d.Hitbox.Center.Y / 16f));
+                    var dt = new Point((int)Math.Floor(d.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(d.Hitbox.Center.ToXna().Y / 16f));
                     if (!OnScreen(dt))
                     {
                         continue;
@@ -3421,9 +3429,9 @@ namespace AnodyneSharp.Recording
                 }
                 BotRunner.Status = $"dust onto {target}";
                 // (something woke and hurt us on the way: leave the dust to the fight that follows rather than keep walking into it)
-                int hp0 = GlobalState.CUR_HEALTH;
-                yield return Flatten(StandFaceAccept(bpick.X, bpick.Y, FaceChar(new Point(bdt.X - bpick.X, bdt.Y - bpick.Y)))).TakeUntil(() => GlobalState.CUR_HEALTH < hp0);
-                if (GlobalState.CUR_HEALTH < hp0)
+                int hp0 = Gs.Health;
+                yield return Flatten(StandFaceAccept(bpick.X, bpick.Y, FaceChar(new Point(bdt.X - bpick.X, bdt.Y - bpick.Y)))).TakeUntil(() => Gs.Health < hp0);
+                if (Gs.Health < hp0)
                 {
                     yield break;
                 }
@@ -3432,8 +3440,8 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                yield return Flatten(StandFaceAccept(bstand.X, bstand.Y, FaceChar(new Point(target.X - bstand.X, target.Y - bstand.Y)))).TakeUntil(() => GlobalState.CUR_HEALTH < hp0);
-                if (GlobalState.CUR_HEALTH < hp0)
+                yield return Flatten(StandFaceAccept(bstand.X, bstand.Y, FaceChar(new Point(target.X - bstand.X, target.Y - bstand.Y)))).TakeUntil(() => Gs.Health < hp0);
+                if (Gs.Health < hp0)
                 {
                     yield break;
                 }
@@ -3461,11 +3469,11 @@ namespace AnodyneSharp.Recording
             var upAfter = new HashSet<Point>(BotNav.PillarsUp());
             BotNav.PillarFlip = false;
             var talk = BotNav.InteractTiles();
-            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            BotNav.AllowJump = Gs.CanJump;
             (Point stand, Point sw, int len)? best = null;
             foreach (var e in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Switches.PillarSwitch))
             {
-                var sw = new Point((int)Math.Floor(e.Hitbox.Center.X / 16f), (int)Math.Floor(e.Hitbox.Center.Y / 16f));
+                var sw = new Point((int)Math.Floor(e.Hitbox.Center.ToXna().X / 16f), (int)Math.Floor(e.Hitbox.Center.ToXna().Y / 16f));
                 if (only != null && sw != only)
                 {
                     continue;
@@ -3531,8 +3539,8 @@ namespace AnodyneSharp.Recording
             {
                 return _gasSpotMemo.spot;
             }
-            var traps = TrapRects().Select(r => BotNav.TileOf(new Vector2(r.Center.X - BotNav.HalfW, r.Center.Y - BotNav.HalfH))).ToList();
-            var frogs = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Frog").Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).ToList();
+            var traps = TrapRects().Select(r => BotNav.TileOf(new Vector2(r.Center.ToXna().X - BotNav.HalfW, r.Center.ToXna().Y - BotNav.HalfH))).ToList();
+            var frogs = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Frog").Select(e => new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y)).ToList();
             Point? best = null;
             var cands = new List<Point>();
             for (int ty = grid.Y * 10 + 1; ty < grid.Y * 10 + 9; ty++)
@@ -3565,7 +3573,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Whether the screen has a shut gate that opens on enemies killed (frame 0-4, 10-14).</summary>
         private static bool KillGateShut() =>
             BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Gate && e.Solid
-                && GatePreset?.GetValue(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 < 5);
+                && GatePreset?.GetValueF(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 < 5);
 
         /// <summary>Whether the screen has buttons and a shut gate that opens on puzzles solved (frame 5-7) rather than kills.</summary>
         private static bool PuzzleGateShut()
@@ -3575,7 +3583,7 @@ namespace AnodyneSharp.Recording
                 return false;
             }
             return BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Gate && e.Solid
-                && GatePreset?.GetValue(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 >= 5);
+                && GatePreset?.GetValueF(e) is AnodyneSharp.Entities.EntityPreset p && p.Frame % 10 >= 5);
         }
 
         /// <summary>
@@ -3593,7 +3601,7 @@ namespace AnodyneSharp.Recording
                 throw new Exception($"silverfish on button: needs one or two buttons here ({buttons.Count})");
             }
             var grid = Grid;
-            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.X / 16f), (int)Math.Floor(r.Center.Y / 16f));
+            Point TileAt(Rectangle r) => new((int)Math.Floor(r.Center.ToXna().X / 16f), (int)Math.Floor(r.Center.ToXna().Y / 16f));
             var buttonTiles = buttons.Select(b => TileAt(b.Hitbox)).ToList();
             bool OnScreen(Point t) => t.X >= grid.X * 10 && t.X < grid.X * 10 + 10 && t.Y >= grid.Y * 10 && t.Y < grid.Y * 10 + 10;
             var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
@@ -3641,7 +3649,7 @@ namespace AnodyneSharp.Recording
                         throw new Exception("silverfish on button: no silverfish here");
                     }
                     BotNav.SpookFish = fish;
-                    for (int f = 0; f < 120 && fish.velocity != Vector2.Zero; f++)
+                    for (int f = 0; f < 120 && fish.velocity.ToXna() != Vector2.Zero; f++)
                     {
                         yield return Wait(1);
                     }
@@ -3685,11 +3693,11 @@ namespace AnodyneSharp.Recording
                         {
                             yield return FishWalk(fish, ours);
                         }
-                        for (int f = 0; f < limit && GlobalState.PUZZLES_SOLVED < buttons.Count && TileAt(fish.Hitbox) == ft; f++)
+                        for (int f = 0; f < limit && Gs.PuzzlesSolved < buttons.Count && TileAt(fish.Hitbox) == ft; f++)
                         {
                             yield return Wait(1);
                         }
-                        if (GlobalState.PUZZLES_SOLVED >= buttons.Count)
+                        if (Gs.PuzzlesSolved >= buttons.Count)
                         {
                             yield break;
                         }
@@ -3779,12 +3787,12 @@ namespace AnodyneSharp.Recording
                             System.Console.Error.WriteLine($"  silverfish on button: stuck at {ft}; out to screen {next} and back to start it over");
                             resets++;
                             var oc = BotNav.CentreOf(o) + new Vector2(5, 6);
-                            if (BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Silverfish && (e.Center - oc).Length() < 28) is Entity inDoor)
+                            if (BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.Silverfish && (e.Center.ToXna() - oc).Length() < 28) is Entity inDoor)
                             {
                                 // It has run into the doorway itself (and nothing we do makes it leave an edge it backs into): jump over it.
                                 var jd = next.X < grid.X ? KeyFunctions.Left : next.X > grid.X ? KeyFunctions.Right : next.Y < grid.Y ? KeyFunctions.Up : KeyFunctions.Down;
                                 var jv = DirVector(jd);
-                                var standAt = inDoor.Center - jv * 18f - new Vector2(5, 6);
+                                var standAt = inDoor.Center.ToXna() - jv * 18f - new Vector2(5, 6);
                                 BotRunner.Status = "silverfish on button: jump the fish in the doorway";
                                 yield return GoTo(standAt.X, standAt.Y);
                                 yield return WalkTo(standAt.X, standAt.Y, tol: 1.5f, timeout: 90);
@@ -3828,7 +3836,7 @@ namespace AnodyneSharp.Recording
                     bool ran = false;
                     for (int f = 0; f < 300; f++)
                     {
-                        if (fish.velocity != Vector2.Zero)
+                        if (fish.velocity.ToXna() != Vector2.Zero)
                         {
                             ran = true;
                         }
@@ -3867,14 +3875,14 @@ namespace AnodyneSharp.Recording
             }
             Facing Toward(Point ft, Point t) => t.Y == ft.Y ? (t.X < ft.X ? Facing.LEFT : Facing.RIGHT) : (t.Y < ft.Y ? Facing.UP : Facing.DOWN);
             Facing After(Facing f) => f switch { Facing.LEFT => Facing.UP, Facing.UP => Facing.RIGHT, Facing.RIGHT => Facing.DOWN, _ => Facing.LEFT };
-            Point FishTile() => BotNav.TileOf(new Vector2(fish.Hitbox.Center.X - BotNav.HalfW, fish.Hitbox.Center.Y - BotNav.HalfH));
+            Point FishTile() => BotNav.TileOf(new Vector2(fish.Hitbox.Center.ToXna().X - BotNav.HalfW, fish.Hitbox.Center.ToXna().Y - BotNav.HalfH));
             bool InLine(Point t, Point ft) => (t.X == ft.X || t.Y == ft.Y) && t != ft;
             var cur = here;
             for (int i = 0; i < path.Count; i++)
             {
                 var t = path[i];
                 var ft = FishTile();
-                if (fish.exists && fish.velocity == Vector2.Zero && InLine(t, ft) && !InLine(cur, ft))
+                if (fish.exists && fish.velocity.ToXna() == Vector2.Zero && InLine(t, ft) && !InLine(cur, ft))
                 {
                     // About to step into its line: wait (on this side) for it to have just turned past facing us.
                     var toward = Toward(ft, t);
@@ -3904,7 +3912,7 @@ namespace AnodyneSharp.Recording
         private static IEnumerable<Threat> PredictSightTrap(Entity d, float speed = 80f)
         {
             var r = d.Hitbox;
-            var t0 = BotNav.TileOf(new Vector2(r.Center.X, r.Center.Y) - new Vector2(BotNav.HalfW, BotNav.HalfH));
+            var t0 = BotNav.TileOf(new Vector2(r.Center.ToXna().X, r.Center.ToXna().Y) - new Vector2(BotNav.HalfW, BotNav.HalfH));
             int Reach(Point step)
             {
                 int n = 0;
@@ -3950,12 +3958,12 @@ namespace AnodyneSharp.Recording
         /// <summary>A Crowd Rotator's fireball circles its post (out to 59px at 30px/s, 1.2 rad/s): exactly where it will be. Harmless to a jumper.</summary>
         private static Threat PredictRotatorBullet(Entity d)
         {
-            float r = (float)RotRadiusField.GetValue(d), a = (float)RotAngleField.GetValue(d);
-            var parent = (Entity)RotParentField.GetValue(d);
-            var c = parent.Center;
+            float r = (float)RotRadiusField.GetValueF(d), a = (float)RotAngleField.GetValueF(d);
+            var parent = (Entity)RotParentField.GetValueF(d);
+            var c = parent.Center.ToXna();
             var th = new Threat { Name = "RotatorBullet", Margin = 2, Source = d };
             var hb = d.Hitbox;
-            var off = new Vector2(hb.X, hb.Y) - d.Position; // hitbox top-left relative to the position the orbit sets
+            var off = new Vector2(hb.X, hb.Y) - d.Position.ToXna(); // hitbox top-left relative to the position the orbit sets
             for (int f = 0; f <= Horizon; f++)
             {
                 float rf = Math.Min(59f, r + 30f * f / 60f), af = a + 1.2f * f / 60f;
@@ -3985,14 +3993,14 @@ namespace AnodyneSharp.Recording
             var th = new Threat { Name = "SpikeRoller", Source = e, Margin = 1 };
             var r = e.Hitbox;
             var roller = (AnodyneSharp.Entities.Enemy.Crowd.BaseSpikeRoller)e;
-            var v = e.velocity;
-            float fallLeft = roller.CollisionOn ? 0 : e.offset.Y / 60f;
+            var v = e.velocity.ToXna();
+            float fallLeft = roller.CollisionOn ? 0 : e.offset.ToXna().Y / 60f;
             float left = 112f;
-            if (RollerInitField?.GetValue(e) is Vector2 init)
+            if (RollerInitField?.GetValueF(e) is Vector2 init)
             {
-                left = Math.Max(0, 112f - (init - e.Position).Length());
+                left = Math.Max(0, 112f - (init - e.Position.ToXna()).Length());
             }
-            if (v == Vector2.Zero && !roller.CollisionOn && RollerVelField?.GetValue(e) is Vector2 vel)
+            if (v == Vector2.Zero && !roller.CollisionOn && RollerVelField?.GetValueF(e) is Vector2 vel)
             {
                 v = vel; // still falling: it rolls when it lands
             }
@@ -4031,14 +4039,14 @@ namespace AnodyneSharp.Recording
         private static Threat PredictLob(Entity d, string name, float hurtBelow)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            if (d.velocity == Vector2.Zero)
+            if (d.velocity.ToXna() == Vector2.Zero)
             {
                 return null;
             }
-            var para = d.GetType().GetField("parabola", F)?.GetValue(d);
+            var para = d.GetType().GetField("parabola", F)?.GetValueF(d);
             var pt = typeof(AnodyneSharp.Entities.Parabola_Thing);
-            if (para == null || pt.GetField("t", F)?.GetValue(para) is not float t0 || pt.GetField("period", F)?.GetValue(para) is not float period
-                || pt.GetField("height", F)?.GetValue(para) is not float height || pt.GetField("start", F)?.GetValue(para) is not float start)
+            if (para == null || pt.GetField("t", F)?.GetValueF(para) is not float t0 || pt.GetField("period", F)?.GetValueF(para) is not float period
+                || pt.GetField("height", F)?.GetValueF(para) is not float height || pt.GetField("start", F)?.GetValueF(para) is not float start)
             {
                 return null;
             }
@@ -4057,7 +4065,7 @@ namespace AnodyneSharp.Recording
                     continue; // high in the air: passes over us
                 }
                 var r = d.Hitbox;
-                r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                r.Offset((int)(d.velocity.ToXna().X * f / 60f), (int)(d.velocity.ToXna().Y * f / 60f));
                 th.At[f] = r;
             }
             return th;
@@ -4065,17 +4073,17 @@ namespace AnodyneSharp.Recording
 
         private static Threat PredictFrogBullet(Entity d)
         {
-            if (d.velocity == Vector2.Zero)
+            if (d.velocity.ToXna() == Vector2.Zero)
             {
                 return null;
             }
-            var para = FrogParabolaField?.GetValue(d);
+            var para = FrogParabolaField?.GetValueF(d);
             if (para == null)
             {
                 return null;
             }
-            float t0 = (float)ParabolaTField.GetValue(para);
-            float period = (float)ParabolaPeriodField.GetValue(para);
+            float t0 = (float)ParabolaTField.GetValueF(para);
+            float period = (float)ParabolaPeriodField.GetValueF(para);
             var th = new Threat { Name = "FrogBullet", Margin = 2, Source = d };
             for (int f = 0; f <= Horizon; f++)
             {
@@ -4090,7 +4098,7 @@ namespace AnodyneSharp.Recording
                     continue; // high in the air: passes over us
                 }
                 var r = d.Hitbox;
-                r.Offset((int)(d.velocity.X * f / 60f), (int)(d.velocity.Y * f / 60f));
+                r.Offset((int)(d.velocity.ToXna().X * f / 60f), (int)(d.velocity.ToXna().Y * f / 60f));
                 th.At[f] = r;
             }
             return th;
@@ -4224,13 +4232,13 @@ namespace AnodyneSharp.Recording
         /// <summary>Frames until we land from the jump we are in (read off the jump's parabola clock), or null when it cannot be read.</summary>
         private static int? AirFramesLeft()
         {
-            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || JumpAnimField?.GetValue(Player) is not object anim)
+            if (Player.state != AnodyneSharp.Entities.PlayerState.AIR || PlayerField(JumpAnimField) is not object anim)
             {
                 return null;
             }
             foreach (var f in anim.GetType().GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
             {
-                if (f.GetValue(anim) is AnodyneSharp.Entities.Parabola_Thing pt && ParabolaTField?.GetValue(pt) is float t && ParabolaPeriodField?.GetValue(pt) is float period)
+                if (f.GetValueF(anim) is AnodyneSharp.Entities.Parabola_Thing pt && ParabolaTField?.GetValueF(pt) is float t && ParabolaPeriodField?.GetValueF(pt) is float period)
                 {
                     return Math.Max(0, (int)Math.Ceiling((period - t) * 60f));
                 }
@@ -4278,7 +4286,7 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             pb.Offset((int)Math.Round(v.X), (int)Math.Round(v.Y));
             var tb = e.Hitbox;
-            tb.Offset((int)Math.Round(e.velocity.X * frames / 60f), (int)Math.Round(e.velocity.Y * frames / 60f));
+            tb.Offset((int)Math.Round(e.velocity.ToXna().X * frames / 60f), (int)Math.Round(e.velocity.ToXna().Y * frames / 60f));
             tb.Inflate(2, 2);
             return pb.Intersects(tb);
         }
@@ -4377,7 +4385,7 @@ namespace AnodyneSharp.Recording
                 }
                 sb.AppendLine();
             }
-            sb.AppendLine($"jump {(GlobalState.inventory.CanJump ? 1 : 0)}");
+            sb.AppendLine($"jump {(Gs.CanJump ? 1 : 0)}");
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, $"st_{BotRunner.Frame}_{_stDumps++}.txt"), sb.ToString());
         }
 
@@ -4443,19 +4451,19 @@ namespace AnodyneSharp.Recording
                 ? r => fastWalk0(r) && r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160
                 : fastWalk0;
             // (with the boots, and on the ground on dry land: jumps too, over what sweeps the floor and across pits)
-            Func<Rectangle, bool> airOk = GlobalState.inventory.CanJump && Player.state == PlayerState.GROUND && Player.raft == null && !BotNav.IsConveyor(BotNav.TileOf(Pos))
+            Func<Rectangle, bool> airOk = Gs.CanJump && Player.state == PlayerState.GROUND && Player.raft == null && !BotNav.IsConveyor(BotNav.TileOf(Pos))
                 && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null
                 ? r => WallFree(r) && (!stayOn || r.Left >= gridNow.X * 160 && r.Right <= gridNow.X * 160 + 160 && r.Top >= gridNow.Y * 160 && r.Bottom <= gridNow.Y * 160 + 160)
                 : null;
             // Dash pads on this screen (the planner rides them: a run the way one points outpaces what walks)
             var pads = BotRunner.Entities().OfType<AnodyneSharp.Entities.Gadget.DashPad>().Where(e => e.exists && e.Hitbox.Intersects(new Rectangle(gridNow.X * 160, gridNow.Y * 160, 160, 160)))
-                .Select(e => (box: e.Hitbox, dir: Entity.FacingDirection(e.facing))).ToList();
+                .Select(e => (box: e.Hitbox, dir: Entity.FacingDirection(e.facing).ToXna())).ToList();
             Func<Rectangle, (int, int)> padAt = null;
             if (pads.Count > 0)
             {
                 padAt = r =>
                 {
-                    var c = r.Center;
+                    var c = r.Center.ToXna();
                     foreach (var (box, dir) in pads)
                     {
                         if (box.Contains(c))
@@ -4466,7 +4474,7 @@ namespace AnodyneSharp.Recording
                     return (0, 0);
                 };
             }
-            var dash0 = Player.state == PlayerState.GROUND && PlayerDashField?.GetValue(Player) is Vector2 dv ? dv : Vector2.Zero;
+            var dash0 = Player.state == PlayerState.GROUND && PlayerField(PlayerDashField) is Vector2 dv ? dv : Vector2.Zero;
             int a = SpaceTime.Plan(Player.Hitbox, goal, st, fastWalk, Horizon, maxNodes: 700, survive: survive, airOk: airOk, padAt: padAt, dash0: dash0);
             if (Environment.GetEnvironmentVariable("ANODYNE_ST_TIME") != null) { System.Console.Error.WriteLine($"  plan {swPlan.Elapsed.TotalMilliseconds:0.00}ms nodes {SpaceTime.Nodes} threats {st.Count} -> {a}"); }
             if (a < 0)
@@ -4552,7 +4560,7 @@ namespace AnodyneSharp.Recording
                 {
                     return false;
                 }
-                var c = r.Center;
+                var c = r.Center.ToXna();
                 return Tile((int)Math.Floor((c.X - 2) / 16f), (int)Math.Floor((c.Y - 2) / 16f)) && Tile((int)Math.Floor((c.X + 2) / 16f), (int)Math.Floor((c.Y - 2) / 16f)) &&
                        Tile((int)Math.Floor((c.X - 2) / 16f), (int)Math.Floor((c.Y + 2) / 16f)) && Tile((int)Math.Floor((c.X + 2) / 16f), (int)Math.Floor((c.Y + 2) / 16f));
             }
@@ -4566,13 +4574,13 @@ namespace AnodyneSharp.Recording
         /// </summary>
         // (a Frog spits a burst at us whenever we are within 64px of it)
         private static bool FrogsReach(Vector2 at) =>
-            BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToVector2() - at).LengthSquared() < 72 * 72);
+            BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToXna().ToVector2() - at).LengthSquared() < 72 * 72);
 
         private static Point? QuietHoldTile(Entity except)
         {
             // (only what sweeps the floor on a fixed beat, a spike bar or a fire pillar: shots are aimed at us wherever we hold;
             // and a Frog's reach: it spits a burst at us whenever we are within 64px of it, an Annoyer circling us or not)
-            var frogs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToVector2()).ToList();
+            var frogs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToXna().ToVector2()).ToList();
             if (frogs.Count == 0 && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller or AnodyneSharp.Entities.Enemy.Circus.FirePillar or AnodyneSharp.Entities.Enemy.Apartment.BounceDashTrap))
             {
                 return null;
@@ -4701,7 +4709,7 @@ namespace AnodyneSharp.Recording
         {
             var list = new List<Threat>();
             int now = (int)BotRunner.Frame;
-            var pc = Player.VisualCenter;
+            var pc = Player.VisualCenter.ToXna();
             foreach (var sl in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").ToList())
             {
                 string anim = sl.CurAnimName ?? "";
@@ -4711,11 +4719,11 @@ namespace AnodyneSharp.Recording
                     ph = (kind, now);
                     _slasherPhase[sl] = ph;
                 }
-                foreach (var sub in sl.SubEntities().Where(e => e.exists && e.visible && e.GetType().Name.EndsWith("Slash")))
+                foreach (var sub in sl.Subs().Where(e => e.exists && e.visible && e.GetType().Name.EndsWith("Slash")))
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && now - ph.since <= 1)
                     {
-                        System.Console.Error.WriteLine($"  slashcheck f{now} actual={sub.Hitbox} predicted={SlasherCutRect(sl.Position, Player.Position, Player.VisualCenter)} sl={sl.Position} me={Player.Position} {sl.facing}");
+                        System.Console.Error.WriteLine($"  slashcheck f{now} actual={sub.Hitbox} predicted={SlasherCutRect(sl.Position.ToXna(), Player.Position.ToXna(), Player.VisualCenter.ToXna())} sl={sl.Position.ToXna()} me={Player.Position.ToXna()} {sl.facing}");
                     }
                     var th = new Threat { Name = "Slasher cut", Source = sl, Margin = 2, Stationary = true };
                     for (int k = 0; k <= 16; k++)
@@ -4730,10 +4738,10 @@ namespace AnodyneSharp.Recording
                     continue;
                 }
                 left = Math.Max(left, 0);
-                var toUs = pc - sl.Center;
+                var toUs = pc - sl.Center.ToXna();
                 // where it will be: it drifts straight at us (20px/s on each axis) until the cut
                 float drift = 20f * left / 60f;
-                var p = sl.Position + new Vector2(Math.Sign(toUs.X) * Math.Min(drift, Math.Abs(toUs.X)), Math.Sign(toUs.Y) * Math.Min(drift, Math.Abs(toUs.Y)));
+                var p = sl.Position.ToXna() + new Vector2(Math.Sign(toUs.X) * Math.Min(drift, Math.Abs(toUs.X)), Math.Sign(toUs.Y) * Math.Min(drift, Math.Abs(toUs.Y)));
                 int grow = 3 + left / 20;
                 var facings = new List<Facing> { sl.facing };
                 facings.Add(Math.Abs(toUs.X) >= Math.Abs(toUs.Y) ? (toUs.Y < 0 ? Facing.UP : Facing.DOWN) : (toUs.X < 0 ? Facing.LEFT : Facing.RIGHT));
@@ -4770,7 +4778,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static void SlasherDrift(Entity sl, ref Vector2 p, Vector2 to)
         {
-            var off = new Vector2(sl.Hitbox.X, sl.Hitbox.Y) - sl.Position;
+            var off = new Vector2(sl.Hitbox.X, sl.Hitbox.Y) - sl.Position.ToXna();
             bool Fits(Vector2 at)
             {
                 var r = new Rectangle((int)Math.Floor(at.X + off.X), (int)Math.Floor(at.Y + off.Y), sl.Hitbox.Width, sl.Hitbox.Height);
@@ -4842,7 +4850,7 @@ namespace AnodyneSharp.Recording
             typeof(AnodyneSharp.Entities.Player).GetField("IS_SINKING", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Wading in water (no raft): the game ignores the jump key then, whatever tile our position rounds to.</summary>
-        private static bool Sinking => SinkingField?.GetValue(Player) is bool b && b;
+        private static bool Sinking => PlayerField(SinkingField) is bool b && b;
 
         protected static KeyFunctions[] SafeMove(KeyFunctions wanted, Entity except = null, float dist = 40f, bool stopForBlockers = false, List<Vector2> look = null)
         {
@@ -4876,7 +4884,7 @@ namespace AnodyneSharp.Recording
                 return SteamWait ? K() : K(wanted);
             }
             var threats = PredictThreats(except);
-            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && DashStateField?.GetValue(Player) is Vector2 dsv)
+            if (Player.state == AnodyneSharp.Entities.PlayerState.GROUND && DashFactor() > 1.01f && PlayerField(DashStateField) is Vector2 dsv)
             {
                 // Running off a dash pad (it lasts while the key is held): the plans below think in walking pace, so if anything is in the
                 // way of the run let go for a frame (that ends it) and plan again at a walk.
@@ -4893,7 +4901,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            if (GlobalState.inventory.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && !Sinking && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
+            if (Gs.CanJump && !(Player.raft == null && BotNav.IsConveyor(BotNav.TileOf(Pos))) && !Sinking && Environment.GetEnvironmentVariable("ANODYNE_BOT_NO_JUMPDODGE") == null)
             {
                 // (Wading, sinking into water, there is no jumping; puddles are fine.) With the boots a jump is ~28 frames in the air, and everything that hurts by touch or bullet checks "not in the air": jump
                 // through the volley / the dash instead of waiting for a gap that may never come. Steer in the air towards where we were going.
@@ -5163,7 +5171,7 @@ namespace AnodyneSharp.Recording
         /// <summary>True if a wall is right beside the enemy's tile on one side only (it plugs part of a narrow passage).</summary>
         private static bool InCorridor(Entity e)
         {
-            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
+            var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X - 5, e.Hitbox.Center.ToXna().Y - 6));
             return BotNav.Walkable(new Point(t.X + 1, t.Y)) != BotNav.Walkable(new Point(t.X - 1, t.Y));
         }
 
@@ -5202,7 +5210,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> StandFaceAccept(int tx, int ty, char face, Point? clearOfBolts = null, bool here = false)
         {
             var c = BotNav.CentreOf(new Point(tx, ty));
-            if (BotNav.Walkable(new Point(tx, ty - 1)) && BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
+            if (BotNav.Walkable(new Point(tx, ty - 1)) && BotRunner.Entities().Any(e => e.exists && e.GetType().Name is "Frog" or "Burst_Plant" && (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - new Vector2(c.X + 5, c.Y + 6)).Length() < 90))
             {
                 // A shooter is about: its bullets are aimed at the middle of us. Stand at the top of the tile (still the same tile): the volley
                 // lands a few pixels short and mostly misses, which is enough while we do slow work (setting dust down) here. (Not under a
@@ -5230,7 +5238,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"  set dust down onto {cb.X},{cb.Y}: centre {Player.Center} face {Player.facing} f{BotRunner.Frame} carried {Player.broom.dust?.Position} {Player.broom.dust?.exists} released {Player.broom.just_released_dust} broom out {Player.broom.exists}");
+                    System.Console.Error.WriteLine($"  set dust down onto {cb.X},{cb.Y}: centre {Player.Center.ToXna()} face {Player.facing} f{BotRunner.Frame} carried {Player.broom.dust?.Position} {Player.broom.dust?.exists} released {Player.broom.just_released_dust} broom out {Player.broom.exists}");
                 }
             }
             yield return Tap(KeyFunctions.Accept);
@@ -5238,7 +5246,7 @@ namespace AnodyneSharp.Recording
             {
                 for (int w = 0; w < 12; w++)
                 {
-                    System.Console.Error.WriteLine($"   after f{BotRunner.Frame}: dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}{e.CurAnimName}"))} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Position.X:0}"))}");
+                    System.Console.Error.WriteLine($"   after f{BotRunner.Frame}: dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position.ToXna()}{(e.exists ? "" : "x")}{e.CurAnimName}"))} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Position.ToXna().X:0}"))}");
                     yield return K();
                 }
                 yield break;
@@ -5257,7 +5265,7 @@ namespace AnodyneSharp.Recording
         /// <summary>True if the dust sits right at the end of a beam (picking it up there means loitering in the line of fire).</summary>
         private static bool NextToLane(Entity dust, HashSet<Point> lanes)
         {
-            var t = BotNav.TileOf(dust.Position + new Vector2(8, 8));
+            var t = BotNav.TileOf(dust.Position.ToXna() + new Vector2(8, 8));
             return lanes.Contains(new Point(t.X + 1, t.Y)) || lanes.Contains(new Point(t.X - 1, t.Y)) ||
                    lanes.Contains(new Point(t.X, t.Y + 1)) || lanes.Contains(new Point(t.X, t.Y - 1));
         }
@@ -5275,9 +5283,9 @@ namespace AnodyneSharp.Recording
             {
                 BotNav.HardAvoid = null; // an earlier emitter that gave up (`continue`) must not leave its beam lanes walled off
                 var step = FacingStep(em.facing);
-                var et = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                var et = BotNav.TileOf(em.Position.ToXna() + new Vector2(8, 8));
                 var target = new Point(et.X + step.X, et.Y + step.Y);
-                bool plugged() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && BotNav.TileOf(e.Position + new Vector2(8, 8)) == target);
+                bool plugged() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) == target);
                 if (plugged())
                 {
                     continue;
@@ -5325,13 +5333,13 @@ namespace AnodyneSharp.Recording
                             {
                                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && w % 3 == 0)
                                 {
-                                    System.Console.Error.WriteLine($"  leapfrog w{w}: me {Pos} v {Player.velocity} carrying {Player.broom.dust != null} dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position}{(e.exists ? "" : "x")}{e.CurAnimName}"))}");
+                                    System.Console.Error.WriteLine($"  leapfrog w{w}: me {Pos} v {Player.velocity.ToXna()} carrying {Player.broom.dust != null} dust {string.Join(" ", BotRunner.Entities().Where(e => e is AnodyneSharp.Entities.Dust).Select(e => $"{e.Position.ToXna()}{(e.exists ? "" : "x")}{e.CurAnimName}"))}");
                                 }
                                 yield return K();
                             }
                             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                             {
-                                System.Console.Error.WriteLine($"  leapfrog first plug: me {Pos} centre {Player.Center} face {Player.facing} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position.ToString()))}");
+                                System.Console.Error.WriteLine($"  leapfrog first plug: me {Pos} centre {Player.Center.ToXna()} face {Player.facing} carrying {Player.broom.dust != null}; dust {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position.ToXna().ToString()))}");
                             }
                             BotNav.HardAvoid = BotNav.LaneTiles();
                             yield return PickUpLooseDust(frog.beam[frog.j]);
@@ -5370,7 +5378,7 @@ namespace AnodyneSharp.Recording
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
-                            System.Console.Error.WriteLine($"  dust: {string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{BotNav.TileOf(e.Position + new Vector2(8, 8))}{(e.exists ? "" : "x")}"))}");
+                            System.Console.Error.WriteLine($"  dust: {string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8))}{(e.exists ? "" : "x")}"))}");
                             var near = BotNav.NearEnemies(14, null, stationaryOnly: true);
                             System.Console.Error.WriteLine($"  laser {et.X},{et.Y}: no safe tile to plug {target.X},{target.Y} from; me {BotNav.TileOf(Pos)} lanes {string.Join(" ", lanes0.Select(l => $"{l.X},{l.Y}"))} walk {string.Join(" ", new[] { new Point(0, 1), new Point(0, -1), new Point(-1, 0) }.Select(o => $"{o.X},{o.Y}:{BotNav.Walkable(new Point(target.X + o.X, target.Y + o.Y))}/{near.Contains(new Point(target.X + o.X, target.Y + o.Y))}"))}");
                         }
@@ -5413,7 +5421,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static (List<Point> beam, int j, Point stand)? LeapfrogStand(Point target, Point step, HashSet<Point> lanes)
         {
-            var dusts = BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8)))) + (Player.broom.dust != null ? 1 : 0);
+            var dusts = BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)))) + (Player.broom.dust != null ? 1 : 0);
             if (dusts < 2)
             {
                 return null;
@@ -5475,14 +5483,14 @@ namespace AnodyneSharp.Recording
                 yield break;
             }
             var lanes = BotNav.LaneTiles();
-            var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8)))
-                    && BotNav.TileOf(e.Position + new Vector2(8, 8)) != except && BotNav.TileOf(e.Position + new Vector2(8, 8)) is var et && et.X / 10 == Grid.X && et.Y / 10 == Grid.Y)
-                .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+            var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)))
+                    && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) != except && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) is var et && et.X / 10 == Grid.X && et.Y / 10 == Grid.Y)
+                .OrderBy(e => NextToLane(e, lanes) ? 1 : 0).ThenBy(e => (e.Position.ToXna() - Pos).LengthSquared()).FirstOrDefault();
             if (dust == null)
             {
                 yield break;
             }
-            var dt = BotNav.TileOf(dust.Position + new Vector2(8, 8));
+            var dt = BotNav.TileOf(dust.Position.ToXna() + new Vector2(8, 8));
             foreach (var o in new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) })
             {
                 var t = new Point(dt.X + o.X, dt.Y + o.Y);
@@ -5490,6 +5498,12 @@ namespace AnodyneSharp.Recording
                 {
                     yield return StandFaceAccept(t.X, t.Y, FaceChar(new Point(-o.X, -o.Y)));
                     yield return Wait(30);
+                    if (Talking)
+                    {
+                        // The first dust ever swept says so ("Your broom is now full of dust!"): only in a release build of the C#
+                        // game, and on the GBA port. Read it, or the next Accept (setting the dust down) only turns its page.
+                        yield return ReadDialogue();
+                    }
                     _pickedDust = Player.broom.dust != null;
                     yield break;
                 }
@@ -5505,7 +5519,7 @@ namespace AnodyneSharp.Recording
             foreach (var em in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser"))
             {
                 var step = FacingStep(em.facing);
-                var t = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                var t = BotNav.TileOf(em.Position.ToXna() + new Vector2(8, 8));
                 if (onPath.Contains(t))
                 {
                     result.Add(em); // the route squeezes past the emitter itself: its muzzle bullets are on the path
@@ -5532,7 +5546,7 @@ namespace AnodyneSharp.Recording
         protected static bool HaveLooseDust()
         {
             var lanes = BotNav.LaneTiles();
-            return Player.broom.dust != null || BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position + new Vector2(8, 8))));
+            return Player.broom.dust != null || BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && !lanes.Contains(BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8))));
         }
 
         /// <summary>Walks screen by screen along the most permissive route (rafts, jumps) to the tile containing (gx,gy).</summary>
@@ -5543,8 +5557,8 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> StepOffDoor(Point toward)
         {
             var start = BotNav.TileOf(Pos);
-            if (!AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type != null
-                && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && BotNav.TileOf(pr.Position + new Vector2(8, 8)) == start))
+            if (!AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type != null
+                && (pr.Type.Name.EndsWith("Door") || pr.Type.Name.EndsWith("Portal")) && BotNav.TileOf(pr.Position.ToXna() + new Vector2(8, 8)) == start))
             {
                 yield break;
             }
@@ -5562,7 +5576,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> GoGlobal(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
-            bool jump = GlobalState.inventory.CanJump;
+            bool jump = Gs.CanJump;
             var start = BotNav.TileOf(Pos);
             if (!BotNav.Walkable(start) && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Propelled && e.Hitbox.Intersects(Player.Hitbox)))
             {
@@ -5584,6 +5598,7 @@ namespace AnodyneSharp.Recording
             long healAt = -100000; // when this walk last went off to heal
             int killTrips = 0; // trips round to the enemies of a kill gate on the far side
             bool warped = false; // went back to the Nexus pad to plan from there
+            bool steppedOff = false; // stepped off a wall tile our centre was over, to plan from the floor
             int flips = 0, buttonsPressed = 0;
             var doorsTaken = new HashSet<int>(); // door pairs taken to get out of a room with no other way out
             var lookedAt = new HashSet<Point>(); // screens gone to for a look at a shut gate with no button
@@ -5595,11 +5610,11 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                bool lowHp = GlobalState.CUR_HEALTH * 5 <= GlobalState.MAX_HEALTH * 2;
+                bool lowHp = Gs.Health * 5 <= Gs.MaxHealth * 2;
                 // (a top-up for chip damage only once in a while: when each trip to a checkpoint costs a hit on the way, more trips just go round)
                 // (and hearts already let go as chip, when a checkpoint is handy: Heal() turns down a long trip for a heart or two)
                 bool owed = BotRunner.DebtAge > BotRunner.RecoverFrames / 2 && BotRunner.DebtMissing > BotRunner.ChipLeft;
-                bool topUp = !owed && BotRunner.ChipLeft < BotRunner.ChipPerPart && BotRunner.DebtAge < 0 && GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH;
+                bool topUp = !owed && BotRunner.ChipLeft < BotRunner.ChipPerPart && BotRunner.DebtAge < 0 && Gs.Health < Gs.MaxHealth;
                 bool chipHeal = (owed || topUp) && BotRunner.Frame - _lastChipHeal > 6000;
                 if (AutoHeal && !_healing && BotRunner.Frame - healAt > 1200 && (lowHp || chipHeal) && !HasRaft() && !OnConveyor(here))
                 {
@@ -5778,7 +5793,7 @@ namespace AnodyneSharp.Recording
                             yield return GoGlobal(nc.X, nc.Y);
                             if (Grid == fs)
                             {
-                                yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == fs);
+                                yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.ToXna().X / 160), (int)(e.Hitbox.Center.ToXna().Y / 160)) == fs);
                             }
                             plan = null;
                             lastHere = new Point(-1, -1);
@@ -5786,7 +5801,7 @@ namespace AnodyneSharp.Recording
                         }
                     }
                 }
-                if (route == null && AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !(fruitless.TryGetValue(Grid, out int leftHere) && leftHere == Enemies().Count)
+                if (route == null && AutoFight && Gs.HasBroom && Enemies().Count > 0 && !(fruitless.TryGetValue(Grid, out int leftHere) && leftHere == Enemies().Count)
                     && Enumerable.Range(0, 100).Select(k => new Point(Grid.X * 10 + k % 10, Grid.Y * 10 + k / 10)).FirstOrDefault(BotNav.IsShutKillGate) is var shutKg
                     && BotNav.IsShutKillGate(shutKg))
                 {
@@ -5797,7 +5812,7 @@ namespace AnodyneSharp.Recording
                         System.Console.Error.WriteLine($"  no route from {here} to {goal}: the kill gate {shutKg} of this screen is shut, fighting the {Enemies().Count} enemies here");
                     }
                     var fg = Grid;
-                    yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == fg);
+                    yield return Fight(3600, only: e => new Point((int)(e.Hitbox.Center.ToXna().X / 160), (int)(e.Hitbox.Center.ToXna().Y / 160)) == fg);
                     fruitless[fg] = Enemies().Count;
                     plan = null;
                     lastHere = new Point(-1, -1);
@@ -5817,7 +5832,30 @@ namespace AnodyneSharp.Recording
                     lastHere = new Point(-1, -1);
                     continue;
                 }
-                if (route == null && !warped && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad")
+                if (route == null && !steppedOff && !BotNav.Walkable(here))
+                {
+                    // Our centre is over a wall tile (a fight left us pressed to the side of a one-tile corridor, the Circus Folks' way
+                    // out): no route starts there, so first onto the floor tile our box is mostly on, and plan again.
+                    steppedOff = true;
+                    var box = Player.Hitbox;
+                    var under = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1), new Point(1, 1), new Point(-1, 1), new Point(1, -1), new Point(-1, -1) }
+                        .Select(o => new Point(here.X + o.X, here.Y + o.Y)).Where(BotNav.Walkable)
+                        .OrderByDescending(t => { var r = Rectangle.Intersect(box, new Rectangle(t.X * 16, t.Y * 16, 16, 16)); return r.Width * r.Height; })
+                        .ThenBy(t => Math.Abs(t.X - goal.X) + Math.Abs(t.Y - goal.Y)).ToList();
+                    if (under.Count > 0)
+                    {
+                        if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                        {
+                            System.Console.Error.WriteLine($"  no route from {here} to {goal}: on a wall tile, onto {under[0]} first");
+                        }
+                        var uc = BotNav.CentreOf(under[0]);
+                        yield return WalkTo(uc.X, uc.Y, tol: 1.5f, timeout: 120);
+                        plan = null;
+                        lastHere = new Point(-1, -1);
+                        continue;
+                    }
+                }
+                if (route == null && !warped && AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type?.Name == "NexusPad")
                     && !Map.Equals("NEXUS"))
                 {
                     // Nowhere to go from here (a one-way leap or drop brought us into a dead end): back to the map's Nexus pad, as a player
@@ -5867,7 +5905,7 @@ namespace AnodyneSharp.Recording
                 {
                     // The way out is a gate of this screen that opens on kills: fight for it first.
                     var gridNow = Grid;
-                    if (Enemies().Count == 0 && gateGrace < 120 && !BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == gridNow))
+                    if (Enemies().Count == 0 && gateGrace < 120 && !BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && new Point((int)e.Center.ToXna().X / 160, (int)e.Center.ToXna().Y / 160) == gridNow))
                     {
                         // (nothing left to fight: the last one is still dying, and the gate opens when it is gone; Dustmaids asleep are
                         // still to wake and beat, which FightForKillGate does)
@@ -5912,7 +5950,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 BotRunner.Status = $"on to {way.X},{way.Y}";
-                RaftLog($"hop {hop}: from {here} to {way} (route {route.Count}) pos {Pos} grid {Grid} trans {GlobalState.ScreenTransition} via {string.Join(">", route.Take(40).Select(t => $"{t.X},{t.Y}"))}");
+                RaftLog($"hop {hop}: from {here} to {way} (route {route.Count}) pos {Pos} grid {Grid} trans {Gs.ScreenTransition} via {string.Join(">", route.Take(40).Select(t => $"{t.X},{t.Y}"))}");
                 var wc = BotNav.CentreOf(way);
                 if (stalled && new Point(way.X / 10, way.Y / 10) != Grid)
                 {
@@ -5929,10 +5967,10 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     yield return RaftTo(wc.X - BotNav.HalfW, wc.Y - BotNav.HalfH);
-                    yield return Until(() => !GlobalState.ScreenTransition, 600, "screen transition");
+                    yield return Until(() => !Gs.ScreenTransition, 600, "screen transition");
                     yield return Wait(10);
                     // (not from a raft drifting down a river: the broom cannot steer it out of a Gas Guy's cloud)
-                    if (AutoFight && GlobalState.inventory.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos)) && BotNav.TileOf(Pos) != goal
+                    if (AutoFight && Gs.HasBroom && Enemies().Count > 0 && !HasRaft() && !OnConveyor(BotNav.TileOf(Pos)) && BotNav.TileOf(Pos) != goal
                         && !(fruitless.TryGetValue(Grid, out int left) && left == Enemies().Count))
                     {
                         // (once per screen while it gets us nowhere: a fight that killed nothing here is not started again on every hop)
@@ -5950,7 +5988,7 @@ namespace AnodyneSharp.Recording
 
         /// <summary>A button on the loaded screen that is pressed and counted (a permanent one stays so).</summary>
         private static bool ButtonDown(Point b) => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Gadget.Button
-            && BotNav.TileOf(e.Position + new Vector2(8, 8)) == b && ButtonIncField?.GetValue(e) is true);
+            && BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)) == b && ButtonIncField?.GetValueF(e) is true);
 
         /// <summary>Opens every treasure chest of the current map that is reachable (nearest first), crossing screens, rivers and spikes.</summary>
         private static readonly HashSet<System.Guid> _failedChests = new();
@@ -5980,37 +6018,37 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> KillSilverfish(int frames)
         {
-            bool Wall(Point t) => BotNav.IsBeamWall(t) || BotRunner.Entities().Any(g => g.exists && g.Solid && g.GetType().Name == "Gate" && BotNav.TileOf(g.Position) == t);
+            bool Wall(Point t) => BotNav.IsBeamWall(t) || BotRunner.Entities().Any(g => g.exists && g.Solid && g.GetType().Name == "Gate" && BotNav.TileOf(g.Position.ToXna()) == t);
             var dirs = new[] { new Point(0, 1), new Point(0, -1), new Point(1, 0), new Point(-1, 0) };
             var gasMem = new PolicyMem();
             var last = new Dictionary<Entity, Vector2>();
             for (int i = 0; i < frames; i++)
             {
-                var me = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+                var me = new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y);
                 var moving = new HashSet<Entity>();
                 foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Silverfish"))
                 {
                     // moving = it actually moved since the last frame (one pushing into a thin wall keeps its velocity but never gets anywhere)
-                    if (e.velocity != Vector2.Zero && (!last.TryGetValue(e, out var lp) || (lp - e.Position).Length() > 0.1f))
+                    if (e.velocity.ToXna() != Vector2.Zero && (!last.TryGetValue(e, out var lp) || (lp - e.Position.ToXna()).Length() > 0.1f))
                     {
                         moving.Add(e);
                     }
-                    last[e] = e.Position;
+                    last[e] = e.Position.ToXna();
                 }
-                var fish = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Silverfish" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid)
-                    .OrderBy(e => (e.Center - me).Length()).FirstOrDefault();
+                var fish = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Silverfish" && new Point((int)(e.Center.ToXna().X / 160), (int)(e.Center.ToXna().Y / 160)) == Grid)
+                    .OrderBy(e => (e.Center.ToXna() - me).Length()).FirstOrDefault();
                 if (fish == null)
                 {
                     yield break;
                 }
-                BotRunner.Status = $"silverfish at {fish.Position}";
+                BotRunner.Status = $"silverfish at {fish.Position.ToXna()}";
                 // one running at us (a first run goes the way it did not face, wherever we are): step out of its lane
-                var bolt = moving.FirstOrDefault(e => e.velocity.X != 0 ? Math.Abs(e.Center.Y - me.Y) < 15 && (me.X - e.Center.X) * e.velocity.X > 0 && Math.Abs(me.X - e.Center.X) < 64
-                                          : Math.Abs(e.Center.X - me.X) < 14 && (me.Y - e.Center.Y) * e.velocity.Y > 0 && Math.Abs(me.Y - e.Center.Y) < 64);
+                var bolt = moving.FirstOrDefault(e => e.velocity.ToXna().X != 0 ? Math.Abs(e.Center.ToXna().Y - me.Y) < 15 && (me.X - e.Center.ToXna().X) * e.velocity.ToXna().X > 0 && Math.Abs(me.X - e.Center.ToXna().X) < 64
+                                          : Math.Abs(e.Center.ToXna().X - me.X) < 14 && (me.Y - e.Center.ToXna().Y) * e.velocity.ToXna().Y > 0 && Math.Abs(me.Y - e.Center.ToXna().Y) < 64);
                 if (bolt != null)
                 {
-                    var side = bolt.velocity.X != 0 ? (me.Y < bolt.Center.Y ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Down, KeyFunctions.Up })
-                                                    : (me.X < bolt.Center.X ? new[] { KeyFunctions.Left, KeyFunctions.Right } : new[] { KeyFunctions.Right, KeyFunctions.Left });
+                    var side = bolt.velocity.ToXna().X != 0 ? (me.Y < bolt.Center.ToXna().Y ? new[] { KeyFunctions.Up, KeyFunctions.Down } : new[] { KeyFunctions.Down, KeyFunctions.Up })
+                                                    : (me.X < bolt.Center.ToXna().X ? new[] { KeyFunctions.Left, KeyFunctions.Right } : new[] { KeyFunctions.Right, KeyFunctions.Left });
                     var before = Pos;
                     yield return K(side[0]);
                     if ((Pos - before).Length() < 0.3f)
@@ -6019,11 +6057,11 @@ namespace AnodyneSharp.Recording
                     }
                     continue;
                 }
-                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid))
+                if (BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.ToXna().X / 160), (int)(e.Center.ToXna().Y / 160)) == Grid))
                 {
                     // the Gas Guy homes in on us through everything: broom it first (its gas kills silverfish anyway)
-                    var gas = BotRunner.Entities().First(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.X / 160), (int)(e.Center.Y / 160)) == Grid);
-                    BotRunner.Status = $"gas guy at {gas.Position}";
+                    var gas = BotRunner.Entities().First(e => e.exists && e.GetType().Name == "GasGuy" && new Point((int)(e.Center.ToXna().X / 160), (int)(e.Center.ToXna().Y / 160)) == Grid);
+                    BotRunner.Status = $"gas guy at {gas.Position.ToXna()}";
                     yield return PolicyFrame(FightPolicies.Slime(PolicyCtx(gas), gasMem) ?? new PKey[0], gas); // it comes to us: keep it at broom's length and swing
                     continue;
                 }
@@ -6032,7 +6070,7 @@ namespace AnodyneSharp.Recording
                     yield return K(); // running: let it reach its wall
                     continue;
                 }
-                var ft = BotNav.TileOf(fish.Center - new Vector2(BotNav.HalfW, BotNav.HalfH));
+                var ft = BotNav.TileOf(fish.Center.ToXna() - new Vector2(BotNav.HalfW, BotNav.HalfH));
                 // the side to come from: one we can stand on, with a wall right behind the fish (else the side whose run is shortest)
                 Point best = Point.Zero;
                 int bestRun = int.MaxValue;
@@ -6056,11 +6094,11 @@ namespace AnodyneSharp.Recording
                 }
                 if (bestRun == int.MaxValue)
                 {
-                    System.Console.Error.WriteLine($"silverfish at {fish.Position}: no side to reach it from");
+                    System.Console.Error.WriteLine($"silverfish at {fish.Position.ToXna()}: no side to reach it from");
                     yield break;
                 }
                 // stand 21px out from its centre on that side, level with it
-                var goal = fish.Center + new Vector2(best.X, best.Y) * 21f;
+                var goal = fish.Center.ToXna() + new Vector2(best.X, best.Y) * 21f;
                 var d = goal - me;
                 float along = best.X != 0 ? d.X : d.Y, across = best.X != 0 ? d.Y : d.X;
                 if (Math.Abs(along) > 24 || Math.Abs(across) > 24)
@@ -6102,11 +6140,11 @@ namespace AnodyneSharp.Recording
             int chaseFrames = 0;
             for (int guard = 0; guard < 3000 && GlobalState.events.GetEvent("SuburbKilled") < total; guard++)
             {
-                var me = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
-                var killers = BotRunner.Entities().Where(e => e.exists && BotNav.IsSuburbKiller(e)).Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).ToList();
-                var walker = BotRunner.Entities().Where(e => e.exists && !skip.Contains(e) && e.GetType().Name == "SuburbWalker" && e.velocity != Vector2.Zero && new Point((int)(e.Position.X / 160), (int)(e.Position.Y / 160)) == Grid
-                        && killers.All(k => (k - new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)).Length() > 48f)) // (one by a killer is left alone: the killer wakes as we swing)
-                    .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length()).FirstOrDefault();
+                var me = new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y);
+                var killers = BotRunner.Entities().Where(e => e.exists && BotNav.IsSuburbKiller(e)).Select(e => new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y)).ToList();
+                var walker = BotRunner.Entities().Where(e => e.exists && !skip.Contains(e) && e.GetType().Name == "SuburbWalker" && e.velocity.ToXna() != Vector2.Zero && new Point((int)(e.Position.ToXna().X / 160), (int)(e.Position.ToXna().Y / 160)) == Grid
+                        && killers.All(k => (k - new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y)).Length() > 48f)) // (one by a killer is left alone: the killer wakes as we swing)
+                    .OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).Length()).FirstOrDefault();
                 if (walker == null)
                 {
                     System.Console.Error.WriteLine($"townsfolk dead: {GlobalState.events.GetEvent("SuburbKilled")} (none left to reach on {Grid}, {skip.Count} walled off)");
@@ -6135,11 +6173,11 @@ namespace AnodyneSharp.Recording
                     chaseFrames += 2;
                     continue;
                 }
-                var d = new Vector2(walker.Hitbox.Center.X, walker.Hitbox.Center.Y) - me;
+                var d = new Vector2(walker.Hitbox.Center.ToXna().X, walker.Hitbox.Center.ToXna().Y) - me;
                 if (d.Length() > 36f)
                 {
                     // far, maybe round a wall: walk the tile route to beside it (it moves 20px/s, so a stale goal is still close)
-                    var wt = BotNav.TileOf(new Vector2(walker.Hitbox.Center.X - 5, walker.Hitbox.Center.Y - 6));
+                    var wt = BotNav.TileOf(new Vector2(walker.Hitbox.Center.ToXna().X - 5, walker.Hitbox.Center.ToXna().Y - 6));
                     var route = BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - wt.X) + Math.Abs(t.Y - wt.Y) <= 1);
                     if (route == null)
                     {
@@ -6261,16 +6299,16 @@ namespace AnodyneSharp.Recording
             var at = new Vector2(x, y);
             for (int attempt = 0; attempt < 4; attempt++)
             {
-                var frog = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && Vector2.Dot(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - at, d) > 0
-                        && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - at).Length() < 64)
-                    .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (at + d * 30)).LengthSquared()).FirstOrDefault();
+                var frog = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && Vector2.Dot(new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - at, d) > 0
+                        && (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - at).Length() < 64)
+                    .OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - (at + d * 30)).LengthSquared()).FirstOrDefault();
                 if (frog == null)
                 {
                     yield break;
                 }
                 BotRunner.Status = "frog rush: wait out of reach";
                 // (72px out from its middle along the run: its reach is 64px)
-                float along = Vector2.Dot(new Vector2(frog.Hitbox.Center.X, frog.Hitbox.Center.Y) - (at + new Vector2(5, 6)), d);
+                float along = Vector2.Dot(new Vector2(frog.Hitbox.Center.ToXna().X, frog.Hitbox.Center.ToXna().Y) - (at + new Vector2(5, 6)), d);
                 var wait = at - d * Math.Max(30f, 72f - along);
                 yield return GoGlobal(wait.X, wait.Y);
                 for (int i = 0; i < 40 && (Pos - wait).Length() > 1.5f; i++)
@@ -6332,21 +6370,21 @@ namespace AnodyneSharp.Recording
 
         protected static IEnumerable<object> CollectCicada()
         {
-            var pr = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+            var pr = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .FirstOrDefault(p => p.Type != null && p.Type.Name == "HealthCicadaSentinel" && p.Alive);
             if (pr == null)
             {
                 yield break;
             }
-            int maxBefore = GlobalState.MAX_HEALTH;
-            BotRunner.Status = $"to the health cicada at {pr.Position.X:0},{pr.Position.Y:0}";
+            int maxBefore = Gs.MaxHealth;
+            BotRunner.Status = $"to the health cicada at {pr.Position.ToXna().X:0},{pr.Position.ToXna().Y:0}";
             // (no trip to heal on the way: the cicada tops us up itself, and the Circus boss's warp back to the pad for one left the
             // keyblocks spent between us and it)
             bool heal = AutoHeal;
             AutoHeal = false;
             try
             {
-                yield return GoGlobal(pr.Position.X, pr.Position.Y);
+                yield return GoGlobal(pr.Position.ToXna().X, pr.Position.ToXna().Y);
             }
             finally
             {
@@ -6356,7 +6394,7 @@ namespace AnodyneSharp.Recording
             for (int i = 0; i < 1800; i++)
             {
                 sawBusy |= Talking;
-                if (GlobalState.MAX_HEALTH > maxBefore && !Talking && i > 60)
+                if (Gs.MaxHealth > maxBefore && !Talking && i > 60)
                 {
                     break;
                 }
@@ -6381,27 +6419,27 @@ namespace AnodyneSharp.Recording
                 var xy = spec.Substring(spec.IndexOf('@') + 1).Split(',');
                 near = new Vector2(float.Parse(xy[0]), float.Parse(xy[1]));
             }
-            string here = GlobalState.CURRENT_MAP_NAME;
+            string here = Gs.Map;
             var door = AnodyneSharp.Entities.EntityManager.GetMapEntities(here)
                 .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && pr.Type.Name != "NexusPad" && pr.Type.Name != "NexusDoor")
                 .Where(pr => string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, map, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(pr => near.HasValue ? (new Vector2(pr.Position.X, pr.Position.Y) - near.Value).Length() : 0f)
+                .OrderBy(pr => near.HasValue ? (new Vector2(pr.Position.ToXna().X, pr.Position.ToXna().Y) - near.Value).Length() : 0f)
                 .FirstOrDefault();
             if (door == null)
             {
                 throw new InvalidOperationException($"bot: no door from {here} to {map}");
             }
-            BotRunner.Status = $"to the door to {map} at {door.Position.X:0},{door.Position.Y:0}";
+            BotRunner.Status = $"to the door to {map} at {door.Position.ToXna().X:0},{door.Position.ToXna().Y:0}";
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
-                System.Console.Error.WriteLine($"  doors of {here}: " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(here).Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door")).Select(pr => $"{pr.Type.Name}@{pr.Position.X:0},{pr.Position.Y:0}->{AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map}")) + $"; taking {door.Position}");
+                System.Console.Error.WriteLine($"  doors of {here}: " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(here).Where(pr => pr.Type != null && pr.Type.Name.EndsWith("Door")).Select(pr => $"{pr.Type.Name}@{pr.Position.ToXna().X:0},{pr.Position.ToXna().Y:0}->{AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map}")) + $"; taking {door.Position.ToXna()}");
             }
             // UpDoor / DownDoor / LeftDoor / RightDoor: the way we walk into it
             var into = door.Type.Name.StartsWith("Down") ? KeyFunctions.Down : door.Type.Name.StartsWith("Left") ? KeyFunctions.Left : door.Type.Name.StartsWith("Right") ? KeyFunctions.Right : KeyFunctions.Up;
             {
                 // A directional door lets us out on its facing side, and that is often the only side with floor: when the tile we would
                 // stand on is a wall, come at it from the other side.
-                var dt = BotNav.TileOf(door.Position + new Vector2(3, 2));
+                var dt = BotNav.TileOf(door.Position.ToXna() + new Vector2(3, 2));
                 var from = into == KeyFunctions.Up ? new Point(dt.X, dt.Y + 1) : into == KeyFunctions.Down ? new Point(dt.X, dt.Y - 1) : into == KeyFunctions.Left ? new Point(dt.X + 1, dt.Y) : new Point(dt.X - 1, dt.Y);
                 var other = new Point(2 * dt.X - from.X, 2 * dt.Y - from.Y);
                 if (!BotNav.Walkable(from) && BotNav.Walkable(other))
@@ -6411,15 +6449,15 @@ namespace AnodyneSharp.Recording
             }
             // the door tile itself is not floor: go to the tile in front of it (the side we come from)
             var back = into == KeyFunctions.Up ? new Vector2(0, 22) : into == KeyFunctions.Down ? new Vector2(0, -22) : into == KeyFunctions.Left ? new Vector2(22, 0) : new Vector2(-22, 0);
-            yield return GoGlobal(door.Position.X + back.X, door.Position.Y + back.Y);
+            yield return GoGlobal(door.Position.ToXna().X + back.X, door.Position.ToXna().Y + back.Y);
             // line up with the door's own (small) hitbox before walking in
-            var de = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == door.Type.Name && (e.Position - door.Position).Length() < 24);
+            var de = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == door.Type.Name && (e.Position.ToXna() - door.Position.ToXna()).Length() < 24);
             if (de != null)
             {
                 bool vertical = into == KeyFunctions.Up || into == KeyFunctions.Down;
                 for (int i = 0; i < 120; i++)
                 {
-                    float off = vertical ? (de.Hitbox.Center.X - 5) - Pos.X : (de.Hitbox.Center.Y - 6) - Pos.Y;
+                    float off = vertical ? (de.Hitbox.Center.ToXna().X - 5) - Pos.X : (de.Hitbox.Center.ToXna().Y - 6) - Pos.Y;
                     if (Math.Abs(off) <= 1.5f)
                     {
                         break;
@@ -6427,9 +6465,9 @@ namespace AnodyneSharp.Recording
                     yield return K(vertical ? (off < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (off < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                 }
             }
-            for (int i = 0; i < 240 && GlobalState.CURRENT_MAP_NAME == here; i++)
+            for (int i = 0; i < 240 && Gs.Map == here; i++)
             {
-                yield return GlobalState.ScreenTransition ? K() : K(into);
+                yield return Gs.ScreenTransition ? K() : K(into);
             }
             yield return Wait(60);
         }
@@ -6444,10 +6482,10 @@ namespace AnodyneSharp.Recording
             var here = BotNav.TileOf(Pos);
             int? best = null;
             int bestLen = int.MaxValue;
-            bool jumpOk = GlobalState.inventory.CanJump;
-            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+            bool jumpOk = Gs.CanJump;
+            foreach (var pr in AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && !pr.Type.Name.Contains("Nexus") && !skip.Contains(pr.Frame)
-                    && string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, GlobalState.CURRENT_MAP_NAME, StringComparison.OrdinalIgnoreCase)))
+                    && string.Equals(AnodyneSharp.Entities.EntityManager.GetLinkedDoor(pr)?.Map, Gs.Map, StringComparison.OrdinalIgnoreCase)))
             {
                 foreach (var (_, stand, _) in DoorApproaches(pr))
                 {
@@ -6474,7 +6512,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         static IEnumerable<(AnodyneSharp.Entities.EntityPreset pr, Point stand, KeyFunctions push)> DoorApproaches(AnodyneSharp.Entities.EntityPreset pr)
         {
-            var dt = BotNav.TileOf(pr.Position + new Vector2(3, 2));
+            var dt = BotNav.TileOf(pr.Position.ToXna() + new Vector2(3, 2));
             string kind = pr.Type.Name;
             if (kind == "BlankPortal")
             {
@@ -6507,13 +6545,13 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> TakeDoor(int pair)
         {
             var here = BotNav.TileOf(Pos);
-            var ends = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+            var ends = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal") && pr.Frame == pair).ToList();
             AnodyneSharp.Entities.EntityPreset best = null;
             Point bestStand = default;
             KeyFunctions bestPush = KeyFunctions.Up;
             int bestLen = int.MaxValue;
-            bool jumpOk = GlobalState.inventory.CanJump;
+            bool jumpOk = Gs.CanJump;
             foreach (var (pr, stand, push) in ends.SelectMany(DoorApproaches))
             {
                 BotNav.AllowJump = jumpOk;
@@ -6533,8 +6571,8 @@ namespace AnodyneSharp.Recording
             BotRunner.Status = $"door {pair}";
             var sc = BotNav.CentreOf(bestStand);
             // in line with the door (its middle), then push into it
-            float x = bestPush is KeyFunctions.Up or KeyFunctions.Down ? best.Position.X + 3 : sc.X;
-            float y = bestPush is KeyFunctions.Left or KeyFunctions.Right ? best.Position.Y + 2 : sc.Y;
+            float x = bestPush is KeyFunctions.Up or KeyFunctions.Down ? best.Position.ToXna().X + 3 : sc.X;
+            float y = bestPush is KeyFunctions.Left or KeyFunctions.Right ? best.Position.ToXna().Y + 2 : sc.Y;
             // (a white portal on another screen, CELL's a screen west and north of the pad: across screens first; a plain door a screen
             // off, the Hotel's floor-3 door 27 a screen west of the lift, is GoTo's walk: GoGlobal finds no way there)
             yield return best.Type.Name == "BlankPortal" && (bestStand.X / 10 != Grid.X || bestStand.Y / 10 != Grid.Y) ? GoGlobal(x, y) : GoTo(x, y);
@@ -6543,9 +6581,9 @@ namespace AnodyneSharp.Recording
             string map = Map;
             for (int i = 0; i < 90 && Map == map && (Pos - before).Length() < 40; i++)
             {
-                yield return GlobalState.ScreenTransition || Talking ? K() : K(bestPush);
+                yield return Gs.ScreenTransition || Talking ? K() : K(bestPush);
             }
-            yield return Until(() => !GlobalState.ScreenTransition, 600, "door warp");
+            yield return Until(() => !Gs.ScreenTransition, 600, "door warp");
             // (a warp within the map fades back in for a while with us held still; the pause menu opened in that fade left us held for
             // good, BLANK's portal to (4,1))
             yield return Until(() => !Player.dontMove, 600, "door warp fade-in");
@@ -6558,14 +6596,14 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> RideElevator(int floor)
         {
-            var lift = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Interactive.Elevator && new Point((int)(e.Position.X + 16) / 160, (int)(e.Position.Y + 16) / 160) == Grid)
-                .OrderBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+            var lift = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Interactive.Elevator && new Point((int)(e.Position.ToXna().X + 16) / 160, (int)(e.Position.ToXna().Y + 16) / 160) == Grid)
+                .OrderBy(e => (e.Position.ToXna() - Pos).LengthSquared()).FirstOrDefault();
             if (lift == null)
             {
                 throw new InvalidOperationException($"bot: no elevator on screen {Grid} of {Map}");
             }
-            var menu = lift.GetType().GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(lift);
-            var preset = menu?.GetType().GetField("parent_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(menu) as AnodyneSharp.Entities.EntityPreset;
+            var menu = lift.GetType().GetField("menu", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(lift);
+            var preset = menu?.GetType().GetField("parent_preset", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(menu) as AnodyneSharp.Entities.EntityPreset;
             if (preset == null)
             {
                 throw new InvalidOperationException("bot: cannot read the elevator's menu");
@@ -6574,14 +6612,14 @@ namespace AnodyneSharp.Recording
             int line = others.FindIndex(e => e.Frame + 1 == floor);
             if (line < 0)
             {
-                throw new InvalidOperationException($"bot: the elevator at {lift.Position} does not go to floor {floor} (it lists {string.Join(",", others.Select(e => e.Frame + 1))})");
+                throw new InvalidOperationException($"bot: the elevator at {lift.Position.ToXna()} does not go to floor {floor} (it lists {string.Join(",", others.Select(e => e.Frame + 1))})");
             }
             BotRunner.Status = $"elevator to floor {floor}";
             // under it, in the middle, then up into it until the menu takes over (the game stops the player while a substate runs)
-            float x = lift.Position.X + 11, y = lift.Position.Y + 36;
+            float x = lift.Position.ToXna().X + 11, y = lift.Position.ToXna().Y + 36;
             yield return GoTo(x, y);
             yield return WalkTo(x, y);
-            var target = others[line].Position;
+            var target = others[line].Position.ToXna();
             string map = Map;
             for (int i = 0; i < 90 && !Talking; i++)
             {
@@ -6610,43 +6648,43 @@ namespace AnodyneSharp.Recording
             int opened = 0; // (once one is open, the rest out of reach from here are for later: a warp away would strand the route)
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
-                System.Console.Error.WriteLine("  chests: all " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
-                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest")).Select(pr => $"{pr.Position.X:0},{pr.Position.Y:0}/f{pr.Frame}/{(pr.Activated ? "open" : "shut")}")));
+                System.Console.Error.WriteLine("  chests: all " + string.Join(" ", AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
+                    .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest")).Select(pr => $"{pr.Position.ToXna().X:0},{pr.Position.ToXna().Y:0}/f{pr.Frame}/{(pr.Activated ? "open" : "shut")}")));
             }
             for (int n = 0; n < 30; n++)
             {
-                var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                var chests = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                     .Where(pr => pr.Type != null && pr.Type.Name.EndsWith("TreasureChest") && !pr.Activated && pr.Frame == frame && !_failedChests.Contains(pr.EntityID)
-                        && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen)).ToList();
+                        && (!screenOnly || new Point((int)pr.Position.ToXna().X / 160, (int)pr.Position.ToXna().Y / 160) == screen)).ToList();
                 BotNav.ResetDustCache();
-                bool jumpOk = GlobalState.inventory.CanJump;
+                bool jumpOk = Gs.CanJump;
                 var hereT = BotNav.TileOf(Pos);
                 // Buttons whose gates are still shut come first, nearest first: those in a room with a chest still to open (the gate they
                 // open is most likely that chest's) or not far off (the Fields lake's dry way round is a button a screen off the route), as long as
                 // the way there spends no key; any other only once no chest can be got to at all (a press on the far side of the map spent
                 // a key on a key block the route after it needed, and a tour of every button walked into fights it had no need of).
-                var chestScreens = new HashSet<Point>(chests.Select(c => new Point((int)c.Position.X / 160, (int)c.Position.Y / 160)));
+                var chestScreens = new HashSet<Point>(chests.Select(c => new Point((int)c.Position.ToXna().X / 160, (int)c.Position.ToXna().Y / 160)));
                 bool anyButton = n > 0 && _chestsNoneReachable;
                 _chestsNoneReachable = false;
                 // (and every button the way to which spends no key, when the only way to the nearest chest is through gunfire: one may
                 // open a way round)
                 bool riskyChests = n > 0 && _chestsUnderFire;
                 _chestsUnderFire = false;
-                var keyGates = new HashSet<Point>(AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                var keyGates = new HashSet<Point>(AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                     .Where(pr => pr.Alive && pr.Type == typeof(AnodyneSharp.Entities.Gadget.SmallKeyGate))
-                    .Select(pr => new Point((int)(pr.Position.X + 8) / 16, (int)(pr.Position.Y + 8) / 16)));
-                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                    .Select(pr => new Point((int)(pr.Position.ToXna().X + 8) / 16, (int)(pr.Position.ToXna().Y + 8) / 16)));
+                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                     .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID)
-                        && (!screenOnly || new Point((int)pr.Position.X / 160, (int)pr.Position.Y / 160) == screen))
-                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
-                    .Where(x => x.rp != null && (anyButton || (!x.rp.Any(keyGates.Contains) && (riskyChests || chestScreens.Contains(new Point((int)x.pr.Position.X / 160, (int)x.pr.Position.Y / 160)) || x.rp.Count <= 40)))).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
+                        && (!screenOnly || new Point((int)pr.Position.ToXna().X / 160, (int)pr.Position.ToXna().Y / 160) == screen))
+                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.ToXna().X + 3, pr.Position.ToXna().Y + 2)), jumpOk)))
+                    .Where(x => x.rp != null && (anyButton || (!x.rp.Any(keyGates.Contains) && (riskyChests || chestScreens.Contains(new Point((int)x.pr.Position.ToXna().X / 160, (int)x.pr.Position.ToXna().Y / 160)) || x.rp.Count <= 40)))).OrderBy(x => x.rp.Count).Select(x => x.pr).FirstOrDefault();
                 if (btn != null)
                 {
                     _pressedButtons.Add(btn.EntityID);
-                    BotRunner.Status = $"to the button at {btn.Position.X:0},{btn.Position.Y:0}";
-                    yield return GoGlobal(btn.Position.X + 3, btn.Position.Y + 2);
+                    BotRunner.Status = $"to the button at {btn.Position.ToXna().X:0},{btn.Position.ToXna().Y:0}";
+                    yield return GoGlobal(btn.Position.ToXna().X + 3, btn.Position.ToXna().Y + 2);
                     // (a route that leaps over it, or lands on it in the air, never presses it: stand on it until it is down)
-                    var bt = new Point((int)(btn.Position.X + 8) / 16, (int)(btn.Position.Y + 8) / 16);
+                    var bt = new Point((int)(btn.Position.ToXna().X + 8) / 16, (int)(btn.Position.ToXna().Y + 8) / 16);
                     for (int tries = 0; tries < 3 && !ButtonDown(bt) && bt.X / 10 == Grid.X && bt.Y / 10 == Grid.Y; tries++)
                     {
                         var bc = BotNav.CentreOf(bt);
@@ -6661,7 +6699,7 @@ namespace AnodyneSharp.Recording
                 bool bestLeap = false, bestUnderFire = false;
                 foreach (var pr in chests)
                 {
-                    var t = BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 17));
+                    var t = BotNav.TileOf(new Vector2(pr.Position.ToXna().X + 3, pr.Position.ToXna().Y + 17));
                     var rp = BotNav.RaftPath(hereT, OnConveyor(hereT), t, jumpOk);
                     bool underFire = rp != null && BotNav.RaftUnderFire;
                     bool leapOnly = false;
@@ -6695,10 +6733,10 @@ namespace AnodyneSharp.Recording
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
-                        System.Console.Error.WriteLine($"  chests: no route from {hereT} to any of {string.Join(" ", chests.Select(c => $"{c.Position.X:0},{c.Position.Y:0}"))} (failed {_failedChests.Count})");
+                        System.Console.Error.WriteLine($"  chests: no route from {hereT} to any of {string.Join(" ", chests.Select(c => $"{c.Position.ToXna().X:0},{c.Position.ToXna().Y:0}"))} (failed {_failedChests.Count})");
                     }
                     if (chests.Count > 0 && !warped && opened == 0 && !screenOnly && !Map.Equals("NEXUS")
-                        && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).Any(pr => pr.Type?.Name == "NexusPad"))
+                        && AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).Any(pr => pr.Type?.Name == "NexusPad"))
                     {
                         // Shut in a dead end (a pocket behind a one-way leap): back to the map's Nexus pad and look again from there.
                         warped = true;
@@ -6710,18 +6748,18 @@ namespace AnodyneSharp.Recording
                 var chest = best.Value.pr;
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"  chests: to {chest.Position} ({bestLen} tiles) of {string.Join(" ", chests.Select(c => $"{c.Position.X:0},{c.Position.Y:0}"))}");
+                    System.Console.Error.WriteLine($"  chests: to {chest.Position.ToXna()} ({bestLen} tiles) of {string.Join(" ", chests.Select(c => $"{c.Position.ToXna().X:0},{c.Position.ToXna().Y:0}"))}");
                 }
-                BotRunner.Status = $"to the chest at {chest.Position.X:0},{chest.Position.Y:0}";
+                BotRunner.Status = $"to the chest at {chest.Position.ToXna().X:0},{chest.Position.ToXna().Y:0}";
                 if (bestLeap)
                 {
-                    yield return GoTo(chest.Position.X + 3, chest.Position.Y + 17);
+                    yield return GoTo(chest.Position.ToXna().X + 3, chest.Position.ToXna().Y + 17);
                 }
                 else
                 {
-                    yield return GoGlobal(chest.Position.X + 3, chest.Position.Y + 17);
+                    yield return GoGlobal(chest.Position.ToXna().X + 3, chest.Position.ToXna().Y + 17);
                 }
-                yield return InteractAt(chest.Position.X, chest.Position.Y, 'd');
+                yield return InteractAt(chest.Position.ToXna().X, chest.Position.ToXna().Y, 'd');
                 yield return Wait(150);
                 yield return ReadDialogue();
                 if (!chest.Activated)
@@ -6738,25 +6776,25 @@ namespace AnodyneSharp.Recording
             for (int n = 0; n < 20; n++)
             {
                 BotNav.ResetDustCache();
-                bool jumpOk = GlobalState.inventory.CanJump;
+                bool jumpOk = Gs.CanJump;
                 var hereT = BotNav.TileOf(Pos);
                 if (BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(x, y)), jumpOk) != null)
                 {
                     yield return GoGlobal(x, y);
                     yield break;
                 }
-                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+                var btn = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                     .Where(pr => pr.Type != null && pr.Type.Name == "Button" && !_pressedButtons.Contains(pr.EntityID))
-                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.X + 3, pr.Position.Y + 2)), jumpOk)))
+                    .Select(pr => (pr, rp: BotNav.RaftPath(hereT, OnConveyor(hereT), BotNav.TileOf(new Vector2(pr.Position.ToXna().X + 3, pr.Position.ToXna().Y + 2)), jumpOk)))
                     .Where(b => b.rp != null).OrderBy(b => b.rp.Count).Select(b => b.pr).FirstOrDefault();
                 if (btn == null)
                 {
                     throw new InvalidOperationException($"bot: no route to ({x},{y}) on {Map} and no button left to press");
                 }
                 _pressedButtons.Add(btn.EntityID);
-                BotRunner.Status = $"to the button at {btn.Position.X:0},{btn.Position.Y:0} (on the way to {x:0},{y:0})";
-                System.Console.Error.WriteLine($"  plan to ({x},{y}): pressing the button at {btn.Position.X},{btn.Position.Y}");
-                yield return GoGlobal(btn.Position.X + 3, btn.Position.Y + 2);
+                BotRunner.Status = $"to the button at {btn.Position.ToXna().X:0},{btn.Position.ToXna().Y:0} (on the way to {x:0},{y:0})";
+                System.Console.Error.WriteLine($"  plan to ({x},{y}): pressing the button at {btn.Position.ToXna().X},{btn.Position.ToXna().Y}");
+                yield return GoGlobal(btn.Position.ToXna().X + 3, btn.Position.ToXna().Y + 2);
                 yield return Wait(90);
             }
             throw new InvalidOperationException($"bot: no route to ({x},{y}) on {Map}");
@@ -6777,8 +6815,8 @@ namespace AnodyneSharp.Recording
                 System.Console.Error.WriteLine("  go puzzle: no detector here (solved already)");
                 yield break;
             }
-            var checks = (List<Point>)typeof(AnodyneSharp.Entities.Gadget.GoDetector).GetField("checks", Priv).GetValue(det);
-            var origin = GlobalState.Map.ToMapLoc(det.Position);
+            var checks = (List<Point>)typeof(AnodyneSharp.Entities.Gadget.GoDetector).GetField("checks", Priv).GetValueF(det);
+            var origin = GlobalState.Map.ToMapLoc(det.Position.ToXna());
             int Tile(Point p) => GlobalState.Map.GetTile(AnodyneSharp.MapData.Layer.BG, p);
             var was = GlobalState.inventory.EquippedBroom;
             if (was != AnodyneSharp.Entities.BroomType.Transformer)
@@ -6828,7 +6866,7 @@ namespace AnodyneSharp.Recording
         /// <summary>The collision of BG tile id `id` (what a tile becomes when a swap brings that id to it).</summary>
         private static (Touching, AnodyneSharp.MapData.Tiles.CollisionEventType) ClassOfTileId(int id)
         {
-            var tiles = (System.Collections.IList)_mapTileObjects.GetValue(BotNav.CurrentMap);
+            var tiles = (System.Collections.IList)_mapTileObjects.GetValueF(BotNav.NativeMap);
             var t = (AnodyneSharp.MapData.Tiles.Tile)tiles[id];
             return (t.allowCollisions, t.collisionEventType);
         }
@@ -6886,7 +6924,7 @@ namespace AnodyneSharp.Recording
             }
             int fails = 0;
             BotRunner.NoAccept = true; // (a swing on the way, by a guard or a walker, is a swap step: it swapped a dug shaft shut behind us)
-            Player.transformer.Reset(); // (and one let through before, the menu's own Accept: a selector up holds us still, BLANK (4,1))
+            Player.Native.transformer.Reset(); // (and one let through before, the menu's own Accept: a selector up holds us still, BLANK (4,1))
             try
             {
                 for (int dig = 0; dig < 120; dig++)
@@ -6982,10 +7020,10 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> SwapTiles(Point c, Point a, Point b)
         {
             static KeyFunctions Toward(Point from, Point to) => to.X > from.X ? KeyFunctions.Right : to.X < from.X ? KeyFunctions.Left : to.Y > from.Y ? KeyFunctions.Down : KeyFunctions.Up;
-            var tf = Player.transformer;
-            Entity Sel() => (Entity)_tfSelector.GetValue(tf);
-            Entity Marked() => (Entity)_tfSelected.GetValue(tf);
-            Point TileAt(Entity e) => new Point((int)Math.Floor((e.Position.X + 8) / 16f), (int)Math.Floor((e.Position.Y + 8) / 16f));
+            var tf = Player.Native.transformer;
+            Entity Sel() => (Entity)_tfSelector.GetValueF(tf);
+            Entity Marked() => (Entity)_tfSelected.GetValueF(tf);
+            Point TileAt(Entity e) => new Point((int)Math.Floor((e.Position.ToXna().X + 8) / 16f), (int)Math.Floor((e.Position.ToXna().Y + 8) / 16f));
             tf.Reset();
             // One frame's press to turn (a second walked a box centred in a dug shaft a pixel into the wall below it, and the game's
             // separation then pushed it right in, onto the tile it was to swap)
@@ -7005,7 +7043,7 @@ namespace AnodyneSharp.Recording
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
             {
                 string Cl(Point q) => BotNav.CurrentMap.GetTileClass(q).Item1 == Touching.NONE ? "." : "#";
-                System.Console.Error.WriteLine($"  swap f{BotRunner.Frame}: centre {Player.Center} tile {BotNav.TileOf(Pos)} facing {Player.facing} marked {(Marked().exists ? TileAt(Marked()).ToString() : "-")} round c: "
+                System.Console.Error.WriteLine($"  swap f{BotRunner.Frame}: centre {Player.Center.ToXna()} tile {BotNav.TileOf(Pos)} facing {Player.facing} marked {(Marked().exists ? TileAt(Marked()).ToString() : "-")} round c: "
                     + string.Join("|", Enumerable.Range(-1, 3).Select(dy => string.Concat(Enumerable.Range(-1, 3).Select(dx => Cl(new Point(c.X + dx, c.Y + dy)))))));
             }
             if (!Marked().exists || TileAt(Marked()) != a)
@@ -7041,15 +7079,15 @@ namespace AnodyneSharp.Recording
         {
             int W = BotNav.CurrentMap.WidthInTiles, H = BotNav.CurrentMap.HeightInTiles;
             // (no way over a door: a dig across OVERWORLD walked into the Bedroom's door 1 on the way)
-            var doors = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME)
+            var doors = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map)
                 .Where(pr => pr.Type != null && (pr.Type.Name.EndsWith("Door") || pr.Type.Name == "BlankPortal" || pr.Type.Name == "NexusPad"))
-                .Select(pr => BotNav.TileOf(pr.Position + new Vector2(3, 2))).Where(t => t != goal && t != from).ToHashSet();
+                .Select(pr => BotNav.TileOf(pr.Position.ToXna() + new Vector2(3, 2))).Where(t => t != goal && t != from).ToHashSet();
             // (nor over a shut gate here: its tile is floor below it, so a dig "into" it swapped floor for floor 120 times, BLANK (1,2))
             foreach (var e in BotRunner.Entities())
             {
                 if (e.exists && e.Solid && e is AnodyneSharp.Entities.Gadget.Gate)
                 {
-                    doors.Add(BotNav.TileOf(e.Position + new Vector2(8, 8)));
+                    doors.Add(BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)));
                 }
             }
             var dist = new Dictionary<Point, int> { [from] = 0 };
@@ -7135,7 +7173,7 @@ namespace AnodyneSharp.Recording
             // (a press in the first moments after a load, or during a screen's scroll, is not taken: again until it is on)
             for (int tries = 0; tries < 3 && GlobalState.inventory.EquippedBroom != want; tries++)
             {
-                yield return Until(() => !GlobalState.ScreenTransition, 300, "screen settled for the menu");
+                yield return Until(() => !Gs.ScreenTransition, 300, "screen settled for the menu");
                 yield return MenuEquipBroomOnce(k);
             }
         }
@@ -7166,10 +7204,10 @@ namespace AnodyneSharp.Recording
         private static AnodyneSharp.States.PauseState OpenPause()
         {
             var ps = GlobalState.SetSubstate?.Target as AnodyneSharp.States.PlayState;
-            return ps == null ? null : (ChildStatesField.GetValue(ps) as List<AnodyneSharp.States.State>)?.OfType<AnodyneSharp.States.PauseState>().FirstOrDefault();
+            return ps == null ? null : (ChildStatesField.GetValueF(ps) as List<AnodyneSharp.States.State>)?.OfType<AnodyneSharp.States.PauseState>().FirstOrDefault();
         }
 
-        private static bool InPausePage => OpenPause() is { } p && (bool)PauseInSubField.GetValue(p);
+        private static bool InPausePage => OpenPause() is { } p && (bool)PauseInSubField.GetValueF(p);
 
         /// <summary>Menu taps, n of them, a few frames apart (the menus act on a fresh press).</summary>
         private static IEnumerable<object> MenuTaps(KeyFunctions k, int n = 1, int gap = 6)
@@ -7187,8 +7225,8 @@ namespace AnodyneSharp.Recording
         {
             for (int i = 0; i < 60; i++)
             {
-                var sub = OpenPause() is { } p ? PauseSubField.GetValue(p) : null;
-                if (sub is not AnodyneSharp.States.MenuSubstates.DialogueSubstate ds || !(bool)InDialogueModeProp.GetValue(ds))
+                var sub = OpenPause() is { } p ? PauseSubField.GetValueF(p) : null;
+                if (sub is not AnodyneSharp.States.MenuSubstates.DialogueSubstate ds || !(bool)InDialogueModeProp.GetValueF(ds))
                 {
                     yield break;
                 }
@@ -7199,7 +7237,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Opens the pause menu on page `page` (0 map, 1 items, 2 cards, 3 save, 4 config), or null when it did not open.</summary>
         private static IEnumerable<object> PauseOnPage(int page)
         {
-            yield return Until(() => !GlobalState.ScreenTransition && !BotRunner.PlayBusy, 600, "settled for the menu");
+            yield return Until(() => !Gs.ScreenTransition && !BotRunner.PlayBusy, 600, "settled for the menu");
             for (int i = 0; i < 5 && OpenPause() == null; i++)
             {
                 yield return Tap(KeyFunctions.Pause);
@@ -7208,7 +7246,7 @@ namespace AnodyneSharp.Recording
             }
             if (OpenPause() == null)
             {
-                throw new InvalidOperationException($"bot: the pause menu did not open (busy '{BotRunner.PlayBusyName}', menu off {GlobalState.disable_menu}, map {GlobalState.CURRENT_MAP_NAME})");
+                throw new InvalidOperationException($"bot: the pause menu did not open (busy '{BotRunner.PlayBusyName}', menu off {GlobalState.disable_menu}, map {Gs.Map})");
             }
             yield return MenuTaps(KeyFunctions.Up, 8, 4);
             yield return MenuTaps(KeyFunctions.Down, page, 4);
@@ -7382,10 +7420,10 @@ namespace AnodyneSharp.Recording
             yield return MenuTaps(KeyFunctions.Up, 3);
             System.Console.Error.WriteLine($"file menu: back on slot {slot + 1}, {Cur()?.GetType().Name}");
             yield return MenuTaps(KeyFunctions.Accept, 1, 10);
-            yield return Until(() => Cur() is AnodyneSharp.States.PlayState && BotRunner.Player != null && BotRunner.Player.exists && !BotRunner.PlayBusy && !GlobalState.ScreenTransition, 1200, "the game loaded again");
+            yield return Until(() => Cur() is AnodyneSharp.States.PlayState && BotRunner.Player != null && BotRunner.Player.exists && !BotRunner.PlayBusy && !Gs.ScreenTransition, 1200, "the game loaded again");
             MenuKeys = false;
             yield return Wait(60);
-            System.Console.Error.WriteLine($"loaded again: {GlobalState.CURRENT_MAP_NAME} {Pos} hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} cards {GlobalState.inventory.CardCount}");
+            System.Console.Error.WriteLine($"loaded again: {Gs.Map} {Pos} hp {Gs.Health}/{Gs.MaxHealth} cards {Gs.CardCount}");
         }
 
         /// <summary>
@@ -7410,7 +7448,7 @@ namespace AnodyneSharp.Recording
                 }
                 yield return Wait(10);
             }
-            System.Console.Error.WriteLine($"cheats done: hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH} mode {GlobalState.GameMode} cell {GlobalState.AlwaysCellGraphics} fuckit {GlobalState.FUCK_IT_MODE_ON}");
+            System.Console.Error.WriteLine($"cheats done: hp {Gs.Health}/{Gs.MaxHealth} mode {GlobalState.GameMode} cell {GlobalState.AlwaysCellGraphics} fuckit {GlobalState.FUCK_IT_MODE_ON}");
             BotRunner.ExpectDeath = true;
             int deaths = BotRunner.Deaths;
             for (int i = 0; i < 20 && OpenPause() != null; i++)
@@ -7425,10 +7463,10 @@ namespace AnodyneSharp.Recording
             yield return Tap(KeyFunctions.Up);
             yield return Wait(10);
             yield return Tap(KeyFunctions.Accept);
-            yield return Until(() => BotRunner.Deaths != deaths && !BotRunner.PlayBusy && !GlobalState.ScreenTransition, 900, "back from the death screen");
+            yield return Until(() => BotRunner.Deaths != deaths && !BotRunner.PlayBusy && !Gs.ScreenTransition, 900, "back from the death screen");
             yield return Wait(60);
             BotRunner.ExpectDeath = false;
-            System.Console.Error.WriteLine($"died and back: {GlobalState.CURRENT_MAP_NAME} hp {GlobalState.CUR_HEALTH}/{GlobalState.MAX_HEALTH}");
+            System.Console.Error.WriteLine($"died and back: {Gs.Map} hp {Gs.Health}/{Gs.MaxHealth}");
         }
 
         private static IEnumerable<object> MenuEquipBroomPresses(int k)
@@ -7466,26 +7504,26 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> ViaNexus(string map)
         {
-            if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+            if (Gs.Map != "NEXUS")
             {
                 yield return MenuReturnToPad(0);
-                if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+                if (Gs.Map != "NEXUS")
                 {
-                    var pad = AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "NexusPad");
+                    var pad = AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "NexusPad");
                     if (pad == null)
                     {
-                        throw new InvalidOperationException($"bot: no Nexus pad on {GlobalState.CURRENT_MAP_NAME}");
+                        throw new InvalidOperationException($"bot: no Nexus pad on {Gs.Map}");
                     }
-                    BotRunner.Status = $"to the Nexus pad at {pad.Position.X:0},{pad.Position.Y:0}";
-                    yield return GoGlobal(pad.Position.X + 11, pad.Position.Y + 9);
+                    BotRunner.Status = $"to the Nexus pad at {pad.Position.ToXna().X:0},{pad.Position.ToXna().Y:0}";
+                    yield return GoGlobal(pad.Position.ToXna().X + 11, pad.Position.ToXna().Y + 9);
                     yield return Wait(10);
                     yield return Tap(KeyFunctions.Accept);
                     yield return Wait(200);
                 }
             }
-            if (GlobalState.CURRENT_MAP_NAME != "NEXUS")
+            if (Gs.Map != "NEXUS")
             {
-                throw new InvalidOperationException($"bot: could not get back to the Nexus from {GlobalState.CURRENT_MAP_NAME}");
+                throw new InvalidOperationException($"bot: could not get back to the Nexus from {Gs.Map}");
             }
             var door = AnodyneSharp.Entities.EntityManager.GetMapEntities("NEXUS")
                 .FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "NexusDoor"
@@ -7495,8 +7533,8 @@ namespace AnodyneSharp.Recording
                 throw new InvalidOperationException($"bot: no Nexus portal to {map}");
             }
             BotRunner.Status = $"to the Nexus portal to {map}";
-            yield return GoGlobal(door.Position.X + 10, door.Position.Y + 36);
-            for (int i = 0; i < 40 && GlobalState.CURRENT_MAP_NAME == "NEXUS"; i++)
+            yield return GoGlobal(door.Position.ToXna().X + 10, door.Position.ToXna().Y + 36);
+            for (int i = 0; i < 40 && Gs.Map == "NEXUS"; i++)
             {
                 yield return K(KeyFunctions.Up);
                 if (i == 20)
@@ -7507,9 +7545,9 @@ namespace AnodyneSharp.Recording
             yield return Wait(60);
             yield return ReadDialogue();
             yield return Wait(200);
-            if (GlobalState.CURRENT_MAP_NAME != map.ToUpperInvariant())
+            if (Gs.Map != map.ToUpperInvariant())
             {
-                throw new InvalidOperationException($"bot: the Nexus portal did not take us to {map} (on {GlobalState.CURRENT_MAP_NAME})");
+                throw new InvalidOperationException($"bot: the Nexus portal did not take us to {map} (on {Gs.Map})");
             }
         }
 
@@ -7519,10 +7557,10 @@ namespace AnodyneSharp.Recording
         /// </summary>
         protected static IEnumerable<object> BackToMapPad()
         {
-            string map = GlobalState.CURRENT_MAP_NAME;
+            string map = Gs.Map;
             yield return MenuReturnToPad(0);
             yield return Wait(60);
-            if (GlobalState.CURRENT_MAP_NAME != map)
+            if (Gs.Map != map)
             {
                 yield return ViaNexus(map);
             }
@@ -7559,7 +7597,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> TimedStrike(Vector2 at, KeyFunctions face, Vector2 stage)
         {
             var spot = new Rectangle((int)at.X, (int)at.Y, 10, 12);
-            var target = Enemies().OrderBy(e => (e.Hitbox.Center.ToVector2() - spot.Center.ToVector2()).Length()).FirstOrDefault();
+            var target = Enemies().OrderBy(e => (e.Hitbox.Center.ToXna().ToVector2() - spot.Center.ToXna().ToVector2()).Length()).FirstOrDefault();
             if (target == null)
             {
                 yield break;
@@ -7625,21 +7663,21 @@ namespace AnodyneSharp.Recording
                 var guns = new List<(Entity em, float timer, List<SimBolt> bolts, Vector2 spawn, Vector2 v, int w, int h)>();
                 foreach (var em in emitters)
                 {
-                    var pool = typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", flags).GetValue(em);
-                    var all = ((IEnumerable<Entity>)pool.GetType().GetProperty("Entities").GetValue(pool)).ToList();
-                    var off = (Vector2)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("spawn_offset", flags).GetValue(all[0]);
-                    bool fast = (bool)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", flags).GetValue(all[0]);
+                    var pool = typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("lasers", flags).GetValueF(em);
+                    var all = ((IEnumerable<Entity>)pool.GetType().GetProperty("Entities").GetValueF(pool)).ToList();
+                    var off = (Vector2)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("spawn_offset", flags).GetValueF(all[0]);
+                    bool fast = (bool)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).GetField("_isFast", flags).GetValueF(all[0]);
                     var v = new Vector2(FacingStep(em.facing).X, FacingStep(em.facing).Y) * (fast ? 70f : 40f);
                     var bolts = all.Where(b => b.exists).Select(b => new SimBolt
                     {
-                        at = b.Position,
+                        at = b.Position.ToXna(),
                         v = v,
                         w = b.Hitbox.Width,
                         h = b.Hitbox.Height,
                         age = 1f,
                         poofLeft = b.CurAnimName == "poof" ? Math.Max(0f, (8 - b.Frame) / 8f) : -1f
                     }).ToList();
-                    guns.Add((em, (float)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em), bolts, em.Position + off, v,
+                    guns.Add((em, (float)typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValueF(em), bolts, em.Position.ToXna() + off, v,
                         all[0].Hitbox.Width, all[0].Hitbox.Height));
                 }
                 var me = Pos;
@@ -7689,7 +7727,7 @@ namespace AnodyneSharp.Recording
                             b.at += b.v * dt;
                             b.age += dt;
                             var bb = new Rectangle((int)b.at.X, (int)b.at.Y, b.w, b.h);
-                            var lead = new Vector2(b.v.X > 0 ? bb.Right : b.v.X < 0 ? bb.Left - 1 : bb.Center.X, b.v.Y > 0 ? bb.Bottom : b.v.Y < 0 ? bb.Top - 1 : bb.Center.Y);
+                            var lead = new Vector2(b.v.X > 0 ? bb.Right : b.v.X < 0 ? bb.Left - 1 : bb.Center.ToXna().X, b.v.Y > 0 ? bb.Bottom : b.v.Y < 0 ? bb.Top - 1 : bb.Center.ToXna().Y);
                             if ((b.age > 0.4f && BotNav.IsBeamWall(new Point((int)Math.Floor(lead.X / 16f), (int)Math.Floor(lead.Y / 16f)))) || dusts.Any(d => d.Intersects(bb)))
                             {
                                 b.poofLeft = 0.5f;
@@ -7750,7 +7788,7 @@ namespace AnodyneSharp.Recording
                 Simulate(best, true);
                 foreach (var em in emitters)
                 {
-                    System.Console.Error.WriteLine($"  gauntlet: emitter {em.Position} timer {typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValue(em)} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox}{e.CurAnimName}{e.Frame}"))}");
+                    System.Console.Error.WriteLine($"  gauntlet: emitter {em.Position.ToXna()} timer {typeof(AnodyneSharp.Entities.Enemy.Bedroom.PewLaser).GetField("_bulletTimer", flags).GetValueF(em)} bolts {string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Bedroom.PewLaser.Laser).Select(e => $"{e.Hitbox}{e.CurAnimName}{e.Frame}"))}");
                 }
             }
             BotRunner.Status = $"gauntlet: wait {best} frames ({bestHits} hits)";
@@ -7869,13 +7907,13 @@ namespace AnodyneSharp.Recording
                     {
                         yield return K(KeyFunctions.Up);
                     }
-                    yield return Until(() => !GlobalState.ScreenTransition, 300, "the screen above");
+                    yield return Until(() => !Gs.ScreenTransition, 300, "the screen above");
                     yield return Wait(20);
                     for (int i = 0; i < 120 && Grid != g0; i++)
                     {
                         yield return K(KeyFunctions.Down);
                     }
-                    yield return Until(() => !GlobalState.ScreenTransition, 300, "back in");
+                    yield return Until(() => !Gs.ScreenTransition, 300, "back in");
                     continue;
                 }
                 if (Enemies().Count == 0)
@@ -7890,19 +7928,19 @@ namespace AnodyneSharp.Recording
                     yield return K(Pos.X < x ? KeyFunctions.Right : KeyFunctions.Left);
                 }
                 var way = y1 > y0 ? KeyFunctions.Down : KeyFunctions.Up;
-                for (int i = 0; i < 90 && Math.Abs(Pos.Y - y1) > 1f && Enemies().All(e => !(e.velocity.Length() > 40f)); i++)
+                for (int i = 0; i < 90 && Math.Abs(Pos.Y - y1) > 1f && Enemies().All(e => !(e.velocity.ToXna().Length() > 40f)); i++)
                 {
                     ExactKeysUntil = BotRunner.Frame + 1;
                     yield return K(way);
                 }
-                for (int i = 0; i < 240 && Enemies().All(e => !(e.velocity.Length() > 40f) && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() > 40f); i++)
+                for (int i = 0; i < 240 && Enemies().All(e => !(e.velocity.ToXna().Length() > 40f) && (e.Hitbox.Center.ToXna().ToVector2() - Player.Hitbox.Center.ToXna().ToVector2()).Length() > 40f); i++)
                 {
                     yield return K(); // (until one comes for us)
                 }
             }
         }
 
-        private static bool KillerAwake() => BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e) && _killerMoving?.GetValue(e) is true);
+        private static bool KillerAwake() => BotRunner.Entities().Any(e => e.exists && BotNav.IsSuburbKiller(e) && _killerMoving?.GetValueF(e) is true);
 
         /// <summary>Runs `inner` (its nested steps flattened here, as the runner would) until `abort` holds before a frame.</summary>
         protected static IEnumerable<object> AbortWhen(IEnumerable<object> inner, Func<bool> abort)
@@ -7958,7 +7996,7 @@ namespace AnodyneSharp.Recording
             // (a press in the first moments after a load, or during a screen's scroll, is not taken: press again until the menu is up)
             for (int tries = 0; tries < 4; tries++)
             {
-                yield return Until(() => !GlobalState.ScreenTransition, 300, "screen settled for the menu");
+                yield return Until(() => !Gs.ScreenTransition, 300, "screen settled for the menu");
                 yield return Tap(KeyFunctions.Pause);
                 yield return Wait(20);
                 if (BotRunner.PlayBusyName.Contains("Pause"))
@@ -7992,12 +8030,12 @@ namespace AnodyneSharp.Recording
         private static bool HasRaft()
         {
             var f = typeof(Player).GetField("raft", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-            return f != null && f.GetValue(Player) != null;
+            return f != null && PlayerField(f) != null;
         }
 
         private static bool ReachableWithJump(Point t)
         {
-            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            BotNav.AllowJump = Gs.CanJump;
             var p = BotNav.FindPath(BotNav.TileOf(Pos), q => q == t, t);
             BotNav.AllowJump = false;
             return p != null;
@@ -8006,9 +8044,9 @@ namespace AnodyneSharp.Recording
         /// <summary>Fights this screen's enemies for its kill gate, first waking any Dustmaids with a dust of the screen.</summary>
         protected static IEnumerable<object> FightForKillGate()
         {
-            bool OnScreen(Entity e) => new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid;
+            bool OnScreen(Entity e) => new Point((int)e.Center.ToXna().X / 160, (int)e.Center.ToXna().Y / 160) == Grid;
             yield return Fight(7200); // (a long one: the gate is the only way on, and a slow fight is no failure)
-            if (GlobalState.inventory.HasBroom && BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && OnScreen(e))
+            if (Gs.HasBroom && BotRunner.Entities().Any(e => e.exists && DormantDustmaid(e) && OnScreen(e))
                 && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && OnScreen(e)))
             {
                 // Dustmaids count for the gate, but only one that has seen us hold dust can be hurt: the rest beaten, wake them with
@@ -8023,8 +8061,8 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> PickUpDust(bool optional = false, bool outrun = false, bool keep = true)
         {
             yield return PickUpDustCore(optional);
-            bool Maids() => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && new Point((int)e.Center.X / 160, (int)e.Center.Y / 160) == Grid);
-            if (outrun || Player.broom.dust == null || !Maids() || !GlobalState.inventory.HasBroom)
+            bool Maids() => BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && new Point((int)e.Center.ToXna().X / 160, (int)e.Center.ToXna().Y / 160) == Grid);
+            if (outrun || Player.broom.dust == null || !Maids() || !Gs.HasBroom)
             {
                 yield break;
             }
@@ -8064,10 +8102,10 @@ namespace AnodyneSharp.Recording
             for (int attempt = 0; attempt < (optional ? 1 : 40); attempt++)
             {
                 var dusts = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").ToList();
-                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
-                foreach (var d in dusts.OrderBy(d => (d.Position - Pos).LengthSquared()))
+                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position.ToXna() + new Vector2(8, 8))));
+                foreach (var d in dusts.OrderBy(d => (d.Position.ToXna() - Pos).LengthSquared()))
                 {
-                    var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                    var dt = BotNav.TileOf(d.Position.ToXna() + new Vector2(8, 8));
                     if (dt == BotNav.TileOf(Pos))
                     {
                         // The raft is on the very tile we stand on (a one-tile islet): sweep it from where we are, in each direction.
@@ -8147,7 +8185,7 @@ namespace AnodyneSharp.Recording
             }
             if (!optional)
             {
-                throw new InvalidOperationException("bot: no dust to pick up on " + Map + " (player " + Pos + " carrying " + (Player.broom.dust != null) + "; dust: " + string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{(int)e.Position.X},{(int)e.Position.Y}{(e.exists ? "" : "x")}")) + ")");
+                throw new InvalidOperationException("bot: no dust to pick up on " + Map + " (player " + Pos + " carrying " + (Player.broom.dust != null) + "; dust: " + string.Join(" ", BotRunner.Entities().Where(e => e.GetType().Name == "Dust").Select(e => $"{(int)e.Position.ToXna().X},{(int)e.Position.ToXna().Y}{(e.exists ? "" : "x")}")) + ")");
             }
         }
 
@@ -8195,9 +8233,9 @@ namespace AnodyneSharp.Recording
         protected static Entity ShutKillGateOnPath(List<Point> path)
         {
             var gates = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Gate" && e.Solid
-                && new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)) == Grid
-                && AnodyneSharp.Entities.EntityManager.GetMapEntities(GlobalState.CURRENT_MAP_NAME).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "Gate"
-                    && Math.Abs(pr.Position.X - e.Position.X) < 2 && Math.Abs(pr.Position.Y - e.Position.Y) < 2) is AnodyneSharp.Entities.EntityPreset gp && gp.Frame % 10 < 5).ToList();
+                && new Point((int)(e.Hitbox.Center.ToXna().X / 160), (int)(e.Hitbox.Center.ToXna().Y / 160)) == Grid
+                && AnodyneSharp.Entities.EntityManager.GetMapEntities(Gs.Map).FirstOrDefault(pr => pr.Type != null && pr.Type.Name == "Gate"
+                    && Math.Abs(pr.Position.ToXna().X - e.Position.ToXna().X) < 2 && Math.Abs(pr.Position.ToXna().Y - e.Position.ToXna().Y) < 2) is AnodyneSharp.Entities.EntityPreset gp && gp.Frame % 10 < 5).ToList();
             foreach (var t in path.TakeWhile(t => t.X / 10 == Grid.X && t.Y / 10 == Grid.Y))
             {
                 var r = new Rectangle(t.X * 16, t.Y * 16, 16, 16);
@@ -8221,11 +8259,11 @@ namespace AnodyneSharp.Recording
         {
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity != Vector2.Zero || !GlobalState.inventory.CanJump)
+                if (!e.exists || e.GetType().Name != "OnSightDashTrap" || e.velocity.ToXna() != Vector2.Zero || !Gs.CanJump)
                 {
                     continue;
                 }
-                var t = BotNav.TileOf(e.Position + new Vector2(8, 8));
+                var t = BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8));
                 int k = path.IndexOf(t);
                 if (k < 0)
                 {
@@ -8321,7 +8359,7 @@ namespace AnodyneSharp.Recording
                     continue; // no stopping in a bouncing trap's lane: aim past it (we jump across)
                 }
                 var c = BotNav.CentreOf(path[pi]);
-                for (int f = 0; f < 90 && Grid == grid0 && !GlobalState.ScreenTransition; f++)
+                for (int f = 0; f < 90 && Grid == grid0 && !Gs.ScreenTransition; f++)
                 {
                     float dx = c.X - Pos.X, dy = c.Y - Pos.Y;
                     if (Math.Abs(dx) < 2f && Math.Abs(dy) < 2f)
@@ -8337,16 +8375,16 @@ namespace AnodyneSharp.Recording
                     {
                         keys.Add(dy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
                     }
-                    if (!jumped && trap.exists && trap.velocity != Vector2.Zero && Player.state != AnodyneSharp.Entities.PlayerState.AIR)
+                    if (!jumped && trap.exists && trap.velocity.ToXna() != Vector2.Zero && Player.state != AnodyneSharp.Entities.PlayerState.AIR)
                     {
                         // Coming at us: the gap between its front and ours along its line of travel.
                         var r = trap.Hitbox;
                         var me = Player.Hitbox;
                         bool overlapX = me.Left < r.Right && me.Right > r.Left, overlapY = me.Top < r.Bottom && me.Bottom > r.Top;
-                        float gap = trap.velocity.Y < 0 && overlapX ? r.Top - me.Bottom
-                            : trap.velocity.Y > 0 && overlapX ? me.Top - r.Bottom
-                            : trap.velocity.X < 0 && overlapY ? r.Left - me.Right
-                            : trap.velocity.X > 0 && overlapY ? me.Left - r.Right : float.MaxValue;
+                        float gap = trap.velocity.ToXna().Y < 0 && overlapX ? r.Top - me.Bottom
+                            : trap.velocity.ToXna().Y > 0 && overlapX ? me.Top - r.Bottom
+                            : trap.velocity.ToXna().X < 0 && overlapY ? r.Left - me.Right
+                            : trap.velocity.ToXna().X > 0 && overlapY ? me.Left - r.Right : float.MaxValue;
                         if (gap >= -2 && gap <= 7)
                         {
                             jumped = true;
@@ -8361,13 +8399,13 @@ namespace AnodyneSharp.Recording
                     }
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && f % 4 == 0)
                     {
-                        System.Console.Error.WriteLine($"  trap pass f{BotRunner.Frame} me={Player.Hitbox} air={Player.state == AnodyneSharp.Entities.PlayerState.AIR} trap={trap.Hitbox} v={trap.velocity} to {path[pi]}");
+                        System.Console.Error.WriteLine($"  trap pass f{BotRunner.Frame} me={Player.Hitbox} air={Player.state == AnodyneSharp.Entities.PlayerState.AIR} trap={trap.Hitbox} v={trap.velocity.ToXna()} to {path[pi]}");
                     }
                     BotRunner.NotStuck();
                     yield return K(keys.ToArray());
                 }
             }
-            while (GlobalState.ScreenTransition)
+            while (Gs.ScreenTransition)
             {
                 yield return K();
             }
@@ -8377,10 +8415,10 @@ namespace AnodyneSharp.Recording
         private static List<Rectangle> BounceLanes()
         {
             var lanes = new List<Rectangle>();
-            foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap" && (e.Position - Pos).Length() < 80))
+            foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap" && (e.Position.ToXna() - Pos).Length() < 80))
             {
                 var r = e.Hitbox;
-                lanes.Add(e.velocity.X != 0 ? new Rectangle(r.Left - 160, r.Top - 1, r.Width + 320, r.Height + 2) : new Rectangle(r.Left - 1, r.Top - 160, r.Width + 2, r.Height + 320));
+                lanes.Add(e.velocity.ToXna().X != 0 ? new Rectangle(r.Left - 160, r.Top - 1, r.Width + 320, r.Height + 2) : new Rectangle(r.Left - 1, r.Top - 160, r.Width + 2, r.Height + 320));
             }
             return lanes;
         }
@@ -8442,14 +8480,14 @@ namespace AnodyneSharp.Recording
             me.Inflate(1, 1);
             foreach (var e in BotRunner.Entities())
             {
-                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Redcave.Four_Shooter.Bullet || e.velocity == Vector2.Zero)
+                if (!e.exists || e is not AnodyneSharp.Entities.Enemy.Redcave.Four_Shooter.Bullet || e.velocity.ToXna() == Vector2.Zero)
                 {
                     continue;
                 }
                 for (int f = 0; f <= frames; f++)
                 {
                     var b = e.Hitbox;
-                    b.Offset((int)Math.Round(e.velocity.X * f / 60f), (int)Math.Round(e.velocity.Y * f / 60f));
+                    b.Offset((int)Math.Round(e.velocity.ToXna().X * f / 60f), (int)Math.Round(e.velocity.ToXna().Y * f / 60f));
                     if (b.Intersects(me))
                     {
                         return true;
@@ -8483,7 +8521,7 @@ namespace AnodyneSharp.Recording
         private static IEnumerable<object> RaftToInner(float gx, float gy)
         {
             var goal = BotNav.TileOf(new Vector2(gx, gy));
-            bool jump = GlobalState.inventory.CanJump;
+            bool jump = Gs.CanJump;
             BotNav.ResetDustCache();
             int budget = 6000;
             for (int round = 0; round < 20; round++)
@@ -8545,7 +8583,7 @@ namespace AnodyneSharp.Recording
                 {
                     DumpTiles(here, goal);
                     RaftLog($"hazards: {string.Join(" ", BotNav.Hazards().Where(t => Math.Abs(t.X - here.X) < 12 && Math.Abs(t.Y - here.Y) < 12))}");
-                    throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map} (keys {GlobalState.inventory.GetCurrentMapKeys()})");
+                    throw new InvalidOperationException($"bot: no raft route from {here} to {goal} on {Map} (keys {Gs.MapKeys})");
                 }
                 int wi = BotNav.Wade ? -1 : path.FindIndex(t => OnConveyor(t) && !(jump && BotNav.NarrowWater(t)));
                 if (wi < 0)
@@ -8554,6 +8592,18 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 RaftLog($"round {round}: from {here} (wet={wetNow}) first water {path[wi]} goal {goal}, {path.Count} tiles");
+                var toLaunch = path.Take(wi + 2).ToList();
+                if (!wetNow && !InSteamLine() && SteamUnsafeOver(toLaunch))
+                {
+                    // A steam jet over the way to the launch (REDCAVE (5,0): its put-in is under one): wait out here for it to go down,
+                    // then go while it stays down. Walked in as it rose, its push held us in the burn for its whole two seconds.
+                    RaftLog($"round {round}: steam over the way to the launch at {path[wi]}: waiting for it to go down");
+                    for (int w = 0; w < 400 && SteamUnsafeOver(toLaunch) && !InSteamLine(); w++)
+                    {
+                        BotRunner.NotStuck();
+                        yield return K();
+                    }
+                }
                 if (!wetNow && Player.broom.dust == null && !BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust"))
                 {
                     // No dust on this screen to float on (it does not come with us over a screen's edge, and the one here was ridden off
@@ -8633,7 +8683,7 @@ namespace AnodyneSharp.Recording
                             for (int i = 0; i < 240; i++)
                             {
                                 var cur = BotNav.TileOf(Pos);
-                                if (GlobalState.ScreenTransition)
+                                if (Gs.ScreenTransition)
                                 {
                                     yield return K();
                                     continue;
@@ -8721,7 +8771,7 @@ namespace AnodyneSharp.Recording
                         yield return BotScript.AdvanceKeys(i);
                         continue;
                     }
-                    if (GlobalState.ScreenTransition)
+                    if (Gs.ScreenTransition)
                     {
                         // Keep pushing the way the raft crossed: the player lands just inside the new screen, and a current running
                         // back towards the edge would carry it straight back over on the first frame after the scroll.
@@ -8763,7 +8813,7 @@ namespace AnodyneSharp.Recording
                     if (!wet && wasWet)
                     {
                         RaftLog($"ride ends on land at {cur}");
-                        if (Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && (e.Position - Pos).Length() < 40))
+                        if (Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && (e.Position.ToXna() - Pos).Length() < 40))
                         {
                             yield return PickUpDust(true);
                         }
@@ -8792,7 +8842,7 @@ namespace AnodyneSharp.Recording
                     float ddx = c.X - Pos.X, ddy = c.Y - Pos.Y;
                     if ((i % 20 == 0 && i < 200) || Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
-                        RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos} v={Player.velocity} add={Player.additionalVel} st={Player.state} f{BotRunner.Frame}");
+                        RaftLog($"step i={i} cur={cur} wet={wet} raft={HasRaft()} next={p2[0]} centre={c} pos={Pos} v={Player.velocity.ToXna()} add={Player.additionalVel} st={Player.state} f{BotRunner.Frame}");
                     }
                     // The 10px hitbox has ~3px of slack in a 16px tile: only correct sideways when well off, else go along the route (a raft
                     // that cannot slide the last pixel sideways would otherwise sit there for ever).
@@ -8839,14 +8889,14 @@ namespace AnodyneSharp.Recording
                     // dodges about in its gas, which turns our keys round, until the steam or the bank has us. Stop, face it as it comes
                     // and swing when it is in front of us, as on land: each hit throws it back, the third kills it.
                     if (wet && HasRaft() && Player.state == PlayerState.GROUND && _raftGasFrames < 1200 && !InSteam(Player.Hitbox, 6)
-                        && Enemies().Where(e => e.GetType().Name == "GasGuy" && Grid == new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160)))
-                            .OrderBy(e => (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length())
-                            .FirstOrDefault(e => (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2()).Length() < 56f) is Entity rgas)
+                        && Enemies().Where(e => e.GetType().Name == "GasGuy" && Grid == new Point((int)(e.Hitbox.Center.ToXna().X / 160), (int)(e.Hitbox.Center.ToXna().Y / 160)))
+                            .OrderBy(e => (e.Hitbox.Center.ToXna().ToVector2() - Player.Hitbox.Center.ToXna().ToVector2()).Length())
+                            .FirstOrDefault(e => (e.Hitbox.Center.ToXna().ToVector2() - Player.Hitbox.Center.ToXna().ToVector2()).Length() < 56f) is Entity rgas)
                     {
                         _raftGasFrames++;
                         i--; // (waiting on purpose: not the ride's own time)
                         BotRunner.NotStuck();
-                        float gdx = rgas.Hitbox.Center.X - Player.Hitbox.Center.X, gdy = rgas.Hitbox.Center.Y - Player.Hitbox.Center.Y;
+                        float gdx = rgas.Hitbox.Center.ToXna().X - Player.Hitbox.Center.ToXna().X, gdy = rgas.Hitbox.Center.ToXna().Y - Player.Hitbox.Center.ToXna().Y;
                         var gface = Math.Abs(gdx) > Math.Abs(gdy) ? (gdx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (gdy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
                         BotRunner.Status = "raft: wait for the Gas Guy and swing";
                         if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
@@ -8876,11 +8926,11 @@ namespace AnodyneSharp.Recording
                     // An Annoyer or Slime at arm's length: swing at it from the raft (the broom never picks up the dust we ride on). The
                     // Forest's channel up to the Mushroom card has a Slime sitting in it and an Annoyer that comes at a stalled raft.
                     if (wet && HasRaft() && raftSwings < 40 && Enemies().Where(e => e.GetType().Name is "Annoyer" or "Slime" or "GasGuy")
-                        .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
+                        .Select(e => new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y))
                         .Where(v => v.Length() < (rideStall > 20 ? 40f : 24f))
                         // (a Frog the moment it is in the broom's reach: it spits at anything within 64px, stalled or not)
                         .Concat(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering && RaftBroomReaches(e)) // (even one the fight passed over)
-                            .Select(e => new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y))
+                            .Select(e => new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y))
                             .Where(v => Math.Max(Math.Abs(v.X), Math.Abs(v.Y)) < 36f && Math.Min(Math.Abs(v.X), Math.Abs(v.Y)) < 10f)).OrderBy(v => v.Length()).Cast<Vector2?>().FirstOrDefault() is Vector2 foe)
                     {
                         raftSwings++;
@@ -8893,8 +8943,8 @@ namespace AnodyneSharp.Recording
                         }
                         // (a Frog a pixel past the broom's reach: drift that way the pixel first, it does not move)
                         var frogFoe = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && !e._flickering
-                            && (e.Hitbox.Center.ToVector2() - Player.Hitbox.Center.ToVector2() - foe).Length() < 2f);
-                        for (int nudge = 0; nudge < 8 && frogFoe != null && frogFoe.exists && !frogFoe.Hitbox.Intersects(BroomBoxAt(Player.Position, faceWant)) && !frogFoe.Hitbox.Intersects(new Rectangle(Player.Hitbox.X - 4, Player.Hitbox.Y - 4, Player.Hitbox.Width + 8, Player.Hitbox.Height + 8)); nudge++)
+                            && (e.Hitbox.Center.ToXna().ToVector2() - Player.Hitbox.Center.ToXna().ToVector2() - foe).Length() < 2f);
+                        for (int nudge = 0; nudge < 8 && frogFoe != null && frogFoe.exists && !frogFoe.Hitbox.Intersects(BroomBoxAt(Player.Position.ToXna(), faceWant)) && !frogFoe.Hitbox.Intersects(new Rectangle(Player.Hitbox.X - 4, Player.Hitbox.Y - 4, Player.Hitbox.Width + 8, Player.Hitbox.Height + 8)); nudge++)
                         {
                             yield return K(faceKey);
                         }
@@ -8924,7 +8974,7 @@ namespace AnodyneSharp.Recording
                     {
                         // (through it, against its roll: across its path at its own pace the jump comes down before it has gone by)
                         // (or along the ride, or on the spot: whichever comes down off the floor spikes, short of a wall and clear of the roller)
-                        var rv = roller.velocity;
+                        var rv = roller.velocity.ToXna();
                         var against = Math.Abs(rv.X) >= Math.Abs(rv.Y) ? (rv.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (rv.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
                         var rollerThreats = PredictThreats(null).Where(t => t.Source == roller).ToList();
                         bool NoWall(Rectangle b) => new[] { new Point(b.Left, b.Top), new Point(b.Right - 1, b.Top), new Point(b.Left, b.Bottom - 1), new Point(b.Right - 1, b.Bottom - 1) }
@@ -8939,7 +8989,7 @@ namespace AnodyneSharp.Recording
                             var landWide = land;
                             landWide.Inflate(4, 4); // (the drift is ~27-31px, with the current's push on top)
                             // (nor into a pit: Debug (1,3)'s rafts ride between rows of holes, and a hop "against" one came down in them)
-                            var landC = new Point((int)Math.Floor(land.Center.X / 16f), (int)Math.Floor(land.Center.Y / 16f));
+                            var landC = new Point((int)Math.Floor(land.Center.ToXna().X / 16f), (int)Math.Floor(land.Center.ToXna().Y / 16f));
                             if (!SpikeCoreUnder(landWide) && NoWall(land) && !BotNav.IsHole(landC) && !rollerThreats.Any(t => Enumerable.Range(25, 6).Any(f => t.At[Math.Min(f, Horizon)] is Rectangle r && r.Intersects(land))))
                             {
                                 hopKey = cand;
@@ -8960,7 +9010,7 @@ namespace AnodyneSharp.Recording
                     }
                     // A Four Shooter's bullet about to reach us on the water (the Fields (6,8) pool's currents carry us in among them,
                     // with no room to dodge): they only hurt on the ground, so hop it where we are and ride on after.
-                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump && FourShotSoon(6))
+                    if (wet && HasRaft() && Player.state == PlayerState.GROUND && Gs.CanJump && FourShotSoon(6))
                     {
                         RaftLog($"hop a Four Shooter bullet at {Pos}");
                         yield return K(rideKey, KeyFunctions.Cancel);
@@ -8970,10 +9020,10 @@ namespace AnodyneSharp.Recording
                         }
                         continue;
                     }
-                    var pcr = Player.Hitbox.Center.ToVector2();
+                    var pcr = Player.Hitbox.Center.ToXna().ToVector2();
                     var dangersNow = Dangers();
                     bool onlySlowChasers = dangersNow.Count > 0 && dangersNow.All(d => d is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && !DormantDustmaid(d));
-                    bool chaserClose = dangersNow.Any(d => Vector2.Distance(d.Hitbox.Center.ToVector2(), pcr) < 20f);
+                    bool chaserClose = dangersNow.Any(d => Vector2.Distance(d.Hitbox.Center.ToXna().ToVector2(), pcr) < 20f);
                     var moveKeys = onlySlowChasers && !chaserClose ? K(rideKey) : SafeMove(rideKey, null, 16f);
                     if (wet && HasRaft() && moveKeys.Length > 0 && !moveKeys.Contains(rideKey) && InSteam(Player.Hitbox, 0))
                     {
@@ -8998,7 +9048,7 @@ namespace AnodyneSharp.Recording
                     var rideKeys = wet ? KeepOnWater(moveKeys, rideKey) : moveKeys;
                     if (Environment.GetEnvironmentVariable("ANODYNE_RAFT_TRACE") != null)
                     {
-                        RaftLog($"  keys {string.Join("+", rideKeys)} (ride {rideKey}, stall {rideStall}, swings {raftSwings}) v={Player.velocity} touching={Player.touching} raft={Player.raft?.Position} state={Player.state}");
+                        RaftLog($"  keys {string.Join("+", rideKeys)} (ride {rideKey}, stall {rideStall}, swings {raftSwings}) v={Player.velocity.ToXna()} touching={Player.touching} raft={Player.raft?.Position} state={Player.state}");
                     }
                     yield return rideKeys;
                     if (!wasWet && !wet && i > 120)
@@ -9066,9 +9116,9 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions[] RaftBouncerDodge(KeyFunctions rideKey, Point cur)
         {
-            var pc = Player.Hitbox.Center.ToVector2();
+            var pc = Player.Hitbox.Center.ToXna().ToVector2();
             var bouncers = PredictThreats(null).Where(t => t.Source is AnodyneSharp.Entities.Enemy.Circus.Contort or AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall
-                && (t.Source.Hitbox.Center.ToVector2() - pc).Length() < 80).ToList();
+                && (t.Source.Hitbox.Center.ToXna().ToVector2() - pc).Length() < 80).ToList();
             if (bouncers.Count == 0)
             {
                 return null;
@@ -9155,9 +9205,9 @@ namespace AnodyneSharp.Recording
             var dirs = keys.Where(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right).ToList();
             if (dirs.Count == 0)
             {
-                var me = Player.Hitbox.Center.ToVector2();
-                bool ontoShooter = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Four_Shooter" && Vector2.Dot(e.Hitbox.Center.ToVector2() - me, fv) > 0f
-                    && (e.Hitbox.Center.ToVector2() - me).Length() < 56f && Math.Abs(Vector2.Dot(e.Hitbox.Center.ToVector2() - me, new Vector2(fv.Y, fv.X))) < 20f);
+                var me = Player.Hitbox.Center.ToXna().ToVector2();
+                bool ontoShooter = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Four_Shooter" && Vector2.Dot(e.Hitbox.Center.ToXna().ToVector2() - me, fv) > 0f
+                    && (e.Hitbox.Center.ToXna().ToVector2() - me).Length() < 56f && Math.Abs(Vector2.Dot(e.Hitbox.Center.ToXna().ToVector2() - me, new Vector2(fv.Y, fv.X))) < 20f);
                 return ontoShooter ? keys.Append(back).ToArray() : keys;
             }
             if (dirs.Count == 1 && DirVector(dirs[0]) is Vector2 dv && Math.Abs(Vector2.Dot(dv, fv)) < 0.5f)
@@ -9214,17 +9264,17 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+                var dustTiles = new HashSet<Point>(dusts.Select(d => BotNav.TileOf(d.Position.ToXna() + new Vector2(8, 8))));
                 foreach (var e in BotRunner.Entities().Where(e => e.exists && System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "Monster|Chest|Statue|NPC")))
                 {
-                    dustTiles.Add(BotNav.TileOf(e.Position + new Vector2(8, 8)));
+                    dustTiles.Add(BotNav.TileOf(e.Position.ToXna() + new Vector2(8, 8)));
                 }
                 var o4 = new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) };
                 Entity chosen = null;
                 Point from = default;
-                foreach (var d in dusts.OrderBy(d => holes.Min(h => Math.Abs(h.X * 16 - d.Position.X) + Math.Abs(h.Y * 16 - d.Position.Y))))
+                foreach (var d in dusts.OrderBy(d => holes.Min(h => Math.Abs(h.X * 16 - d.Position.ToXna().X) + Math.Abs(h.Y * 16 - d.Position.ToXna().Y))))
                 {
-                    var dt = BotNav.TileOf(d.Position + new Vector2(8, 8));
+                    var dt = BotNav.TileOf(d.Position.ToXna() + new Vector2(8, 8));
                     BotNav.Avoid = dustTiles;
                     foreach (var o in o4)
                     {
@@ -9246,7 +9296,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                var ct = BotNav.TileOf(chosen.Position + new Vector2(8, 8));
+                var ct = BotNav.TileOf(chosen.Position.ToXna() + new Vector2(8, 8));
                 BotRunner.Status = $"sweeping dust at {ct.X},{ct.Y}";
                 BotNav.Avoid = dustTiles;
                 try
@@ -9258,11 +9308,11 @@ namespace AnodyneSharp.Recording
                     BotNav.Avoid = null;
                 }
                 yield return Wait(30);
-                if (chosen.exists && BotNav.TileOf(chosen.Position + new Vector2(8, 8)) == ct && chosen.GetType().Name == "Dust" && BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust") >= dusts.Count)
+                if (chosen.exists && BotNav.TileOf(chosen.Position.ToXna() + new Vector2(8, 8)) == ct && chosen.GetType().Name == "Dust" && BotRunner.Entities().Count(e => e.exists && e.GetType().Name == "Dust") >= dusts.Count)
                 {
                     continue; // not picked up; try again (maybe another dust next time)
                 }
-                var otherDust = new HashSet<Point>(BotRunner.Entities().Where(e => e.exists && System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "^Dust$|Monster|Chest|Statue|NPC")).Select(d => BotNav.TileOf(d.Position + new Vector2(8, 8))));
+                var otherDust = new HashSet<Point>(BotRunner.Entities().Where(e => e.exists && System.Text.RegularExpressions.Regex.IsMatch(e.GetType().Name, "^Dust$|Monster|Chest|Statue|NPC")).Select(d => BotNav.TileOf(d.Position.ToXna() + new Vector2(8, 8))));
                 bool placed = false;
                 foreach (var h in holes.OrderBy(h => Math.Abs(h.X - from.X) + Math.Abs(h.Y - from.Y)))
                 {
@@ -9308,7 +9358,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> TempleLaserDust()
         {
             yield return GoScreenTo(1, 2);
-            bool placed() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && Math.Abs(e.Position.X - 176) < 10 && Math.Abs(e.Position.Y - 336) < 10);
+            bool placed() => BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "Dust" && Math.Abs(e.Position.ToXna().X - 176) < 10 && Math.Abs(e.Position.ToXna().Y - 336) < 10);
             if (!placed())
             {
                 yield return StandFaceAccept(13, 21, 'l');
@@ -9416,7 +9466,7 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100, done = 0;
             for (int i = 0; i < 500 && done < swings && b.exists; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -9424,7 +9474,7 @@ namespace AnodyneSharp.Recording
                 BotRunner.Status = $"shove the {b.GetType().Name} {dir}";
                 var pb = Player.Hitbox;
                 var bb = b.Hitbox;
-                float cross = horiz ? pb.Center.Y - bb.Center.Y : pb.Center.X - bb.Center.X;
+                float cross = horiz ? pb.Center.ToXna().Y - bb.Center.ToXna().Y : pb.Center.ToXna().X - bb.Center.ToXna().X;
                 int gap = dir == KeyFunctions.Right ? bb.Left - pb.Right : dir == KeyFunctions.Left ? pb.Left - bb.Right : dir == KeyFunctions.Up ? pb.Top - bb.Bottom : bb.Top - pb.Bottom;
                 if (gap < -2)
                 {
@@ -9472,13 +9522,13 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100;
             for (int i = 0; i < 2400; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
                 }
                 var pb = Player.Hitbox;
-                if (pb.Center.X >= 98 && pb.Bottom <= 284)
+                if (pb.Center.ToXna().X >= 98 && pb.Bottom <= 284)
                 {
                     yield break; // in the room above the corridor
                 }
@@ -9491,9 +9541,9 @@ namespace AnodyneSharp.Recording
                 var sb = sh.Hitbox;
                 if (i % 30 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"  corridor f{i} me={pb} shieldy={sb} v={sh.velocity.X:0} facing={Player.facing}");
+                    System.Console.Error.WriteLine($"  corridor f{i} me={pb} shieldy={sb} v={sh.velocity.ToXna().X:0} facing={Player.facing}");
                 }
-                float rowOff = pb.Center.Y - sb.Center.Y;
+                float rowOff = pb.Center.ToXna().Y - sb.Center.ToXna().Y;
                 if (Math.Abs(rowOff) > 3 && sb.Left < 116)
                 {
                     yield return K(rowOff > 0 ? KeyFunctions.Up : KeyFunctions.Down); // line up with the corridor row
@@ -9502,7 +9552,7 @@ namespace AnodyneSharp.Recording
                 if (sb.Left >= 116)
                 {
                     // Shoved far enough east: walk along to the gap column and up into the room.
-                    yield return pb.Center.X < 102 ? K(KeyFunctions.Right) : K(KeyFunctions.Up);
+                    yield return pb.Center.ToXna().X < 102 ? K(KeyFunctions.Right) : K(KeyFunctions.Up);
                     continue;
                 }
                 int gap = sb.Left - pb.Right;
@@ -9555,7 +9605,7 @@ namespace AnodyneSharp.Recording
             bool pushed = false;
             for (int i = 0; i < 2400 && !pushed; i++)
             {
-                var patroller = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Shieldy" && e.Hitbox.Y >= 205 && e.Hitbox.Y <= 236 && e.velocity.X != 0);
+                var patroller = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Shieldy" && e.Hitbox.Y >= 205 && e.Hitbox.Y <= 236 && e.velocity.ToXna().X != 0);
                 if (Player.facing != Facing.UP)
                 {
                     yield return K(KeyFunctions.Up);
@@ -9590,7 +9640,7 @@ namespace AnodyneSharp.Recording
             }
         }
 
-        public static string DebugEnemies() => string.Join(" ", Enemies().Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}v{e.velocity.X:0},{e.velocity.Y:0}"));
+        public static string DebugEnemies() => string.Join(" ", Enemies().Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}v{e.velocity.ToXna().X:0},{e.velocity.ToXna().Y:0}"));
 
         /// <summary>Enemies the bot has decided are not worth the trouble on this screen (out of reach, asleep behind a wall): no fight or route looks at them again.</summary>
         protected static readonly HashSet<Entity> IgnoredEnemies = new();
@@ -9636,17 +9686,17 @@ namespace AnodyneSharp.Recording
                 _ => new Rectangle(pb.Right, pb.Y - 8, 26, pb.Height + 16),
             };
             // Dust set down on purpose (on a fire pillar, say): a swing that sweeps it up undoes that. Hold the swing.
-            if (KeepDust && Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(BroomBoxAt(Player.Position, Player.facing))))
+            if (KeepDust && Player.broom.dust == null && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(BroomBoxAt(Player.Position.ToXna(), Player.facing))))
             {
                 return held.Where(k => k != KeyFunctions.Accept).ToArray();
             }
             // A bullet Slime close by about to fire that the swing would not reach: a broom out stops us dead in the air, so the hop over
             // its shot (BulletHop) would go nowhere. Hold the swing.
-            if (Player.state == PlayerState.GROUND && GlobalState.inventory.CanJump)
+            if (Player.state == PlayerState.GROUND && Gs.CanJump)
             {
                 foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>())
                 {
-                    if (!sl.exists || sl.Hitbox.Intersects(reach) || !sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+                    if (!sl.exists || sl.Hitbox.Intersects(reach) || !sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
                     {
                         continue;
                     }
@@ -9695,22 +9745,22 @@ namespace AnodyneSharp.Recording
             }
             foreach (var k in ks)
             {
-                if (_killerMoving?.GetValue(k) is true && _wokenKillers.Add(k))
+                if (_killerMoving?.GetValueF(k) is true && _wokenKillers.Add(k))
                 {
-                    System.Console.Error.WriteLine($"  killer woke f{BotRunner.Frame} at {k.Position} us {Player.Position} hp {GlobalState.CUR_HEALTH} doing [{BotRunner.Status}]");
+                    System.Console.Error.WriteLine($"  killer woke f{BotRunner.Frame} at {k.Position.ToXna()} us {Player.Position.ToXna()} hp {Gs.Health} doing [{BotRunner.Status}]");
                 }
             }
             // (with a foe at hand a hit's knock-back throws us 10px: a berth wider by that, or it throws us in to wake one)
-            var mc = Player.Hitbox.Center.ToVector2();
+            var mc = Player.Hitbox.Center.ToXna().ToVector2();
             // (a foe that runs at us, a dog: a bullet or a fire pillar hits too, but from a stand we chose facing it, which throws us back
             // the way we came; the wider berth with a plant's bullets about walled the plants off)
-            float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && e.velocity != Vector2.Zero && !ProjectileName.IsMatch(e.GetType().Name)
-                && (e.Hitbox.Center.ToVector2() - mc).Length() < 36f) ? 14f : 0f;
-            float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValue(k) is true
-                ? (k.Hitbox.Center.ToVector2() - (p + new Vector2(5, 6))).Length() - 18f - knock
-                : (k.Position - p).Length() - 36.3f - knock);
+            float knock = Dangers().Any(e => !BotNav.IsSuburbKiller(e) && e.velocity.ToXna() != Vector2.Zero && !ProjectileName.IsMatch(e.GetType().Name)
+                && (e.Hitbox.Center.ToXna().ToVector2() - mc).Length() < 36f) ? 14f : 0f;
+            float Room(Vector2 p) => ks.Min(k => _killerMoving?.GetValueF(k) is true
+                ? (k.Hitbox.Center.ToXna().ToVector2() - (p + new Vector2(5, 6))).Length() - 18f - knock
+                : (k.Position.ToXna() - p).Length() - 36.3f - knock);
             Vector2 Step(IEnumerable<KeyFunctions> keys) => keys.Aggregate(Vector2.Zero, (a, k) => a + DirVector(k)) * 4f;
-            var now = Player.Position;
+            var now = Player.Position.ToXna();
             float here = Room(now);
             bool Ok(IEnumerable<KeyFunctions> keys)
             {
@@ -9793,7 +9843,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         internal static KeyFunctions[] FightEdgeGuard(KeyFunctions[] held)
         {
-            if (Player == null || FightFrame < BotRunner.Frame - 1 || Grid != FightGrid || GlobalState.ScreenTransition)
+            if (Player == null || FightFrame < BotRunner.Frame - 1 || Grid != FightGrid || Gs.ScreenTransition)
             {
                 return held;
             }
@@ -9820,7 +9870,7 @@ namespace AnodyneSharp.Recording
         {
             box.Inflate(margin, margin);
             return BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>()
-                .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(box))));
+                .Any(pipe => pipe.exists && !pipe.Disabled && (pipe.Hitbox.Intersects(box) || pipe.Subs().Any(st => st.exists && st.Hitbox.Intersects(box))));
         }
 
         /// <summary>
@@ -9830,7 +9880,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         internal static KeyFunctions[] RaftPitBrace(KeyFunctions[] held)
         {
-            if (Player?.raft == null || Player.state != PlayerState.GROUND || GlobalState.ScreenTransition)
+            if (Player?.raft == null || Player.state != PlayerState.GROUND || Gs.ScreenTransition)
             {
                 return held;
             }
@@ -9859,7 +9909,7 @@ namespace AnodyneSharp.Recording
             pb.Inflate(3, 3);
             foreach (var pipe in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Hotel.SteamPipe>())
             {
-                if (!pipe.exists || pipe.Disabled || !(pipe.Hitbox.Intersects(pb) || pipe.SubEntities().Any(st => st.exists && st.Hitbox.Intersects(pb))))
+                if (!pipe.exists || pipe.Disabled || !(pipe.Hitbox.Intersects(pb) || pipe.Subs().Any(st => st.exists && st.Hitbox.Intersects(pb))))
                 {
                     continue;
                 }
@@ -9894,7 +9944,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         internal static KeyFunctions[] ContactEscape(KeyFunctions[] held)
         {
-            if (Player == null || Player.raft != null || !DodgeEnabled || Talking || GlobalState.ScreenTransition
+            if (Player == null || Player.raft != null || !DodgeEnabled || Talking || Gs.ScreenTransition
                 || Environment.GetEnvironmentVariable("ANODYNE_NO_CONTACT_ESCAPE") != null)
             {
                 _contactFrames = 0;
@@ -9902,7 +9952,7 @@ namespace AnodyneSharp.Recording
             }
             var pb = Player.Hitbox;
             pb.Inflate(1, 1);
-            var on = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+            var on = BotRunner.Entities().Where(e => e.exists && e != Player.Native && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                 && !IsEyeBoss(e) && e.GetType().Name is not ("Slasher" or "Burst_Plant" or "Mover") && e.Hitbox.Intersects(pb)).ToList(); // (those only hurt with their cuts / shots, or only push)
             if (on.Count == 0 || (_gasPolicyFrame == BotRunner.Frame && on.All(e => e is AnodyneSharp.Entities.Enemy.Apartment.GasGuy)))
             {
@@ -9914,8 +9964,8 @@ namespace AnodyneSharp.Recording
             {
                 return Player.state == AnodyneSharp.Entities.PlayerState.GROUND || _contactFrames < 4 ? held : held.Where(k => k != KeyFunctions.Cancel).ToArray();
             }
-            var pc = Player.Hitbox.Center.ToVector2();
-            var away = on.Aggregate(Vector2.Zero, (acc, e) => acc + (pc - e.Hitbox.Center.ToVector2() is var d && d != Vector2.Zero ? Vector2.Normalize(d) : new Vector2(0, 1)));
+            var pc = Player.Hitbox.Center.ToXna().ToVector2();
+            var away = on.Aggregate(Vector2.Zero, (acc, e) => acc + (pc - e.Hitbox.Center.ToXna().ToVector2() is var d && d != Vector2.Zero ? Vector2.Normalize(d) : new Vector2(0, 1)));
             if (away == Vector2.Zero)
             {
                 away = new Vector2(0, 1);
@@ -10004,8 +10054,8 @@ namespace AnodyneSharp.Recording
                 return false;
             }
             var pb = Player.Hitbox;
-            var p = Player.Position;
-            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            var p = Player.Position.ToXna();
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity.ToXna() == Vector2.Zero))
             {
                 var tb = t.Hitbox;
                 // (the box after one more step, as the game rounds it: touching its band's edge is not in it)
@@ -10029,7 +10079,7 @@ namespace AnodyneSharp.Recording
         {
             var pb = Player.Hitbox;
             bool horiz = dir == KeyFunctions.Left || dir == KeyFunctions.Right;
-            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity.ToXna() == Vector2.Zero))
             {
                 var tb = t.Hitbox;
                 int gap = dir switch
@@ -10063,7 +10113,7 @@ namespace AnodyneSharp.Recording
         protected static bool OnSightTrapLineAhead(KeyFunctions dir)
         {
             var pb = Player.Hitbox;
-            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity == Vector2.Zero))
+            foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists && e.velocity.ToXna() == Vector2.Zero))
             {
                 var tb = t.Hitbox;
                 bool vertical = dir == KeyFunctions.Up || dir == KeyFunctions.Down;
@@ -10074,12 +10124,12 @@ namespace AnodyneSharp.Recording
                     KeyFunctions.Left => pb.Left - tb.Right,
                     _ => tb.Left - pb.Right,
                 };
-                if (gap >= 0 && gap <= 20 && (vertical ? Math.Abs(tb.Center.X - pb.Center.X) < 48 : Math.Abs(tb.Center.Y - pb.Center.Y) < 48))
+                if (gap >= 0 && gap <= 20 && (vertical ? Math.Abs(tb.Center.ToXna().X - pb.Center.ToXna().X) < 48 : Math.Abs(tb.Center.ToXna().Y - pb.Center.ToXna().Y) < 48))
                 {
                     // (only when its charge at us runs on a long way past us before it bounces: back from a wall a tile off it is on
                     // us again as we land)
-                    var tc = BotNav.TileOf(t.Position + new Vector2(8, 8) - new Vector2(BotNav.HalfW, BotNav.HalfH));
-                    var toward = vertical ? new Point(Math.Sign(pb.Center.X - tb.Center.X), 0) : new Point(0, Math.Sign(pb.Center.Y - tb.Center.Y));
+                    var tc = BotNav.TileOf(t.Position.ToXna() + new Vector2(8, 8) - new Vector2(BotNav.HalfW, BotNav.HalfH));
+                    var toward = vertical ? new Point(Math.Sign(pb.Center.ToXna().X - tb.Center.ToXna().X), 0) : new Point(0, Math.Sign(pb.Center.ToXna().Y - tb.Center.ToXna().Y));
                     int run = 0;
                     for (var q = new Point(tc.X + toward.X, tc.Y + toward.Y); run < 10 && BotNav.Walkable(q) && !BotNav.IsHole(q); q = new Point(q.X + toward.X, q.Y + toward.Y))
                     {
@@ -10115,8 +10165,8 @@ namespace AnodyneSharp.Recording
             var scr = new Rectangle(grid.X * 160, grid.Y * 160, 160, 160);
             for (int attempt = 0; attempt < 8; attempt++)
             {
-                yield return Until(() => !GlobalState.ScreenTransition && Player.state == PlayerState.GROUND, 120, "the ground under us");
-                if ((Player.Position - goal).Length() <= 3f)
+                yield return Until(() => !Gs.ScreenTransition && Player.state == PlayerState.GROUND, 120, "the ground under us");
+                if ((Player.Position.ToXna() - goal).Length() <= 3f)
                 {
                     yield break;
                 }
@@ -10124,15 +10174,15 @@ namespace AnodyneSharp.Recording
                     .Where(e => e.exists && e.Hitbox.Intersects(scr)).ToList();
                 var traps = live.Select(e =>
                 {
-                    var home = SightTrapHome?.GetValue(e) is Vector2 h ? h : e.Position;
-                    float sp = e.velocity.Length();
-                    int mode = sp < 1f ? ((home - e.Position).Length() < 2f ? 0 : 2) : sp > 60f ? 1 : 2;
-                    var v = e.velocity;
+                    var home = SightTrapHome?.GetValueF(e) is Vector2 h ? h : e.Position.ToXna();
+                    float sp = e.velocity.ToXna().Length();
+                    int mode = sp < 1f ? ((home - e.Position.ToXna()).Length() < 2f ? 0 : 2) : sp > 60f ? 1 : 2;
+                    var v = e.velocity.ToXna();
                     if (mode == 2 && sp < 1f)
                     {
-                        v = Vector2.Normalize(home - e.Position) * 40f;
+                        v = Vector2.Normalize(home - e.Position.ToXna()) * 40f;
                     }
-                    return new SightTrap { X = e.Position.X, Y = e.Position.Y, Vx = v.X, Vy = v.Y, Mode = mode, HomeX = home.X, HomeY = home.Y, W = e.width, H = e.height };
+                    return new SightTrap { X = e.Position.ToXna().X, Y = e.Position.ToXna().Y, Vx = v.X, Vy = v.Y, Mode = mode, HomeX = home.X, HomeY = home.Y, W = e.width, H = e.height };
                 }).ToArray();
                 bool OnScreen(Rectangle r) => r.Left >= scr.Left && r.Right <= scr.Right && r.Top >= scr.Top && r.Bottom <= scr.Bottom;
                 Func<Rectangle, bool> walk = r => OnScreen(r) && CornersWalkable(r);
@@ -10140,11 +10190,11 @@ namespace AnodyneSharp.Recording
                 Func<Rectangle, bool> trapFree = r => OnScreen(r) && WallFree(r) && !HoleUnder(r);
                 // Spring pads: landing a jump on one throws us down over the wall below
                 SightTrapPlanner.Springs = BotRunner.Entities().OfType<AnodyneSharp.Entities.Gadget.SpringPad>().Where(e => e.exists && e.Hitbox.Intersects(scr))
-                    .Select(e => (e.Hitbox, SpringDist?.GetValue(e) is int d ? d : 32, (int)Math.Round((SpringTime?.GetValue(e) is float tm ? tm : 0.3f) * 60f))).ToList();
+                    .Select(e => (e.Hitbox, SpringDist?.GetValueF(e) is int d ? d : 32, (int)Math.Round((SpringTime?.GetValueF(e) is float tm ? tm : 0.3f) * 60f))).ToList();
                 var springFrom = new Dictionary<Point, List<Point>>(); // landing tile -> the spring tiles that throw us onto it
                 foreach (var (box, d, _) in SightTrapPlanner.Springs)
                 {
-                    var stile = new Point(box.Center.X / 16, box.Center.Y / 16);
+                    var stile = new Point(box.Center.ToXna().X / 16, box.Center.ToXna().Y / 16);
                     var land = new Point(stile.X, stile.Y + d / 16);
                     if (!springFrom.TryGetValue(land, out var lst))
                     {
@@ -10178,7 +10228,7 @@ namespace AnodyneSharp.Recording
                                 break;
                             }
                             var mid = new Point(c.X + dx, c.Y + dy);
-                            if (BotNav.Walkable(nb) && (k == 1 || (GlobalState.inventory.CanJump && BotNav.IsHole(mid))))
+                            if (BotNav.Walkable(nb) && (k == 1 || (Gs.CanJump && BotNav.IsHole(mid))))
                             {
                                 dist[nb] = dist[c] + k;
                                 q.Enqueue(nb);
@@ -10197,21 +10247,21 @@ namespace AnodyneSharp.Recording
                 List<SightTrapPlanner.Step> plan = null;
                 foreach (int margin in new[] { 3, 2, 1 })
                 {
-                    plan = SightTrapPlanner.Plan(Player.Hitbox, Player.Position, goal, traps, walk, airOk, trapFree, GlobalState.inventory.CanJump, margin: margin,
+                    plan = SightTrapPlanner.Plan(Player.Hitbox, Player.Position.ToXna(), goal, traps, walk, airOk, trapFree, Gs.CanJump, margin: margin,
                         maxNodes: margin == 1 ? 40000 : 15000, framesToGoal: ToGoal);
                     if (plan != null)
                     {
                         break;
                     }
                 }
-                System.Console.Error.WriteLine($"  sight traps: plan from {Player.Position} to {goal}: {(plan == null ? "none" : plan.Count + " steps, " + plan.Sum(st => st.Frames) + " frames")} " +
+                System.Console.Error.WriteLine($"  sight traps: plan from {Player.Position.ToXna()} to {goal}: {(plan == null ? "none" : plan.Count + " steps, " + plan.Sum(st => st.Frames) + " frames")} " +
                     $"({SightTrapPlanner.Nodes} nodes, {sw.ElapsedMilliseconds}ms; traps {string.Join(" ", traps.Select(t => $"{t.X:0},{t.Y:0}/m{t.Mode}"))})");
                 if (plan == null)
                 {
                     throw new InvalidOperationException($"bot: no way past the sight traps to {goal}");
                 }
                 bool off = false;
-                var predicted = Environment.GetEnvironmentVariable("ANODYNE_SIGHT_TRACE") != null ? SightTrapPlanner.Replay(Player.Hitbox, Player.Position, traps, plan, walk, airOk, trapFree) : null;
+                var predicted = Environment.GetEnvironmentVariable("ANODYNE_SIGHT_TRACE") != null ? SightTrapPlanner.Replay(Player.Hitbox, Player.Position.ToXna(), traps, plan, walk, airOk, trapFree) : null;
                 int pf = 0;
                 foreach (var st in plan)
                 {
@@ -10234,14 +10284,14 @@ namespace AnodyneSharp.Recording
                         if (predicted != null && pf > 0 && pf <= predicted.Count)
                         {
                             System.Console.Error.WriteLine($"  sight f{BotRunner.Frame} pred {predicted[pf - 1]}");
-                            System.Console.Error.WriteLine($"  sight f{BotRunner.Frame} real    me {Player.Position.X:0.0},{Player.Position.Y:0.0} {Player.state} | " + string.Join(" ", live.Select(e => $"{e.Position.X:0.0},{e.Position.Y:0.0}")));
+                            System.Console.Error.WriteLine($"  sight f{BotRunner.Frame} real    me {Player.Position.ToXna().X:0.0},{Player.Position.ToXna().Y:0.0} {Player.state} | " + string.Join(" ", live.Select(e => $"{e.Position.ToXna().X:0.0},{e.Position.ToXna().Y:0.0}")));
                         }
                         pf++;
                         yield return jump && f == 0 ? keys.Append(KeyFunctions.Cancel).ToArray() : keys;
                     }
-                    if ((Player.Position - new Vector2(st.X, st.Y)).Length() > 1.5f)
+                    if ((Player.Position.ToXna() - new Vector2(st.X, st.Y)).Length() > 1.5f)
                     {
-                        System.Console.Error.WriteLine($"  sight traps: off the plan at {Player.Position} (meant {st.X:0.0},{st.Y:0.0}): plan again");
+                        System.Console.Error.WriteLine($"  sight traps: off the plan at {Player.Position.ToXna()} (meant {st.X:0.0},{st.Y:0.0}): plan again");
                         off = true;
                         break;
                     }
@@ -10273,21 +10323,21 @@ namespace AnodyneSharp.Recording
             pb.Inflate(1, 1);
             foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
             {
-                var shots = sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().ToList();
+                var shots = sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().ToList();
                 if (shots.Count == 0)
                 {
                     continue; // (a plain Slime)
                 }
                 var sb = sl.Hitbox;
                 int gap = Math.Max(Math.Max(sb.Left - pb.Right, pb.Left - sb.Right), Math.Max(sb.Top - pb.Bottom, pb.Top - sb.Bottom));
-                if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && gap < 40) { System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame} sl={sl.Position} due={SlimeShotIn(sl)} gap={gap} me={Player.Position} st={Player.state}"); }
+                if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && gap < 40) { System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame} sl={sl.Position.ToXna()} due={SlimeShotIn(sl)} gap={gap} me={Player.Position.ToXna()} st={Player.state}"); }
                 if (gap < 30 && SlimeShotIn(sl) is float due && due <= 1.5f / 60f)
                 {
                     BotRunner.Status = "hop the slime's next shot";
-                    var hop = HopAcross(Player.Position - sl.Position);
+                    var hop = HopAcross(Player.Position.ToXna() - sl.Position.ToXna());
                     if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null)
                     {
-                        System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame}: hop {(hop == null ? "none (no safe landing)" : string.Join("+", hop))} held {string.Join("+", held)} vel {Player.velocity}");
+                        System.Console.Error.WriteLine($"  slimehop f{BotRunner.Frame}: hop {(hop == null ? "none (no safe landing)" : string.Join("+", hop))} held {string.Join("+", held)} vel {Player.velocity.ToXna()}");
                     }
                     if (hop != null)
                     {
@@ -10297,9 +10347,9 @@ namespace AnodyneSharp.Recording
             }
             // A dash trap on its way into us (one that charges on sight down the corridor we walk, Fields (7,8)): it only hurts on the
             // ground, so hop it, across its line where there is floor to land on, else where we stand.
-            if (GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
+            if (Gs.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
             {
-                foreach (var dt in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.DashTrap>().Where(e => e.exists && e.velocity != Vector2.Zero))
+                foreach (var dt in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.DashTrap>().Where(e => e.exists && e.velocity.ToXna() != Vector2.Zero))
                 {
                     // (one held up against something solid, an explosion's box say, keeps its velocity but goes nowhere: not coming)
                     if (_trapLastPos.Count > 200)
@@ -10313,24 +10363,24 @@ namespace AnodyneSharp.Recording
                     }
                     else
                     {
-                        moved = lp.frame != BotRunner.Frame - 1 || lp.pos != dt.Position;
-                        _trapLastPos[dt] = (dt.Position, BotRunner.Frame, moved);
+                        moved = lp.frame != BotRunner.Frame - 1 || lp.pos != dt.Position.ToXna();
+                        _trapLastPos[dt] = (dt.Position.ToXna(), BotRunner.Frame, moved);
                     }
                     if (!moved)
                     {
                         continue;
                     }
                     // (relative to us: walking into the back of one going home at half speed is as much a hit as one coming at us)
-                    var rel = dt.velocity - Player.velocity;
+                    var rel = dt.velocity.ToXna() - Player.velocity.ToXna();
                     bool soon = Enumerable.Range(1, 9).Any(f =>
                     {
                         var r = dt.Hitbox;
                         r.Offset((int)Math.Round(rel.X * f / 60f), (int)Math.Round(rel.Y * f / 60f));
                         return r.Intersects(pb);
                     });
-                    if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && (dt.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length() < 48)
+                    if (Environment.GetEnvironmentVariable("ANODYNE_HOP_TRACE") != null && (dt.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2()).Length() < 48)
                     {
-                        System.Console.Error.WriteLine($"  traphop f{BotRunner.Frame} trap={dt.Hitbox} v={dt.velocity} me={Player.Hitbox} st={Player.state} soon={soon} held={string.Join("+", held)}");
+                        System.Console.Error.WriteLine($"  traphop f{BotRunner.Frame} trap={dt.Hitbox} v={dt.velocity.ToXna()} me={Player.Hitbox} st={Player.state} soon={soon} held={string.Join("+", held)}");
                     }
                     if (soon)
                     {
@@ -10342,7 +10392,7 @@ namespace AnodyneSharp.Recording
                             return held.Where(k => k != KeyFunctions.Cancel).ToArray();
                         }
                         _trapHopFrame = BotRunner.Frame;
-                        return HopAcross(dt.velocity) ?? new[] { KeyFunctions.Cancel };
+                        return HopAcross(dt.velocity.ToXna()) ?? new[] { KeyFunctions.Cancel };
                     }
                 }
             }
@@ -10362,7 +10412,7 @@ namespace AnodyneSharp.Recording
             foreach (var t in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap>().Where(e => e.exists))
             {
                 var r = t.Hitbox;
-                r.Offset((int)Math.Round(t.velocity.X * after), (int)Math.Round(t.velocity.Y * after));
+                r.Offset((int)Math.Round(t.velocity.ToXna().X * after), (int)Math.Round(t.velocity.ToXna().Y * after));
                 bool seeX = land.Left <= r.Right && land.Right >= r.Left;
                 bool seeY = land.Top <= r.Bottom && land.Bottom >= r.Top;
                 int dx = Math.Max(0, Math.Max(r.Left - land.Right, land.Left - r.Right));
@@ -10383,11 +10433,11 @@ namespace AnodyneSharp.Recording
                 : new[] { KeyFunctions.Left, KeyFunctions.Right, line.Y > 0 ? KeyFunctions.Down : KeyFunctions.Up, line.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down };
             const float air = 0.46f; // (the jump's length, s)
             // Where the enemy bodies will be as we come down (hopping a shot into its own Slime is a sure hit for a maybe one).
-            var bodies = BotRunner.Entities().Where(e => e.exists && e != Player && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
+            var bodies = BotRunner.Entities().Where(e => e.exists && e != Player.Native && e.width > 0 && e.GetType().IsDefined(typeof(AnodyneSharp.Entities.Enemy.EnemyAttribute), false)
                 && !IsEyeBoss(e)).Select(e =>
                 {
                     var r = e.Hitbox;
-                    r.Offset((int)Math.Round(e.velocity.X * air), (int)Math.Round(e.velocity.Y * air));
+                    r.Offset((int)Math.Round(e.velocity.ToXna().X * air), (int)Math.Round(e.velocity.ToXna().Y * air));
                     r.Inflate(3, 3);
                     return r;
                 }).ToList();
@@ -10407,11 +10457,11 @@ namespace AnodyneSharp.Recording
             // (and the Slime shots still flying as we come down: hopping along one's line lands us on it)
             foreach (var sl in BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists))
             {
-                foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                foreach (var b in sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity.ToXna() != Vector2.Zero))
                 {
                     foreach (float t in new[] { air, air + 0.1f, air + 0.2f })
                     {
-                        var r = new Rectangle((int)(b.Position.X + b.velocity.X * t), (int)(b.Position.Y + b.velocity.Y * t), 8, 8);
+                        var r = new Rectangle((int)(b.Position.ToXna().X + b.velocity.ToXna().X * t), (int)(b.Position.ToXna().Y + b.velocity.ToXna().Y * t), 8, 8);
                         r.Inflate(4, 4);
                         bodies.Add(r);
                     }
@@ -10419,7 +10469,7 @@ namespace AnodyneSharp.Recording
             }
             // (and the shots any Slime fires while we are up: at us, wherever we are then, from its top-left at 40px/s; two Slimes firing
             // a moment apart, Hotel (1,3), had the hop over one's shot land on the other's)
-            var firing = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists && e.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
+            var firing = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Slime>().Where(e => e.exists && e.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any())
                 .Select(e => (sl: e, due: SlimeShotIn(e))).Where(x => x.due is float d && d <= air + 0.2f).Select(x => (x.sl, due: x.due.Value)).ToList();
             // (a wide berth first; in a tight spot a landing that only just fits beats standing in the shot)
             // (out of every on-sight dash trap's line first; failing that, any landing still beats coming down where we stand)
@@ -10439,8 +10489,8 @@ namespace AnodyneSharp.Recording
                         {
                             return false;
                         }
-                        var aim = Player.Position + move * Math.Min(x.due / air, 1f);
-                        var p = x.sl.Position + Vector2.Normalize(aim - x.sl.Position) * 40f * (t - x.due);
+                        var aim = Player.Position.ToXna() + move * Math.Min(x.due / air, 1f);
+                        var p = x.sl.Position.ToXna() + Vector2.Normalize(aim - x.sl.Position.ToXna()) * 40f * (t - x.due);
                         var r = new Rectangle((int)p.X, (int)p.Y, 8, 8);
                         r.Inflate(4, 4);
                         return r.Intersects(new Rectangle(Player.Hitbox.X + (int)Math.Round(move.X), Player.Hitbox.Y + (int)Math.Round(move.Y), Player.Hitbox.Width, Player.Hitbox.Height));
@@ -10463,21 +10513,21 @@ namespace AnodyneSharp.Recording
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
             const System.Reflection.BindingFlags FP = F | System.Reflection.BindingFlags.Public;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = (abs?.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = (abs?.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             if (top == null || top.GetType().Name != "AttackState")
             {
                 return null;
             }
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top.GetType().GetField("attackPositions", FP)?.GetValue(top) is not Vector2[] targets || top.GetType().GetField("attackPhase", FP)?.GetValue(top) is not int phase
-                || tt.GetField("current", F)?.GetValue(top) is not float now || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top.GetType().GetField("attackPositions", FP)?.GetValueF(top) is not Vector2[] targets || top.GetType().GetField("attackPhase", FP)?.GetValueF(top) is not int phase
+                || tt.GetField("current", F)?.GetValueF(top) is not float now || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
             var first = timers[0];
-            if (first.GetType().GetField("current", FP)?.GetValue(first) is not float due)
+            if (first.GetType().GetField("current", FP)?.GetValueF(first) is not float due)
             {
                 return null;
             }
@@ -10488,17 +10538,17 @@ namespace AnodyneSharp.Recording
         private static int? DogAlertLeft(Entity dog)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+            var top = root == null || abs == null ? null : (abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
             var tt = typeof(AnodyneSharp.FSM.TimerState);
-            if (top == null || top.GetType().Name == "AttackState" || tt.GetField("current", F)?.GetValue(top) is not float now
-                || tt.GetField("timers", F)?.GetValue(top) is not System.Collections.IList timers || timers.Count == 0)
+            if (top == null || top.GetType().Name == "AttackState" || tt.GetField("current", F)?.GetValueF(top) is not float now
+                || tt.GetField("timers", F)?.GetValueF(top) is not System.Collections.IList timers || timers.Count == 0)
             {
                 return null;
             }
             var first = timers[0];
-            if (first.GetType().GetField("name")?.GetValue(first) as string != "AlertTimer" || first.GetType().GetField("current")?.GetValue(first) is not float due)
+            if (first.GetType().GetField("name")?.GetValueF(first) as string != "AlertTimer" || first.GetType().GetField("current")?.GetValueF(first) is not float due)
             {
                 return null;
             }
@@ -10513,9 +10563,9 @@ namespace AnodyneSharp.Recording
                 return null;
             }
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = dog.GetType().GetField("_state", F)?.GetValue(dog);
+            var root = dog.GetType().GetField("_state", F)?.GetValueF(dog);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
-            var active = root == null || abs == null ? null : abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var active = root == null || abs == null ? null : abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable;
             var top = active?.Cast<object>().FirstOrDefault();
             return top == null ? null : top.GetType().Name == "AttackState";
         }
@@ -10524,13 +10574,13 @@ namespace AnodyneSharp.Recording
         private static float? SlimeShotIn(Entity slime)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var root = slime.GetType().GetField("state", F)?.GetValue(slime);
+            var root = slime.GetType().GetField("state", F)?.GetValueF(slime);
             var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
             if (root == null || abs == null)
             {
                 return null;
             }
-            var active = abs.GetField("activeChildren", F)?.GetValue(root) as System.Collections.IEnumerable;
+            var active = abs.GetField("activeChildren", F)?.GetValueF(root) as System.Collections.IEnumerable;
             var move = active?.Cast<object>().FirstOrDefault() as AnodyneSharp.FSM.TimerState;
             long frame = BotRunner.Frame;
             if (move == null)
@@ -10548,13 +10598,13 @@ namespace AnodyneSharp.Recording
                 }
                 return Math.Max(0, Math.Max(c.due, c.hurt + 16) - frame) / 60f;
             }
-            var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValue(move);
-            foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValue(move))
+            var now = (float)typeof(AnodyneSharp.FSM.TimerState).GetField("current", F).GetValueF(move);
+            foreach (var t in (System.Collections.IEnumerable)typeof(AnodyneSharp.FSM.TimerState).GetField("timers", F).GetValueF(move))
             {
                 var tt = t.GetType();
-                if ((string)tt.GetField("name").GetValue(t) == "ShootTimer")
+                if ((string)tt.GetField("name").GetValueF(t) == "ShootTimer")
                 {
-                    float left = (float)tt.GetField("current").GetValue(t) - now;
+                    float left = (float)tt.GetField("current").GetValueF(t) - now;
                     if (_slimeClock.Count > 64)
                     {
                         _slimeClock.Clear();
@@ -10605,7 +10655,7 @@ namespace AnodyneSharp.Recording
         {
             var at = new Vector2(x, y);
             var gate = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.SmallKeyGate)
-                .OrderBy(e => (e.Center - (at + DirVector(dir) * 16)).LengthSquared()).FirstOrDefault();
+                .OrderBy(e => (e.Center.ToXna() - (at + DirVector(dir) * 16)).LengthSquared()).FirstOrDefault();
             if (gate == null)
             {
                 throw new InvalidOperationException($"bot: no keyblock by {x},{y} on {Map}");
@@ -10614,7 +10664,7 @@ namespace AnodyneSharp.Recording
             {
                 BotRunner.Status = $"keyblock: clear of people (try {attempt + 1})";
                 for (int w = 0; w < 300 && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Person
-                        && (e.Center - gate.Center).Length() < 28); w++)
+                        && (e.Center.ToXna() - gate.Center.ToXna()).Length() < 28); w++)
                 {
                     BotRunner.NotStuck();
                     yield return K();
@@ -10626,14 +10676,14 @@ namespace AnodyneSharp.Recording
                     yield return K(dir);
                 }
                 yield return Wait(20);
-                if (!string.IsNullOrEmpty(GlobalState.Dialogue))
+                if (!string.IsNullOrEmpty(Gs.Dialogue))
                 {
                     yield return ReadDialogue(); // ("you need a key": the push did reach it)
                 }
             }
             if (gate.Solid)
             {
-                throw new InvalidOperationException($"bot: keyblock at {gate.Position} would not open on {Map} ({GlobalState.inventory.GetCurrentMapKeys()} keys)");
+                throw new InvalidOperationException($"bot: keyblock at {gate.Position.ToXna()} would not open on {Map} ({Gs.MapKeys} keys)");
             }
         }
 
@@ -10668,8 +10718,8 @@ namespace AnodyneSharp.Recording
             var set = new HashSet<Point>();
             foreach (var e in BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap"))
             {
-                var t0 = BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y));
-                var step = Math.Abs(e.velocity.X) >= Math.Abs(e.velocity.Y) ? new Point(1, 0) : new Point(0, 1);
+                var t0 = BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y));
+                var step = Math.Abs(e.velocity.ToXna().X) >= Math.Abs(e.velocity.ToXna().Y) ? new Point(1, 0) : new Point(0, 1);
                 set.Add(t0);
                 foreach (int sgn in new[] { 1, -1 })
                 {
@@ -10697,12 +10747,12 @@ namespace AnodyneSharp.Recording
             long now = BotRunner.Frame;
             if (!_annoyerSeen.TryGetValue(a, out var seen))
             {
-                _annoyerSeen[a] = (a.Position, -1000);
+                _annoyerSeen[a] = (a.Position.ToXna(), -1000);
                 return false;
             }
-            if (seen.pos != a.Position)
+            if (seen.pos != a.Position.ToXna())
             {
-                seen = (a.Position, now);
+                seen = (a.Position.ToXna(), now);
                 _annoyerSeen[a] = seen;
             }
             return now - seen.moved <= 30;
@@ -10720,8 +10770,8 @@ namespace AnodyneSharp.Recording
             {
                 // One given up on as out of reach that has come to us (an Annoyer leaving its perch, a Gas Guy drifting over the water at us) is a target again.
                 // (not one asleep on its perch in the wall beside us: given up on and taken up again every frame, the fight stood there for ever)
-                var pc = Player.Hitbox.Center;
-                IgnoredEnemies.RemoveWhere(e => e.exists && (e.GetType().Name is "GasGuy" || (e.GetType().Name is "Annoyer" && AnnoyerAwake(e))) && Math.Abs(e.Hitbox.Center.X - pc.X) + Math.Abs(e.Hitbox.Center.Y - pc.Y) < 48);
+                var pc = Player.Hitbox.Center.ToXna();
+                IgnoredEnemies.RemoveWhere(e => e.exists && (e.GetType().Name is "GasGuy" || (e.GetType().Name is "Annoyer" && AnnoyerAwake(e))) && Math.Abs(e.Hitbox.Center.ToXna().X - pc.X) + Math.Abs(e.Hitbox.Center.ToXna().Y - pc.Y) < 48);
             }
             // (the Hotel boss's death marker is an invisible "enemy" at 0,0 that only keeps the gates shut: the boss itself is the target)
             return BotRunner.Entities().Where(e => e.exists && (e.GetType().IsDefined(typeof(EnemyAttribute), false) || IsEyeBoss(e)) && !IgnoredEnemies.Contains(e) && !DormantDustmaid(e)
@@ -10735,7 +10785,7 @@ namespace AnodyneSharp.Recording
         /// (fighting one only ever walked into it).
         /// </summary>
         private static bool DormantDustmaid(Entity e) =>
-            e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(e) is false;
+            e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid && e.GetType().GetField("_chasing", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(e) is false;
 
         /// <summary>
         /// Two-button gate with a Mover: stand on one button, and make the Mover cross the other on its way to us. Lure the Mover to a spot
@@ -10744,7 +10794,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> MoverOnButton(int seconds)
         {
             int attempt = 0, respawns = 0;
-            for (int f = 0; f < seconds * 60 && GlobalState.PUZZLES_SOLVED < 2; attempt++)
+            for (int f = 0; f < seconds * 60 && Gs.PuzzlesSolved < 2; attempt++)
             {
                 var buttons = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Button").ToList();
                 var mover = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Mover" && e.CurAnimName != "Die");
@@ -10779,13 +10829,13 @@ namespace AnodyneSharp.Recording
                 }
                 var mine = buttons[attempt % buttons.Count];
                 var theirs = buttons[(attempt + 1) % buttons.Count];
-                var dir = theirs.Position - mine.Position;
+                var dir = theirs.Position.ToXna() - mine.Position.ToXna();
                 dir.Normalize();
                 // the lure spot: beyond their button, as far as a walkable tile allows
                 Point? spot = null;
                 for (int d = 5; d >= 2 && spot == null; d--)
                 {
-                    var q = theirs.Position + dir * (d * 16);
+                    var q = theirs.Position.ToXna() + dir * (d * 16);
                     var t = BotNav.TileOf(q);
                     if (t.X >= Grid.X * 10 + 1 && t.X < Grid.X * 10 + 9 && t.Y >= Grid.Y * 10 + 1 && t.Y < Grid.Y * 10 + 9 && BotNav.FindPath(BotNav.TileOf(Pos), t) != null)
                     {
@@ -10796,15 +10846,15 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                BotRunner.Status = $"buttons: lure mover to {spot.Value.X},{spot.Value.Y}, then stand on {mine.Position}";
+                BotRunner.Status = $"buttons: lure mover to {spot.Value.X},{spot.Value.Y}, then stand on {mine.Position.ToXna()}";
                 yield return GoTo(spot.Value.X * 16, spot.Value.Y * 16);
-                for (int w = 0; w < 10 && (mover.Position - Pos).Length() > 24; w++)
+                for (int w = 0; w < 10 && (mover.Position.ToXna() - Pos).Length() > 24; w++)
                 {
                     yield return Wait(30);
                     f += 30;
                 }
-                yield return GoTo(mine.Position.X, mine.Position.Y);
-                for (int w = 0; w < 8 && GlobalState.PUZZLES_SOLVED < 2; w++)
+                yield return GoTo(mine.Position.ToXna().X, mine.Position.ToXna().Y);
+                for (int w = 0; w < 8 && Gs.PuzzlesSolved < 2; w++)
                 {
                     yield return Wait(30);
                     f += 30;
@@ -10827,10 +10877,10 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
-                var rects = beams.Select(b => new Rectangle((int)b.Position.X, (int)b.Position.Y, b.width, b.height)).ToList();
-                var m = movers.OrderBy(e => (e.Position - Pos).Length()).First();
-                var mc = m.Position + new Vector2(8, 8);
+                var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.Subs()).ToList();
+                var rects = beams.Select(b => new Rectangle((int)b.Position.ToXna().X, (int)b.Position.ToXna().Y, b.width, b.height)).ToList();
+                var m = movers.OrderBy(e => (e.Position.ToXna() - Pos).Length()).First();
+                var mc = m.Position.ToXna() + new Vector2(8, 8);
                 var here = BotNav.TileOf(Pos);
                 var cands = new List<(Point t, int cost)>();
                 for (int tx = Grid.X * 10; tx < Grid.X * 10 + 10; tx++)
@@ -10919,7 +10969,7 @@ namespace AnodyneSharp.Recording
         {
             for (int n = 0; n < 4; n++)
             {
-                if (GlobalState.CUR_HEALTH >= GlobalState.MAX_HEALTH)
+                if (Gs.Health >= Gs.MaxHealth)
                 {
                     yield break;
                 }
@@ -10928,7 +10978,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                if (InRaft || HasRaft() || Enemies().Any(e => (e.Center - heart.Center).Length() < (e is AnodyneSharp.Entities.Enemy.Crowd.Rotator ? 72 : 48)))
+                if (InRaft || HasRaft() || Enemies().Any(e => (e.Center.ToXna() - heart.Center.ToXna()).Length() < (e is AnodyneSharp.Entities.Enemy.Crowd.Rotator ? 72 : 48)))
                 {
                     yield break; // not off a raft, nor into whatever dropped it (a Gas Guy's cloud): a heart is not worth more hits
                 }
@@ -10941,9 +10991,9 @@ namespace AnodyneSharp.Recording
                     yield break; // (nor across a Cell Chaser's beat: the walk to it is not timed against them, and one costs five hearts)
                 }
                 BotRunner.Status = "collect heart";
-                var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
-                int hpAtStart = GlobalState.CUR_HEALTH;
-                for (int i = 0; i < 240 && heart.exists && GlobalState.CUR_HEALTH >= hpAtStart; i++)
+                var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.ToXna().X - 5, heart.Hitbox.Center.ToXna().Y - 6));
+                int hpAtStart = Gs.Health;
+                for (int i = 0; i < 240 && heart.exists && Gs.Health >= hpAtStart; i++)
                 {
                     var hp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
                     if (hp == null || hp.Count == 0)
@@ -10954,7 +11004,7 @@ namespace AnodyneSharp.Recording
                     float px = nc.X - Pos.X, py = nc.Y - Pos.Y;
                     yield return SafeMove(Math.Abs(px) > 2f ? (px < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (py < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                 }
-                if (GlobalState.CUR_HEALTH < hpAtStart)
+                if (Gs.Health < hpAtStart)
                 {
                     yield break; // (hit on the way: that heart is guarded, and going back for it again took four from a Rotator's arm)
                 }
@@ -10973,7 +11023,7 @@ namespace AnodyneSharp.Recording
         private static readonly Dictionary<Entity, float> _seerOmega = new();
         private static readonly Dictionary<Entity, Vector2> _seerPrevRel = new();
 
-        private static Vector2 CentreOfBox(Entity e) => new(e.Hitbox.Center.X, e.Hitbox.Center.Y);
+        private static Vector2 CentreOfBox(Entity e) => new(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y);
 
         /// <summary>
         /// Learns each boss part's velocity (and the orbs' angular speed around the boss) from how it moved over the last frames, then
@@ -11005,18 +11055,18 @@ namespace AnodyneSharp.Recording
         private static List<Threat> SeerThreats(Entity seer, bool stage2, bool charge = false)
         {
             float minY = float.MinValue / 4, maxY = float.MaxValue / 4;
-            if (stage2 && SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset)
+            if (stage2 && SeerPresetField?.GetValueF(seer) is AnodyneSharp.Entities.EntityPreset preset)
             {
                 // Position.Y limits of the dive -> centre limits
-                float off = seer.Hitbox.Center.Y - seer.Position.Y;
-                minY = preset.Position.Y - 32 + off;
-                maxY = preset.Position.Y + 80 + off;
+                float off = seer.Hitbox.Center.ToXna().Y - seer.Position.ToXna().Y;
+                minY = preset.Position.ToXna().Y - 32 + off;
+                maxY = preset.Position.ToXna().Y + 80 + off;
             }
-            if (SeerPresetField?.GetValue(seer) is AnodyneSharp.Entities.EntityPreset preset2)
+            if (SeerPresetField?.GetValueF(seer) is AnodyneSharp.Entities.EntityPreset preset2)
             {
-                float offX = seer.Hitbox.Center.X - seer.Position.X;
-                _seerMinX = preset2.Position.X - 50 + offX;
-                _seerMaxX = preset2.Position.X + 60 + offX;
+                float offX = seer.Hitbox.Center.ToXna().X - seer.Position.ToXna().X;
+                _seerMinX = preset2.Position.ToXna().X - 50 + offX;
+                _seerMaxX = preset2.Position.ToXna().X + 60 + offX;
             }
             var parts = BotRunner.Entities().Where(e => e.exists && (e == seer || e.GetType().Name is "SeerOrb" or "SeerWave")).ToList();
             var seerC = CentreOfBox(seer);
@@ -11113,8 +11163,8 @@ namespace AnodyneSharp.Recording
         private static KeyFunctions[] RedPlanKeys(Entity boss, Vector2 tl, Vector2 goal)
         {
             var at = new Rectangle?[Horizon + 1];
-            var p = boss.Position;
-            var v = boss.velocity;
+            var p = boss.Position.ToXna();
+            var v = boss.velocity.ToXna();
             for (int f = 0; f <= Horizon; f++)
             {
                 at[f] = new Rectangle((int)p.X, (int)p.Y, 26, 19);
@@ -11135,7 +11185,7 @@ namespace AnodyneSharp.Recording
                 for (int f = 0; f <= Horizon; f++)
                 {
                     var r = w.Hitbox;
-                    r.Offset((int)(w.velocity.X * f / 60f), 0);
+                    r.Offset((int)(w.velocity.ToXna().X * f / 60f), 0);
                     wat[f] = r;
                 }
                 threats.Add(new StThreat { At = wat, Margin = 2 });
@@ -11166,7 +11216,7 @@ namespace AnodyneSharp.Recording
             bool wasFlickering = false;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -11177,7 +11227,7 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                int hp = (int)healthField.GetValue(boss);
+                int hp = (int)healthField.GetValueF(boss);
                 if (hp == 0)
                 {
                     yield return K(); // its death throes and the dialogue after it
@@ -11211,7 +11261,7 @@ namespace AnodyneSharp.Recording
                     // The whole fight: from half its health on, sit in its lower sensor at two ticks to set off its wave and dash phases;
                     // hit it while it is stunned, and sit out its dashes in the pocket at the top of the pool.
                     var tlr = new Vector2(Grid.X * 160, Grid.Y * 160);
-                    bool dashing = boss.velocity != Vector2.Zero;
+                    bool dashing = boss.velocity.ToXna() != Vector2.Zero;
                     bool waves = BotRunner.Entities().Any(e => e.exists && (e is AnodyneSharp.Entities.Enemy.Redcave.SmallWave || e is AnodyneSharp.Entities.Enemy.Redcave.BigWave));
                     bool stunned = !dashing && (waves || boss.CurAnimName == "warn" || boss.CurAnimName == "close_eyes");
                     if (dashing && !_redSawDash)
@@ -11237,7 +11287,7 @@ namespace AnodyneSharp.Recording
                     {
                         // stunned: it drifts to the middle (x 96..122) and later 16px west, and its body hurts on the way; once it sits
                         // still, with its waves rising at x 80..112 and running west, hit it
-                        bool still = _redLastPos == boss.Position;
+                        bool still = _redLastPos == boss.Position.ToXna();
                         _redStillFor = still ? _redStillFor + 1 : 0;
                         var small = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Redcave.SmallWave);
                         // (hit it from above, at x 114 of the room: east of where its waves rise, on still water where the pool's
@@ -11246,7 +11296,7 @@ namespace AnodyneSharp.Recording
                         if (pb.Bottom <= (int)tlr.Y + 64 && pb.X < spot.X - 3)
                         {
                             // above it, west (in the pocket where we sat out its dash): stay till its small wave is off west
-                            hold = small != null && small.velocity == Vector2.Zero ? new Point(pb.X, pb.Y) : spot;
+                            hold = small != null && small.velocity.ToXna() == Vector2.Zero ? new Point(pb.X, pb.Y) : spot;
                         }
                         else if (pb.Y > (int)tlr.Y + 60 && pb.X < (int)tlr.X + 128)
                         {
@@ -11270,7 +11320,7 @@ namespace AnodyneSharp.Recording
                         bool atTick = phase >= Tick - 12 || phase < 4;
                         hold = new Point(bb.X + 8, atTick ? bb.Bottom + 9 : bb.Bottom + 23);
                     }
-                    _redLastPos = boss.Position;
+                    _redLastPos = boss.Position.ToXna();
                     if (hold is Point hp2)
                     {
                         int hx = hp2.X - pb.X, hy = hp2.Y - pb.Y;
@@ -11381,7 +11431,7 @@ namespace AnodyneSharp.Recording
             yield return WalkTo(waitAt.X, tl.Y + 70, tol: 1.5f);
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -11407,8 +11457,8 @@ namespace AnodyneSharp.Recording
                     yield return K();
                     continue;
                 }
-                bool invincible = WallFaceInvincibleField?.GetValue(face) is bool b && b;
-                float timeout = WallFaceTimeoutField?.GetValue(face) is float f ? f : 0f;
+                bool invincible = WallFaceInvincibleField?.GetValueF(face) is bool b && b;
+                float timeout = WallFaceTimeoutField?.GetValueF(face) is float f ? f : 0f;
                 var bullets = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Face.Bullet>().Where(e => e.exists && e.CurAnimName == "move").ToList();
                 var laser = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Laser>().FirstOrDefault(e => e.exists);
                 var hands = BotRunner.Entities().OfType<AnodyneSharp.Entities.Enemy.Crowd.Hand>().Where(e => e.exists).ToList();
@@ -11430,7 +11480,7 @@ namespace AnodyneSharp.Recording
                     var th = new Threat { Name = "WallBoss bullet", Source = bu, Margin = 2 };
                     for (int k = 0; k <= Horizon; k++)
                     {
-                        var d = bu.velocity * k / 60f;
+                        var d = bu.velocity.ToXna() * k / 60f;
                         th.At[k] = new Rectangle(bu.Hitbox.X + (int)d.X, bu.Hitbox.Y + (int)d.Y, bu.Hitbox.Width, bu.Hitbox.Height);
                     }
                     threats.Add(th);
@@ -11439,7 +11489,7 @@ namespace AnodyneSharp.Recording
                 {
                     // The volley to come: 8 bullets from the face's centre, 30px/s down and up to 30px/s sideways, for up to 1.5s.
                     int spawnIn = Math.Max(0, 60 - (i - chargeSeen));
-                    var c = face.Center;
+                    var c = face.Center.ToXna();
                     var th = new Threat { Name = "WallBoss volley", Source = face, Margin = 2 };
                     for (int k = spawnIn; k <= Math.Min(Horizon, spawnIn + 90); k++)
                     {
@@ -11456,45 +11506,45 @@ namespace AnodyneSharp.Recording
                     var shadowRect = sh?.Hitbox ?? h.Hitbox;
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 6 == 0)
                     {
-                        System.Console.Error.WriteLine($"  wallboss f{i} {h.GetType().Name} pos={h.Position} off={h.offset} v={h.velocity} anim={h.CurAnimName} shadow={(sh == null ? "-" : sh.Hitbox + ":" + sh.visible)} me={pb}");
+                        System.Console.Error.WriteLine($"  wallboss f{i} {h.GetType().Name} pos={h.Position.ToXna()} off={h.offset.ToXna()} v={h.velocity.ToXna()} anim={h.CurAnimName} shadow={(sh == null ? "-" : sh.Hitbox + ":" + sh.visible)} me={pb}");
                     }
-                    bool moved = lastShadow.TryGetValue(h, out var lp) && (lp - h.Position).Length() > 0.1f;
-                    lastShadow[h] = h.Position;
+                    bool moved = lastShadow.TryGetValue(h, out var lp) && (lp - h.Position.ToXna()).Length() > 0.1f;
+                    lastShadow[h] = h.Position.ToXna();
                     if (shadowOn)
                     {
                         if (h is AnodyneSharp.Entities.Enemy.Crowd.RHand)
                         {
                             rightStomping = true;
                             var th = new Threat { Name = "WallBoss right stomp", Source = h, Margin = 3 };
-                            for (int k = h.offset.Y > 12 ? 6 : 0; k <= Horizon; k++)
+                            for (int k = h.offset.ToXna().Y > 12 ? 6 : 0; k <= Horizon; k++)
                             {
                                 var r = shadowRect;
-                                r.Offset((int)(h.velocity.X * k / 60f), 0);
+                                r.Offset((int)(h.velocity.ToXna().X * k / 60f), 0);
                                 th.At[k] = r;
                             }
                             threats.Add(th);
                         }
-                        else if (!moved || h.offset.Y < 20)
+                        else if (!moved || h.offset.ToXna().Y < 20)
                         {
                             // (while it still hunts us it moves with us: dodge only where it has settled)
                             // (it only hurts as it lands, and it is still high: from a few frames on, so a way out is always planned)
                             var th = new Threat { Name = "WallBoss left stomp", Source = h, Margin = 4, Stationary = true };
-                            for (int k = h.offset.Y > 20 ? 12 : 0; k <= Horizon; k++)
+                            for (int k = h.offset.ToXna().Y > 20 ? 12 : 0; k <= Horizon; k++)
                             {
                                 th.At[k] = shadowRect;
                             }
                             threats.Add(th);
                         }
                     }
-                    else if (h.velocity.Y > 0)
+                    else if (h.velocity.ToXna().Y > 0)
                     {
                         // A push: it drops until its top is 96px down the room (it only shoves, but into the holes on row 6/8).
                         var th = new Threat { Name = "WallBoss push", Source = h, Margin = 2 };
                         for (int k = 0; k <= Horizon; k++)
                         {
-                            var d = h.velocity * k / 60f;
-                            float y = Math.Min(h.Position.Y + d.Y, tl.Y + 96);
-                            th.At[k] = new Rectangle((int)(h.Position.X + d.X), (int)y, h.Hitbox.Width, h.Hitbox.Height);
+                            var d = h.velocity.ToXna() * k / 60f;
+                            float y = Math.Min(h.Position.ToXna().Y + d.Y, tl.Y + 96);
+                            th.At[k] = new Rectangle((int)(h.Position.ToXna().X + d.X), (int)y, h.Hitbox.Width, h.Hitbox.Height);
                         }
                         threats.Add(th);
                     }
@@ -11525,7 +11575,7 @@ namespace AnodyneSharp.Recording
                         // Over it: against a laser coming down (it is past sooner), still against one going up (behind us are the holes).
                         // (and clear of the bullets, which hurt in the air too)
                         BotRunner.Status = "Wall boss: over the laser";
-                        var prefer = laser.velocity.Y > 0 ? new[] { KeyFunctions.Up, (KeyFunctions)0, KeyFunctions.Left, KeyFunctions.Right }
+                        var prefer = laser.velocity.ToXna().Y > 0 ? new[] { KeyFunctions.Up, (KeyFunctions)0, KeyFunctions.Left, KeyFunctions.Right }
                             : new[] { (KeyFunctions)0, KeyFunctions.Left, KeyFunctions.Right, KeyFunctions.Up };
                         var shots = threats.Where(t => t.Name.StartsWith("WallBoss bullet") || t.Name == "WallBoss volley").ToList();
                         KeyFunctions pick = prefer[0];
@@ -11620,8 +11670,8 @@ namespace AnodyneSharp.Recording
         private static Rectangle?[] WallLaserPath(Entity laser, Vector2 tl, int flickerLeft)
         {
             var at = new Rectangle?[Horizon + 1];
-            float y = laser.Position.Y - tl.Y;
-            float v = laser.velocity.Y;
+            float y = laser.Position.ToXna().Y - tl.Y;
+            float v = laser.velocity.ToXna().Y;
             int phase = laser._flickering ? 0 : v > 0 && v < 60 ? 1 : v < 0 ? 2 : v > 60 ? 3 : 4;
             int wait = laser._flickering ? flickerLeft : 0;
             var hb = laser.Hitbox;
@@ -11805,7 +11855,7 @@ namespace AnodyneSharp.Recording
             int lastSwing = -100, jumpAt = -100;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -11816,11 +11866,11 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                string state = SplitStateField.GetValue(boss)?.GetType().Name ?? "";
+                string state = SplitStateField.GetValueF(boss)?.GetType().Name ?? "";
                 state = state.Length > 1 && state[0] == '<' ? state.Substring(1, state.IndexOf('>') - 1) : state;
-                int hp = (int)SplitHealthField.GetValue(boss);
-                bool vulnerable = (bool)SplitVulnField.GetValue(boss);
-                float invuln = (float)SplitInvulnField.GetValue(boss);
+                int hp = (int)SplitHealthField.GetValueF(boss);
+                bool vulnerable = (bool)SplitVulnField.GetValueF(boss);
+                float invuln = (float)SplitInvulnField.GetValueF(boss);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var bb = boss.Hitbox;
@@ -11832,9 +11882,9 @@ namespace AnodyneSharp.Recording
                 }
 
                 var threats = new List<Threat>();
-                foreach (var bu in boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>().Where(e => e.exists && e.opacity > 0))
+                foreach (var bu in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>().Where(e => e.exists && e.opacity > 0))
                 {
-                    if (!(SplitBulletActiveField.GetValue(bu) is bool on && on))
+                    if (!(SplitBulletActiveField.GetValueF(bu) is bool on && on))
                     {
                         continue; // a dropped ball before it is let go
                     }
@@ -11842,26 +11892,26 @@ namespace AnodyneSharp.Recording
                     var h = bu.Hitbox;
                     for (int k = 0; k <= Horizon; k++)
                     {
-                        if (bu.velocity == Vector2.Zero)
+                        if (bu.velocity.ToXna() == Vector2.Zero)
                         {
                             th.At[k] = new Rectangle(h.X, h.Y, h.Width, h.Height + (int)Math.Ceiling(40f * k / 60f)); // sits, then falls some time
                         }
                         else
                         {
-                            var d = bu.velocity * k / 60f;
+                            var d = bu.velocity.ToXna() * k / 60f;
                             th.At[k] = new Rectangle(h.X + (int)d.X, h.Y + (int)d.Y, h.Width, h.Height);
                         }
                     }
                     threats.Add(th);
                 }
-                var copyList = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.Copy>().Where(c => c.exists).ToList();
+                var copyList = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.Copy>().Where(c => c.exists).ToList();
                 bool copies = copyList.Count > 0;
                 var bodies = new List<AnodyneSharp.Entities.Enemy.Apartment.BaseSplitBoss> { boss };
                 bodies.AddRange(copyList);
                 foreach (var b in bodies)
                 {
                     bool splitDrop = b == boss && state == "Split" && boss.damage_player && !copies;
-                    bool copyWarn = b != boss && state == "Split" && (b._flickering || b.velocity != Vector2.Zero);
+                    bool copyWarn = b != boss && state == "Split" && (b._flickering || b.velocity.ToXna() != Vector2.Zero);
                     if (b == boss && state == "Split" && copies)
                     {
                         continue; // it keeps 24px above us while its copies are out
@@ -11873,7 +11923,7 @@ namespace AnodyneSharp.Recording
                     var th = new Threat { Name = b == boss ? "Watcher" : "Watcher copy", Source = b, Margin = splitDrop ? 1 : 3, HurtsInAir = true };
                     var h = b.Hitbox;
                     // (a copy flies at the other one, through where we were when they stopped following us: 40-60px/s)
-                    var v = copyWarn && b.velocity == Vector2.Zero ? new Vector2(Math.Sign(pb.Center.X - h.Center.X) * 60f, 0) : b.velocity;
+                    var v = copyWarn && b.velocity.ToXna() == Vector2.Zero ? new Vector2(Math.Sign(pb.Center.ToXna().X - h.Center.ToXna().X) * 60f, 0) : b.velocity.ToXna();
                     for (int k = 0; k <= Horizon; k++)
                     {
                         if (splitDrop)
@@ -11899,16 +11949,16 @@ namespace AnodyneSharp.Recording
                 bool near = false; // the last few pixels are walked straight (the planner keeps off the holes' edge we strike from)
                 if (state == "Intro" && !boss.damage_player && boss.visible && boss.opacity >= 1f)
                 {
-                    goal = new Vector2(bb.Center.X - pb.Width / 2, bb.Bottom + 2); // wake it
+                    goal = new Vector2(bb.Center.ToXna().X - pb.Width / 2, bb.Bottom + 2); // wake it
                     strike = true;
                 }
                 else if (state == "Split" && !boss.damage_player)
                 {
-                    goal = new Vector2(bb.Center.X - pb.Width / 2, bb.Bottom + 5); // it waits to be hit (and hurts from then on: not from inside it)
+                    goal = new Vector2(bb.Center.ToXna().X - pb.Width / 2, bb.Bottom + 5); // it waits to be hit (and hurts from then on: not from inside it)
                     strike = pb.Top >= bb.Bottom + 2 || Player.facing == Facing.UP && pb.Top >= bb.Bottom; // (turning up steps us 1px up)
                     near = true;
                 }
-                else if (state == "Split" && copies && !copyList.Any(c => c._flickering || c.velocity != Vector2.Zero))
+                else if (state == "Split" && copies && !copyList.Any(c => c._flickering || c.velocity.ToXna() != Vector2.Zero))
                 {
                     BotRunner.Status = "Watcher: split, the copies follow us: stand still";
                     yield return K();
@@ -11936,13 +11986,13 @@ namespace AnodyneSharp.Recording
                     goal = goLeft ? left : right;
                     face = goLeft ? Facing.RIGHT : Facing.LEFT;
                     strike = true; // (turned towards it ahead of time)
-                    swingNow = vulnerable && bb.Bottom + boss.velocity.Y * 3 / 60f > pb.Top - 2 && bb.Top < pb.Bottom + 2;
+                    swingNow = vulnerable && bb.Bottom + boss.velocity.ToXna().Y * 3 / 60f > pb.Top - 2 && bb.Top < pb.Bottom + 2;
                     near = true;
                 }
                 else if (state == "Dash")
                 {
                     // It locks onto our row, then dashes right through it: be just above (or below) the row then and sweep it as it goes by.
-                    bool dashing = boss.CurAnimName == "dash_r" && boss.velocity.X > 0;
+                    bool dashing = boss.CurAnimName == "dash_r" && boss.velocity.ToXna().X > 0;
                     if (dashing && bb.Bottom > pb.Top - 6 && bb.Top < pb.Bottom + 6 || dashing && Math.Abs(here.Y - goal.Y) > 2 && bb.Right < pb.Left)
                     {
                         var above = new Vector2(here.X, bb.Top - pb.Height - 5);
@@ -11951,14 +12001,14 @@ namespace AnodyneSharp.Recording
                         goal = aboveOk ? above : below;
                         face = aboveOk ? Facing.DOWN : Facing.UP;
                         strike = true; // (turned towards it ahead of time: the broom sweeps 11px either side of us, 2-3 frames after the press)
-                        swingNow = vulnerable && bb.Right + boss.velocity.X * 3 / 60f >= pb.Left - 11 && bb.Left <= pb.Right + 3;
+                        swingNow = vulnerable && bb.Right + boss.velocity.ToXna().X * 3 / 60f >= pb.Left - 11 && bb.Left <= pb.Right + 3;
                         near = true;
                     }
                     else if (!dashing)
                     {
                         goal = new Vector2(here.X, Math.Clamp(here.Y, tl.Y + 20, tl.Y + 50)); // it follows our row: keep room above and below
-                        var sitting = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>()
-                            .Where(e => e.exists && e.opacity > 0 && !(SplitBulletActiveField.GetValue(e) is bool on && on)).Select(e => e.Hitbox.Center.ToVector2()).ToList();
+                        var sitting = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Apartment.SplitBoss.Bullet>()
+                            .Where(e => e.exists && e.opacity > 0 && !(SplitBulletActiveField.GetValueF(e) is bool on && on)).Select(e => e.Hitbox.Center.ToXna().ToVector2()).ToList();
                         if (sitting.Count > 0 && !boss.visible || sitting.Count > 0 && bb.Right < tl.X)
                         {
                             // The dropped balls will fly at us all at once: the farther from them, the longer to sidestep each.
@@ -12000,7 +12050,7 @@ namespace AnodyneSharp.Recording
                         {
                             continue;
                         }
-                        float cost = Math.Abs(c.X - here.X) + Math.Abs(c.X + pb.Width / 2 - bb.Center.X) * 0.3f;
+                        float cost = Math.Abs(c.X - here.X) + Math.Abs(c.X + pb.Width / 2 - bb.Center.ToXna().X) * 0.3f;
                         if (cost < bestCost)
                         {
                             bestCost = cost;
@@ -12014,7 +12064,7 @@ namespace AnodyneSharp.Recording
                     }
                     else
                     {
-                        goal = new Vector2(bb.Center.X - pb.Width / 2, tl.Y + 26); // below the fire for now
+                        goal = new Vector2(bb.Center.ToXna().X - pb.Width / 2, tl.Y + 26); // below the fire for now
                     }
                 }
                 // Solid things in the arena (the health cicada's sentinel sits in it): stand beside them, not into them.
@@ -12052,7 +12102,7 @@ namespace AnodyneSharp.Recording
                 bool inReach = Reach(here);
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && state == "Split" && !boss.damage_player)
                 {
-                    System.Console.Error.WriteLine($"  watcher pre f{i} here={here} goal={goal} strike={strike} reach={inReach} at={atGoal} face={Player.facing} v={Player.velocity} inv={invuln} since={i - lastSwing} broom={Player.broom?.exists} safe={SafeAtExactThreats(here, threats, 12)}");
+                    System.Console.Error.WriteLine($"  watcher pre f{i} here={here} goal={goal} strike={strike} reach={inReach} at={atGoal} face={Player.facing} v={Player.velocity.ToXna()} inv={invuln} since={i - lastSwing} broom={Player.broom?.exists} safe={SafeAtExactThreats(here, threats, 12)}");
                 }
                 if (strike && inReach && SafeAtExactThreats(here, threats, 12))
                 {
@@ -12132,7 +12182,7 @@ namespace AnodyneSharp.Recording
             float keepNear = Environment.GetEnvironmentVariable("ANODYNE_LION_KEEP") is string lk ? float.Parse(lk) : 50f;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -12145,7 +12195,7 @@ namespace AnodyneSharp.Recording
                     .OrderBy(e => FsmStateLeft(e) is var (ls0, ll0) && (ls0 == "ChargeWarnState" || ls0 == "ChargeWalkState" && ll0 < 50) ? 0 : 1)
                     // (and the one we were after, unless another is clearly nearer: two about as near swapped every frame, and each
                     // swap turned the bot round, back and forth in their fire)
-                    .ThenBy(e => (e.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length() - (e == target ? 24f : 0f)).FirstOrDefault();
+                    .ThenBy(e => (e.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2()).Length() - (e == target ? 24f : 0f)).FirstOrDefault();
                 if (lion == null)
                 {
                     yield break;
@@ -12160,11 +12210,11 @@ namespace AnodyneSharp.Recording
                 // Where it will be in a few frames (it paces at 43px/s): strike at that.
                 // (its box turns with it, 26x13 side-on and 10x20 end-on, and it turns to face us: count it as both at once)
                 // (its hitbox sits at its position, whatever the sprite's draw offset)
-                var full = new Rectangle((int)lion.Position.X, (int)lion.Position.Y, 26, 20);
+                var full = new Rectangle((int)lion.Position.ToXna().X, (int)lion.Position.ToXna().Y, 26, 20);
                 var bb = full;
-                bb.Offset((int)(lion.velocity.X * 6 / 60f), (int)(lion.velocity.Y * 6 / 60f));
+                bb.Offset((int)(lion.velocity.ToXna().X * 6 / 60f), (int)(lion.velocity.ToXna().Y * 6 / 60f));
                 // (standing still while it warns and spits, it is the easiest to hit, and a hit stops the fire: in close, go for it)
-                float dist = (lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length();
+                float dist = (lion.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2()).Length();
                 // (a hit while it spits stops the fire; one while it only warns does not, and then it spits at us point-blank)
                 // (only from right beside it: walking in through the fan from further off takes a ball or two on the way)
                 bool still = state == "ShootState" && dist < (Environment.GetEnvironmentVariable("ANODYNE_LION_STILL") is string ls ? float.Parse(ls) : 20f);
@@ -12174,9 +12224,9 @@ namespace AnodyneSharp.Recording
                 // fan of them with nowhere left to step. Only where nothing else gets us while the swing roots us.
                 if (Player.state == PlayerState.GROUND && !(Player.broom != null && Player.broom.exists) && i - lastSwing > 16)
                 {
-                    var balls = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion).SelectMany(e => e.SubEntities())
+                    var balls = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion).SelectMany(e => e.Subs())
                         .Where(b => b.exists && b.CurAnimName != "poof").ToList();
-                    Rectangle BallAt(Entity b, int t) { var r = b.Hitbox; r.Offset((int)(b.velocity.X * t / 60f), (int)(b.velocity.Y * t / 60f)); return r; }
+                    Rectangle BallAt(Entity b, int t) { var r = b.Hitbox; r.Offset((int)(b.velocity.ToXna().X * t / 60f), (int)(b.velocity.ToXna().Y * t / 60f)); return r; }
                     var meBox = pb;
                     meBox.Inflate(1, 1);
                     int touch = int.MaxValue;
@@ -12193,7 +12243,7 @@ namespace AnodyneSharp.Recording
                         Facing? popFace = null;
                         foreach (var f in new[] { Player.facing, Facing.UP, Facing.DOWN, Facing.LEFT, Facing.RIGHT })
                         {
-                            var bro = BroomBoxAt(Player.Position, f);
+                            var bro = BroomBoxAt(Player.Position.ToXna(), f);
                             // (turning costs a frame first)
                             int from = f == Player.facing ? 0 : 1;
                             bool meets = false;
@@ -12237,7 +12287,7 @@ namespace AnodyneSharp.Recording
                     Facing? reachFace = null;
                     foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                     {
-                        var bx = BroomBoxAt(Player.Position, lf);
+                        var bx = BroomBoxAt(Player.Position.ToXna(), lf);
                         if (Enemies().Any(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && !e._flickering && e.Hitbox.Intersects(bx)))
                         {
                             reachFace = lf;
@@ -12274,10 +12324,10 @@ namespace AnodyneSharp.Recording
                     var spots = new List<(Vector2 p, Facing f)>();
                     foreach (int sl in new[] { 0, -8, 8, -14, 14 })
                     {
-                        spots.Add((new Vector2(bb.Left - pb.Width - gap, bb.Center.Y - pb.Height / 2 + sl), Facing.RIGHT));
-                        spots.Add((new Vector2(bb.Right + gap, bb.Center.Y - pb.Height / 2 + sl), Facing.LEFT));
-                        spots.Add((new Vector2(bb.Center.X - pb.Width / 2 + sl, bb.Top - pb.Height - gap), Facing.DOWN));
-                        spots.Add((new Vector2(bb.Center.X - pb.Width / 2 + sl, bb.Bottom + gap), Facing.UP));
+                        spots.Add((new Vector2(bb.Left - pb.Width - gap, bb.Center.ToXna().Y - pb.Height / 2 + sl), Facing.RIGHT));
+                        spots.Add((new Vector2(bb.Right + gap, bb.Center.ToXna().Y - pb.Height / 2 + sl), Facing.LEFT));
+                        spots.Add((new Vector2(bb.Center.ToXna().X - pb.Width / 2 + sl, bb.Top - pb.Height - gap), Facing.DOWN));
+                        spots.Add((new Vector2(bb.Center.ToXna().X - pb.Width / 2 + sl, bb.Bottom + gap), Facing.UP));
                     }
                     spots = spots.Where(sp => BroomBoxAt(sp.p, sp.f).Intersects(bb)).ToList();
                     var best = spots.Where(sp => StandsSafe(new Rectangle((int)sp.p.X, (int)sp.p.Y, pb.Width, pb.Height)) && SafeAtExactThreats(sp.p, others, 20))
@@ -12301,7 +12351,7 @@ namespace AnodyneSharp.Recording
                     // faces with a random slant - up to 26 in 32 across, 16 in 32 up or down - and flies 80px on either axis; the fan is
                     // swept with our box and the shot's, a couple of px to spare)
                     bool OutOfFan(Vector2 c) => Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Circus.Lion && FsmStateLeft(e)?.Item1 is "ShootWarningState" or "ShootState")
-                        .All(e => OutOfFanOf(e.Position, c));
+                        .All(e => OutOfFanOf(e.Position.ToXna(), c));
                     bool OutOfFanOf(Vector2 lp, Vector2 c)
                     {
                         var dir = c - lp;
@@ -12363,7 +12413,7 @@ namespace AnodyneSharp.Recording
                                 {
                                     continue;
                                 }
-                                float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2()).Length();
+                                float ld = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToXna().ToVector2()).Length();
                                 // (while it spits, near enough to be in for the strike the moment it can be hit)
                                 float score = (spitting && !lion._flickering ? -Math.Abs(ld - 44f) : keepNear > 0 ? -Math.Abs(ld - keepNear) : Math.Min(90f, ld)) - 0.4f * (c - here).Length();
                                 // (and in the open: in a corner or against a wall there is nowhere to sidestep its pounce, or its fire, to)
@@ -12385,7 +12435,7 @@ namespace AnodyneSharp.Recording
                                 {
                                     // (its pounce goes for wherever we stand as it sets off: stand far enough off to see it come and step aside,
                                     // with floor to step onto on either side of its line, not against a wall it pins us to)
-                                    var away = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToVector2();
+                                    var away = c + new Vector2(pb.Width / 2f, pb.Height / 2f) - lion.Hitbox.Center.ToXna().ToVector2();
                                     if (away != Vector2.Zero)
                                     {
                                         away.Normalize();
@@ -12449,7 +12499,7 @@ namespace AnodyneSharp.Recording
                     float dx = goal.X - here.X, dy = goal.Y - here.Y;
                     if (dx > 1) { dk.Add(KeyFunctions.Right); } else if (dx < -1) { dk.Add(KeyFunctions.Left); }
                     if (dy > 1) { dk.Add(KeyFunctions.Down); } else if (dy < -1) { dk.Add(KeyFunctions.Up); }
-                    var toLion = lion.Hitbox.Center.ToVector2() - pb.Center.ToVector2();
+                    var toLion = lion.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2();
                     var faceLion = Math.Abs(toLion.X) > Math.Abs(toLion.Y) ? (toLion.X > 0 ? Facing.RIGHT : Facing.LEFT) : (toLion.Y > 0 ? Facing.DOWN : Facing.UP);
                     if (Player.facing == faceLion && i - lastSwing > 16 && !(Player.broom != null && Player.broom.exists))
                     {
@@ -12519,12 +12569,12 @@ namespace AnodyneSharp.Recording
 
         /// <summary>A local variable of a running iterator (the compiler keeps it in a field named &lt;name&gt;5__N).</summary>
         private static object IterLocal(object it, string name) =>
-            it?.GetType().GetFields(AnyInst).FirstOrDefault(f => f.Name.StartsWith("<" + name + ">"))?.GetValue(it);
+            it?.GetType().GetFields(AnyInst).FirstOrDefault(f => f.Name.StartsWith("<" + name + ">"))?.GetValueF(it);
 
         private static readonly System.Reflection.FieldInfo FlickerTimerField = typeof(Entity).GetField("_flickerTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
         /// <summary>Frames until e stops blinking after a hit (0 if it is not blinking).</summary>
-        private static int FlickerLeft(Entity e) => e._flickering && FlickerTimerField?.GetValue(e) is float ft ? (int)Math.Ceiling(ft * 60f) : 0;
+        private static int FlickerLeft(Entity e) => e._flickering && FlickerTimerField?.GetValueF(e) is float ft ? (int)Math.Ceiling(ft * 60f) : 0;
 
         /// <summary>On screen, or blinking after a hit (a flickering sprite turns visible on and off every few frames; it is still there).</summary>
         private static bool Shown(Entity e) => e.visible || e._flickering;
@@ -12554,7 +12604,7 @@ namespace AnodyneSharp.Recording
                     Touching.UP or Touching.DOWN => x > center.X ? Facing.LEFT : Facing.RIGHT,
                     _ => facing,
                 };
-                var d = Entity.FacingDirection(facing) * speed / 60f;
+                var d = Entity.FacingDirection(facing).ToXna() * speed / 60f;
                 var n = new Rectangle((int)(x + d.X), (int)(y + d.Y), box.Width, box.Height);
                 if (WallFree(n))
                 {
@@ -12606,7 +12656,7 @@ namespace AnodyneSharp.Recording
             int wetFor = 0; // frames our middle has been in a puddle
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -12617,10 +12667,10 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout
-                var it = CfStateField.GetValue(boss);
+                var it = CfStateField.GetValueF(boss);
                 string state = IterState(it);
-                int hp = (int)CfHealthField.GetValue(boss);
-                var tl = (Vector2)CfTopLeftField.GetValue(boss);
+                int hp = (int)CfHealthField.GetValueF(boss);
+                var tl = (Vector2)CfTopLeftField.GetValueF(boss);
                 var center = tl + new Vector2(64, 64);
                 if (ring == null)
                 {
@@ -12640,14 +12690,14 @@ namespace AnodyneSharp.Recording
                     {
                         foreach (var t in ring.Where(t => !BotNav.Walkable(t)))
                         {
-                            System.Console.Error.WriteLine($"  circus ring tile {t} not walkable: gate={BotNav.IsGateTile(t)} blocked={BotNav.Blocked.Contains(t)} class={BotNav.CurrentMap.GetTileClass(t)} ents={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.Hitbox.Intersects(new Rectangle(t.X * 16, t.Y * 16, 16, 16))).Select(e => $"{e.GetType().Name}@{e.Position}"))}");
+                            System.Console.Error.WriteLine($"  circus ring tile {t} not walkable: gate={BotNav.IsGateTile(t)} blocked={BotNav.Blocked.Contains(t)} class={BotNav.CurrentMap.GetTileClass(t)} ents={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.Hitbox.Intersects(new Rectangle(t.X * 16, t.Y * 16, 16, 16))).Select(e => $"{e.GetType().Name}@{e.Position.ToXna()}"))}");
                         }
                     }
                     // (screen y points down: their way round is the one of falling angle about the middle)
                     ring = ring.OrderByDescending(t => Math.Atan2(t.Y * 16 + 8 - center.Y, t.X * 16 + 8 - center.X)).ToList();
                 }
-                var arthur = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Arthur)CfArthurField.GetValue(boss);
-                var javiera = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Javiera)CfJavieraField.GetValue(boss);
+                var arthur = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Arthur)CfArthurField.GetValueF(boss);
+                var javiera = (AnodyneSharp.Entities.Enemy.Circus.CircusFolks.Javiera)CfJavieraField.GetValueF(boss);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var wt0 = BotNav.TileOf(Pos);
@@ -12670,7 +12720,7 @@ namespace AnodyneSharp.Recording
                 {
                     // It wakes once we are a few px up into the room (above grid_entrance); meanwhile the pair stroll the top row.
                     BotRunner.Status = "Circus Folks: wake them";
-                    yield return Player.Position.Y > tl.Y + 112 ? K(KeyFunctions.Up) : K();
+                    yield return Player.Position.ToXna().Y > tl.Y + 112 ? K(KeyFunctions.Up) : K();
                     continue;
                 }
 
@@ -12686,16 +12736,16 @@ namespace AnodyneSharp.Recording
                         int left = Math.Max(0, (int)Math.Ceiling((3f - wt) * 60f)) + 1;
                         at = SimWalkAround(boss.Hitbox, boss.facing, boss.touching, 90f, center, Horizon, (f, _) => f >= left);
                     }
-                    else if (state == "Jump" && boss.velocity != Vector2.Zero)
+                    else if (state == "Jump" && boss.velocity.ToXna() != Vector2.Zero)
                     {
                         // straight at a corner of the ring (the one along its flight)
                         var corners = new[] { tl, tl + new Vector2(112, 0), tl + new Vector2(0, 112), tl + new Vector2(112, 112) };
-                        var dir = Vector2.Normalize(boss.velocity);
-                        var c = corners.OrderByDescending(k => k == boss.Position ? -2f : Vector2.Dot(Vector2.Normalize(k - boss.Position), dir)).First();
-                        float dist = (c - boss.Position).Length();
+                        var dir = Vector2.Normalize(boss.velocity.ToXna());
+                        var c = corners.OrderByDescending(k => k == boss.Position.ToXna() ? -2f : Vector2.Dot(Vector2.Normalize(k - boss.Position.ToXna()), dir)).First();
+                        float dist = (c - boss.Position.ToXna()).Length();
                         for (int f = 0; f <= Horizon; f++)
                         {
-                            var p = boss.Position + dir * Math.Min(dist, 100f * f / 60f);
+                            var p = boss.Position.ToXna() + dir * Math.Min(dist, 100f * f / 60f);
                             at[f] = new Rectangle((int)p.X, (int)p.Y, boss.Hitbox.Width, boss.Hitbox.Height);
                         }
                     }
@@ -12715,8 +12765,8 @@ namespace AnodyneSharp.Recording
                 bool arthurFlying = arthur.exists && Shown(arthur) && arthur.stateLogic != null;
                 if (arthurFlying && IterLocal(arthur.stateLogic, "targetPos") is Vector2 target)
                 {
-                    var p = arthur.Position;
-                    var v = arthur.velocity / 60f;
+                    var p = arthur.Position.ToXna();
+                    var v = arthur.velocity.ToXna() / 60f;
                     bool near = Vector2.DistanceSquared(p, target) <= 16 * 16;
                     for (int f = 1; f <= 240 && v != Vector2.Zero; f++)
                     {
@@ -12793,7 +12843,7 @@ namespace AnodyneSharp.Recording
                             {
                                 javRun = sim;
                                 javStop = k + 1;
-                                var d = sim[k].Center - ab2.Center;
+                                var d = sim[k].Center.ToXna() - ab2.Center.ToXna();
                                 javFrom = Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? Facing.LEFT : Facing.RIGHT) : (d.Y < 0 ? Facing.UP : Facing.DOWN);
                             }
                         }
@@ -12827,7 +12877,7 @@ namespace AnodyneSharp.Recording
                         threats.Add(back);
                     }
                 }
-                var waves = boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Circus.CircusFolks.ShockWave>().Where(e => e.exists && Shown(e) && e.CurAnimName == "move").ToList();
+                var waves = boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Circus.CircusFolks.ShockWave>().Where(e => e.exists && Shown(e) && e.CurAnimName == "move").ToList();
                 foreach (var sw in waves)
                 {
                     var at = SimWalkAround(sw.Hitbox, sw.facing, sw.touching, 70f, center, Horizon);
@@ -12870,7 +12920,7 @@ namespace AnodyneSharp.Recording
                     Facing? reach = null;
                     foreach (var lf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                     {
-                        var bx = BroomBoxAt(Player.Position, lf);
+                        var bx = BroomBoxAt(Player.Position.ToXna(), lf);
                         // (a moving one: as it comes in within the next few frames, or a frame or two later from another side: a turn
                         // costs a frame; one standing still: turn to it first)
                         if (targets.Any(t => lf == Player.facing || t.Still ? Enumerable.Range(1, 4).Any(k => t.At[k] is Rectangle r && r.Intersects(bx))
@@ -12884,7 +12934,7 @@ namespace AnodyneSharp.Recording
                     // pops, Arthur or Javiera flicker harmless; the pair themselves hurt even when hit).
                     bool SwingSafe(Facing f)
                     {
-                        var bro = BroomBoxAt(Player.Position, f);
+                        var bro = BroomBoxAt(Player.Position.ToXna(), f);
                         var mine = pb;
                         mine.Inflate(1, 1);
                         foreach (var t in threats)
@@ -12916,7 +12966,7 @@ namespace AnodyneSharp.Recording
                             lastSwing = i;
                             if (trace)
                             {
-                                System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} swing {rf} me={pb} pos={Player.Position} broom={BroomBoxAt(Player.Position, rf)} " + string.Join(" ", targets.Select(t => $"{t.At[0]}>{t.At[4]}")));
+                                System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} swing {rf} me={pb} pos={Player.Position.ToXna()} broom={BroomBoxAt(Player.Position.ToXna(), rf)} " + string.Join(" ", targets.Select(t => $"{t.At[0]}>{t.At[4]}")));
                             }
                             BotRunner.Status = "Circus Folks: in reach, swing";
                             yield return K(KeyFunctions.Accept);
@@ -12937,10 +12987,10 @@ namespace AnodyneSharp.Recording
                 {
                     var spots = new List<(Vector2 p, Facing f, Facing side)>
                     {
-                        (new Vector2(b.Left - pb.Width - gap, b.Center.Y - pb.Height / 2), Facing.RIGHT, Facing.LEFT),
-                        (new Vector2(b.Right + gap, b.Center.Y - pb.Height / 2), Facing.LEFT, Facing.RIGHT),
-                        (new Vector2(b.Center.X - pb.Width / 2, b.Top - pb.Height - gap), Facing.DOWN, Facing.UP),
-                        (new Vector2(b.Center.X - pb.Width / 2, b.Bottom + gap), Facing.UP, Facing.DOWN),
+                        (new Vector2(b.Left - pb.Width - gap, b.Center.ToXna().Y - pb.Height / 2), Facing.RIGHT, Facing.LEFT),
+                        (new Vector2(b.Right + gap, b.Center.ToXna().Y - pb.Height / 2), Facing.LEFT, Facing.RIGHT),
+                        (new Vector2(b.Center.ToXna().X - pb.Width / 2, b.Top - pb.Height - gap), Facing.DOWN, Facing.UP),
+                        (new Vector2(b.Center.ToXna().X - pb.Width / 2, b.Bottom + gap), Facing.UP, Facing.DOWN),
                     };
                     return spots.Where(s => StandsSafe(new Rectangle((int)s.p.X, (int)s.p.Y, pb.Width, pb.Height)) && (side == null || s.side == side))
                         .OrderBy(s => SafeAtExactThreats(s.p, avoid, 20) ? 0 : 1).ThenBy(s => (s.p - here).Length())
@@ -12963,7 +13013,7 @@ namespace AnodyneSharp.Recording
                         }
                         return BotNav.CentreOf(ring[(k % n + n) % n]);
                     }
-                    float sP = S(pb.Center.ToVector2());
+                    float sP = S(pb.Center.ToXna().ToVector2());
                     Rectangle? src = null;
                     int walkLeft = 0;
                     if (body != null && state == "Walk")
@@ -12989,7 +13039,7 @@ namespace AnodyneSharp.Recording
                     {
                         return here;
                     }
-                    float sB = S(sb.Center.ToVector2());
+                    float sB = S(sb.Center.ToXna().ToVector2());
                     float ahead = ((sP - sB) % len + len) % len; // how far in front of them, the way they walk
                     if (ahead > len / 2)
                     {
@@ -13023,7 +13073,7 @@ namespace AnodyneSharp.Recording
                         for (int k = javStop - 24; javRun != null && k >= 1 && meet == null; k--)
                         {
                             var jb = javRun[k];
-                            var mp = new Vector2(jb.Center.X - pb.Width / 2, jb.Center.Y - pb.Height / 2);
+                            var mp = new Vector2(jb.Center.ToXna().X - pb.Width / 2, jb.Center.ToXna().Y - pb.Height / 2);
                             var mv = javRun[k].Location.ToVector2() - javRun[k - 1].Location.ToVector2();
                             // (on a straight stretch: she must be coming at us head-on for the last 16 frames, not round a corner)
                             var mv0 = k >= 17 ? javRun[k - 15].Location.ToVector2() - javRun[k - 16].Location.ToVector2() : Vector2.Zero;
@@ -13081,7 +13131,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (trace && (keys == null || keys.Length == 0 || traceAll))
                 {
-                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerDashField?.GetValue(Player)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity} add={Player.additionalVel} c={Player.Center} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
+                    System.Console.Error.WriteLine($"  circus f{i} F{BotRunner.Frame} keys {(keys == null ? "none" : string.Join("+", keys))}: dash={PlayerField(PlayerDashField)} st={Player.state} conv={BotNav.IsConveyor(BotNav.TileOf(Pos))} tch={Player.touching} v={Player.velocity.ToXna()} add={Player.additionalVel} c={Player.Center.ToXna()} onc={Player.ON_CONVEYOR} me={pb} goal={goal} body+10={body?.At[10]} +30={body?.At[30]}");
                 }
                 yield return keys ?? K();
             }
@@ -13108,7 +13158,7 @@ namespace AnodyneSharp.Recording
             long planAt = 0;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -13123,9 +13173,9 @@ namespace AnodyneSharp.Recording
                     // Walled off from us (bouncing about the far side of a wall): no fight to be had, leave them to it.
                     var me0 = BotNav.TileOf(Pos);
                     bool oldJump = BotNav.AllowJump;
-                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    BotNav.AllowJump = Gs.CanJump;
                     // (by a way that stays about this screen: one only got to round by the next screens is walled off from this fight)
-                    bool reach = big.Any(c => BotNav.FindPath(me0, new Point(c.Hitbox.Center.X / 16, c.Hitbox.Center.Y / 16)) is List<Point> cp && cp.Count <= 20
+                    bool reach = big.Any(c => BotNav.FindPath(me0, new Point(c.Hitbox.Center.ToXna().X / 16, c.Hitbox.Center.ToXna().Y / 16)) is List<Point> cp && cp.Count <= 20
                         && cp.All(q => q.X / 10 == me0.X / 10 && q.Y / 10 == me0.Y / 10));
                     BotNav.AllowJump = oldJump;
                     // (one only drifting over water or a conveyor for a while comes back: leave only those walled off for good)
@@ -13143,9 +13193,9 @@ namespace AnodyneSharp.Recording
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
                 var targets = BotRunner.Entities().Where(e => e.exists &&
-                        (e is AnodyneSharp.Entities.Enemy.Circus.Contort c && ContortHealthField?.GetValue(c) is int h && h > 0 && big.Contains(c)
+                        (e is AnodyneSharp.Entities.Enemy.Circus.Contort c && ContortHealthField?.GetValueF(c) is int h && h > 0 && big.Contains(c)
                          || e is AnodyneSharp.Entities.Enemy.Circus.Contort.ContortSmall))
-                    .OrderBy(e => e._flickering ? 1 : 0).ThenBy(e => (e.Hitbox.Center.ToVector2() - pb.Center.ToVector2()).Length()).ToList();
+                    .OrderBy(e => e._flickering ? 1 : 0).ThenBy(e => (e.Hitbox.Center.ToXna().ToVector2() - pb.Center.ToXna().ToVector2()).Length()).ToList();
                 var threats = PredictThreats(null);
                 Vector2 goal = here;
                 Facing face = Player.facing;
@@ -13206,7 +13256,7 @@ namespace AnodyneSharp.Recording
                         {
                             continue;
                         }
-                        var rc = R.Center.ToVector2();
+                        var rc = R.Center.ToXna().ToVector2();
                         int vx = Math.Sign(R.X - R0.X), vy = Math.Sign(R.Y - R0.Y);
                         foreach (var fc in new[] { Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                         {
@@ -13317,7 +13367,7 @@ namespace AnodyneSharp.Recording
                             float score = 5f * open8 - 0.3f * (c - here).Length() + (prevClear is Vector2 pc && (pc - c).Length() < 6f ? 6f : 0f);
                             if (stalk != null)
                             {
-                                float sd = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - stalk.Hitbox.Center.ToVector2()).Length();
+                                float sd = (c + new Vector2(pb.Width / 2f, pb.Height / 2f) - stalk.Hitbox.Center.ToXna().ToVector2()).Length();
                                 score -= 0.5f * Math.Max(0f, sd - 40f);
                             }
                             if (score > bestScore)
@@ -13352,9 +13402,9 @@ namespace AnodyneSharp.Recording
         /// <summary>A local of the Sage's running stage (its iterator keeps them as fields named &lt;name&gt;5__n), or null.</summary>
         private static object SageStageLocal(Entity sage, string name)
         {
-            var logic = SageLogicField?.GetValue(sage);
+            var logic = SageLogicField?.GetValueF(sage);
             var f = logic?.GetType().GetFields(Priv | System.Reflection.BindingFlags.Public).FirstOrDefault(x => x.Name.StartsWith("<" + name + ">"));
-            return f?.GetValue(logic);
+            return f?.GetValueF(logic);
         }
 
         /// <summary>
@@ -13370,11 +13420,11 @@ namespace AnodyneSharp.Recording
         {
             var tl = new Vector2(Grid.X * 160, Grid.Y * 160);
             float minX = tl.X + 48, maxX = tl.X + 112 - sage.width, minY = tl.Y + 16, maxY = tl.Y + 144 - sage.height;
-            bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+            bool canHurt = SageCanHurtField?.GetValueF(sage) is bool ch && ch;
             var threats = new List<Threat>();
             var sp = new Rectangle?[Horizon + 1];
             {
-                float x = sage.Position.X, y = sage.Position.Y, vx = sage.velocity.X / 60f, vy = sage.velocity.Y / 60f;
+                float x = sage.Position.ToXna().X, y = sage.Position.ToXna().Y, vx = sage.velocity.ToXna().X / 60f, vy = sage.velocity.ToXna().Y / 60f;
                 for (int f = 0; f <= Horizon; f++)
                 {
                     sp[f] = new Rectangle((int)x, (int)y, (int)sage.width, (int)sage.height);
@@ -13392,7 +13442,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
-            int hpNow = SageHealthField?.GetValue(sage) is int hv ? hv : 0;
+            int hpNow = SageHealthField?.GetValueF(sage) is int hv ? hv : 0;
             if (canHurt || hpNow > 0)
             {
                 // (between stages it is harmless, but the next stage's orbs appear round it and its lasers along the hall's ends: keep off)
@@ -13408,7 +13458,7 @@ namespace AnodyneSharp.Recording
                     threats.Add(th);
                 }
             }
-            foreach (var e in sage.SubEntities().Where(e => e.exists))
+            foreach (var e in sage.Subs().Where(e => e.exists))
             {
                 if (!(e is AnodyneSharp.Entities.Enemy.Etc.SageBoss.HurtingEntity he) || !he.IsHurting)
                 {
@@ -13419,7 +13469,7 @@ namespace AnodyneSharp.Recording
                 if (e is AnodyneSharp.Entities.Enemy.Etc.SageBoss.ShortAttack sa && !sa.MapColission)
                 {
                     // an orb: where it sits off the body (which side, how far out) and which way that distance is going
-                    var rel = e.Position - sage.Position;
+                    var rel = e.Position.ToXna() - sage.Position.ToXna();
                     int side = rel.Y < -5 ? 0 : rel.Y > 8 ? 1 : rel.X < 0 ? 2 : 3;
                     float off = side switch { 0 => -10 - rel.Y, 1 => rel.Y - 12, 2 => -12 - rel.X, _ => rel.X - 14 };
                     float rate = _sageOrbOff.TryGetValue(e, out var po) ? off - po : 0f;
@@ -13455,7 +13505,7 @@ namespace AnodyneSharp.Recording
                     // a laser or a bullet: straight on until it meets the hall's wall, where it is gone
                     for (int f = 0; f <= Horizon; f++)
                     {
-                        var r = new Rectangle((int)(hb.X + e.velocity.X / 60f * f), (int)(hb.Y + e.velocity.Y / 60f * f), hb.Width, hb.Height);
+                        var r = new Rectangle((int)(hb.X + e.velocity.ToXna().X / 60f * f), (int)(hb.Y + e.velocity.ToXna().Y / 60f * f), hb.Width, hb.Height);
                         if (r.Bottom > tl.Y + 144 + 1)
                         {
                             break;
@@ -13467,7 +13517,7 @@ namespace AnodyneSharp.Recording
             }
             // Stage 1's next laser, from its clock (it appears at the hall's top: no time to see it coming otherwise)
             if (canHurt && SageStageLocal(sage, "bClock") is float clock && SageStageLocal(sage, "bDelay") is float[] delays
-                && SageHealthField?.GetValue(sage) is int hp && hp > 0)
+                && SageHealthField?.GetValueF(sage) is int hp && hp > 0)
             {
                 float delay = delays[Math.Clamp(3 - hp, 0, delays.Length - 1)];
                 var th = new Threat { Name = "Sage next laser", Margin = 1 };
@@ -13505,11 +13555,11 @@ namespace AnodyneSharp.Recording
             _sageOrbOff.Clear();
             _sageOrbRate.Clear();
             int lastSwing = -100;
-            int lastHearts = GlobalState.CUR_HEALTH;
+            int lastHearts = Gs.Health;
             var sageFace = Facing.UP;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -13521,16 +13571,16 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck();
-                int hp = SageHealthField?.GetValue(sage) is int h ? h : -1;
-                bool canHurt = SageCanHurtField?.GetValue(sage) is bool ch && ch;
+                int hp = SageHealthField?.GetValueF(sage) is int h ? h : -1;
+                bool canHurt = SageCanHurtField?.GetValueF(sage) is bool ch && ch;
                 var threats = SageThreats(sage);
                 var pb = Player.Hitbox;
                 var here = new Vector2(pb.X, pb.Y);
-                if (GlobalState.CUR_HEALTH < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                if (Gs.Health < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  SAGE HURT f{i} by {GlobalState.DamageDealer} P={pb} air={Player.state} S={sage.Hitbox} v={sage.velocity} threats={string.Join(",", threats.Select(t => $"{t.Name}@{t.At[0]}"))}");
+                    System.Console.Error.WriteLine($"  SAGE HURT f{i} by {GlobalState.DamageDealer} P={pb} air={Player.state} S={sage.Hitbox} v={sage.velocity.ToXna()} threats={string.Join(",", threats.Select(t => $"{t.Name}@{t.At[0]}"))}");
                 }
-                lastHearts = GlobalState.CUR_HEALTH;
+                lastHearts = Gs.Health;
                 bool vulnerable = canHurt && !sage._flickering;
                 BotRunner.Status = $"Sage fight: hp {hp}{(vulnerable ? " open" : "")} threats {threats.Count}";
                 var sageAt8 = threats.FirstOrDefault(t => t.Source == sage)?.At[8] ?? sage.Hitbox;
@@ -13583,14 +13633,14 @@ namespace AnodyneSharp.Recording
                 // Where to be: at striking distance from whichever side can be reached safely (below first: it keeps to the hall's top).
                 var cands = new[]
                 {
-                    (new Vector2(sageAt8.Center.X - 5, sageAt8.Bottom + 6), Facing.UP),
-                    (new Vector2(sageAt8.Left - 14, sageAt8.Center.Y - 6), Facing.RIGHT),
-                    (new Vector2(sageAt8.Right + 4, sageAt8.Center.Y - 6), Facing.LEFT),
-                    (new Vector2(sageAt8.Center.X - 5, sageAt8.Top - 18), Facing.DOWN),
+                    (new Vector2(sageAt8.Center.ToXna().X - 5, sageAt8.Bottom + 6), Facing.UP),
+                    (new Vector2(sageAt8.Left - 14, sageAt8.Center.ToXna().Y - 6), Facing.RIGHT),
+                    (new Vector2(sageAt8.Right + 4, sageAt8.Center.ToXna().Y - 6), Facing.LEFT),
+                    (new Vector2(sageAt8.Center.ToXna().X - 5, sageAt8.Top - 18), Facing.DOWN),
                 };
                 // Never wait in its way: with it moving fast on an axis, the spot on the side it is heading for is where it will run us over.
                 // Nor on the side it is leaving if it turns back off a wall soon: it comes back faster than we walk.
-                var sv = sage.velocity;
+                var sv = sage.velocity.ToXna();
                 var bodyAt = threats.FirstOrDefault(t => t.Source == sage)?.At;
                 bool TurnsSoon(bool yAxis)
                 {
@@ -13617,14 +13667,14 @@ namespace AnodyneSharp.Recording
                 if (!canHurt && hp <= 0)
                 {
                     // the intro: walk up under it until it notices us (within 32px, on the ground) and its talk starts
-                    goal = new Vector2(sageAt8.Center.X - 5, sageAt8.Bottom + 16);
+                    goal = new Vector2(sageAt8.Center.ToXna().X - 5, sageAt8.Bottom + 16);
                     keys = SpaceTimeMove(goal, threats, useCache: false);
                 }
                 else if (!canHurt)
                 {
                     // between stages: well away from it (the next stage's orbs appear round it), in the middle of the hall's lower half
                     goal = new Vector2(Grid.X * 160 + 75, Grid.Y * 160 + 100);
-                    if (Math.Abs(sage.Hitbox.Center.Y - (goal.Y + 6)) < 40)
+                    if (Math.Abs(sage.Hitbox.Center.ToXna().Y - (goal.Y + 6)) < 40)
                     {
                         goal.Y = Grid.Y * 160 + 40; // (it came back down this far: the upper half then)
                     }
@@ -13653,7 +13703,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
                 {
-                    System.Console.Error.WriteLine($"  sage f{i} hp={hp} hurt={canHurt} vuln={vulnerable} P={pb} {Player.state} S={sage.Hitbox} v={sage.velocity} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}] threats={threats.Count}");
+                    System.Console.Error.WriteLine($"  sage f{i} hp={hp} hurt={canHurt} vuln={vulnerable} P={pb} {Player.state} S={sage.Hitbox} v={sage.velocity.ToXna()} goal={goal} keys=[{(keys == null ? "none" : string.Join("+", keys))}] threats={threats.Count}");
                 }
                 yield return keys ?? K();
             }
@@ -13680,7 +13730,7 @@ namespace AnodyneSharp.Recording
         private static List<Threat> BriarThreats(AnodyneSharp.Entities.Entity fight, int phase)
         {
             var threats = new List<Threat>();
-            var subs = fight.SubEntities().ToList();
+            var subs = fight.Subs().ToList();
             var body = subs[0];
             var bt = new Threat { Name = "Briar body", Source = body, Stationary = true, HurtsInAir = true, Margin = 2 };
             for (int k = 0; k <= Horizon; k++)
@@ -13699,13 +13749,13 @@ namespace AnodyneSharp.Recording
                 threats.Add(gt);
             }
             long now = BotRunner.Frame;
-            foreach (var e in body.SubEntities().Where(e => e.exists))
+            foreach (var e in body.Subs().Where(e => e.exists))
             {
                 if (e is AnodyneSharp.Entities.Enemy.Go.BriarBossBody.Bullet)
                 {
                     var t = new Threat { Name = "Briar bullet", Source = e, Margin = 0 }; // (exact: one lane is a pixel off the column we stand on)
-                    var p = e.Position;
-                    var v = e.velocity;
+                    var p = e.Position.ToXna();
+                    var v = e.velocity.ToXna();
                     for (int k = 0; k <= Horizon; k++)
                     {
                         if (p.Y - Grid.Y * 160 > 150)
@@ -13713,16 +13763,16 @@ namespace AnodyneSharp.Recording
                             break;
                         }
                         t.At[k] = new Rectangle((int)p.X, (int)p.Y, e.width, e.height);
-                        v += e.acceleration / 60f;
+                        v += e.acceleration.ToXna() / 60f;
                         p += v / 60f;
                     }
                     threats.Add(t);
                 }
                 else if (e is AnodyneSharp.Entities.Enemy.Go.BriarBossBody.Thorn)
                 {
-                    if (!_briarThornBorn.TryGetValue(e, out var b) || b.at != e.Position || b.born > now)
+                    if (!_briarThornBorn.TryGetValue(e, out var b) || b.at != e.Position.ToXna() || b.born > now)
                     {
-                        _briarThornBorn[e] = b = (now, e.Position);
+                        _briarThornBorn[e] = b = (now, e.Position.ToXna());
                     }
                     int age = (int)(now - b.born);
                     float fpsA = 12 + phase;
@@ -13740,11 +13790,11 @@ namespace AnodyneSharp.Recording
             }
             foreach (var arm in subs.Skip(2))
             {
-                foreach (var e in arm.SubEntities().Where(e => e.exists))
+                foreach (var e in arm.Subs().Where(e => e.exists))
                 {
                     if (e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye eye)
                     {
-                        foreach (var m in eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist && !m.Hitbox.Intersects(Player.Hitbox)))
+                        foreach (var m in eye.Subs().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist && !m.Hitbox.Intersects(Player.Hitbox)))
                         {
                             // (not one we are in already, knocked or jumped into it: the planners find no way from inside a threat, and
                             // it is harmless, so walk out of it)
@@ -13756,20 +13806,20 @@ namespace AnodyneSharp.Recording
                             }
                             threats.Add(t);
                         }
-                        var eyeDusts = eye.SubEntities().Where(d => d.exists && d is AnodyneSharp.Entities.Dust).ToList();
-                        var eyeMists = eye.SubEntities().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(m => m.Hitbox).ToList();
-                        foreach (var f in eye.SubEntities().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
+                        var eyeDusts = eye.Subs().Where(d => d.exists && d is AnodyneSharp.Entities.Dust).ToList();
+                        var eyeMists = eye.Subs().Where(m => m.exists && m is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(m => m.Hitbox).ToList();
+                        foreach (var f in eye.Subs().Where(f => f.exists && f is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Fireball))
                         {
-                            BriarShotThreats(threats, "Briar fireball", f, new Vector2(f.Hitbox.X, f.Hitbox.Y), f.velocity, 0, eyeDusts, eyeMists, 2);
+                            BriarShotThreats(threats, "Briar fireball", f, new Vector2(f.Hitbox.X, f.Hitbox.Y), f.velocity.ToXna(), 0, eyeDusts, eyeMists, 2);
                         }
                     }
-                    else if (e is AnodyneSharp.Entities.Enemy.Go.HappyThorn.IceCrystal && e.velocity != Vector2.Zero)
+                    else if (e is AnodyneSharp.Entities.Enemy.Go.HappyThorn.IceCrystal && e.velocity.ToXna() != Vector2.Zero)
                     {
                         var t = new Threat { Name = "Briar ice", Source = e, Margin = 2, HurtsInAir = true };
                         for (int k = 0; k <= Horizon; k++)
                         {
                             var r = e.Hitbox;
-                            r.Offset((int)(e.velocity.X * k / 60f), (int)(e.velocity.Y * k / 60f));
+                            r.Offset((int)(e.velocity.ToXna().X * k / 60f), (int)(e.velocity.ToXna().Y * k / 60f));
                             t.At[k] = r;
                         }
                         threats.Add(t);
@@ -13803,7 +13853,7 @@ namespace AnodyneSharp.Recording
                         var rest = dusts.Where(d => d != hit).ToList();
                         foreach (var dir in new[] { Vector2.UnitX, -Vector2.UnitX, Vector2.UnitY, -Vector2.UnitY })
                         {
-                            BriarShotThreats(threats, "Briar lane", src, hit.Position, dir * 70, k + 1, rest, mists, depth - 1);
+                            BriarShotThreats(threats, "Briar lane", src, hit.Position.ToXna(), dir * 70, k + 1, rest, mists, depth - 1);
                         }
                     }
                     return;
@@ -13822,7 +13872,7 @@ namespace AnodyneSharp.Recording
         {
             BotRunner.BossDamageBudget = 6; // TODO: tune down once the fight is clean over a few seeds
             int lastSwing = -100;
-            int lastHearts = GlobalState.CUR_HEALTH;
+            int lastHearts = Gs.Health;
             BriarBomb bomb = null;
             bool wasCarrying = false;
             var carryAt = Vector2.Zero;
@@ -13834,7 +13884,7 @@ namespace AnodyneSharp.Recording
             int pushedFor = 0, nudgeUntil = -1, nudges = 0;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -13842,8 +13892,8 @@ namespace AnodyneSharp.Recording
                 // Walking into something for a second and a half without budging (a mist's box is not quite the one we plan round): a
                 // few steps each way in turn, and plan again from there.
                 bool walking = BotRunner.LastHeld.Any(k => k is KeyFunctions.Up or KeyFunctions.Down or KeyFunctions.Left or KeyFunctions.Right);
-                pushedFor = walking && Player.state == PlayerState.GROUND && (Player.Position - lastAt).Length() < 0.2f ? pushedFor + 1 : 0;
-                lastAt = Player.Position;
+                pushedFor = walking && Player.state == PlayerState.GROUND && (Player.Position.ToXna() - lastAt).Length() < 0.2f ? pushedFor + 1 : 0;
+                lastAt = Player.Position.ToXna();
                 if (pushedFor > 90 && i >= nudgeUntil)
                 {
                     nudgeUntil = i + 15;
@@ -13872,7 +13922,7 @@ namespace AnodyneSharp.Recording
                 var here = new Vector2(pb.X, pb.Y);
                 if (fight == null)
                 {
-                    if (main.GetType().GetField("state", AnyInst)?.GetValue(main)?.ToString() == "Post")
+                    if (main.GetType().GetField("state", AnyInst)?.GetValueF(main)?.ToString() == "Post")
                     {
                         BotRunner.BossDamageBudget = 0;
                         yield break;
@@ -13882,20 +13932,20 @@ namespace AnodyneSharp.Recording
                     yield return K(KeyFunctions.Up);
                     continue;
                 }
-                var subs = fight.SubEntities().ToList();
+                var subs = fight.Subs().ToList();
                 var body = (AnodyneSharp.Entities.Enemy.Go.BriarBossBody)subs[0];
                 var blue = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[2];
                 var happy = (AnodyneSharp.Entities.Enemy.Go.BigThorn)subs[3];
                 var solids = new List<Rectangle> { body.Hitbox, blue.Hitbox, happy.Hitbox }; // (the arms are solid to us)
                 int phase = Math.Clamp(6 - happy.Health - blue.Health, 0, 5);
                 var threats = BriarThreats(fight, phase);
-                if (GlobalState.CUR_HEALTH < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                if (Gs.Health < lastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  BRIAR HURT f{i} by {GlobalState.DamageDealer} P={pb} {Player.state} threats={string.Join(",", threats.Where(t => t.At[0] is Rectangle r && Math.Abs(r.Center.X - pb.Center.X) < 30 && Math.Abs(r.Center.Y - pb.Center.Y) < 30).Select(t => $"{t.Name}@{t.At[0]}"))}");
+                    System.Console.Error.WriteLine($"  BRIAR HURT f{i} by {GlobalState.DamageDealer} P={pb} {Player.state} threats={string.Join(",", threats.Where(t => t.At[0] is Rectangle r && Math.Abs(r.Center.ToXna().X - pb.Center.ToXna().X) < 30 && Math.Abs(r.Center.ToXna().Y - pb.Center.ToXna().Y) < 30).Select(t => $"{t.Name}@{t.At[0]}"))}");
                 }
-                lastHearts = GlobalState.CUR_HEALTH;
-                var crystal = happy.SubEntities().FirstOrDefault(e => e.exists); // (it flickers in: invisible every other moment)
-                var eye = blue.SubEntities().FirstOrDefault(e => e.exists && e.Position != Vector2.Zero) as AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye; // (it exists from the start, at 0,0, until its first turn)
+                lastHearts = Gs.Health;
+                var crystal = happy.Subs().FirstOrDefault(e => e.exists); // (it flickers in: invisible every other moment)
+                var eye = blue.Subs().FirstOrDefault(e => e.exists && e.Position.ToXna() != Vector2.Zero) as AnodyneSharp.Entities.Enemy.Go.BlueThorn.FireEye; // (it exists from the start, at 0,0, until its first turn)
                 bool grounded = Player.state == PlayerState.GROUND;
                 bool broomOut = Player.broom != null && Player.broom.exists;
                 if (BriarCarrying != wasCarrying)
@@ -13911,8 +13961,8 @@ namespace AnodyneSharp.Recording
                 if (reeling != null)
                 {
                     mode = $"hit the {(reeling == blue ? "right" : "left")} arm";
-                    var spot = new Vector2(reeling.Hitbox.Center.X - pb.Width / 2, reeling.Hitbox.Bottom + 1);
-                    if (grounded && !broomOut && i - lastSwing > 20 && BroomBoxAt(Player.Position, Facing.UP).Intersects(reeling.Hitbox))
+                    var spot = new Vector2(reeling.Hitbox.Center.ToXna().X - pb.Width / 2, reeling.Hitbox.Bottom + 1);
+                    if (grounded && !broomOut && i - lastSwing > 20 && BroomBoxAt(Player.Position.ToXna(), Facing.UP).Intersects(reeling.Hitbox))
                     {
                         if (Player.facing != Facing.UP)
                         {
@@ -13934,20 +13984,20 @@ namespace AnodyneSharp.Recording
                     // The ice crystal: meet it with the broom on its way to us (it goes off to the left arm), facing where it comes from.
                     mode = "ice rally";
                     var cb = crystal.Hitbox;
-                    var toMe = new Vector2(pb.Center.X - cb.Center.X, pb.Center.Y - cb.Center.Y);
-                    bool coming = crystal.velocity != Vector2.Zero && Vector2.Dot(crystal.velocity, toMe) > 0;
+                    var toMe = new Vector2(pb.Center.ToXna().X - cb.Center.ToXna().X, pb.Center.ToXna().Y - cb.Center.ToXna().Y);
+                    bool coming = crystal.velocity.ToXna() != Vector2.Zero && Vector2.Dot(crystal.velocity.ToXna(), toMe) > 0;
                     var face = Math.Abs(toMe.X) >= Math.Abs(toMe.Y) ? (toMe.X > 0 ? Facing.LEFT : Facing.RIGHT) : (toMe.Y > 0 ? Facing.UP : Facing.DOWN);
                     if (!coming)
                     {
                         // (on its way back to the left arm, or still flickering in at the right one: face where it will come from next)
-                        face = crystal.velocity == Vector2.Zero ? (cb.Center.X > pb.Center.X ? Facing.RIGHT : Facing.LEFT) : Facing.LEFT;
+                        face = crystal.velocity.ToXna() == Vector2.Zero ? (cb.Center.ToXna().X > pb.Center.ToXna().X ? Facing.RIGHT : Facing.LEFT) : Facing.LEFT;
                     }
                     bool meets = false;
                     for (int k = 0; k <= 5 && coming; k++)
                     {
                         var r = cb;
-                        r.Offset((int)(crystal.velocity.X * k / 60f), (int)(crystal.velocity.Y * k / 60f));
-                        if (r.Intersects(BroomBoxAt(Player.Position, face)))
+                        r.Offset((int)(crystal.velocity.ToXna().X * k / 60f), (int)(crystal.velocity.ToXna().Y * k / 60f));
+                        if (r.Intersects(BroomBoxAt(Player.Position.ToXna(), face)))
                         {
                             meets = true;
                             break;
@@ -13973,8 +14023,8 @@ namespace AnodyneSharp.Recording
                 {
                     // The fire eye: a dust where its blast reaches the right arm, and us where its next shot meets that dust first.
                     mode = "dust bomb";
-                    var dusts = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
-                    var mists = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(e => e.Hitbox).ToList();
+                    var dusts = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).ToList();
+                    var mists = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Go.BlueThorn.Mist).Select(e => e.Hitbox).ToList();
                     if (bomb != null && !BriarBombStillOn(bomb, dusts))
                     {
                         bomb = null;
@@ -13985,7 +14035,7 @@ namespace AnodyneSharp.Recording
                         bomb = BriarBombPlan(tl, eye, blue, mists, solids);
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                         {
-                            System.Console.Error.WriteLine($"  briar bomb plan: {(bomb == null ? "none" : $"{(bomb.Burn ? "burn " : "")}moves {string.Join(" ", bomb.Moves.Select(m => $"{m.from}->{m.to}"))} trigger {bomb.Trigger} stand {bomb.Stand}")} eye {eye.Position} mists {string.Join(" ", mists)}");
+                            System.Console.Error.WriteLine($"  briar bomb plan: {(bomb == null ? "none" : $"{(bomb.Burn ? "burn " : "")}moves {string.Join(" ", bomb.Moves.Select(m => $"{m.from}->{m.to}"))} trigger {bomb.Trigger} stand {bomb.Stand}")} eye {eye.Position.ToXna()} mists {string.Join(" ", mists)}");
                         }
                     }
                     if (bomb != null)
@@ -13994,7 +14044,7 @@ namespace AnodyneSharp.Recording
                         if (Player.broom.dust is AnodyneSharp.Entities.Dust held && held.exists)
                         {
                             // the broom still holds one we set down: set it down again where it is, to let go of it
-                            var ht = new Point((int)held.Position.X / 16, (int)held.Position.Y / 16);
+                            var ht = new Point((int)held.Position.ToXna().X / 16, (int)held.Position.ToXna().Y / 16);
                             var (hk, hswing) = BriarCarryKeys(ht, dusts.Where(d => d != held).ToList(), threats, solids, null, true);
                             BotRunner.Status = $"Briar: dust bomb, let go of the dust at {ht}";
                             if (hswing && grounded && !broomOut && i - lastSwing > 16)
@@ -14007,7 +14057,7 @@ namespace AnodyneSharp.Recording
                             yield return hk ?? SpaceTimeMove(here, threats, useCache: false, survive: true) ?? K();
                             continue;
                         }
-                        var move = bomb.Moves.Where(m => !dusts.Any(d => (d.Position - new Vector2(m.to.X * 16, m.to.Y * 16)).Length() < 2)).Select(m => ((Vector2, Point)?)m).FirstOrDefault();
+                        var move = bomb.Moves.Where(m => !dusts.Any(d => (d.Position.ToXna() - new Vector2(m.to.X * 16, m.to.Y * 16)).Length() < 2)).Select(m => ((Vector2, Point)?)m).FirstOrDefault();
                         if (move is (Vector2 from, Point dsp))
                         {
                             // carry one there, a frame at a time round the fire (the plain dust walker does not dodge)
@@ -14042,7 +14092,7 @@ namespace AnodyneSharp.Recording
 
                             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null && i % 10 == 0)
                             {
-                                System.Console.Error.WriteLine($"  briar f{i} carry: {BotRunner.Status} keys=[{(ck == null ? "none" : string.Join("+", ck))}] swing={swing} g={grounded} bo={broomOut} ls={i - lastSwing} st={Player.state} dm={Player.dontMove} v={Player.velocity} pos={Player.Position} P={pb} face={Player.facing} dusts={string.Join(" ", dusts.Select(d => d.Position))}");
+                                System.Console.Error.WriteLine($"  briar f{i} carry: {BotRunner.Status} keys=[{(ck == null ? "none" : string.Join("+", ck))}] swing={swing} g={grounded} bo={broomOut} ls={i - lastSwing} st={Player.state} dm={Player.dontMove} v={Player.velocity.ToXna()} pos={Player.Position.ToXna()} P={pb} face={Player.facing} dusts={string.Join(" ", dusts.Select(d => d.Position.ToXna()))}");
                             }
                             ExactKeysUntil = BotRunner.Frame + 1; // (the plan is round this fight's own exact threats: the global guards only fight it)
                             ck = ck ?? SpaceTimeMove(here, threats, useCache: false, survive: true);
@@ -14055,7 +14105,7 @@ namespace AnodyneSharp.Recording
                             continue;
                         }
                         // (within a px each way: the plan holds for a px off the spot every way)
-                        var exact = Player.Position;
+                        var exact = Player.Position.ToXna();
                         bool atStand = Math.Abs(exact.X - ss.X) <= 0.9f && Math.Abs(exact.Y - ss.Y) <= 0.9f;
                         keys = atStand ? new KeyFunctions[0] : SpaceTimeMove(ss, threats, useCache: false);
                         if (keys != null && keys.Length == 0 && !atStand)
@@ -14151,7 +14201,7 @@ namespace AnodyneSharp.Recording
             var spots = new List<(Vector2 p, Facing f)>();
             if (!BriarCarrying && !setDown)
             {
-                var dust = dusts.Where(e => !(e.Position == new Vector2(d.X * 16, d.Y * 16))).OrderBy(e => from is Vector2 fp ? (e.Position - fp).Length() : (e.Position - here).Length()).FirstOrDefault();
+                var dust = dusts.Where(e => !(e.Position.ToXna() == new Vector2(d.X * 16, d.Y * 16))).OrderBy(e => from is Vector2 fp ? (e.Position.ToXna() - fp).Length() : (e.Position.ToXna() - here).Length()).FirstOrDefault();
                 if (dust == null)
                 {
                     return (null, false);
@@ -14193,7 +14243,7 @@ namespace AnodyneSharp.Recording
                 if (BriarCarrying || setDown)
                 {
                     // (it lands on the tile ahead of our middle: that has to be d now and after the step a turn takes)
-                    var c = Player.Center;
+                    var c = Player.Center.ToXna();
                     Point TileAt(Vector2 v) => new Point((int)Math.Floor(v.X / 16), (int)Math.Floor(v.Y / 16));
                     var want = new Point(d.X - ahead.X, d.Y - ahead.Y);
                     reach = TileAt(c) == want && (Player.facing == f || TileAt(c + new Vector2(ahead.X, ahead.Y) * 1.5f) == want);
@@ -14256,7 +14306,7 @@ namespace AnodyneSharp.Recording
         /// <summary>Whether a bomb plan still fits the dusts there are: each move's dust where it was or where it goes (or in hand), and the one the shot meets.</summary>
         private static bool BriarBombStillOn(BriarBomb bomb, List<Entity> dusts)
         {
-            bool At(Vector2 p) => dusts.Any(d => (d.Position - p).Length() < 2);
+            bool At(Vector2 p) => dusts.Any(d => (d.Position.ToXna() - p).Length() < 2);
             int inHand = BriarCarrying ? 1 : 0;
             foreach (var (from, to) in bomb.Moves)
             {
@@ -14275,20 +14325,20 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static BriarBomb BriarBombPlan(Vector2 tl, Entity eye, Entity arm, List<Rectangle> mists, List<Rectangle> solids)
         {
-            var dustPos = eye.SubEntities().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position).ToList();
+            var dustPos = eye.Subs().Where(e => e.exists && e is AnodyneSharp.Entities.Dust).Select(e => e.Position.ToXna()).ToList();
             if (BriarCarrying)
             {
                 dustPos.Add(new Vector2(-1000, -1000)); // (the one in hand: carried from here)
             }
-            var eyeC = eye.Hitbox.Center.ToVector2();
+            var eyeC = eye.Hitbox.Center.ToXna().ToVector2();
             var pb = Player.Hitbox;
             var here = new Vector2(pb.X, pb.Y);
-            var start = eye.Position + new Vector2(4, 4);
+            var start = eye.Position.ToXna() + new Vector2(4, 4);
             var arena = new Rectangle((int)tl.X, (int)tl.Y, 160, 160);
             Rectangle Box(Vector2 p) => new Rectangle((int)p.X, (int)p.Y, 16, 16);
             // (a dust's own box, as the broom and our feet meet it)
-            var dustOne = eye.SubEntities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Dust);
-            var dustOff = dustOne == null ? new Rectangle(0, 0, 16, 16) : new Rectangle(dustOne.Hitbox.X - (int)dustOne.Position.X, dustOne.Hitbox.Y - (int)dustOne.Position.Y, dustOne.Hitbox.Width, dustOne.Hitbox.Height);
+            var dustOne = eye.Subs().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Dust);
+            var dustOff = dustOne == null ? new Rectangle(0, 0, 16, 16) : new Rectangle(dustOne.Hitbox.X - (int)dustOne.Position.ToXna().X, dustOne.Hitbox.Y - (int)dustOne.Position.ToXna().Y, dustOne.Hitbox.Width, dustOne.Hitbox.Height);
             Rectangle DustBox(Vector2 p) => new Rectangle((int)p.X + dustOff.X, (int)p.Y + dustOff.Y, dustOff.Width, dustOff.Height);
 
             // the tiles a dust can be set down on
@@ -14333,7 +14383,7 @@ namespace AnodyneSharp.Recording
                     if (fb.Intersects(me))
                     {
                         // (it is aimed at us: with the boots we jump and it flies on under us, to a dust behind)
-                        if (!GlobalState.inventory.CanJump)
+                        if (!Gs.CanJump)
                         {
                             break;
                         }
@@ -14360,7 +14410,7 @@ namespace AnodyneSharp.Recording
                 for (int px = (int)tl.X + 18; px <= (int)tl.X + 140; px += 2)
                 {
                     var me = new Rectangle(px, py, pb.Width, pb.Height);
-                    if (!CornersWalkable(me) || mists.Any(m => m.Intersects(me)) || solids.Any(b => b.Intersects(me)) || (me.Center.ToVector2() - eyeC).Length() < 36)
+                    if (!CornersWalkable(me) || mists.Any(m => m.Intersects(me)) || solids.Any(b => b.Intersects(me)) || (me.Center.ToXna().ToVector2() - eyeC).Length() < 36)
                     {
                         continue;
                     }
@@ -14562,12 +14612,12 @@ namespace AnodyneSharp.Recording
             KeyFunctions[] seerCachedKeys = null;
             bool seerCachedWasVulnerable = false;
             int seerTraceA = int.Parse(Environment.GetEnvironmentVariable("SEER_TRACE_A") ?? "-1"), seerTraceB = int.Parse(Environment.GetEnvironmentVariable("SEER_TRACE_B") ?? "-2");
-            int seerLastHearts = GlobalState.CUR_HEALTH;
+            int seerLastHearts = Gs.Health;
             string seerLastKeys = "";
-            Vector2 seerStart0 = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer")?.Position ?? Vector2.Zero;
+            Vector2 seerStart0 = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name == "Seer")?.Position.ToXna() ?? Vector2.Zero;
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -14579,21 +14629,21 @@ namespace AnodyneSharp.Recording
                     yield break;
                 }
                 BotRunner.NotStuck(); // the fight has its own timeout; the boss's waves and dives keep us still for long stretches
-                int hp = healthField != null ? (int)healthField.GetValue(seer) : -1;
+                int hp = healthField != null ? (int)healthField.GetValueF(seer) : -1;
                 BotRunner.Status = $"Seer fight: boss hp {hp}";
-                if (GlobalState.CUR_HEALTH < seerLastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
+                if (Gs.Health < seerLastHearts && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  SEER HURT f{i} hearts {seerLastHearts}->{GlobalState.CUR_HEALTH} bosshp={hp} P={Player.Hitbox} face={Player.facing} keysLast={seerLastKeys} boss={seer.Hitbox} v={seer.velocity} orbs={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerOrb").Select(e => e.Hitbox.ToString()))} wave={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerWave").Select(e => e.Hitbox.ToString()))} dusts={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").Select(e => e.Hitbox.ToString()))}");
+                    System.Console.Error.WriteLine($"  SEER HURT f{i} hearts {seerLastHearts}->{Gs.Health} bosshp={hp} P={Player.Hitbox} face={Player.facing} keysLast={seerLastKeys} boss={seer.Hitbox} v={seer.velocity.ToXna()} orbs={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerOrb").Select(e => e.Hitbox.ToString()))} wave={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "SeerWave").Select(e => e.Hitbox.ToString()))} dusts={string.Join(",", BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").Select(e => e.Hitbox.ToString()))}");
                 }
-                seerLastHearts = GlobalState.CUR_HEALTH;
+                seerLastHearts = Gs.Health;
                 var sb = seer.Hitbox;
                 var pb = Player.Hitbox;
                 bool vulnerable = !seer._flickering && seer.opacity >= 1f;
-                if (!seerStarted && (seer.velocity != Vector2.Zero || seer.Position != seerStart0))
+                if (!seerStarted && (seer.velocity.ToXna() != Vector2.Zero || seer.Position.ToXna() != seerStart0))
                 {
                     seerStarted = true;
                 }
-                if (!seerStarted && Player.Position.Y > seer.Position.Y + 46)
+                if (!seerStarted && Player.Position.ToXna().Y > seer.Position.ToXna().Y + 46)
                 {
                     // The boss sleeps until the player is within 48px below it (its intro dialogue starts then).
                     yield return K(KeyFunctions.Up);
@@ -14602,7 +14652,7 @@ namespace AnodyneSharp.Recording
                 if (seer.opacity < 1f)
                 {
                     // Not in the fight yet: walk up until it notices us (it starts once we are close), then let the dialogue run.
-                    yield return Player.Position.Y > seer.Position.Y + 44 ? K(KeyFunctions.Up) : K();
+                    yield return Player.Position.ToXna().Y > seer.Position.ToXna().Y + 44 ? K(KeyFunctions.Up) : K();
                     continue;
                 }
                 if (awake++ < seerWait)
@@ -14616,14 +14666,14 @@ namespace AnodyneSharp.Recording
                 // Stage 2 plan: it dives through the whole room, so never strike while it moves. After its wave it drifts back to its post
                 // (nearly still, high up): that is when to hit it, from just under its orbs, then step out of the column before it dives.
                 var seerSpeed = _seerVel.TryGetValue(seer, out var seerV0) ? seerV0.Length() : 9f;
-                bool settle = stage2 && waveE == null && seerSpeed < 0.45f && seer.Hitbox.Center.Y <= 66;
+                bool settle = stage2 && waveE == null && seerSpeed < 0.45f && seer.Hitbox.Center.ToXna().Y <= 66;
                 if (settle)
                 {
                     foreach (var th in threats) { th.Margin = 1; } // it is not going anywhere: no buffer needed for prediction error
                 }
                 // The wave appears on the boss and hangs there still (and flickering) while the orbs are drawn out to the sides: the boss itself
                 // is then a stationary target up top with nothing under it. Hit it from just below before the wave starts to fall.
-                bool charge = stage2 && waveE != null && waveE.velocity == Vector2.Zero;
+                bool charge = stage2 && waveE != null && waveE.velocity.ToXna() == Vector2.Zero;
                 if (charge)
                 {
                     threats = SeerThreats(seer, stage2, charge: true);
@@ -14664,7 +14714,7 @@ namespace AnodyneSharp.Recording
                     if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         var st = threats.First(t => t.Source == seer);
-                        System.Console.Error.WriteLine($"  seer SWING f{i} P={pb} face={Player.facing} S={sb} v={(_seerVel.TryGetValue(seer, out var vv0) ? vv0 : Vector2.Zero)} pred@8={st.At[8]} @16={st.At[16]} @24={st.At[24]} limits={SeerPresetField?.GetValue(seer)}");
+                        System.Console.Error.WriteLine($"  seer SWING f{i} P={pb} face={Player.facing} S={sb} v={(_seerVel.TryGetValue(seer, out var vv0) ? vv0 : Vector2.Zero)} pred@8={st.At[8]} @16={st.At[16]} @24={st.At[24]} limits={SeerPresetField?.GetValueF(seer)}");
                     }
                     yield return K(KeyFunctions.Accept);
                     continue;
@@ -14683,10 +14733,10 @@ namespace AnodyneSharp.Recording
                     // Strike from whichever side we can reach safely soonest: below (facing up), left or right of it, or above.
                     var cands = new[]
                     {
-                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Bottom + (charge ? 5 : stage2 ? 14 : 7)), Facing.UP), // stage 2: just clear of the orbs, which hang 12px under the body
-                        (new Vector2(seerAt8.Right + 7, seerAt8.Center.Y - 6), Facing.LEFT),
-                        (new Vector2(seerAt8.Left - 17, seerAt8.Center.Y - 6), Facing.RIGHT),
-                        (new Vector2(seerAt8.Center.X - 5, seerAt8.Top - 19), Facing.DOWN),
+                        (new Vector2(seerAt8.Center.ToXna().X - 5, seerAt8.Bottom + (charge ? 5 : stage2 ? 14 : 7)), Facing.UP), // stage 2: just clear of the orbs, which hang 12px under the body
+                        (new Vector2(seerAt8.Right + 7, seerAt8.Center.ToXna().Y - 6), Facing.LEFT),
+                        (new Vector2(seerAt8.Left - 17, seerAt8.Center.ToXna().Y - 6), Facing.RIGHT),
+                        (new Vector2(seerAt8.Center.ToXna().X - 5, seerAt8.Top - 19), Facing.DOWN),
                     }.Where(c => !stage2 || c.Item2 == Facing.UP) // its orbs whirl out to the right of and below the body: only its left side and top are safe to strike from
                      .OrderBy(c => (c.Item1 - new Vector2(pb.X, pb.Y)).LengthSquared()).ToList();
                     goal = new Vector2(pb.X, pb.Y); // no strike spot can be reached safely right now: keep clear and wait for one
@@ -14786,20 +14836,20 @@ namespace AnodyneSharp.Recording
             {
                 // (one behind a wall cannot touch us, and a fight with it goes nowhere)
                 mine ??= FloodRegion(BotNav.TileOf(Pos), 200);
-                var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
+                var t = BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X - 5, e.Hitbox.Center.ToXna().Y - 6));
                 return new[] { new Point(0, 0), new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(t.X + o.X, t.Y + o.Y)));
             }
             return Enemies().Where(e => e.GetType().Name == "Slime")
-                .Where(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < radius)
+                .Where(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - (Pos + new Vector2(5, 6))).Length() < radius)
                 .Where(OurSide)
-                .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
+                .OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
         }
 
         protected static Entity ShooterNear(float radius)
         {
             return Enemies().Where(IsShooter)
-                .Where(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).Length() < radius)
-                .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
+                .Where(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - (Pos + new Vector2(5, 6))).Length() < radius)
+                .OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - (Pos + new Vector2(5, 6))).LengthSquared()).FirstOrDefault();
         }
 
         /// <summary>Health we are willing to spend on charging a shooter (a volley is at most 3 bullets, and it cannot fire again until they are gone).</summary>
@@ -14812,7 +14862,7 @@ namespace AnodyneSharp.Recording
             Swinging = Player.broom != null && Player.broom.exists,
             T = target.Hitbox,
             TV = SeenVelocity(target),
-            Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
+            Fast = target is AnodyneSharp.Entities.Enemy.Slime && target.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any(),
             Walk = CornersWalkable,
             Hazard = LaneHazard(),
             Others = Enemies().Where(e => e != target).Select(e => e.Hitbox).ToList()
@@ -14860,10 +14910,10 @@ namespace AnodyneSharp.Recording
                 }
                 if (was.frame == now - 1)
                 {
-                    var v = (e.Position - was.pos) * 60f;
+                    var v = (e.Position.ToXna() - was.pos) * 60f;
                     // (a velocity that agrees with the move is the truer one: it is not rounded by a frame's step)
-                    var use = (e.velocity - v).Length() < Math.Min(20f, Math.Max(4f, 0.5f * e.velocity.Length())) ? e.velocity : v; // (a slow walker held by a wall reads near its whole speed off)
-                    _seenMove[e] = (now, e.Position, use);
+                    var use = (e.velocity.ToXna() - v).Length() < Math.Min(20f, Math.Max(4f, 0.5f * e.velocity.ToXna().Length())) ? e.velocity.ToXna() : v; // (a slow walker held by a wall reads near its whole speed off)
+                    _seenMove[e] = (now, e.Position.ToXna(), use);
                     return use;
                 }
             }
@@ -14871,8 +14921,8 @@ namespace AnodyneSharp.Recording
             {
                 _seenMove.Clear();
             }
-            _seenMove[e] = (now, e.Position, e.velocity);
-            return e.velocity;
+            _seenMove[e] = (now, e.Position.ToXna(), e.velocity.ToXna());
+            return e.velocity.ToXna();
         }
 
         private static KeyFunctions[] PolicyFrame(PKey[] keys, Entity target)
@@ -14898,8 +14948,8 @@ namespace AnodyneSharp.Recording
         /// <summary>Face a foe and swing whenever it can be hurt (not blinking, broom put away): null when it is out of the broom's reach.</summary>
         private static KeyFunctions[] BlowForBlow(Entity foe)
         {
-            var fc = new Vector2(foe.Hitbox.Center.X, foe.Hitbox.Center.Y);
-            var pc = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+            var fc = new Vector2(foe.Hitbox.Center.ToXna().X, foe.Hitbox.Center.ToXna().Y);
+            var pc = new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y);
             var d = fc - pc;
             var (face, key) = Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? (Facing.LEFT, KeyFunctions.Left) : (Facing.RIGHT, KeyFunctions.Right))
                 : (d.Y < 0 ? (Facing.UP, KeyFunctions.Up) : (Facing.DOWN, KeyFunctions.Down));
@@ -14925,8 +14975,8 @@ namespace AnodyneSharp.Recording
             ExactKeysUntil = BotRunner.Frame + 1; // our own dodging: the contact/swing guards would undo it
             var pb = Player.Hitbox;
             var tb = maid.Hitbox;
-            var pc = new Vector2(pb.Center.X, pb.Center.Y);
-            var tc = new Vector2(tb.Center.X, tb.Center.Y);
+            var pc = new Vector2(pb.Center.ToXna().X, pb.Center.ToXna().Y);
+            var tc = new Vector2(tb.Center.ToXna().X, tb.Center.ToXna().Y);
             float dx = tc.X - pc.X, dy = tc.Y - pc.Y;
             int gx = Math.Max(tb.Left - pb.Right, pb.Left - tb.Right);
             int gy = Math.Max(tb.Top - pb.Bottom, pb.Top - tb.Bottom);
@@ -14990,7 +15040,7 @@ namespace AnodyneSharp.Recording
             }
             if (trail.Count == 0 || trail.Last().f != BotRunner.Frame)
             {
-                trail.Add((BotRunner.Frame, maid.Position));
+                trail.Add((BotRunner.Frame, maid.Position.ToXna()));
             }
             if (trail.Count > 30)
             {
@@ -15005,10 +15055,10 @@ namespace AnodyneSharp.Recording
                 bool Step(Rectangle r) => Open(r) && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(r) && !e.Hitbox.Intersects(pb));
                 var spots = new (Rectangle r, Facing f, KeyFunctions k)[]
                 {
-                    (new Rectangle(tb.Left - 3 - pb.Width, tb.Center.Y - pb.Height / 2, pb.Width, pb.Height), Facing.RIGHT, KeyFunctions.Right),
-                    (new Rectangle(tb.Right + 3, tb.Center.Y - pb.Height / 2, pb.Width, pb.Height), Facing.LEFT, KeyFunctions.Left),
-                    (new Rectangle(tb.Center.X - pb.Width / 2, tb.Top - 3 - pb.Height, pb.Width, pb.Height), Facing.DOWN, KeyFunctions.Down),
-                    (new Rectangle(tb.Center.X - pb.Width / 2, tb.Bottom + 3, pb.Width, pb.Height), Facing.UP, KeyFunctions.Up),
+                    (new Rectangle(tb.Left - 3 - pb.Width, tb.Center.ToXna().Y - pb.Height / 2, pb.Width, pb.Height), Facing.RIGHT, KeyFunctions.Right),
+                    (new Rectangle(tb.Right + 3, tb.Center.ToXna().Y - pb.Height / 2, pb.Width, pb.Height), Facing.LEFT, KeyFunctions.Left),
+                    (new Rectangle(tb.Center.ToXna().X - pb.Width / 2, tb.Top - 3 - pb.Height, pb.Width, pb.Height), Facing.DOWN, KeyFunctions.Down),
+                    (new Rectangle(tb.Center.ToXna().X - pb.Width / 2, tb.Bottom + 3, pb.Width, pb.Height), Facing.UP, KeyFunctions.Up),
                 };
                 var here = BotNav.TileOf(Pos);
                 var reachable = spots.Where(sp => Free(sp.r)).Select(sp => (sp, path: BotNav.FindPath(here, BotNav.TileOf(new Vector2(sp.r.X, sp.r.Y)))))
@@ -15079,7 +15129,7 @@ namespace AnodyneSharp.Recording
                 bool TileFree(Point t) => screen.Contains(new Rectangle(t.X * 16, t.Y * 16, 16, 16)) && BotNav.Walkable(t) && !OnConveyor(t) && !BotNav.IsHole(t) && !maidLanes.Contains(t)
                     && !BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Dust && e.Hitbox.Intersects(new Rectangle(t.X * 16 + 2, t.Y * 16 + 2, 12, 12)));
                 // (from every maid on us, not only this one: five of them corner us where the furthest from one is beside another)
-                var maidCs = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid).Select(e => e.Hitbox.Center.ToVector2()).Append(tc).ToList();
+                var maidCs = Enemies().Where(e => e is AnodyneSharp.Entities.Enemy.Hotel.Dustmaid).Select(e => e.Hitbox.Center.ToXna().ToVector2()).Append(tc).ToList();
                 float Clear(Point t) => maidCs.Min(mc => (new Vector2(t.X * 16 + 8, t.Y * 16 + 8) - mc).Length());
                 var parent = new Dictionary<Point, Point> { [start] = start };
                 var clear = new Dictionary<Point, float> { [start] = float.PositiveInfinity };
@@ -15187,7 +15237,7 @@ namespace AnodyneSharp.Recording
             for (int i = 0; i < 30000; i++)
             {
                 BotRunner.NotStuck();
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -15206,7 +15256,7 @@ namespace AnodyneSharp.Recording
                 bool water = boss is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase;
                 if ((i % 60 == 0 || (Environment.GetEnvironmentVariable("ANODYNE_EYE_TRACE") != null && i - hitAt < 40)) && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"  eye f{i} [{BotRunner.Status}] me={Player.Hitbox} face={Player.facing} boss={boss.Hitbox} v={boss.velocity} solid={boss.Solid} flick={boss._flickering} spot={spotGoal}/{spotFace} hp={GlobalState.CUR_HEALTH}");
+                    System.Console.Error.WriteLine($"  eye f{i} [{BotRunner.Status}] me={Player.Hitbox} face={Player.facing} boss={boss.Hitbox} v={boss.velocity.ToXna()} solid={boss.Solid} flick={boss._flickering} spot={spotGoal}/{spotFace} hp={Gs.Health}");
                 }
                 if (water && AnodyneSharp.Sounds.SoundManager.CurrentSongName != "hotel-boss")
                 {
@@ -15262,19 +15312,19 @@ namespace AnodyneSharp.Recording
                 // would touch us is popped with the broom when it comes into the broom's box first, else stepped round (the land
                 // phase's lobbed shots are only stepped round).
                 // (a lobbed land shot only hurts the moment it comes down and while it bursts there: it flies 1.5s at 45px up)
-                var shots = boss.SubEntities().Where(b => b.exists && b is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker
-                    && ((b is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase.Bullet && b.velocity != Vector2.Zero) || b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)).ToList();
+                var shots = boss.Subs().Where(b => b.exists && b is not AnodyneSharp.Entities.Enemy.Hotel.Boss.EnemyMarker
+                    && ((b is AnodyneSharp.Entities.Enemy.Hotel.Boss.WaterPhase.Bullet && b.velocity.ToXna() != Vector2.Zero) || b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)).ToList();
                 const int Ahead = 40;
                 var area = new Rectangle((int)tl.X, (int)tl.Y, 16 * 8, 16 * 9);
                 var paths = shots.Select(b =>
                     {
                         var r = new Rectangle[Ahead + 1];
                         var bp = new Vector2(b.Hitbox.X, b.Hitbox.Y);
-                        var v = b.velocity;
+                        var v = b.velocity.ToXna();
                         int w = b.Hitbox.Width, h = b.Hitbox.Height;
                         if (b is AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.Bullet)
                         {
-                            int remF = b.velocity == Vector2.Zero ? 0 : (int)Math.Round((1.5f - LobTime(b)) * 60f);
+                            int remF = b.velocity.ToXna() == Vector2.Zero ? 0 : (int)Math.Round((1.5f - LobTime(b)) * 60f);
                             var land = new Rectangle((int)(bp.X + v.X * remF / 60f) - 1, (int)(bp.Y + v.Y * remF / 60f) - 1, w + 2, h + 2);
                             for (int t = 0; t <= Ahead; t++)
                             {
@@ -15293,13 +15343,13 @@ namespace AnodyneSharp.Recording
                     }).ToList();
                 // A land shot bursts into 4 splashes (20px/s, a 36px lob of 1-1.4s): low down (the start and the end, and their 10-frame pop)
                 // one slows us to 0.3 for 100 frames, and the eye's next shots (aimed where we stand) then come down on us.
-                foreach (var sp in boss.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
+                foreach (var sp in boss.Subs().OfType<AnodyneSharp.Entities.Enemy.Hotel.Boss.LandPhase.BulletSplash>().Where(e => e.exists))
                 {
                     const System.Reflection.BindingFlags SF = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-                    var para = sp.GetType().GetField("parabola", SF)?.GetValue(sp);
+                    var para = sp.GetType().GetField("parabola", SF)?.GetValueF(sp);
                     var ptt = typeof(AnodyneSharp.Entities.Parabola_Thing);
-                    if (para == null || ptt.GetField("t", SF)?.GetValue(para) is not float st0 || ptt.GetField("period", SF)?.GetValue(para) is not float sper
-                        || ptt.GetField("height", SF)?.GetValue(para) is not float sh)
+                    if (para == null || ptt.GetField("t", SF)?.GetValueF(para) is not float st0 || ptt.GetField("period", SF)?.GetValueF(para) is not float sper
+                        || ptt.GetField("height", SF)?.GetValueF(para) is not float sh)
                     {
                         continue;
                     }
@@ -15310,7 +15360,7 @@ namespace AnodyneSharp.Recording
                         float tt = st0 + t / 60f;
                         float sc = Math.Clamp(tt / sper, 0f, 1f);
                         bool low = tt <= sper + 12 / 60f && sh * 4 * sc * (1 - sc) < 9 + 2;
-                        r[t] = low ? new Rectangle(sb.X + (int)Math.Round(sp.velocity.X * t / 60f) - 1, sb.Y + (int)Math.Round(sp.velocity.Y * t / 60f) - 1, sb.Width + 2, sb.Height + 2) : Rectangle.Empty;
+                        r[t] = low ? new Rectangle(sb.X + (int)Math.Round(sp.velocity.ToXna().X * t / 60f) - 1, sb.Y + (int)Math.Round(sp.velocity.ToXna().Y * t / 60f) - 1, sb.Width + 2, sb.Height + 2) : Rectangle.Empty;
                     }
                     paths.Add(r);
                 }
@@ -15413,7 +15463,7 @@ namespace AnodyneSharp.Recording
                     int touch = FirstTouch(_ => meBox, Ahead);
                     if (Environment.GetEnvironmentVariable("ANODYNE_EYE_TRACE") != null)
                     {
-                        System.Console.Error.WriteLine($"    shots f{i} me={pb} st={Player.state} touch={touch} hp={GlobalState.CUR_HEALTH} " + string.Join(" ", shots.Select(b => $"{b.Hitbox.X},{b.Hitbox.Y} v{b.velocity.X:0},{b.velocity.Y:0} {b.CurAnimName} lob={LobTime(b):0.00} off={b.offset.Y:0}")));
+                        System.Console.Error.WriteLine($"    shots f{i} me={pb} st={Player.state} touch={touch} hp={Gs.Health} " + string.Join(" ", shots.Select(b => $"{b.Hitbox.X},{b.Hitbox.Y} v{b.velocity.ToXna().X:0},{b.velocity.ToXna().Y:0} {b.CurAnimName} lob={LobTime(b):0.00} off={b.offset.ToXna().Y:0}")));
                     }
                     if (touch <= 30)
                     {
@@ -15477,7 +15527,7 @@ namespace AnodyneSharp.Recording
                     var box = new Rectangle((int)tl.X + 12, (int)tl.Y + 16, 16 * 7 + 4 - 12, 16 * 8 - 16);
                     var eb = boss.Hitbox;
                     var bpos = new Vector2(eb.X, eb.Y);
-                    var bv = boss.velocity;
+                    var bv = boss.velocity.ToXna();
                     var future = new List<Rectangle>();
                     // On land it walks (60px/s each way) to the pacing point its Pace routine is holding out, read off the running fight;
                     // for a second and a half after a hit it charges to the right wall instead (1.7x on the way across).
@@ -15546,7 +15596,7 @@ namespace AnodyneSharp.Recording
                             {
                                 // (where we are along the way there at t2, roughly)
                                 var at = eta == 0 ? sp : Vector2.Lerp(me, sp, Math.Min(1f, t2 / (float)Math.Max(1, eta)));
-                                var fc = future[t2].Center;
+                                var fc = future[t2].Center.ToXna();
                                 worst = Math.Min(worst, (new Vector2(fc.X, fc.Y) - at - new Vector2(pb.Width / 2f, pb.Height / 2f)).Length());
                             }
                             if (worst > farBest)
@@ -15594,7 +15644,7 @@ namespace AnodyneSharp.Recording
                     {
                         replan = 10;
                         // (a raft, or the pool's dust to make one, opens the water: the eye waits for its first hit out in the middle)
-                        bool afloat = water && (HasRaft() || BotRunner.Entities().Any(d => d.exists && d is AnodyneSharp.Entities.Dust && (int)d.Position.X / 160 == room.X && (int)d.Position.Y / 160 == room.Y));
+                        bool afloat = water && (HasRaft() || BotRunner.Entities().Any(d => d.exists && d is AnodyneSharp.Entities.Dust && (int)d.Position.ToXna().X / 160 == room.X && (int)d.Position.ToXna().Y / 160 == room.Y));
                         BotNav.AllowWater = afloat;
                         bool riding = afloat && HasRaft() && OnConveyor(BotNav.TileOf(Pos));
                         var region = FloodRegion(BotNav.TileOf(Pos), 200).Where(t => (riding ? OnConveyor(t) : afloat || !OnConveyor(t)) && !BotNav.IsHole(t) && (OnConveyor(t) || SpotStands(t))).ToList();
@@ -15628,7 +15678,7 @@ namespace AnodyneSharp.Recording
                                     if (bro.Intersects(future[t2]))
                                     {
                                         int score = t2 * 2 + eta;
-                                        if (sp.X + pb.Width / 2f > future[t2].Center.X - 4)
+                                        if (sp.X + pb.Width / 2f > future[t2].Center.ToXna().X - 4)
                                         {
                                             // A hit facing up/down also sends the water eye off to the right (20px/s, faster each hit), and the
                                             // land eye charges to the right wall after every hit: strike from its left and it goes off clear of
@@ -15649,7 +15699,7 @@ namespace AnodyneSharp.Recording
                         if (spotGoal == null || best == int.MaxValue)
                         {
                             // nowhere it comes within reach soon: the nearest floor to it
-                            spotGoal = region.OrderBy(t => (BotNav.CentreOf(t) - new Vector2(eb.Center.X, eb.Center.Y)).LengthSquared()).FirstOrDefault();
+                            spotGoal = region.OrderBy(t => (BotNav.CentreOf(t) - new Vector2(eb.Center.ToXna().X, eb.Center.ToXna().Y)).LengthSquared()).FirstOrDefault();
                             spotFace = Facing.DOWN;
                         }
                     }
@@ -15701,22 +15751,22 @@ namespace AnodyneSharp.Recording
         private static float LobTime(Entity shot)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            var par = shot.GetType().GetField("parabola", F)?.GetValue(shot);
-            return par?.GetType().GetField("t", F)?.GetValue(par) is float t ? t : 0f;
+            var par = shot.GetType().GetField("parabola", F)?.GetValueF(shot);
+            return par?.GetType().GetField("t", F)?.GetValueF(par) is float t ? t : 0f;
         }
 
         /// <summary>The point the land-phase eye is pacing towards (its LandLogic's Pace enumerator, by reflection), or null.</summary>
         private static Vector2? EyeLandPace(Entity boss)
         {
             const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance;
-            var st = boss.GetType().GetField("state", F)?.GetValue(boss);
+            var st = boss.GetType().GetField("state", F)?.GetValueF(boss);
             if (st == null)
             {
                 return null;
             }
             foreach (var f in st.GetType().GetFields(F))
             {
-                if (f.GetValue(st) is IEnumerator<Vector2> pace)
+                if (f.GetValueF(st) is IEnumerator<Vector2> pace)
                 {
                     return pace.Current;
                 }
@@ -15748,23 +15798,23 @@ namespace AnodyneSharp.Recording
             Rectangle AtOf(Entity e, int f, Vector2 me)
             {
                 float step = 12f * f / 60f;
-                float ox = Math.Clamp(me.X - e.Position.X, -step, step) + e.velocity.X * f / 60f;
-                float oy = Math.Clamp(me.Y - e.Position.Y, -step, step) + e.velocity.Y * f / 60f;
+                float ox = Math.Clamp(me.X - e.Position.ToXna().X, -step, step) + e.velocity.ToXna().X * f / 60f;
+                float oy = Math.Clamp(me.Y - e.Position.ToXna().Y, -step, step) + e.velocity.ToXna().Y * f / 60f;
                 var r = e.Hitbox;
                 r.Offset((int)Math.Round(ox), (int)Math.Round(oy));
                 return r;
             }
             Rectangle At(int f, Vector2 me) => AtOf(g, f, me);
-            var gc = g.Hitbox.Center;
-            float dx = gc.X - pb.Center.X, dy = gc.Y - pb.Center.Y;
+            var gc = g.Hitbox.Center.ToXna();
+            float dx = gc.X - pb.Center.ToXna().X, dy = gc.Y - pb.Center.ToXna().Y;
             var face = Math.Abs(dx) >= Math.Abs(dy) ? (dx < 0 ? Facing.LEFT : Facing.RIGHT) : (dy < 0 ? Facing.UP : Facing.DOWN);
             bool rooted = Player.ANIM_STATE == AnodyneSharp.Entities.PlayerAnimState.ANIM_ATK || (Player.broom != null && Player.broom.exists);
             if (!rooted)
             {
                 // (any of them about to come into the broom's reach, nearest first)
-                foreach (var e in all.Where(e => !e._flickering).OrderBy(e => Vector2.Distance(e.Hitbox.Center.ToVector2(), pb.Center.ToVector2())))
+                foreach (var e in all.Where(e => !e._flickering).OrderBy(e => Vector2.Distance(e.Hitbox.Center.ToXna().ToVector2(), pb.Center.ToXna().ToVector2())))
                 {
-                    float ex = e.Hitbox.Center.X - pb.Center.X, ey = e.Hitbox.Center.Y - pb.Center.Y;
+                    float ex = e.Hitbox.Center.ToXna().X - pb.Center.ToXna().X, ey = e.Hitbox.Center.ToXna().Y - pb.Center.ToXna().Y;
                     var ef = Math.Abs(ex) >= Math.Abs(ey) ? (ex < 0 ? Facing.LEFT : Facing.RIGHT) : (ey < 0 ? Facing.UP : Facing.DOWN);
                     var broom = BroomBoxAt(Pos, ef);
                     for (int f = 0; f <= 8; f++)
@@ -15799,7 +15849,7 @@ namespace AnodyneSharp.Recording
             {
                 var mine = new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height);
                 mine.Inflate(2, 2);
-                return traps.Any(t => t.velocity.X != 0 ? mine.Top < t.Hitbox.Bottom && mine.Bottom > t.Hitbox.Top : mine.Left < t.Hitbox.Right && mine.Right > t.Hitbox.Left);
+                return traps.Any(t => t.velocity.ToXna().X != 0 ? mine.Top < t.Hitbox.Bottom && mine.Bottom > t.Hitbox.Top : mine.Left < t.Hitbox.Right && mine.Right > t.Hitbox.Left);
             }
             if (!rooted && Touches(Pos, Vector2.Zero, 14))
             {
@@ -15834,7 +15884,7 @@ namespace AnodyneSharp.Recording
                     }
                     else
                     {
-                        d = all.Min(e => Vector2.Distance(end + new Vector2(5, 6), AtOf(e, 14, end).Center.ToVector2()));
+                        d = all.Min(e => Vector2.Distance(end + new Vector2(5, 6), AtOf(e, 14, end).Center.ToXna().ToVector2()));
                     }
                     if (InLane(end))
                     {
@@ -15949,7 +15999,7 @@ namespace AnodyneSharp.Recording
             {
                 _frogLastStatus = BotRunner.Status;
                 var hf = frog.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                System.Console.Error.WriteLine($"  frogstat f{BotRunner.Frame} {BotRunner.Status} at {Player.Hitbox.X},{Player.Hitbox.Y} frog@{frog.Position} hp={hf?.GetValue(frog)}");
+                System.Console.Error.WriteLine($"  frogstat f{BotRunner.Frame} {BotRunner.Status} at {Player.Hitbox.X},{Player.Hitbox.Y} frog@{frog.Position.ToXna()} hp={hf?.GetValueF(frog)}");
             }
             return keys;
         }
@@ -15961,7 +16011,7 @@ namespace AnodyneSharp.Recording
             // it was and the next volley came early, into a plan that thought itself clear.
             foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog))
             {
-                foreach (var b in f.SubEntities().Where(b => b.exists && b.velocity == Vector2.Zero && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                foreach (var b in f.Subs().Where(b => b.exists && b.velocity.ToXna() == Vector2.Zero && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
                 {
                     _frogSplashSeen.TryAdd(b, BotRunner.Frame);
                 }
@@ -15969,10 +16019,10 @@ namespace AnodyneSharp.Recording
             var pb = Player.Hitbox;
             // Every other danger counts too (a Rotator's fireball circling past), but frogs themselves are modelled below.
             var threats = PredictThreats(frog).Where(t => !(t.Source is AnodyneSharp.Entities.Enemy.Crowd.Frog)).ToList();
-            var me = new Vector2(pb.Center.X, pb.Center.Y);
+            var me = new Vector2(pb.Center.ToXna().X, pb.Center.ToXna().Y);
             foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog))
             {
-                var fc = new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y);
+                var fc = new Vector2(f.Hitbox.Center.ToXna().X, f.Hitbox.Center.ToXna().Y);
                 if ((fc - me).Length() > 110)
                 {
                     continue;
@@ -15987,24 +16037,24 @@ namespace AnodyneSharp.Recording
                 // The next volley: now if it is ready, else once the last bullet has landed and splashed. Aimed at wherever we are then,
                 // so it is a danger all round its corner (12px out) for the 16 frames it is low.
                 int fireAt = 0;
-                foreach (var b in f.SubEntities().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
+                foreach (var b in f.Subs().Where(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet))
                 {
                     int left = 18;
-                    if (b.velocity != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValueF(b) is object para)
                     {
-                        left += (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f);
+                        left += (int)Math.Ceiling(((float)ParabolaPeriodField.GetValueF(para) - (float)ParabolaTField.GetValueF(para)) * 60f);
                     }
                     fireAt = Math.Max(fireAt, left);
                 }
                 var volley = new Threat { Name = "FrogVolley", Margin = 1, Source = f, Launch = true };
-                var corner = new Rectangle((int)f.Position.X, (int)f.Position.Y, 8, 8);
+                var corner = new Rectangle((int)f.Position.ToXna().X, (int)f.Position.ToXna().Y, 8, 8);
                 if (fireAt == 0)
                 {
-                    var dir = me - f.Position;
+                    var dir = me - f.Position.ToXna();
                     dir = dir.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(dir);
                     for (int k = 0; k <= 18; k++)
                     {
-                        var o = f.Position + dir * Math.Min(12f, k * 45f / 60f);
+                        var o = f.Position.ToXna() + dir * Math.Min(12f, k * 45f / 60f);
                         volley.At[k] = new Rectangle((int)o.X, (int)o.Y, 8, 8);
                     }
                 }
@@ -16019,12 +16069,12 @@ namespace AnodyneSharp.Recording
                     }
                     // ...and where that volley comes down (flight times unknown yet: anywhere its three speeds can carry it in 0.8-1.8s),
                     // aimed at about where we are now.
-                    var adir = me - f.Position;
+                    var adir = me - f.Position.ToXna();
                     adir = adir.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(adir);
                     foreach (float v in new[] { 15f, 30f, 45f })
                     {
-                        var a = f.Position + adir * (v * 0.8f * 0.85f);
-                        var b2 = f.Position + adir * (v * 1.8f);
+                        var a = f.Position.ToXna() + adir * (v * 0.8f * 0.85f);
+                        var b2 = f.Position.ToXna() + adir * (v * 1.8f);
                         var zone = new Rectangle((int)Math.Min(a.X, b2.X), (int)Math.Min(a.Y, b2.Y), (int)Math.Abs(a.X - b2.X) + 8, (int)Math.Abs(a.Y - b2.Y) + 8);
                         var land = new Threat { Name = "FrogVolley", Margin = 1, Source = f };
                         for (int k = fireAt + 40; k <= fireAt + 108 && k <= Horizon; k++)
@@ -16037,7 +16087,7 @@ namespace AnodyneSharp.Recording
                 threats.Add(volley);
             }
             var fh = frog.Hitbox;
-            var fcen = new Vector2(fh.Center.X, fh.Center.Y);
+            var fcen = new Vector2(fh.Center.ToXna().X, fh.Center.ToXna().Y);
             (Vector2, KeyFunctions, Facing) Spot(int side)
             {
                 // A spot a jump's length from floor beats a closer one with only pit to take off from.
@@ -16285,7 +16335,7 @@ namespace AnodyneSharp.Recording
             }
             var spot = spots[best];
             // (a pit just short of the spot: it is jumped from a take-off point a jump's length back along the line we face the frog on)
-            bool pitOnWay = GlobalState.inventory.CanJump && (FrogPitBetween(here, spot.pos) || FrogPitBetween(spot.pos - DirVector(spot.face) * 27f, spot.pos));
+            bool pitOnWay = Gs.CanJump && (FrogPitBetween(here, spot.pos) || FrogPitBetween(spot.pos - DirVector(spot.face) * 27f, spot.pos));
             if (!pitOnWay && FrogGroundKeys(spot.pos, spot.face, threats, SafeAtExact) is KeyFunctions[] gk)
             {
                 return gk;
@@ -16356,7 +16406,7 @@ namespace AnodyneSharp.Recording
                     {
                         sb.Append(th.At[k] is Rectangle tr ? $" {k}:{tr.X},{tr.Y}" : "");
                     }
-                    System.Console.Error.WriteLine($"    wait f{BotRunner.Frame} me={pb} st={Player.state} sink={Sinking} v={Player.velocity} tile={BotNav.TileOf(Pos)} wet={OnConveyor(BotNav.TileOf(Pos))} bullet {th.Source?.Position} v={th.Source?.velocity}{sb}");
+                    System.Console.Error.WriteLine($"    wait f{BotRunner.Frame} me={pb} st={Player.state} sink={Sinking} v={Player.velocity.ToXna()} tile={BotNav.TileOf(Pos)} wet={OnConveyor(BotNav.TileOf(Pos))} bullet {th.Source?.Position} v={th.Source?.velocity}{sb}");
                 }
             }
             return K();
@@ -16454,8 +16504,8 @@ namespace AnodyneSharp.Recording
                 why = $"volley {hit}/{plan.Count} {who}";
                 // Two frogs side by side never leave a clean way in and out (each spits the moment its last volley is down). With the
                 // hearts to spare and a long wait behind us, take the one late bullet: it only lands after the swing that hurts the frog.
-                var frogsNear = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToVector2() - (spot + new Vector2(5, 6))).Length() < 40).Count();
-                if (frogsNear >= 2 && _frogTrades < 3 && hit > walk + 6 && _frogGroundStall > 300 && GlobalState.CUR_HEALTH >= Math.Max(5, GlobalState.MAX_HEALTH - 1))
+                var frogsNear = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog && (e.Hitbox.Center.ToXna().ToVector2() - (spot + new Vector2(5, 6))).Length() < 40).Count();
+                if (frogsNear >= 2 && _frogTrades < 3 && hit > walk + 6 && _frogGroundStall > 300 && Gs.Health >= Math.Max(5, Gs.MaxHealth - 1))
                 {
                     _frogTrades++;
                     clear = true;
@@ -16477,7 +16527,7 @@ namespace AnodyneSharp.Recording
             {
                 // A long way in: the volleys on the way back never all line up. Wait closer, just out of every frog's 64px reach (it does
                 // not spit at us there), so the way in and out is short.
-                var frogCs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToVector2()).ToList();
+                var frogCs = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).Select(e => e.Hitbox.Center.ToXna().ToVector2()).ToList();
                 var halfBox = new Vector2(pb.Width / 2f, pb.Height / 2f);
                 var outDir = Vector2.Normalize(here - spot);
                 float far = (here - spot).Length();
@@ -16556,14 +16606,14 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions[] OffTheFrog(List<Threat> threats = null)
         {
-            var pc = Player.Hitbox.Center;
+            var pc = Player.Hitbox.Center.ToXna();
             var near = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog
-                    && Math.Abs(e.Hitbox.Center.X - pc.X) < 18 && Math.Abs(e.Hitbox.Center.Y - pc.Y) < 18);
+                    && Math.Abs(e.Hitbox.Center.ToXna().X - pc.X) < 18 && Math.Abs(e.Hitbox.Center.ToXna().Y - pc.Y) < 18);
             if (near == null)
             {
                 return null;
             }
-            float ax = pc.X - near.Hitbox.Center.X, ay = pc.Y - near.Hitbox.Center.Y;
+            float ax = pc.X - near.Hitbox.Center.ToXna().X, ay = pc.Y - near.Hitbox.Center.ToXna().Y;
             var keys = Math.Abs(ax) >= Math.Abs(ay)
                 ? new[] { ax < 0 ? KeyFunctions.Left : KeyFunctions.Right, ay < 0 ? KeyFunctions.Up : KeyFunctions.Down }
                 : new[] { ay < 0 ? KeyFunctions.Up : KeyFunctions.Down, ax < 0 ? KeyFunctions.Left : KeyFunctions.Right };
@@ -16644,28 +16694,28 @@ namespace AnodyneSharp.Recording
         {
             who = "";
             var pb = Player.Hitbox;
-            var cOff = Player.Center - new Vector2(pb.X, pb.Y);
-            foreach (var k in _frogSplashSeen.Keys.Where(e => !e.exists || e.velocity != Vector2.Zero).ToList())
+            var cOff = Player.Center.ToXna() - new Vector2(pb.X, pb.Y);
+            foreach (var k in _frogSplashSeen.Keys.Where(e => !e.exists || e.velocity.ToXna() != Vector2.Zero).ToList())
             {
                 _frogSplashSeen.Remove(k);
             }
-            var me = plan.Count > 0 ? plan[0] + cOff : Player.Center;
+            var me = plan.Count > 0 ? plan[0] + cOff : Player.Center.ToXna();
             int len = plan.Count;
             Vector2 At(int k) => plan[Math.Clamp(k, 1, len) - 1];
             foreach (var f in BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog).ToList())
             {
-                if ((f.Center - me).Length() > 140)
+                if ((f.Center.ToXna() - me).Length() > 140)
                 {
                     continue;
                 }
-                var bullets = f.SubEntities().Where(b => b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).ToList();
+                var bullets = f.Subs().Where(b => b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet).ToList();
                 int fireAt = 1;
                 foreach (var b in bullets.Where(b => b.exists))
                 {
                     int left;
-                    if (b.velocity != Vector2.Zero && FrogParabolaField?.GetValue(b) is object para)
+                    if (b.velocity.ToXna() != Vector2.Zero && FrogParabolaField?.GetValueF(b) is object para)
                     {
-                        left = (int)Math.Ceiling(((float)ParabolaPeriodField.GetValue(para) - (float)ParabolaTField.GetValue(para)) * 60f) + 18;
+                        left = (int)Math.Ceiling(((float)ParabolaPeriodField.GetValueF(para) - (float)ParabolaTField.GetValueF(para)) * 60f) + 18;
                     }
                     else
                     {
@@ -16683,7 +16733,7 @@ namespace AnodyneSharp.Recording
                     int fire = -1;
                     for (int k = fireAt; k <= len; k++)
                     {
-                        if ((At(k) + cOff - f.Center).Length() < 64)
+                        if ((At(k) + cOff - f.Center.ToXna()).Length() < 64)
                         {
                             fire = k;
                             break;
@@ -16693,18 +16743,18 @@ namespace AnodyneSharp.Recording
                     {
                         break;
                     }
-                    var aim = At(fire) + cOff - f.Position;
+                    var aim = At(fire) + cOff - f.Position.ToXna();
                     aim = aim.LengthSquared() < 1 ? new Vector2(0, 1) : Vector2.Normalize(aim);
                     float maxPeriod = 0;
                     foreach (var b in bullets)
                     {
-                        if (FrogParabolaField?.GetValue(b) is not object para)
+                        if (FrogParabolaField?.GetValueF(b) is not object para)
                         {
                             continue;
                         }
-                        float period = (float)ParabolaPeriodField.GetValue(para);
+                        float period = (float)ParabolaPeriodField.GetValueF(para);
                         maxPeriod = Math.Max(maxPeriod, period);
-                        float v = 15f * (FrogMultiplierField?.GetValue(b) is int m ? m : 3);
+                        float v = 15f * (FrogMultiplierField?.GetValueF(b) is int m ? m : 3);
                         var hb = b.Hitbox;
                         for (int j = 0; j <= (int)Math.Ceiling(period * 60f) && fire + j <= len; j++)
                         {
@@ -16715,13 +16765,13 @@ namespace AnodyneSharp.Recording
                             {
                                 continue; // high: passes over us
                             }
-                            var bp = f.Position + aim * (v * j / 60f);
+                            var bp = f.Position.ToXna() + aim * (v * j / 60f);
                             var br = new Rectangle((int)bp.X, (int)bp.Y, hb.Width, hb.Height);
                             br.Inflate(3, 3);
                             var p = At(fire + j);
                             if (br.Intersects(new Rectangle((int)p.X, (int)p.Y, pb.Width, pb.Height)))
                             {
-                                who = $"{f.Position} v{v} j{j} fire@{fire}";
+                                who = $"{f.Position.ToXna()} v{v} j{j} fire@{fire}";
                                 return fire + j;
                             }
                         }
@@ -16838,9 +16888,9 @@ namespace AnodyneSharp.Recording
                     return true;
                 }
                 // A frog that is ready to fire looses a volley the moment we come within 64px: its bullets are unknown until then.
-                var meNow = new Vector2(pb.Center.X, pb.Center.Y);
-                if (!takeoffOnly && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - meNow).Length() < 110 &&
-                    !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)))
+                var meNow = new Vector2(pb.Center.ToXna().X, pb.Center.ToXna().Y);
+                if (!takeoffOnly && BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.ToXna().X, f.Hitbox.Center.ToXna().Y) - meNow).Length() < 110 &&
+                    !f.Subs().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)))
                 {
                     why = "a frog is ready to fire";
                     return false;
@@ -16934,8 +16984,8 @@ namespace AnodyneSharp.Recording
                     BotRunner.Status = "fight/frog: dodge short of the pit";
                     return K(dodge);
                 }
-                var near = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.X, f.Hitbox.Center.Y) - new Vector2(spot.X + 5, spot.Y + 6)).Length() < 40).ToList();
-                var readyOnes = near.Where(f => !f.SubEntities().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)).ToList();
+                var near = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.Frog f && (new Vector2(f.Hitbox.Center.ToXna().X, f.Hitbox.Center.ToXna().Y) - new Vector2(spot.X + 5, spot.Y + 6)).Length() < 40).ToList();
+                var readyOnes = near.Where(f => !f.Subs().Any(b => b.exists && b is AnodyneSharp.Entities.Enemy.Crowd.Frog.BurstBullet)).ToList();
                 var stepKey = StepKey(origin.X - here.X, origin.Y - here.Y, null);
                 var stepTo = here + DirVector(stepKey) * 6f;
                 bool stepOk = StandsSafe(new Rectangle((int)stepTo.X, (int)stepTo.Y, pb.Width, pb.Height));
@@ -17020,10 +17070,10 @@ namespace AnodyneSharp.Recording
 
         private static KeyFunctions[] StandoffKeys(Rectangle tg, Rectangle pb, ref int swingWait, int cooldown)
         {
-            float dx = tg.Center.X - pb.Center.X, dy = tg.Center.Y - pb.Center.Y;
+            float dx = tg.Center.ToXna().X - pb.Center.ToXna().X, dy = tg.Center.ToXna().Y - pb.Center.ToXna().Y;
             bool vert = Math.Abs(dy) >= Math.Abs(dx);
             // The side we are on may be walled off (a plant in a corner): stand on a side whose tile we can get to, going round if need be.
-            var tt = BotNav.TileOf(new Vector2(tg.Center.X - 5, tg.Center.Y - 6));
+            var tt = BotNav.TileOf(new Vector2(tg.Center.ToXna().X - 5, tg.Center.ToXna().Y - 6));
             var sides = new List<(Point t, bool v)>();
             var mine = vert ? new Point(tt.X, tt.Y + (dy > 0 ? -1 : 1)) : new Point(tt.X + (dx > 0 ? -1 : 1), tt.Y);
             sides.Add((mine, vert));
@@ -17104,7 +17154,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static Func<int, Rectangle?> DogPath(Entity dog, int e, Vector2 tPos)
         {
-            var start = dog.Position;
+            var start = dog.Position.ToXna();
             var hb0 = dog.Hitbox;
             float[] speeds = { 66f, 84f, 84f };
             float[] dxs = { -44f, 36f, -44f };
@@ -17112,10 +17162,10 @@ namespace AnodyneSharp.Recording
             var att = DogAttackPlan(dog);
             // A super dog (the Hotel's) rolls nothing: each of its five dashes heads for a point just past wherever we are as it starts
             // (25px beyond us, on our side of it), faster each time. Taken as where we stand now.
-            bool super = dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is true;
+            bool super = dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(dog) is true;
             float[] superSpeeds = { 66f, 84f, 84f, 96f, 102f };
             var pos = start;
-            var vel = dog.velocity;
+            var vel = dog.velocity.ToXna();
             var cache = new List<Rectangle?>();
             int phaseNow = att?.phase ?? -1;
             for (int f = 0; f <= Horizon; f++)
@@ -17129,7 +17179,7 @@ namespace AnodyneSharp.Recording
                     {
                         if (phase <= 4)
                         {
-                            var me = Player.Position;
+                            var me = Player.Position.ToXna();
                             var target = me.X > pos.X ? me + new Vector2(25, 8) : me - new Vector2(28, 8);
                             var dir = target - pos;
                             vel = dir.Length() < 0.5f ? Vector2.Zero : Vector2.Normalize(dir) * superSpeeds[phase];
@@ -17179,7 +17229,7 @@ namespace AnodyneSharp.Recording
         /// </summary>
         private static KeyFunctions[] DogSidestep(Entity dog, Func<int, Rectangle?> path, List<Threat> others = null)
         {
-            if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(dog) is not true || dog.velocity.Length() < 30f)
+            if (dog.GetType().GetField("_isSuperDog", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(dog) is not true || dog.velocity.ToXna().Length() < 30f)
             {
                 return null;
             }
@@ -17235,7 +17285,7 @@ namespace AnodyneSharp.Recording
                 {
                     var end = path(n) ?? dog.Hitbox;
                     wet = OnConveyor(BotNav.TileOf(p));
-                    score = Vector2.Distance(p + new Vector2(5, 6), end.Center.ToVector2()) - (ks.Length == 0 ? 0 : 2) - (wet ? 24 : 0); // (standing wins a tie; ending in the water is worse)
+                    score = Vector2.Distance(p + new Vector2(5, 6), end.Center.ToXna().ToVector2()) - (ks.Length == 0 ? 0 : 2) - (wet ? 24 : 0); // (standing wins a tie; ending in the water is worse)
                     if (others != null)
                     {
                         // (and not up against the other dog: run there and the next dash corners us between the two)
@@ -17243,7 +17293,7 @@ namespace AnodyneSharp.Recording
                         {
                             if (t.At[Math.Min(n, Horizon)] is Rectangle orr)
                             {
-                                score -= 2f * Math.Max(0f, 40f - Vector2.Distance(p + new Vector2(5, 6), orr.Center.ToVector2()));
+                                score -= 2f * Math.Max(0f, 40f - Vector2.Distance(p + new Vector2(5, 6), orr.Center.ToXna().ToVector2()));
                             }
                         }
                     }
@@ -17278,7 +17328,7 @@ namespace AnodyneSharp.Recording
             {
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Circus.FirePillar)
                 {
-                    set.Add(new Point(e.Hitbox.Center.X / 16, e.Hitbox.Center.Y / 16));
+                    set.Add(new Point(e.Hitbox.Center.ToXna().X / 16, e.Hitbox.Center.ToXna().Y / 16));
                 }
             }
             return set;
@@ -17334,7 +17384,7 @@ namespace AnodyneSharp.Recording
         /// <summary>The direction (towards a beam lane that is at most 4 shoves away over open floor) in which to push a Shieldy, or null.</summary>
         private static KeyFunctions? BeamPushDirection(Entity shieldy, HashSet<Point> lanes)
         {
-            var c = new Vector2(shieldy.Hitbox.Center.X - 5, shieldy.Hitbox.Center.Y - 6);
+            var c = new Vector2(shieldy.Hitbox.Center.ToXna().X - 5, shieldy.Hitbox.Center.ToXna().Y - 6);
             var t0 = BotNav.TileOf(c);
             if (lanes.Contains(t0))
             {
@@ -17382,7 +17432,7 @@ namespace AnodyneSharp.Recording
                 yield return MenuEquipBroom(0);
                 yield return Fight(timeoutFrames, soft, only);
                 yield return MenuEquipBroom(3);
-                Player.transformer.Reset();
+                Player.Native.transformer.Reset();
                 BotRunner.NoAccept = noAccept;
                 yield break;
             }
@@ -17404,6 +17454,10 @@ namespace AnodyneSharp.Recording
             {
                 // The same fight (same screen, same enemies) has ended with us put off its screen time after time (a current, a
                 // knock-back at the edge): starting it once more only goes round again. Leave it to the route.
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  fight refused: {key} ended off its screen {_fightLeftCount} times");
+                }
                 yield break;
             }
             if (soft && _fightDepth > 0 && (only == null || _fightDepth > 1 || _nestedSoft >= 6))
@@ -17412,6 +17466,10 @@ namespace AnodyneSharp.Recording
                 // itself, round and round for ever: the outer fight is already on it; so would the "shooter on the way" one, for the very
                 // plant the outer fight was routing over a gap to, 7000 times over. One foe in the way of the outer fight's walk is fought,
                 // a few times over at most: refused, the walk went on into the Slime blocking a corridor, hit after hit.)
+                if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
+                {
+                    System.Console.Error.WriteLine($"  fight refused: nested (depth {_fightDepth}, soft {_nestedSoft})");
+                }
                 yield break;
             }
             if (_fightDepth == 0)
@@ -17442,7 +17500,7 @@ namespace AnodyneSharp.Recording
 
         private static readonly HashSet<(Entity, Point)> _parkedTried = new(); // (an enemy and the tile it was parked on: hit, it may park again elsewhere)
 
-        private static bool ParkedTry(Entity e) => _parkedTried.Add((e, new Point((int)e.Hitbox.Center.X / 16, (int)e.Hitbox.Center.Y / 16)));
+        private static bool ParkedTry(Entity e) => _parkedTried.Add((e, new Point((int)e.Hitbox.Center.ToXna().X / 16, (int)e.Hitbox.Center.ToXna().Y / 16)));
 
         // (its "Wait" state, asleep on its perch: the only TimerState under its Active one)
         private static bool AnnoyerWaiting(Entity a) => FsmPath(a).StartsWith("ActiveState/TimerState");
@@ -17454,7 +17512,7 @@ namespace AnodyneSharp.Recording
         private static IEnumerable<object> StrikeParked(Entity e)
         {
             var eb = e.Hitbox;
-            var ec = eb.Center.ToVector2();
+            var ec = eb.Center.ToXna().ToVector2();
             (Vector2 p, Facing f)? SpotIn(Point t)
             {
                 if (!BotNav.Walkable(t) || BotNav.IsSpike(t))
@@ -17501,7 +17559,7 @@ namespace AnodyneSharp.Recording
             // (walked step by step, not with GoTo: that stops to fight whatever is about, this one included, and gives up on it again)
             for (int k = 0; k < 240 && e.exists; k++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield break;
                 }
@@ -17517,8 +17575,8 @@ namespace AnodyneSharp.Recording
                     yield return K(Math.Abs(nc.X) > 2f ? (nc.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (nc.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     continue;
                 }
-                var d = spot - Player.Position;
-                if (!BroomBoxAt(Player.Position, face).Intersects(eb) && d.Length() > 0.6f)
+                var d = spot - Player.Position.ToXna();
+                if (!BroomBoxAt(Player.Position.ToXna(), face).Intersects(eb) && d.Length() > 0.6f)
                 {
                     yield return K(Math.Abs(d.X) > Math.Abs(d.Y) ? (d.X < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (d.Y < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                     continue;
@@ -17537,9 +17595,9 @@ namespace AnodyneSharp.Recording
         // A sleeping Annoyer only wakes with us within 64px of it. Path (jumping spikes if we can) to the nearest floor that close.
         private static List<Point> AnnoyerWakePath(Entity a)
         {
-            var ac = a.Hitbox.Center.ToVector2();
+            var ac = a.Hitbox.Center.ToXna().ToVector2();
             bool oldJ = BotNav.AllowJump;
-            BotNav.AllowJump = GlobalState.inventory.CanJump;
+            BotNav.AllowJump = Gs.CanJump;
             var wake = BotNav.FindPath(BotNav.TileOf(Pos), t => (BotNav.CentreOf(t) + new Vector2(BotNav.HalfW, BotNav.HalfH) - ac).Length() < 44 && !BotNav.IsSpike(t) && BotNav.Walkable(t));
             BotNav.AllowJump = oldJ;
             if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -17554,7 +17612,7 @@ namespace AnodyneSharp.Recording
         // (a shut gate on the way: waking or striking what is behind it is not ours to do yet)
         private static bool ThroughShutGate(List<Point> path)
         {
-            var shut = BotRunner.Entities().Where(e => e.exists && e.Solid && (e.GetType().Name.Contains("Gate") || e.GetType().Name.Contains("KeyBlock"))).Select(e => BotNav.TileOf(e.Hitbox.Center.ToVector2() - new Vector2(BotNav.HalfW, BotNav.HalfH))).ToHashSet();
+            var shut = BotRunner.Entities().Where(e => e.exists && e.Solid && (e.GetType().Name.Contains("Gate") || e.GetType().Name.Contains("KeyBlock"))).Select(e => BotNav.TileOf(e.Hitbox.Center.ToXna().ToVector2() - new Vector2(BotNav.HalfW, BotNav.HalfH))).ToHashSet();
             return path.Any(shut.Contains);
         }
         private static string _fightKey, _fightLeftKey;
@@ -17570,7 +17628,7 @@ namespace AnodyneSharp.Recording
                 {
                     yield break;
                 }
-                if (FrogsReach(Player.Hitbox.Center.ToVector2()))
+                if (FrogsReach(Player.Hitbox.Center.ToXna().ToVector2()))
                 {
                     yield break; // a live Frog in reach keeps spitting: waiting here never ends, the walk on (dodging as it goes) gets us out
                 }
@@ -17613,15 +17671,15 @@ namespace AnodyneSharp.Recording
                 // With no gate on the screen counting kills, a rooted shooter is only scenery that shoots: the walker dodges its
                 // bullets on the way past, and walking up to it to strike is what gets us cornered between its volleys.
                 bool killGate = KillGateShut();
-                foreach (var e in Enemies().Where(e => e.velocity == Vector2.Zero && e.GetType().Name is "Burst_Plant" or "Frog"))
+                foreach (var e in Enemies().Where(e => e.velocity.ToXna() == Vector2.Zero && e.GetType().Name is "Burst_Plant" or "Frog"))
                 {
                     if (!killGate && !(only != null && only(e))) // (one asked for by name is the fight, gate or not)
                     {
                         IgnoredEnemies.Add(e);
                         continue;
                     }
-                    var et = BotNav.TileOf(new Vector2(e.Hitbox.Center.X - 5, e.Hitbox.Center.Y - 6));
-                    BotNav.AllowJump = GlobalState.inventory.CanJump;
+                    var et = BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X - 5, e.Hitbox.Center.ToXna().Y - 6));
+                    BotNav.AllowJump = Gs.CanJump;
                     var reach = BotNav.FindPath(here, q => Math.Abs(q.X - et.X) + Math.Abs(q.Y - et.Y) <= 1, null, strict: true);
                     BotNav.AllowJump = false;
                     if (reach == null && !(Math.Abs(here.X - et.X) + Math.Abs(here.Y - et.Y) <= 1))
@@ -17706,7 +17764,7 @@ namespace AnodyneSharp.Recording
                 var emittersNear = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "PewLaser").Where(em =>
                 {
                     var step = FacingStep(em.facing);
-                    var t = BotNav.TileOf(em.Position + new Vector2(8, 8));
+                    var t = BotNav.TileOf(em.Position.ToXna() + new Vector2(8, 8));
                     for (int i = 0; i < 24; i++)
                     {
                         t = new Point(t.X + step.X, t.Y + step.Y);
@@ -17716,7 +17774,7 @@ namespace AnodyneSharp.Recording
                         }
                         foreach (var sh in shieldies)
                         {
-                            var st = BotNav.TileOf(new Vector2(sh.Hitbox.Center.X - 5, sh.Hitbox.Center.Y - 6));
+                            var st = BotNav.TileOf(new Vector2(sh.Hitbox.Center.ToXna().X - 5, sh.Hitbox.Center.ToXna().Y - 6));
                             if (Math.Abs(st.X - t.X) <= 2 && Math.Abs(st.Y - t.Y) <= 2)
                             {
                                 return true;
@@ -17776,7 +17834,7 @@ namespace AnodyneSharp.Recording
             var ambushCols = new Dictionary<int, int>();
             for (int i = 0; i < timeoutFrames; i++)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return AdvanceKeys(i);
                     continue;
@@ -17785,17 +17843,17 @@ namespace AnodyneSharp.Recording
                 {
                     // Knocked (or walked: a dodge, a wade) onto another screen. The fight is still there to win (a section that called it goes
                     // on as if it were): back in and on with it, twice at most; after that, that room's enemies are not this fight's business.
-                    var myScreen = new Point((int)(Player.Hitbox.Center.X / 160), (int)(Player.Hitbox.Center.Y / 160));
+                    var myScreen = new Point((int)(Player.Hitbox.Center.ToXna().X / 160), (int)(Player.Hitbox.Center.ToXna().Y / 160));
                     if (myScreen == startGrid && edgeSteps < 60)
                     {
                         // Standing astride the edge: the camera still counts the screen next door while we are (mostly) back on the
                         // fight's. Step on in to its middle until the screen really is the fight's again.
                         edgeSteps++;
-                        float mx = startGrid.X * 160 + 80 - Player.Hitbox.Center.X, my = startGrid.Y * 160 + 80 - Player.Hitbox.Center.Y;
+                        float mx = startGrid.X * 160 + 80 - Player.Hitbox.Center.ToXna().X, my = startGrid.Y * 160 + 80 - Player.Hitbox.Center.ToXna().Y;
                         yield return K(Math.Abs(mx) > Math.Abs(my) ? (mx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (my < 0 ? KeyFunctions.Up : KeyFunctions.Down));
                         continue;
                     }
-                    if (backIn < 2 && Map == startMap && GlobalState.CUR_HEALTH >= 3)
+                    if (backIn < 2 && Map == startMap && Gs.Health >= 3)
                     {
                         backIn++;
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
@@ -17815,7 +17873,7 @@ namespace AnodyneSharp.Recording
                 FightGrid = startGrid;
                 FightFrame = BotRunner.Frame;
                 if (Player.raft == null && Player.state == AnodyneSharp.Entities.PlayerState.GROUND && OnConveyor(BotNav.TileOf(Pos))
-                    && !Enemies().Any(e => e.velocity.Length() > 50f && Vector2.Distance(e.Hitbox.Center.ToVector2(), Player.Hitbox.Center.ToVector2()) < 56f)) // (a dash coming: dodge first, the water can wait a moment)
+                    && !Enemies().Any(e => e.velocity.ToXna().Length() > 50f && Vector2.Distance(e.Hitbox.Center.ToXna().ToVector2(), Player.Hitbox.Center.ToXna().ToVector2()) < 56f)) // (a dash coming: dodge first, the water can wait a moment)
                 {
                     // Wading (knocked in, or put back at a screen entrance that is water after drowning): we sink in 3s, so ashore first.
                     var wadeFrom = BotNav.TileOf(Pos);
@@ -17885,8 +17943,8 @@ namespace AnodyneSharp.Recording
                     // can be reached) and come back to the Slime once it is the only one shooting.
                     if (unreachable is AnodyneSharp.Entities.Enemy.Slime && !crossfireCleared.Contains(unreachable)
                         && enemies.Where(e => e != unreachable && e.GetType().Name is "Burst_Plant" or "Frog" && !ignoredTargets.Contains(e))
-                                  .OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - Pos).LengthSquared())
-                                  .FirstOrDefault(e => BotNav.FindPath(BotNav.TileOf(Pos), t => BotNav.TileOf(new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y)) is var et && Math.Abs(t.X - et.X) + Math.Abs(t.Y - et.Y) <= 2) != null) is Entity shooter)
+                                  .OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - Pos).LengthSquared())
+                                  .FirstOrDefault(e => BotNav.FindPath(BotNav.TileOf(Pos), t => BotNav.TileOf(new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y)) is var et && Math.Abs(t.X - et.X) + Math.Abs(t.Y - et.Y) <= 2) != null) is Entity shooter)
                     {
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
@@ -17900,7 +17958,7 @@ namespace AnodyneSharp.Recording
                     }
                     // Out of reach, or only hard to pin down (a bullet Slime in a corridor keeps shooting us back out of reach)? If there is
                     // floor right beside it, go for it hard a couple of times before leaving it.
-                    var ut = BotNav.TileOf(new Vector2(unreachable.Hitbox.Center.X - 5, unreachable.Hitbox.Center.Y - 6));
+                    var ut = BotNav.TileOf(new Vector2(unreachable.Hitbox.Center.ToXna().X - 5, unreachable.Hitbox.Center.ToXna().Y - 6));
                     var up = BotNav.FindPath(BotNav.TileOf(Pos), t => Math.Abs(t.X - ut.X) + Math.Abs(t.Y - ut.Y) <= 1, ut);
                     lastPressPath = up?.Count ?? -1;
                     if ((softPress < 2 || (softPress < 6 && KillGateShut())) && up != null && up.Count <= 12)
@@ -17909,7 +17967,7 @@ namespace AnodyneSharp.Recording
                         softPress++;
                         pressed = unreachable;
                         // (with others about the charge still steps round their shots and bodies: see the far branch)
-                        aggroFrames = GlobalState.CUR_HEALTH >= (enemies.Count == 1 ? 5 : 4) ? 240 : 0;
+                        aggroFrames = Gs.Health >= (enemies.Count == 1 ? 5 : 4) ? 240 : 0;
                         noKill = 1;
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                         {
@@ -18010,13 +18068,13 @@ namespace AnodyneSharp.Recording
                         relocFrames = 0;
                     }
                 }
-                if (GlobalState.CUR_HEALTH <= 3)
+                if (Gs.Health <= 3)
                 {
                     // Dropped hearts are worth a detour when low.
                     var heart = BotRunner.Entities().FirstOrDefault(e => e.exists && e.GetType().Name.Contains("HealthPickup"));
                     if (heart != null)
                     {
-                        var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
+                        var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.ToXna().X - 5, heart.Hitbox.Center.ToXna().Y - 6));
                         var hp = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
                         if (hp != null && hp.Count > 0)
                         {
@@ -18083,26 +18141,26 @@ namespace AnodyneSharp.Recording
                     stillFrames = 0;
                 }
                 lastStep = null;
-                if (GlobalState.CUR_HEALTH != _lastHp)
+                if (Gs.Health != _lastHp)
                 {
                     if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                     {
                         string near = string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.X},{e.Hitbox.Y}({e.Hitbox.Width}x{e.Hitbox.Height})"));
-                        System.Console.Error.WriteLine($"  HP {_lastHp}->{GlobalState.CUR_HEALTH} f{i} playerBox={Player.Hitbox} face={Player.facing} lanes={BotNav.LaneTiles().Count} enemies: {near} dangers: " + string.Join(" ", Dangers().Select(d => $"{d.GetType().Name}{d.Hitbox}")));
+                        System.Console.Error.WriteLine($"  HP {_lastHp}->{Gs.Health} f{i} playerBox={Player.Hitbox} face={Player.facing} lanes={BotNav.LaneTiles().Count} enemies: {near} dangers: " + string.Join(" ", Dangers().Select(d => $"{d.GetType().Name}{d.Hitbox}")));
                     }
-                    _lastHp = GlobalState.CUR_HEALTH;
+                    _lastHp = Gs.Health;
                 }
                 if (committed == null || !committed.exists || !enemies.Contains(committed))
                 {
                     // A bullet Slime shoots at us from anywhere while we stand about waiting out a plant's or frog's volleys: it goes first.
                     bool rooted = enemies.Any(e => e.GetType().Name is "Burst_Plant" or "Frog");
-                    committed = enemies.OrderBy(e => rooted && e is AnodyneSharp.Entities.Enemy.Slime sl && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() ? 0 : 1)
-                        .ThenBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).LengthSquared()).First();
+                    committed = enemies.OrderBy(e => rooted && e is AnodyneSharp.Entities.Enemy.Slime sl && sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() ? 0 : 1)
+                        .ThenBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).LengthSquared()).First();
                 }
                 var target = (forced != null && forced.exists && enemies.Contains(forced)) ? forced : committed;
                 if (i % 10 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.X},{e.Hitbox.Center.Y}")) + $" target={target.GetType().Name} status=[{BotRunner.Status}]");
+                    System.Console.Error.WriteLine($"  enemies f{i} me={me} " + string.Join(" ", enemies.Select(e => $"{e.GetType().Name}@{e.Hitbox.Center.ToXna().X},{e.Hitbox.Center.ToXna().Y}")) + $" target={target.GetType().Name} status=[{BotRunner.Status}]");
                 }
                 {
                     // Whatever the plan (even a forced one): a Slime that is right beside us is the one that touches us next.
@@ -18114,11 +18172,11 @@ namespace AnodyneSharp.Recording
                         target = besideUs;
                     }
                 }
-                if (enemies.FirstOrDefault(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < (forced == null ? 80 : 40)) is Entity nearAnnoyer)
+                if (enemies.FirstOrDefault(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).Length() < (forced == null ? 80 : 40)) is Entity nearAnnoyer)
                 {
                     target = nearAnnoyer; // one hit kills it and it is the one that comes at us: deal with it before a patroller
                 }
-                if (enemies.FirstOrDefault(e => e.GetType().Name == "GasGuy" && Grid == new Point((int)(e.Hitbox.Center.X / 160), (int)(e.Hitbox.Center.Y / 160))) is Entity gasAny
+                if (enemies.FirstOrDefault(e => e.GetType().Name == "GasGuy" && Grid == new Point((int)(e.Hitbox.Center.ToXna().X / 160), (int)(e.Hitbox.Center.ToXna().Y / 160))) is Entity gasAny
                     && (enemies.Any(e => e.GetType().Name == "Frog") || BotRunner.Entities().Any(e => e.exists && e is AnodyneSharp.Entities.Enemy.Apartment.OnSightDashTrap))
                     && GasWaitSpot() is Point gasSpot)
                 {
@@ -18135,7 +18193,7 @@ namespace AnodyneSharp.Recording
                         yield return WalkTo(gsc.X, gsc.Y, tol: 1.5f, timeout: 60);
                         continue;
                     }
-                    float gdx = gasAny.Hitbox.Center.X - Player.Hitbox.Center.X, gdy = gasAny.Hitbox.Center.Y - Player.Hitbox.Center.Y;
+                    float gdx = gasAny.Hitbox.Center.ToXna().X - Player.Hitbox.Center.ToXna().X, gdy = gasAny.Hitbox.Center.ToXna().Y - Player.Hitbox.Center.ToXna().Y;
                     var gface = Math.Abs(gdx) > Math.Abs(gdy) ? (gdx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (gdy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
                     if (Player.facing != FacingOf(gface))
                     {
@@ -18152,8 +18210,8 @@ namespace AnodyneSharp.Recording
                     yield return K();
                     continue;
                 }
-                if (enemies.Where(e => e.GetType().Name == "GasGuy").OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length()).FirstOrDefault() is Entity nearGas &&
-                    (new Vector2(nearGas.Hitbox.Center.X, nearGas.Hitbox.Center.Y) - me).Length() < 40)
+                if (enemies.Where(e => e.GetType().Name == "GasGuy").OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).Length()).FirstOrDefault() is Entity nearGas &&
+                    (new Vector2(nearGas.Hitbox.Center.ToXna().X, nearGas.Hitbox.Center.ToXna().Y) - me).Length() < 40)
                 {
                     target = nearGas; // it homes in on us through anything: the one about to touch us comes first
                 }
@@ -18175,14 +18233,14 @@ namespace AnodyneSharp.Recording
                     routedFor = target;
                     // An enemy walled off from where we stand (the slime in the pocket whose door is on the other screen): the fight is
                     // there, so go round to the side it can be reached from first.
-                    var tTile = BotNav.TileOf(new Vector2(target.Hitbox.Center.X - 5, target.Hitbox.Center.Y - 6));
+                    var tTile = BotNav.TileOf(new Vector2(target.Hitbox.Center.ToXna().X - 5, target.Hitbox.Center.ToXna().Y - 6));
                     var mine = FloodRegion(BotNav.TileOf(Pos), 900);
                     bool reachableHere = mine.Contains(tTile) || new[] { new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => mine.Contains(new Point(tTile.X + o.X, tTile.Y + o.Y)));
                     // (not for what flies over the walls to us, an Annoyer or a Gas Guy: walled off or not, it comes)
                     if (!reachableHere && only == null && target.GetType().Name is not ("Annoyer" or "GasGuy"))
                     {
                         var theirs = FloodRegion(tTile, 900);
-                        BotNav.AllowJump = GlobalState.inventory.CanJump;
+                        BotNav.AllowJump = Gs.CanJump;
                         var roundPath = BotNav.FindPath(BotNav.TileOf(Pos), t => theirs.Contains(t));
                         bool canGoRound = roundPath != null;
                         BotNav.AllowJump = false;
@@ -18234,7 +18292,7 @@ namespace AnodyneSharp.Recording
                         continue;
                     }
                 }
-                var c = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
+                var c = new Vector2(target.Hitbox.Center.ToXna().X, target.Hitbox.Center.ToXna().Y);
                 float dx = c.X - me.X, dy = c.Y - me.Y;
                 BotRunner.Status = $"fight {target.GetType().Name} ({enemies.Count} left{(only != null ? ", only" : "")}{(soft ? ", soft" : "")}) d=({dx:0},{dy:0})";
                 if (Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS") is string shotDir && i % 10 == 0 && i >= int.Parse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS_FROM") ?? "0") && i < int.Parse(Environment.GetEnvironmentVariable("ANODYNE_BOT_SHOTS_FROM") ?? "0") + 300)
@@ -18243,7 +18301,7 @@ namespace AnodyneSharp.Recording
                 }
                 if (i % 120 == 0 && Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null)
                 {
-                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={GlobalState.CUR_HEALTH} enemies={enemies.Count}{(target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(target) is int th ? $" its hp={th}" : "")}");
+                    System.Console.Error.WriteLine($"fight {target.GetType().Name} f{i} me={me} target={c} d=({dx:0},{dy:0}) hp={Gs.Health} enemies={enemies.Count}{(target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(target) is int th ? $" its hp={th}" : "")}");
                 }
                 // Whatever the plan is, a patrolling Shieldy that is about to walk into where we stand comes first: clear of it, then carry on.
                 if (!(Player.broom != null && Player.broom.exists))
@@ -18270,7 +18328,7 @@ namespace AnodyneSharp.Recording
                 // A Gas Guy on top of us hurts every time our blink runs out (it homes in, and nothing else here keeps off it): it comes
                 // first, whatever we were after (a TeleGuy far off kept us standing there while it took 7 hearts).
                 if (target.GetType().Name != "GasGuy" && Map == "APARTMENT"
-                    && enemies.FirstOrDefault(e => e.GetType().Name == "GasGuy" && (e.Center - Player.Center).Length() < 30) is Entity gasNear)
+                    && enemies.FirstOrDefault(e => e.GetType().Name == "GasGuy" && (e.Center.ToXna() - Player.Center.ToXna()).Length() < 30) is Entity gasNear)
                 {
                     target = gasNear;
                 }
@@ -18309,9 +18367,9 @@ namespace AnodyneSharp.Recording
                     // Whatever we are after, a Slasher near us about to cut comes first: the dodge below plans round it. (Any map, and in
                     // a fight for something else only: holding still for the Fields (2,6) Annoyers sat in its long cut.)
                     SlasherThreats(); // (keeps each one's phase up to date)
-                    var pcNow = Player.Center;
-                    if (Enemies().Where(e => e.GetType().Name == "Slasher" && (e.Center - pcNow).Length() < 72)
-                            .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.SubEntities().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
+                    var pcNow = Player.Center.ToXna();
+                    if (Enemies().Where(e => e.GetType().Name == "Slasher" && (e.Center.ToXna() - pcNow).Length() < 72)
+                            .FirstOrDefault(e => SlasherCutIn(e) is int cin && cin >= 0 && cin <= 50 || e.Subs().Any(sub => sub.exists && sub.visible && sub.GetType().Name.EndsWith("Slash"))) is Entity soon)
                     {
                         target = soon;
                     }
@@ -18331,8 +18389,8 @@ namespace AnodyneSharp.Recording
                         // drift after us, frame by frame; its cut is made from where it and we are then, so it is checked exactly.
                         var slList = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Slasher").ToList();
                         var cutsNow = slThreats.Where(t => t.Name == "Slasher cut").ToList();
-                        var vcOff = Player.VisualCenter - Player.Position;
-                        var hbOff = new Vector2(Player.Hitbox.X, Player.Hitbox.Y) - Player.Position;
+                        var vcOff = Player.VisualCenter.ToXna() - Player.Position.ToXna();
+                        var hbOff = new Vector2(Player.Hitbox.X, Player.Hitbox.Y) - Player.Position.ToXna();
                         var winding = slList.Select(e => (e, left: SlasherCutIn(e))).Where(w => w.left >= 0 && w.left <= 64).ToList();
                         Vector2 Vel(KeyFunctions[] keys)
                         {
@@ -18349,8 +18407,8 @@ namespace AnodyneSharp.Recording
                         {
                             var v = Vel(runDir);
                             var v2 = Vel(then);
-                            var q = Player.Position;
-                            var sp = winding.Select(w => w.e.Position).ToArray();
+                            var q = Player.Position.ToXna();
+                            var sp = winding.Select(w => w.e.Position.ToXna()).ToArray();
                             // (what hurts to walk into on the way: a Gas Guy, drifting after us at 12px/s on each axis; its cloud only swaps the
                             // d-pad. A TeleGuy standing about is left out: counting it boxes us in with the cuts more often than it saves a touch)
                             var bodies = new List<Rectangle>();
@@ -18361,7 +18419,7 @@ namespace AnodyneSharp.Recording
                             // comes is the next hit)
                             var bouncers = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "BounceDashTrap").ToList();
                             var bPos = bouncers.Select(e => new Vector2(e.Hitbox.X, e.Hitbox.Y)).ToArray();
-                            var bVel = bouncers.Select(e => e.velocity * GameTimes.DeltaTime).ToArray();
+                            var bVel = bouncers.Select(e => e.velocity.ToXna() * GameTimes.DeltaTimeF).ToArray();
                             for (int k = 1; k <= 66; k++)
                             {
                                 for (int b = 0; b < bouncers.Count; b++)
@@ -18397,8 +18455,8 @@ namespace AnodyneSharp.Recording
                                 }
                                 for (int g = 0; g < gasBoxes.Count && k <= 40; g++)
                                 {
-                                    var gc = new Vector2(gasBoxes[g].Center.X, gasBoxes[g].Center.Y) + gasOff[g];
-                                    var mc = new Vector2(me2.Center.X, me2.Center.Y);
+                                    var gc = new Vector2(gasBoxes[g].Center.ToXna().X, gasBoxes[g].Center.ToXna().Y) + gasOff[g];
+                                    var mc = new Vector2(me2.Center.ToXna().X, me2.Center.ToXna().Y);
                                     AnodyneSharp.Utilities.MathUtilities.MoveTo(ref gasOff[g].X, gasOff[g].X + (mc.X - gc.X), 12);
                                     AnodyneSharp.Utilities.MathUtilities.MoveTo(ref gasOff[g].Y, gasOff[g].Y + (mc.Y - gc.Y), 12);
                                     var gb = gasBoxes[g];
@@ -18476,7 +18534,7 @@ namespace AnodyneSharp.Recording
                                 Facing? hitFace = null;
                                 foreach (var hf in new[] { Player.facing, Facing.LEFT, Facing.RIGHT, Facing.UP, Facing.DOWN })
                                 {
-                                    var bx = BroomBoxAt(Player.Position, hf);
+                                    var bx = BroomBoxAt(Player.Position.ToXna(), hf);
                                     if (slList.Any(e => !e._flickering && e.Hitbox.Intersects(bx)))
                                     {
                                         hitFace = hf;
@@ -18504,7 +18562,7 @@ namespace AnodyneSharp.Recording
                                         var (clear, q, hitAt) = Sim(runDir, walk);
                                         var qc = q + vcOff;
                                         // (no clear way: the one that is hit latest, where it may still turn out clear as things move)
-                                        float score = clear ? 1000f - walk - 0.5f * (target.Center - qc).Length() + 3f * Open(q) : hitAt * 8f + slList.Min(e => (e.Center - qc).Length()) * 0.2f + Open(q);
+                                        float score = clear ? 1000f - walk - 0.5f * (target.Center.ToXna() - qc).Length() + 3f * Open(q) : hitAt * 8f + slList.Min(e => (e.Center.ToXna() - qc).Length()) * 0.2f + Open(q);
                                         score += _slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f;
                                         if (score > bestScore)
                                         {
@@ -18535,7 +18593,7 @@ namespace AnodyneSharp.Recording
                                                 {
                                                     continue;
                                                 }
-                                                float score = 900f - walk - 0.5f * (target.Center - (q + vcOff)).Length() + 3f * Open(q) + (_slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f);
+                                                float score = 900f - walk - 0.5f * (target.Center.ToXna() - (q + vcOff)).Length() + 3f * Open(q) + (_slasherRun != null && runDir.SequenceEqual(_slasherRun) ? 6f : 0f);
                                                 if (score > bestScore)
                                                 {
                                                     bestScore = score;
@@ -18547,7 +18605,7 @@ namespace AnodyneSharp.Recording
                                 }
                                 if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                                 {
-                                    System.Console.Error.WriteLine($"  slrun f{BotRunner.Frame} me={Player.Hitbox} best={string.Join("+", best)} score={bestScore} winding=" + string.Join(" ", winding.Select(w => $"{w.e.Position}:{w.left}")) + " straight: " + string.Join(" ", StActions.Skip(1).Select(rd => string.Join("+", rd) + ":" + Sim(rd, 66).hitAt + "@" + Sim(rd, 66).end)) + " L26U:" + Sim(new[] { KeyFunctions.Left }, 26, new[] { KeyFunctions.Up }).hitAt);
+                                    System.Console.Error.WriteLine($"  slrun f{BotRunner.Frame} me={Player.Hitbox} best={string.Join("+", best)} score={bestScore} winding=" + string.Join(" ", winding.Select(w => $"{w.e.Position.ToXna()}:{w.left}")) + " straight: " + string.Join(" ", StActions.Skip(1).Select(rd => string.Join("+", rd) + ":" + Sim(rd, 66).hitAt + "@" + Sim(rd, 66).end)) + " L26U:" + Sim(new[] { KeyFunctions.Left }, 26, new[] { KeyFunctions.Up }).hitAt);
                                 }
                                 _slasherRun = best;
                                 BotRunner.Status = $"fight/slasher: run from the coming cuts ({string.Join("+", best)}{(bestScore >= 500 ? "" : ", no clear way")})";
@@ -18558,7 +18616,7 @@ namespace AnodyneSharp.Recording
                     }
                     _slasherRun = null;
                     string anim = target.CurAnimName ?? "";
-                    bool cutting = anim.StartsWith("attack") && target.SubEntities().Any(sub => sub.exists);
+                    bool cutting = anim.StartsWith("attack") && target.Subs().Any(sub => sub.exists);
                     bool floating = anim.StartsWith("float");
                     if (floating && !slPrev.StartsWith("float"))
                     {
@@ -18568,8 +18626,8 @@ namespace AnodyneSharp.Recording
                     slPrev = anim;
                     if (anim.StartsWith("warning") || cutting || (floating && i - slFloat >= SlasherStrikeFrames))
                     {
-                        var sc = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
-                        var pcen = new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y);
+                        var sc = new Vector2(target.Hitbox.Center.ToXna().X, target.Hitbox.Center.ToXna().Y);
+                        var pcen = new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y);
                         float ddx = pcen.X - sc.X, ddy = pcen.Y - sc.Y;
                         bool safe = Math.Min(Math.Abs(ddx), Math.Abs(ddy)) >= 30 || Math.Sqrt(ddx * ddx + ddy * ddy) >= 70;
                         BotRunner.Status = safe ? "fight/slasher: clear of the cut" : "fight/slasher: out of line of the cut";
@@ -18684,7 +18742,7 @@ namespace AnodyneSharp.Recording
                             }
                         }
                     }
-                    var slCen = new Vector2(target.Hitbox.Center.X, target.Hitbox.Center.Y);
+                    var slCen = new Vector2(target.Hitbox.Center.ToXna().X, target.Hitbox.Center.ToXna().Y);
                     var slNear = new HashSet<Point>();
                     for (int ox = -16; ox <= 16; ox += 8)
                     {
@@ -18714,7 +18772,7 @@ namespace AnodyneSharp.Recording
                         yield return slStepClear == null || slStepClear(sIn) ? K(sIn) : K();
                         continue;
                     }
-                    if (!inReach && (target.Position - Pos).Length() > 20 && !slNear.Contains(slHere))
+                    if (!inReach && (target.Position.ToXna() - Pos).Length() > 20 && !slNear.Contains(slHere))
                     {
                         var approach = BotNav.FindPath(slHere, t => slNear.Contains(t), slHere);
                         // (a way round that starts by backing off from a Slasher close by and in a straight line is no way in: the
@@ -18751,7 +18809,7 @@ namespace AnodyneSharp.Recording
                 if (target.GetType().Name == "Dog")
                 {
                     var dg = target.Hitbox;
-                    float dspeed = Math.Abs(target.velocity.X) + Math.Abs(target.velocity.Y);
+                    float dspeed = Math.Abs(target.velocity.ToXna().X) + Math.Abs(target.velocity.ToXna().Y);
                     if (noKill > 0 && noKill < 1200)
                     {
                         noKill = 1; // three hits take three barks and three charges: waiting out the charges is not "no progress"
@@ -18759,13 +18817,13 @@ namespace AnodyneSharp.Recording
                     if (i % 15 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
                         var dhf0 = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        System.Console.Error.WriteLine($"  dogstate f{i} health={dhf0?.GetValue(target)} dashing={dogDashing} P={Player.Hitbox} dog={dg} v={target.velocity} status={BotRunner.Status}");
+                        System.Console.Error.WriteLine($"  dogstate f{i} health={dhf0?.GetValueF(target)} dashing={dogDashing} P={Player.Hitbox} dog={dg} v={target.velocity.ToXna()} status={BotRunner.Status}");
                     }
                     if (dspeed > 40f && !dogDashing)
                     {
                         dogDashing = true;
                         dogAttackFrame = 0;
-                        dogTPos = Player.Position; // the position the dog aims at (it samples ours as the attack begins)
+                        dogTPos = Player.Position.ToXna(); // the position the dog aims at (it samples ours as the attack begins)
                     }
                     if (dogDashing)
                     {
@@ -18785,7 +18843,7 @@ namespace AnodyneSharp.Recording
                     }
                     // (its dashes stop at walls: one walled off from us, dashing at us from the far side, is no reason to stand off; go round to it)
                     bool dashesMiss = false;
-                    if (dogDashing && Math.Sqrt(Math.Pow(dg.Center.X - Player.Hitbox.Center.X, 2) + Math.Pow(dg.Center.Y - Player.Hitbox.Center.Y, 2)) >= 60)
+                    if (dogDashing && Math.Sqrt(Math.Pow(dg.Center.ToXna().X - Player.Hitbox.Center.ToXna().X, 2) + Math.Pow(dg.Center.ToXna().Y - Player.Hitbox.Center.ToXna().Y, 2)) >= 60)
                     {
                         var dp0 = DogPath(target, dogAttackFrame, dogTPos);
                         var stand = Player.Hitbox;
@@ -18811,7 +18869,7 @@ namespace AnodyneSharp.Recording
                             // (a super dog re-aims at us for every dash: running ahead of one only corners us for the next; off its line is the dodge)
                             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                             {
-                                System.Console.Error.WriteLine($"  dog side f{i} P={pbd} dog={dg} v={target.velocity} keys={string.Join("+", side)}");
+                                System.Console.Error.WriteLine($"  dog side f{i} P={pbd} dog={dg} v={target.velocity.ToXna()} keys={string.Join("+", side)}");
                             }
                             yield return side;
                             continue;
@@ -18822,13 +18880,13 @@ namespace AnodyneSharp.Recording
                             ?? SpaceTimeMove(new Vector2(pbd.X, pbd.Y), new List<Threat> { dogThreat }, useCache: false, survive: true);
                         if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                         {
-                            System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity} plan={(away == null ? "none" : string.Join("+", away))} pred={dogThreat.At[10]}/{dogThreat.At[20]}/{dogThreat.At[30]} att={DogAttackPlan(target)?.next}/{DogAttackPlan(target)?.phase} T={string.Join(";", DogAttackPlan(target)?.targets ?? new Vector2[0])} pos={target.Position}");
+                            System.Console.Error.WriteLine($"  dog f{i} att={dogAttackFrame} P={pbd} dog={dg} v={target.velocity.ToXna()} plan={(away == null ? "none" : string.Join("+", away))} pred={dogThreat.At[10]}/{dogThreat.At[20]}/{dogThreat.At[30]} att={DogAttackPlan(target)?.next}/{DogAttackPlan(target)?.phase} T={string.Join(";", DogAttackPlan(target)?.targets ?? new Vector2[0])} pos={target.Position.ToXna()}");
                         }
-                        if (away == null && GlobalState.inventory.CanJump && Player.state == PlayerState.GROUND && _jumpPressFrame != BotRunner.Frame - 1
+                        if (away == null && Gs.CanJump && Player.state == PlayerState.GROUND && _jumpPressFrame != BotRunner.Frame - 1
                             && dogThreat.At.Take(20).Any(r => r is Rectangle dr2 && new Rectangle(dr2.X - 4, dr2.Y - 4, dr2.Width + 8, dr2.Height + 8).Intersects(pbd)))
                         {
                             // no way clear on foot or landing: it only hurts on the ground, so be off it as it comes (away from it)
-                            var dc = dg.Center.ToVector2() - pbd.Center.ToVector2();
+                            var dc = dg.Center.ToXna().ToVector2() - pbd.Center.ToXna().ToVector2();
                             var offK = Math.Abs(dc.X) >= Math.Abs(dc.Y) ? (dc.X > 0 ? KeyFunctions.Left : KeyFunctions.Right) : (dc.Y > 0 ? KeyFunctions.Up : KeyFunctions.Down);
                             _jumpPressFrame = BotRunner.Frame;
                             _airSteer = JumpLandsOnFloor(offK) ? offK : null;
@@ -18857,11 +18915,11 @@ namespace AnodyneSharp.Recording
                     }
                     // barking or pacing: close in to a standoff ~5px short of its box (touching it hurts), line up, face it and swing
                     var pbs = Player.Hitbox;
-                    float sdx = dg.Center.X - pbs.Center.X, sdy = dg.Center.Y - pbs.Center.Y;
+                    float sdx = dg.Center.ToXna().X - pbs.Center.ToXna().X, sdy = dg.Center.ToXna().Y - pbs.Center.ToXna().Y;
                     // (close by it is the standoff even when the line reads shut: a dog in a one-tile corridor hangs half into the wall
                     // beside it, and walking at it as if it were far off walks into it)
                     double sdist = Math.Sqrt(sdx * sdx + sdy * sdy);
-                    if (sdist < 60 && (sdist < 32 || OpenLine(pbs.Center.ToVector2(), dg.Center.ToVector2())))
+                    if (sdist < 60 && (sdist < 32 || OpenLine(pbs.Center.ToXna().ToVector2(), dg.Center.ToXna().ToVector2())))
                     {
                         bool vert = Math.Abs(sdy) >= Math.Abs(sdx);
                         var faceKey = vert ? (sdy > 0 ? KeyFunctions.Down : KeyFunctions.Up) : (sdx > 0 ? KeyFunctions.Right : KeyFunctions.Left);
@@ -18910,7 +18968,7 @@ namespace AnodyneSharp.Recording
                             if (Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                             {
                                 var dhf = target.GetType().GetField("_health", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                                System.Console.Error.WriteLine($"  dog SWING f{i} health={dhf?.GetValue(target)} gap={sgap} cross={cross:0} face={Player.facing}");
+                                System.Console.Error.WriteLine($"  dog SWING f{i} health={dhf?.GetValueF(target)} gap={sgap} cross={cross:0} face={Player.facing}");
                             }
                             yield return K(KeyFunctions.Accept);
                             continue;
@@ -18928,8 +18986,8 @@ namespace AnodyneSharp.Recording
                     var pbp = Player.Hitbox;
                     // (a burst one sits on its last frame a while; and only this plant's count: with two plants in a room the other may never stop)
                     bool bulletsUp = BotRunner.Entities().Any(e => e.exists && e.GetType().Name == "BurstBullet" && e.CurAnimName == "move"
-                        && (e.Hitbox.Center.ToVector2() - pl.Center.ToVector2()).Length() < 80f);
-                    float pdist = (new Vector2(pl.Center.X, pl.Center.Y) - new Vector2(pbp.Center.X, pbp.Center.Y)).Length();
+                        && (e.Hitbox.Center.ToXna().ToVector2() - pl.Center.ToXna().ToVector2()).Length() < 80f);
+                    float pdist = (new Vector2(pl.Center.ToXna().X, pl.Center.ToXna().Y) - new Vector2(pbp.Center.ToXna().X, pbp.Center.ToXna().Y)).Length();
                     if (noKill > 0 && noKill < 1200 && (bulletsUp || pdist < 50))
                     {
                         noKill = 1; // waiting out its bullets / working at it from the standoff is progress; walking at it for ever is not
@@ -18944,9 +19002,9 @@ namespace AnodyneSharp.Recording
                     {
                         // Four seconds rooted to one spot waiting for a volley that does not come (out of its reach, or a step in that is never
                         // safe): step back from it a little and let the plan start over from there.
-                        var awayF = Math.Abs(pbp.Center.X - pl.Center.X) >= Math.Abs(pbp.Center.Y - pl.Center.Y)
-                            ? (pbp.Center.X >= pl.Center.X ? KeyFunctions.Right : KeyFunctions.Left)
-                            : (pbp.Center.Y >= pl.Center.Y ? KeyFunctions.Down : KeyFunctions.Up);
+                        var awayF = Math.Abs(pbp.Center.ToXna().X - pl.Center.ToXna().X) >= Math.Abs(pbp.Center.ToXna().Y - pl.Center.ToXna().Y)
+                            ? (pbp.Center.ToXna().X >= pl.Center.ToXna().X ? KeyFunctions.Right : KeyFunctions.Left)
+                            : (pbp.Center.ToXna().Y >= pl.Center.ToXna().Y ? KeyFunctions.Down : KeyFunctions.Up);
                         _frogStillSince = BotRunner.Frame;
                         if (soft && pdist >= 110)
                         {
@@ -18992,9 +19050,9 @@ namespace AnodyneSharp.Recording
                         if (pdist < 70)
                         {
                             BotRunner.Status = "fight/plant: back off while its bullets fly";
-                            var offKey = Math.Abs(pbp.Center.X - pl.Center.X) >= Math.Abs(pbp.Center.Y - pl.Center.Y)
-                                ? (pbp.Center.X >= pl.Center.X ? KeyFunctions.Right : KeyFunctions.Left)
-                                : (pbp.Center.Y >= pl.Center.Y ? KeyFunctions.Down : KeyFunctions.Up);
+                            var offKey = Math.Abs(pbp.Center.ToXna().X - pl.Center.ToXna().X) >= Math.Abs(pbp.Center.ToXna().Y - pl.Center.ToXna().Y)
+                                ? (pbp.Center.ToXna().X >= pl.Center.ToXna().X ? KeyFunctions.Right : KeyFunctions.Left)
+                                : (pbp.Center.ToXna().Y >= pl.Center.ToXna().Y ? KeyFunctions.Down : KeyFunctions.Up);
                             yield return SafeMove(offKey, target, 12f);
                             continue;
                         }
@@ -19024,17 +19082,17 @@ namespace AnodyneSharp.Recording
                     }
                 }
                 // Hit and owing hearts: a dropped heart that is near and not guarded by an enemy is worth more than the fight (they time out).
-                if (BotRunner.DebtBaseline >= 0 || GlobalState.CUR_HEALTH < GlobalState.MAX_HEALTH)
+                if (BotRunner.DebtBaseline >= 0 || Gs.Health < Gs.MaxHealth)
                 {
-                    var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup") && !_unreachableHearts.Contains(e)).OrderBy(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length()).FirstOrDefault();
-                    if (heart != null && (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length() < 110 &&
-                        !Enemies().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y)).Length() < 22) &&
-                        !Dangers().Any(e => (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < 36)) // (not with one on us, even one the fight gave up on)
+                    var heart = BotRunner.Entities().Where(e => e.exists && e.GetType().Name.Contains("HealthPickup") && !_unreachableHearts.Contains(e)).OrderBy(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y)).Length()).FirstOrDefault();
+                    if (heart != null && (new Vector2(heart.Hitbox.Center.ToXna().X, heart.Hitbox.Center.ToXna().Y) - new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y)).Length() < 110 &&
+                        !Enemies().Any(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - new Vector2(heart.Hitbox.Center.ToXna().X, heart.Hitbox.Center.ToXna().Y)).Length() < 22) &&
+                        !Dangers().Any(e => (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).Length() < 36)) // (not with one on us, even one the fight gave up on)
                     {
-                        var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.X - 5, heart.Hitbox.Center.Y - 6));
+                        var ht = BotNav.TileOf(new Vector2(heart.Hitbox.Center.ToXna().X - 5, heart.Hitbox.Center.ToXna().Y - 6));
                         var hpath = BotNav.FindPath(BotNav.TileOf(Pos), t => t == ht, ht);
                         // (one dropped against a wall can sit out of reach in it: walking at it for a second without getting closer gives up on it)
-                        float hd = (new Vector2(heart.Hitbox.Center.X, heart.Hitbox.Center.Y) - new Vector2(Player.Hitbox.Center.X, Player.Hitbox.Center.Y)).Length();
+                        float hd = (new Vector2(heart.Hitbox.Center.ToXna().X, heart.Hitbox.Center.ToXna().Y) - new Vector2(Player.Hitbox.Center.ToXna().X, Player.Hitbox.Center.ToXna().Y)).Length();
                         if (heart != _heartChased || hd < _heartBest - 1f)
                         {
                             _heartChased = heart;
@@ -19070,7 +19128,7 @@ namespace AnodyneSharp.Recording
                 }
                 KeyFunctions dir;
                 bool attack = false;
-                if (target.GetType().Name == "Shieldy" && target.velocity == Vector2.Zero && FightPolicies.BoomStationary(PolicyCtx(target), pmem) is PKey[] boomKeys)
+                if (target.GetType().Name == "Shieldy" && target.velocity.ToXna() == Vector2.Zero && FightPolicies.BoomStationary(PolicyCtx(target), pmem) is PKey[] boomKeys)
                 {
                     BotRunner.Status = "fight/boom";
                     if (DodgeEnabled && boomKeys.Length == 1 && boomKeys[0] != PKey.Accept && BotNav.LaneTiles().Count > 0)
@@ -19082,7 +19140,7 @@ namespace AnodyneSharp.Recording
                     yield return PolicyFrame(boomKeys, target);
                     continue;
                 }
-                if (target.GetType().Name == "Shieldy" && target.velocity.Y != 0 && target.velocity.X == 0 && aggroFrames <= 0 && ambushFrames < 900 && Target_ColumnAboveClear(target) &&
+                if (target.GetType().Name == "Shieldy" && target.velocity.ToXna().Y != 0 && target.velocity.ToXna().X == 0 && aggroFrames <= 0 && ambushFrames < 900 && Target_ColumnAboveClear(target) &&
                     FightPolicies.VerticalShieldy(PolicyCtx(target), pmem) is PKey[] vKeys)
                 {
                     // (waiting for it is on purpose, but not for ever: after 15s go at it the ordinary way)
@@ -19096,16 +19154,16 @@ namespace AnodyneSharp.Recording
                     yield return PolicyFrame(vKeys, target);
                     continue;
                 }
-                if (target.GetType().Name == "Shieldy" && target.velocity.X != 0 && target.velocity.Y == 0 && aggroFrames <= 0 && ShieldyHoverY(target) is int hoverY)
+                if (target.GetType().Name == "Shieldy" && target.velocity.ToXna().X != 0 && target.velocity.ToXna().Y == 0 && aggroFrames <= 0 && ShieldyHoverY(target) is int hoverY)
                 {
                     // A Shieldy patrolling sideways: float 3px above its line (no contact possible), follow it in x and swing down.
                     var tb = target.Hitbox;
                     var pb = Player.Hitbox;
                     int gap = tb.Top - pb.Bottom;
-                    bool inBand = gap >= 1 && gap <= 24 && Math.Abs(pb.Center.X - tb.Center.X) < 60 && CornersWalkable(new Rectangle(pb.X, pb.Y + 1, pb.Width, Math.Min(gap, 6) + pb.Height));
+                    bool inBand = gap >= 1 && gap <= 24 && Math.Abs(pb.Center.ToXna().X - tb.Center.ToXna().X) < 60 && CornersWalkable(new Rectangle(pb.X, pb.Y + 1, pb.Width, Math.Min(gap, 6) + pb.Height));
                     if (i % 20 == 0 && Environment.GetEnvironmentVariable("ANODYNE_FIGHT_TRACE") != null)
                     {
-                        System.Console.Error.WriteLine($"  ambush f{i} gap={gap} inBand={inBand} pb={pb} tb={tb} v={target.velocity}");
+                        System.Console.Error.WriteLine($"  ambush f{i} gap={gap} inBand={inBand} pb={pb} tb={tb} v={target.velocity.ToXna()}");
                     }
                     if (!inBand)
                     {
@@ -19115,7 +19173,7 @@ namespace AnodyneSharp.Recording
                         var here0 = BotNav.TileOf(Pos);
                         Point? goalTile = null;
                         int bestCost = int.MaxValue;
-                        for (int col = tb.Center.X / 16 - 12; col <= tb.Center.X / 16 + 12; col++)
+                        for (int col = tb.Center.ToXna().X / 16 - 12; col <= tb.Center.ToXna().X / 16 + 12; col++)
                         {
                             var rect = new Rectangle(col * 16 + 3, hoverY, 10, 12);
                             if (CornersWalkable(rect) && BotNav.Walkable(new Point(col, tb.Top / 16)) && Math.Abs(col - here0.X) + Math.Abs(row - here0.Y) < bestCost)
@@ -19153,7 +19211,7 @@ namespace AnodyneSharp.Recording
                         {
                             noKill = 1; // waiting for a patroller to come by is not "no progress"
                         }
-                        float adx = tb.Center.X - pb.Center.X;
+                        float adx = tb.Center.ToXna().X - pb.Center.ToXna().X;
                         // Facing down already: stay put unless it got too close or too far. Not facing down: turning costs a pixel of
                         // gap (the Down press also walks), so make sure there are 4+ before pressing it.
                         bool facingDown = Player.facing == Facing.DOWN;
@@ -19242,9 +19300,9 @@ namespace AnodyneSharp.Recording
                     }
                     var slideRect = pb;
                     slideRect.Offset(dx < 0 ? -3 : 3, 0);
-                    if (planHold <= 0 && CornersWalkable(slideRect) && pb.Bottom <= tb.Top - (target.velocity == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
+                    if (planHold <= 0 && CornersWalkable(slideRect) && pb.Bottom <= tb.Top - (target.velocity.ToXna() == Vector2.Zero && InCorridor(target) ? 0 : 2) && Math.Abs(dx) > 4 && Math.Abs(dx) < 40)
 {
-                        if (target.velocity != Vector2.Zero)
+                        if (target.velocity.ToXna() != Vector2.Zero)
                         {
                             // A patroller comes to us: wait just above its line, facing down (chasing it sideways ends in contact).
                             BotRunner.Status = "fight/wait-above";
@@ -19256,12 +19314,12 @@ namespace AnodyneSharp.Recording
                         yield return K(dx < 0 ? KeyFunctions.Left : KeyFunctions.Right);
                         continue;
                     }
-                    if (planHold <= 0 && target.velocity == Vector2.Zero && InCorridor(target) && pb.Top > tb.Bottom && pb.Top - tb.Bottom < 28 && pb.Right > tb.Left - 3 && pb.Left < tb.Right + 3)
+                    if (planHold <= 0 && target.velocity.ToXna() == Vector2.Zero && InCorridor(target) && pb.Top > tb.Bottom && pb.Top - tb.Bottom < 28 && pb.Right > tb.Left - 3 && pb.Left < tb.Right + 3)
                     {
                         // Approaching from below and lined up with it (a Shieldy in a corridor): slide to the free side first, since
                         // walking past its flank on the way up is what gets us hit.
                         var here = BotNav.TileOf(Pos);
-                        var side = (tb.Center.X - pb.Center.X >= -6) ? KeyFunctions.Left : KeyFunctions.Right;
+                        var side = (tb.Center.ToXna().X - pb.Center.ToXna().X >= -6) ? KeyFunctions.Left : KeyFunctions.Right;
                         var sideTile = new Point(here.X + (side == KeyFunctions.Left ? -1 : 1), here.Y);
                         if (!BotNav.Walkable(sideTile))
                         {
@@ -19342,7 +19400,7 @@ namespace AnodyneSharp.Recording
                     foreach (int up in new[] { 2, 1 })
                     {
                         int standX = et.X;
-                        if (target.velocity.X != 0 && target.velocity.Y == 0)
+                        if (target.velocity.ToXna().X != 0 && target.velocity.ToXna().Y == 0)
                         {
                             // A sideways patroller: its x keeps changing, so a standoff that follows it never settles. Ambush it instead: pick
                             // (once) the column of its line, with clear floor above, that is nearest to where we are, and wait there.
@@ -19438,7 +19496,7 @@ namespace AnodyneSharp.Recording
                         var skey = SafeMove(StepKey(px, py, target), target);
                         if (Environment.GetEnvironmentVariable("ANODYNE_BOT_DEBUG") != null && i % 120 == 0)
                         {
-                            System.Console.Error.WriteLine($"    step px={px:0.0} py={py:0.0} key={string.Join("+", skey)} dodged={Dodged} still={stillFrames} facing={Player.facing} dontMove={Player.dontMove} state={Player.state} talk={Talking} trans={GlobalState.ScreenTransition} vel={Player.velocity}");
+                            System.Console.Error.WriteLine($"    step px={px:0.0} py={py:0.0} key={string.Join("+", skey)} dodged={Dodged} still={stillFrames} facing={Player.facing} dontMove={Player.dontMove} state={Player.state} talk={Talking} trans={Gs.ScreenTransition} vel={Player.velocity.ToXna()}");
                         }
                         BotRunner.Status = "fight/plan";
                         yield return skey;
@@ -19484,7 +19542,7 @@ namespace AnodyneSharp.Recording
                     noProgress++;
                 }
                 static bool StillWater(Point t) => OnConveyor(t) && BotNav.FlowDir(t) == Touching.NONE;
-                var tgtTile = new Point((int)target.Hitbox.Center.X / 16, (int)target.Hitbox.Center.Y / 16);
+                var tgtTile = new Point((int)target.Hitbox.Center.ToXna().X / 16, (int)target.Hitbox.Center.ToXna().Y / 16);
                 if (Player.raft != null && StillWater(BotNav.TileOf(Pos))
                     && new[] { Point.Zero, new Point(1, 0), new Point(-1, 0), new Point(0, 1), new Point(0, -1) }.Any(o => StillWater(tgtTile + o)))
                 {
@@ -19499,19 +19557,19 @@ namespace AnodyneSharp.Recording
                     ctx.Walk = OnPool;
                     // its shots only hurt us standing, and a hit knocks us off the raft: step out of a shot's line first
                     var pbx = Player.Hitbox;
-                    var shot = BotRunner.Entities().FirstOrDefault(b => b.exists && b.GetType().Name == "Bullet" && b.velocity != Vector2.Zero && Enumerable.Range(0, 18).Any(f =>
+                    var shot = BotRunner.Entities().FirstOrDefault(b => b.exists && b.GetType().Name == "Bullet" && b.velocity.ToXna() != Vector2.Zero && Enumerable.Range(0, 18).Any(f =>
                     {
                         var bb = b.Hitbox;
-                        bb.Offset((int)(b.velocity.X * f / 60f), (int)(b.velocity.Y * f / 60f));
+                        bb.Offset((int)(b.velocity.ToXna().X * f / 60f), (int)(b.velocity.ToXna().Y * f / 60f));
                         bb.Inflate(3, 3);
                         return bb.Intersects(pbx);
                     }));
                     KeyFunctions? dodge = null;
                     if (shot != null)
                     {
-                        var sides = Math.Abs(shot.velocity.X) >= Math.Abs(shot.velocity.Y)
-                            ? new[] { pbx.Center.Y <= shot.Hitbox.Center.Y ? KeyFunctions.Up : KeyFunctions.Down, pbx.Center.Y <= shot.Hitbox.Center.Y ? KeyFunctions.Down : KeyFunctions.Up }
-                            : new[] { pbx.Center.X <= shot.Hitbox.Center.X ? KeyFunctions.Left : KeyFunctions.Right, pbx.Center.X <= shot.Hitbox.Center.X ? KeyFunctions.Right : KeyFunctions.Left };
+                        var sides = Math.Abs(shot.velocity.ToXna().X) >= Math.Abs(shot.velocity.ToXna().Y)
+                            ? new[] { pbx.Center.ToXna().Y <= shot.Hitbox.Center.ToXna().Y ? KeyFunctions.Up : KeyFunctions.Down, pbx.Center.ToXna().Y <= shot.Hitbox.Center.ToXna().Y ? KeyFunctions.Down : KeyFunctions.Up }
+                            : new[] { pbx.Center.ToXna().X <= shot.Hitbox.Center.ToXna().X ? KeyFunctions.Left : KeyFunctions.Right, pbx.Center.ToXna().X <= shot.Hitbox.Center.ToXna().X ? KeyFunctions.Right : KeyFunctions.Left };
                         foreach (var k in sides)
                         {
                             var v = DirVector(k) * 3;
@@ -19593,7 +19651,7 @@ namespace AnodyneSharp.Recording
                 // (one about to fire from right beside us comes out a frame or two from our box: the broom must be out already)
                 if ((IncomingAnnoyerFireball(24) ?? AnnoyerAboutToFire(6, 34)) is Vector2 inc && !(Player.broom != null && Player.broom.exists))
                 {
-                    var pc0 = Player.Hitbox.Center.ToVector2();
+                    var pc0 = Player.Hitbox.Center.ToXna().ToVector2();
                     var tow = Math.Abs(inc.X - pc0.X) >= Math.Abs(inc.Y - pc0.Y) ? (inc.X < pc0.X ? Facing.LEFT : Facing.RIGHT) : (inc.Y < pc0.Y ? Facing.UP : Facing.DOWN);
                     BotRunner.Status = "fight: bat an Annoyer fireball away";
                     if (Player.facing != tow)
@@ -19610,7 +19668,7 @@ namespace AnodyneSharp.Recording
                     // what gets us hit. Stand still facing right and swing; it is in reach every time round.
                     BotRunner.Status = "fight/annoyer hold";
                     // Not getting anywhere towards a sleeping Annoyer (something between us)? Leave it asleep.
-                    annoyerStill = Pos == annoyerLastPos && target.velocity == Vector2.Zero ? annoyerStill + 1 : 0;
+                    annoyerStill = Pos == annoyerLastPos && target.velocity.ToXna() == Vector2.Zero ? annoyerStill + 1 : 0;
                     annoyerLastPos = Pos;
                     if (annoyerStill > 45 && distSq > 52 * 52 && _annoyerWakeTried.Add(target))
                     {
@@ -19690,7 +19748,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  annoyer hold f{i}: quiet tile {quietTile?.ToString() ?? "none"} from {BotNav.TileOf(Pos)}");
                         }
-                        if (soft && quietTile == null && FrogsReach(Player.Hitbox.Center.ToVector2()))
+                        if (soft && quietTile == null && FrogsReach(Player.Hitbox.Center.ToXna().ToVector2()))
                         {
                             // Only passing through, with Frogs spitting at wherever on this screen we could stand to take it on: not worth
                             // it, walk on out (it does not follow us off the screen).
@@ -19724,7 +19782,7 @@ namespace AnodyneSharp.Recording
                     }
                     // With an Annoyer circling us, a patroller still a while off is not worth walking away for (stepping about with it
                     // on us is what gets us hit: it is the one at arm's length): swing at it until the other is close.
-                    bool annoyerOnUs = Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.X, e.Hitbox.Center.Y) - me).Length() < 36);
+                    bool annoyerOnUs = Enemies().Any(e => e.GetType().Name == "Annoyer" && (new Vector2(e.Hitbox.Center.ToXna().X, e.Hitbox.Center.ToXna().Y) - me).Length() < 36);
                     bool otherSoon = true;
                     if (annoyerOnUs && safeKeepLeft <= 0)
                     {
@@ -19815,7 +19873,7 @@ namespace AnodyneSharp.Recording
                     {
                         path = BotNav.FindPathTo(BotNav.TileOf(Pos), tt);
                     }
-                    if (path == null && GlobalState.inventory.CanJump && jumpTrips < 3 && target.GetType().Name != "Annoyer" && !OnConveyor(BotNav.TileOf(Pos))
+                    if (path == null && Gs.CanJump && jumpTrips < 3 && target.GetType().Name != "Annoyer" && !OnConveyor(BotNav.TileOf(Pos))
                         && !(_lastJumpTrip.from == BotNav.TileOf(Pos) && _lastJumpTrip.to == tt && BotRunner.Frame - _lastJumpTrip.at < 600))
                     {
                         // No way on foot, but one over a gap: let the route walker (which knows how to take a jump) bring us near it.
@@ -19865,7 +19923,7 @@ namespace AnodyneSharp.Recording
                         {
                             System.Console.Error.WriteLine($"  far f{i} me={me} step={path[0]} px={px:0.0} py={py:0.0} dir={dir} path={path.Count}");
                         }
-                        if (aggroFrames > 0 && target == pressed && target is AnodyneSharp.Entities.Enemy.Slime && GlobalState.inventory.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
+                        if (aggroFrames > 0 && target == pressed && target is AnodyneSharp.Entities.Enemy.Slime && Gs.CanJump && !OnConveyor(BotNav.TileOf(Pos)))
                         {
                             // Pressing a bullet Slime that keeps shooting us back: walk straight in and hop its bullets (in the air they pass under us).
                             var all = Dangers(target);
@@ -19884,7 +19942,7 @@ namespace AnodyneSharp.Recording
                             yield return Player.state == AnodyneSharp.Entities.PlayerState.GROUND && shotDue && _jumpPressFrame != BotRunner.Frame - 1 ? JumpPress(dir) : K(dir);
                             continue;
                         }
-                        yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
+                        yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && Gs.Health >= 3) ? K(dir) : SafeMove(dir, target);
                         continue;
                     }
                 }
@@ -19959,7 +20017,7 @@ namespace AnodyneSharp.Recording
                 else
                 {
                     // Charging a shooter: dodging its volley only drags the fight out (it re-fires when the bullets are gone).
-                    yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && GlobalState.CUR_HEALTH >= 3) ? K(dir) : SafeMove(dir, target);
+                    yield return (DodgeEnabled && IsShooter(target) && target.GetType().Name is not ("Burst_Plant" or "Frog") && Gs.Health >= 3) ? K(dir) : SafeMove(dir, target);
                 }
             }
             if (!soft)
@@ -20034,7 +20092,7 @@ namespace AnodyneSharp.Recording
             var y = Pos.Y;
             var row = BotNav.TileOf(Pos).Y;
             var pads = BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && e.facing == AnodyneSharp.Entities.Facing.RIGHT
-                && Math.Abs(e.Position.Y - row * 16) < 8).Select(e => e.Hitbox).OrderBy(r => r.X).ToList();
+                && Math.Abs(e.Position.ToXna().Y - row * 16) < 8).Select(e => e.Hitbox).OrderBy(r => r.X).ToList();
             var spikeStarts = new List<int>();
             for (int tx = BotNav.TileOf(Pos).X + 1; tx * 16 < xEnd; tx++)
             {
@@ -20083,7 +20141,7 @@ namespace AnodyneSharp.Recording
             // not held: set off a few frames before it next comes back on, so it fires with Right down.
             int first = 0, every = 1;
             var onPad = BotRunner.Entities().FirstOrDefault(e => e.exists && e is AnodyneSharp.Entities.Gadget.DashPad && e.Hitbox.Contains(new Point((int)(Pos.X + 5), (int)(Pos.Y + 6))));
-            if (onPad != null && typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(onPad) is float dis)
+            if (onPad != null && typeof(AnodyneSharp.Entities.Gadget.DashPad).GetField("disabled_t", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValueF(onPad) is float dis)
             {
                 first = (int)Math.Ceiling((1f - dis) * 60f) - 3;
                 while (first < 0)
@@ -20141,10 +20199,10 @@ namespace AnodyneSharp.Recording
                 {
                     continue;
                 }
-                var c = new ChaserPlan { Idle = new Vector2(e.Hitbox.X, e.Hitbox.Y), Horiz = ChaserHorizField?.GetValue(e) is true };
-                if (e.velocity != Vector2.Zero)
+                var c = new ChaserPlan { Idle = new Vector2(e.Hitbox.X, e.Hitbox.Y), Horiz = ChaserHorizField?.GetValueF(e) is true };
+                if (e.velocity.ToXna() != Vector2.Zero)
                 {
-                    c.Track = ChaserTrack(c.Idle, e.velocity, screen, frames);
+                    c.Track = ChaserTrack(c.Idle, e.velocity.ToXna(), screen, frames);
                 }
                 else
                 {
@@ -20240,7 +20298,7 @@ namespace AnodyneSharp.Recording
                         {
                             moves.Add((a, 1));
                         }
-                        else if (GlobalState.inventory.CanJump && screen.Contains(a) && BotNav.IsJumpable(a))
+                        else if (Gs.CanJump && screen.Contains(a) && BotNav.IsJumpable(a))
                         {
                             var b = new Point(a.X + d.X, a.Y + d.Y);
                             if ((screen.Contains(b) || b == goal) && BotNav.Walkable(b) && !BotNav.IsJumpable(b))
@@ -20337,7 +20395,7 @@ namespace AnodyneSharp.Recording
             {
                 var dir = k is KeyFunctions kk ? DirVector(kk) : Vector2.Zero;
                 var land = new Rectangle((int)(pb.X + dir.X * Air * AirFrames), (int)(pb.Y + dir.Y * Air * AirFrames), pb.Width, pb.Height);
-                if (!BotNav.BoxStands(land) || new Point((int)Math.Floor(land.Center.X / 16f) / 10, (int)Math.Floor(land.Center.Y / 16f) / 10) != grid)
+                if (!BotNav.BoxStands(land) || new Point((int)Math.Floor(land.Center.ToXna().X / 16f) / 10, (int)Math.Floor(land.Center.ToXna().Y / 16f) / 10) != grid)
                 {
                     continue;
                 }
@@ -20398,12 +20456,12 @@ namespace AnodyneSharp.Recording
                 if (e.exists && e is AnodyneSharp.Entities.Enemy.Slime sl)
                 {
                     // a bullet Slime's shots in flight: straight on at their speed until a wall (they hurt only on the ground)
-                    foreach (var b in sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity != Vector2.Zero))
+                    foreach (var b in sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Where(b => b.exists && b.velocity.ToXna() != Vector2.Zero))
                     {
                         var bt = new Rectangle?[frames + 1];
-                        var bp = b.Position;
-                        var bv = b.velocity / 60f;
-                        int life = (int)Math.Ceiling((b.opacity - 0.3f) / 0.39f * 60f);
+                        var bp = b.Position.ToXna();
+                        var bv = b.velocity.ToXna() / 60f;
+                        int life = (int)Math.Ceiling(((float)b.opacity - 0.3f) / 0.39f * 60f);
                         for (int f = 0; f <= frames && f <= life; f++)
                         {
                             var br = new Rectangle((int)bp.X, (int)bp.Y, 8, 8);
@@ -20418,11 +20476,11 @@ namespace AnodyneSharp.Recording
                         list.Add((bt, false));
                     }
                     // (and its next shot, if it comes within the horizon: from its top-left, at us as we stand now, give or take)
-                    if (Player != null && sl.SubEntities().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() && SlimeShotIn(sl) is float due && due * 60f < frames)
+                    if (Player != null && sl.Subs().OfType<AnodyneSharp.Entities.Enemy.Slime.Bullet>().Any() && SlimeShotIn(sl) is float due && due * 60f < frames)
                     {
                         var bt = new Rectangle?[frames + 1];
-                        var bp = sl.Position;
-                        var bv = Vector2.Normalize(Player.Position - sl.Position) * 40f / 60f;
+                        var bp = sl.Position.ToXna();
+                        var bv = Vector2.Normalize(Player.Position.ToXna() - sl.Position.ToXna()) * 40f / 60f;
                         for (int f = (int)Math.Ceiling(due * 60f); f <= frames; f++)
                         {
                             var br = new Rectangle((int)bp.X, (int)bp.Y, 8, 8);
@@ -20443,7 +20501,7 @@ namespace AnodyneSharp.Recording
                     // a bouncing dash trap: 80px/s along its line, turning at walls, holes and the screen's edge; it hurts only on the ground
                     var dt = new Rectangle?[frames + 1];
                     var pos = new Vector2(e.Hitbox.X, e.Hitbox.Y);
-                    var dv = e.velocity / 60f;
+                    var dv = e.velocity.ToXna() / 60f;
                     var scr = new Rectangle(Grid.X * 160, Grid.Y * 160, 160, 160);
                     for (int f = 0; f <= frames; f++)
                     {
@@ -20469,7 +20527,7 @@ namespace AnodyneSharp.Recording
                 }
                 var track = new Rectangle?[frames + 1];
                 var r = e.Hitbox;
-                var v = e.velocity;
+                var v = e.velocity.ToXna();
                 float fx = 0, fy = 0;
                 for (int f = 0; f <= frames; f++)
                 {
@@ -20512,7 +20570,7 @@ namespace AnodyneSharp.Recording
         protected static IEnumerable<object> SteamGap()
         {
             BotRunner.Status = "wait for the steam jets to switch off";
-            var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.SubEntities()).ToList();
+            var beams = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "OnOffLaser").SelectMany(e => e.Subs()).ToList();
             if (beams.Count == 0)
             {
                 yield break;
@@ -20564,7 +20622,7 @@ namespace AnodyneSharp.Recording
                     // (already holding back the other way while the screen scrolls: the frame it ends on has no map collision, so the step back over
                     // the edge from there starts the next transition with no collision either, and the sideways bit of each step goes through walls)
                     var back = across switch { KeyFunctions.Right => KeyFunctions.Left, KeyFunctions.Left => KeyFunctions.Right, KeyFunctions.Down => KeyFunctions.Up, _ => KeyFunctions.Down };
-                    for (int w = 0; w < 120 && GlobalState.ScreenTransition; w++)
+                    for (int w = 0; w < 120 && Gs.ScreenTransition; w++)
                     {
                         ExactKeysUntil = BotRunner.Frame + 1;
                         yield return K(back, vk);
@@ -20792,10 +20850,10 @@ namespace AnodyneSharp.Recording
                         yield return K();
                     }
                     yield return ExactWalk(ca, 60);
-                    var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").OrderBy(e => (e.Position - Pos).LengthSquared()).FirstOrDefault();
+                    var dust = BotRunner.Entities().Where(e => e.exists && e.GetType().Name == "Dust").OrderBy(e => (e.Position.ToXna() - Pos).LengthSquared()).FirstOrDefault();
                     if (dust != null)
                     {
-                        float ddx = dust.Position.X - Pos.X, ddy = dust.Position.Y - Pos.Y;
+                        float ddx = dust.Position.ToXna().X - Pos.X, ddy = dust.Position.ToXna().Y - Pos.Y;
                         var fk = Math.Abs(ddx) > Math.Abs(ddy) ? (ddx < 0 ? KeyFunctions.Left : KeyFunctions.Right) : (ddy < 0 ? KeyFunctions.Up : KeyFunctions.Down);
                         BotRunner.Status = "rhop: sweep up the raft's dust";
                         ExactKeysUntil = BotRunner.Frame + 1;
@@ -20891,7 +20949,7 @@ namespace AnodyneSharp.Recording
             bool GroundClear(Vector2 p, int f) => Clear(p, f, false);
             // Cracked floor gives way after a second stood on: cross it, hop on it, but never wait on it.
             var cracked = new HashSet<Point>(BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Gadget.Holes.CrackedTile)
-                .Select(e => new Point((int)(e.Position.X + 8) / 16, (int)(e.Position.Y + 8) / 16)));
+                .Select(e => new Point((int)(e.Position.ToXna().X + 8) / 16, (int)(e.Position.ToXna().Y + 8) / 16)));
             bool Ok(Point t) => (screen.Contains(t) || t == goal) && BotNav.Walkable(t);
             // A dash pad kicks us along its way while that key is down: a step with it goes faster than walking (so reaches a timed
             // hazard sooner than walking would), and a jump off one carries further than a hop, so none is planned along it.
@@ -20954,7 +21012,7 @@ namespace AnodyneSharp.Recording
                                 Add(a, 1, 0);
                             }
                         }
-                        if (!GlobalState.inventory.CanJump || !GroundClear(c, f0) || !GroundClear(c, f0 + 1) || Kicked(t, d))
+                        if (!Gs.CanJump || !GroundClear(c, f0) || !GroundClear(c, f0 + 1) || Kicked(t, d))
                         {
                             continue;
                         }
@@ -20984,6 +21042,7 @@ namespace AnodyneSharp.Recording
                     }
                 }
             }
+            _sweepNodes += seen.Count;
             _sweepReach = "" + string.Join(" ", seen.GroupBy(x => x.Item1).Select(g => $"{g.Key.X},{g.Key.Y}[{string.Join(",", g.Select(x => x.Item2).OrderBy(x => x))}]"));
             if (Environment.GetEnvironmentVariable("ANODYNE_SWEEP_TRACE") != null)
             {
@@ -20996,6 +21055,7 @@ namespace AnodyneSharp.Recording
         }
 
         private static string _sweepReach = "";
+        private static int _sweepNodes;
         private static bool _sweepWalkOk;
 
         /// <summary>Crosses this screen to `goal` (a tile on it or the first one past its edge) timing each move against its spike rollers.</summary>
@@ -21006,7 +21066,7 @@ namespace AnodyneSharp.Recording
             int noPlan = 0;
             for (int i = 0; i < timeoutFrames;)
             {
-                if (Talking || GlobalState.ScreenTransition || Player.state == PlayerState.AIR)
+                if (Talking || Gs.ScreenTransition || Player.state == PlayerState.AIR)
                 {
                     yield return K();
                     i++;
@@ -21033,9 +21093,8 @@ namespace AnodyneSharp.Recording
                 }
                 var tracks = SweeperTracks(SweepStep * (SweepSteps + 3));
                 // (a short look ahead first: most ways turn up within a few dozen moves, and the long search is the bot's dearest frame)
-                long planT0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _sweepNodes = 0;
                 var plan = PlanPastSweepers(here, goal, tracks, 40) ?? PlanPastSweepers(here, goal, tracks);
-                double planMs = (System.Diagnostics.Stopwatch.GetTimestamp() - planT0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 if (plan == null && noPlan < 120)
                 {
                     // No timed way from here just now (a bar about to reach us, say): don't hand over to the plain walk, which walks into it.
@@ -21085,7 +21144,7 @@ namespace AnodyneSharp.Recording
                             yield return K(rk.ToArray());
                         }
                     }
-                    else if (soon && GlobalState.inventory.CanJump)
+                    else if (soon && Gs.CanJump)
                     {
                         // A bar takes ~36 frames to roll over us and a hop is 27 in the air: on the spot it comes down on the bar. Hop
                         // through it instead (towards where it comes from, so it is behind us as we land), or wherever lands clear.
@@ -21107,9 +21166,9 @@ namespace AnodyneSharp.Recording
                     else
                     {
                         BotRunner.Status = $"sweepers: no way yet from {here} (for {goal}): wait";
-                        // (plan again in a few frames: the search is dear, so the wait grows with what this one cost, to keep the
-                        // bot's own time per frame at ~5ms over the wait)
-                        int waitFor = Math.Clamp((int)Math.Ceiling(planMs / 5.0), 6, 30);
+                        // (plan again in a few frames: the search is dear, so the wait grows with what this one cost. Counted in the
+                        // search's states, not its milliseconds: a wait off the wall clock came out a frame or two different run to run)
+                        int waitFor = Math.Clamp((_sweepNodes + 1999) / 2000, 6, 30);
                         for (int w = 0; w < waitFor; w++, i++, noPlan++)
                         {
                             yield return K();
@@ -21129,7 +21188,7 @@ namespace AnodyneSharp.Recording
                 var (to, kind) = plan.Value;
                 if (Environment.GetEnvironmentVariable("ANODYNE_SWEEP_TRACE") != null)
                 {
-                    System.Console.Error.WriteLine($"  sweep f{BotRunner.Frame} at {Player.Hitbox} {here} -> {to} kind {kind}; bars " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller).Select(e => $"{e.Hitbox} v{e.velocity}")));
+                    System.Console.Error.WriteLine($"  sweep f{BotRunner.Frame} at {Player.Hitbox} {here} -> {to} kind {kind}; bars " + string.Join(" ", BotRunner.Entities().Where(e => e.exists && e is AnodyneSharp.Entities.Enemy.Crowd.BouncySpikeRoller).Select(e => $"{e.Hitbox} v{e.velocity.ToXna()}")));
                 }
                 var dir = to.X > here.X ? KeyFunctions.Right : to.X < here.X ? KeyFunctions.Left : to.Y > here.Y ? KeyFunctions.Down : KeyFunctions.Up;
                 if (kind == 0 && to == here)
@@ -21211,7 +21270,7 @@ namespace AnodyneSharp.Recording
             var expect = Point.Zero;
             for (int i = 0; i < timeoutFrames;)
             {
-                if (Talking || GlobalState.ScreenTransition)
+                if (Talking || Gs.ScreenTransition)
                 {
                     yield return K();
                     i++;

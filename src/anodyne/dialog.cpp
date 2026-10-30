@@ -5,8 +5,10 @@
 #include "tonc.h"
 
 #include "audio_manager.h"
-#include "../build/tools/dialog_data.h"
-#include "../build/tools/title_data.h"
+#include "dialog_data.h"
+#include "ecs.h"
+#include "save.h"
+#include "title_data.h"
 
 // Read by the headless test driver (src/tools/bot/gba_drive.py).
 volatile int gDialogueOpen = 0;
@@ -17,6 +19,7 @@ namespace
 const char* gArea = "";
 uint8_t gSceneLine[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
 uint8_t gSceneFinished[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
+uint8_t gSceneDirty[kDialogSceneCount > 0 ? kDialogSceneCount : 1] __attribute__((section(".sbss")));
 
 const DialogSceneData* FindScene(const char* npc, const char* area, const char* scene, unsigned* index)
 {
@@ -51,6 +54,7 @@ constexpr int kMaxLineChars = 24;
 constexpr int kFirstOam = 120;
 constexpr int kObjCount = 8;
 constexpr int kCanvasTiles = 3 * 32 + 5 * 8;
+constexpr int kCanvasH = 48;
 constexpr int kPalBank = 15;
 
 // Palette indices.
@@ -61,15 +65,27 @@ constexpr uint32_t kRedLight = 4;
 constexpr uint32_t kRedDark = 5;
 constexpr uint32_t kPromptRed = 6;
 
+// A menu's panel (pop_menu: the box's colours, 32x32 OBJs) takes OAM 108-127 and moves the labels to 100-107.
+constexpr int kPanelFirstOam = 108;
+constexpr int kPanelObjs = 20;
+constexpr int kPanelLabelOam = kPanelFirstOam - kObjCount;
+constexpr int kPanelTiles = 16; // one 32x32 OBJ, for each of the 9 kinds: left/middle/right by top/middle/bottom
+
 ObjVramAllocator* gVram = nullptr;
 int gObjBlock[kObjCount];
+int gObjOam = kFirstOam; // where the box or labels' OBJs are
+int gPanelBlock = -1;    // the 9 kinds' tiles
 bool gOpen = false;
+bool gLabels = false; // Dialog_ShowLabels holds the OBJs
 bool gTop = false;
 bool gIntro = false;
 
 alignas(4) uint32_t gCanvas[kCanvasTiles * 8] __attribute__((section(".sbss")));  // 4bpp tiles, in OBJ order (each OBJ's tiles consecutive)
 alignas(4) uint32_t gBoxImage[kCanvasTiles * 8] __attribute__((section(".sbss"))); // the empty box, for fast redraws
 bool gUploadNeeded = false;
+uint32_t gUploads = 0;    // Upload()s so far
+uint32_t gLabelsHash = 0; // what Dialog_ShowLabels last drew (with gLabelsUpload: and it's still in the OBJs' tiles)
+uint32_t gLabelsUpload = 0;
 
 uint16_t gSavedBldCnt = 0;
 uint16_t gSavedBldAlpha = 0;
@@ -89,7 +105,7 @@ uint32_t* TileWord(int x, int y)
 
 void SetPixel(uint32_t* buf, int x, int y, uint32_t c)
 {
-    if (x < 0 || x >= 160 || y < 0 || y >= 48)
+    if (x < 0 || x >= 160 || y < 0 || y >= kCanvasH)
     {
         return;
     }
@@ -136,7 +152,7 @@ void DrawGlyph(char c, int gx, int gy, uint32_t ink, bool shadow)
         for (int r = 0; r < 8; r++)
         {
             const int y = gy + r + (pass == 0 ? 1 : 0);
-            if (y < 0 || y >= kBoxH)
+            if (y < 0 || y >= (gLabels ? kCanvasH : kBoxH))
             {
                 continue;
             }
@@ -166,6 +182,9 @@ void DrawGlyph(char c, int gx, int gy, uint32_t ink, bool shadow)
     }
 }
 
+// Updating the box under the shown one (a second DialogueState opened over it): its typing draws nothing.
+bool gHidden = false;
+
 // ---- Writer (TextWriter.cs) ---------------------------------------------------------------------------------------
 struct Writer final
 {
@@ -176,7 +195,7 @@ struct Writer final
     int mCursor = 0;
     bool mNewWord = true;
     int mSpeed = 30;          // chars per second
-    int mStep = 0;            // 16.16 steps accumulated
+    float mStep = 0;          // steps accumulated (float, like the C#'s _stepProgress)
     int mFirstLineY = 0;
     bool mJustWrote = false;
     int mLineCount = 0;
@@ -216,6 +235,10 @@ void ResetWriter(const char* text)
 
 void RedrawText()
 {
+    if (gHidden)
+    {
+        return;
+    }
     memcpy(gCanvas, gBoxImage, sizeof(gCanvas));
     for (int l = 0; l < gW.mLineCount; l++)
     {
@@ -343,8 +366,11 @@ void WriteStep()
         gW.mLines[gW.mLine][n] = c;
         gW.mLineX[gW.mLine][n] = static_cast<uint8_t>(gW.mCursor > 255 ? 255 : gW.mCursor);
         gW.mLineLen[gW.mLine]++;
-        DrawGlyph(c, kTextX + gW.mCursor, kTextY + gW.mFirstLineY + gW.mLine * kLineSep, kWhite, true);
-        gUploadNeeded = true;
+        if (!gHidden)
+        {
+            DrawGlyph(c, kTextX + gW.mCursor, kTextY + gW.mFirstLineY + gW.mLine * kLineSep, kWhite, true);
+            gUploadNeeded = true;
+        }
     }
     gW.mProgress++;
     if ((c == '.' || c == '!' || c == '?') && gW.mProgress < gW.mLen && gW.mText[gW.mProgress] == ' ')
@@ -386,10 +412,10 @@ void WriterUpdate()
     {
         return;
     }
-    gW.mStep += gW.mSpeed * 65536 / 60;
-    while (gW.mStep >= 65536)
+    gW.mStep += kUiDeltaTime * static_cast<float>(gW.mSpeed);
+    while (gW.mStep >= 1.0f)
     {
-        gW.mStep -= 65536;
+        gW.mStep -= 1.0f;
         if (!AtEndOfBox() && !AtEndOfText())
         {
             WriteStep();
@@ -416,7 +442,10 @@ Base gBase = Base::Waiting;
 Top gTopState = Top::None;
 int gNormalSpeed = 30;
 int gSpeedScale = 2;
-int gBumpTimer = 0;
+// BumpState's TimerState: the time it has been the top state and when "doBump" next fires (it fires at
+// current + 0.1 after each firing, summed in float, so it is sometimes 7 frames apart rather than 6).
+float gBumpCurrent = 0.0f;
+float gBumpNext = 0.1f;
 int gHalfBumps = 0;
 int gLinesBumped = 0;
 int gBlinkyTimer = 0;
@@ -424,10 +453,76 @@ bool gBlinkyOn = false;
 bool gBlinkyDrawn = false;
 bool gBlinkyEnabled = true;
 
+// Everything one box's DialogueState holds, to keep the box under the shown one (PlayState can run two DialogueStates
+// at once: a line set while a box is open opens a second one over it, and both read the keys and type).
+struct BoxState final
+{
+    Writer mW;
+    Base mBase;
+    Top mTopState;
+    int mNormalSpeed;
+    int mSpeedScale;
+    float mBumpCurrent;
+    float mBumpNext;
+    int mHalfBumps;
+    int mLinesBumped;
+    int mBlinkyTimer;
+    bool mBlinkyOn;
+    bool mBlinkyDrawn;
+    bool mBlinkyEnabled;
+    bool mTop;
+    bool mIntro;
+};
+BoxState gUnder __attribute__((section(".sbss")));
+BoxState gSwap __attribute__((section(".sbss")));
+bool gHasUnder = false;
+int gFinishedCount = 0; // boxes that reached Done (GlobalState.Dialogue = "")
+bool gOpenedNew = false; // a box opened since Dialog_TakeOpened
+
+void SaveBox(BoxState& b)
+{
+    b.mW = gW;
+    b.mBase = gBase;
+    b.mTopState = gTopState;
+    b.mNormalSpeed = gNormalSpeed;
+    b.mSpeedScale = gSpeedScale;
+    b.mBumpCurrent = gBumpCurrent;
+    b.mBumpNext = gBumpNext;
+    b.mHalfBumps = gHalfBumps;
+    b.mLinesBumped = gLinesBumped;
+    b.mBlinkyTimer = gBlinkyTimer;
+    b.mBlinkyOn = gBlinkyOn;
+    b.mBlinkyDrawn = gBlinkyDrawn;
+    b.mBlinkyEnabled = gBlinkyEnabled;
+    b.mTop = gTop;
+    b.mIntro = gIntro;
+}
+
+void LoadBox(const BoxState& b)
+{
+    gW = b.mW;
+    gBase = b.mBase;
+    gTopState = b.mTopState;
+    gNormalSpeed = b.mNormalSpeed;
+    gSpeedScale = b.mSpeedScale;
+    gBumpCurrent = b.mBumpCurrent;
+    gBumpNext = b.mBumpNext;
+    gHalfBumps = b.mHalfBumps;
+    gLinesBumped = b.mLinesBumped;
+    gBlinkyTimer = b.mBlinkyTimer;
+    gBlinkyOn = b.mBlinkyOn;
+    gBlinkyDrawn = b.mBlinkyDrawn;
+    gBlinkyEnabled = b.mBlinkyEnabled;
+    gTop = b.mTop;
+    gIntro = b.mIntro;
+}
+
+// SoundManager.PlaySoundEffect: draws a random number for its pick, so the C#'s dialogue blips do too.
 void PlaySfx(int32_t id)
 {
     if (id >= 0)
     {
+        Rng_Range(0, 1);
         AudioManager_PlaySFX(static_cast<uint32_t>(id));
     }
 }
@@ -444,6 +539,10 @@ bool AcceptOrCancelHit()
 
 void DrawBlinky(bool on)
 {
+    if (gHidden)
+    {
+        return;
+    }
     if (gIntro)
     {
         // UILabel prompt "A" in red, bottom-right.
@@ -498,6 +597,7 @@ void Upload()
         tile += n;
     }
     gUploadNeeded = false;
+    gUploads++;
 }
 
 void PlaceObjs()
@@ -517,7 +617,33 @@ void HideObjs()
 {
     for (int o = 0; o < kObjCount; o++)
     {
-        obj_hide(&oam_mem[kFirstOam + o]);
+        obj_hide(&oam_mem[gObjOam + o]);
+    }
+}
+
+// One kind of panel OBJ: kx/ky 0 = the left/top edge, 1 = the middle, 2 = the right/bottom edge.
+void BuildPanelTiles(uint32_t* tiles, int kx, int ky)
+{
+    memset(tiles, 0, kPanelTiles * 32);
+    for (int y = 0; y < 32; y++)
+    {
+        for (int x = 0; x < 32; x++)
+        {
+            // distance to the panel's edge (99: not near one)
+            const int ex = kx == 0 ? x : (kx == 2 ? 31 - x : 99);
+            const int ey = ky == 0 ? y : (ky == 2 ? 31 - y : 99);
+            uint32_t c = kFill;
+            if (ex == 0 && ey == 0)
+            {
+                continue; // the rounded corner
+            }
+            if (ex == 0 || ey == 0 || (ex == 1 && ey == 1))
+            {
+                c = kBlack;
+            }
+            uint32_t& w = tiles[((y >> 3) * 4 + (x >> 3)) * 8 + (y & 7)];
+            w |= c << ((x & 7) * 4);
+        }
     }
 }
 
@@ -564,6 +690,7 @@ void Dialog_Init(ObjVramAllocator& vram)
     gDialogueOpen = 0;
     memset(gSceneLine, 0, sizeof(gSceneLine));
     memset(gSceneFinished, 0, sizeof(gSceneFinished));
+    memset(gSceneDirty, 0, sizeof(gSceneDirty));
     gSfxBlip = AudioManager_FindSfx("dialogue_blip");
     gSfxBloop = AudioManager_FindSfx("dialogue_bloop");
     BuildBoxImage();
@@ -586,6 +713,7 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
     {
         *top = s->mTop != 0;
     }
+    gSceneDirty[index] = 1;
     if (id == -1)
     {
         id = gSceneLine[index];
@@ -604,17 +732,73 @@ const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, 
     return line;
 }
 
+const char* Dialog_Peek(const char* npc, const char* area, const char* scene, int id)
+{
+    unsigned index = 0;
+    const DialogSceneData* s = FindScene(npc, area, scene, &index);
+    if (!s || id < 0 || id >= s->mLineCount)
+    {
+        return "";
+    }
+    return kDialogLines[s->mFirstLine + id];
+}
+
+int Dialog_SceneLength(const char* npc, const char* scene)
+{
+    unsigned index = 0;
+    const DialogSceneData* s = FindScene(npc, gArea, scene, &index);
+    return s ? s->mLineCount : -1;
+}
+
 const char* Dialog_Get(const char* npc, const char* scene, int id, bool* top)
 {
     return Dialog_GetFor(npc, gArea, scene, id, top);
 }
 
-void Dialog_Open(const char* text, bool top, bool intro)
+bool Dialog_IsSceneFinished(const char* npc, const char* scene)
 {
-    if (!gVram || gOpen)
+    unsigned index = 0;
+    return FindScene(npc, gArea, scene, &index) && gSceneFinished[index] != 0;
+}
+
+void Dialog_ResetProgress()
+{
+    memset(gSceneLine, 0, sizeof(gSceneLine));
+    memset(gSceneFinished, 0, sizeof(gSceneFinished));
+    memset(gSceneDirty, 0, sizeof(gSceneDirty));
+}
+
+void Dialog_SaveState(SaveWriter& w)
+{
+    w.Put(gSceneLine, sizeof(gSceneLine));
+    w.Put(gSceneFinished, sizeof(gSceneFinished));
+    w.Put(gSceneDirty, sizeof(gSceneDirty));
+}
+
+void Dialog_LoadState(SaveReader& r)
+{
+    r.Get(gSceneLine, sizeof(gSceneLine));
+    r.Get(gSceneFinished, sizeof(gSceneFinished));
+    r.Get(gSceneDirty, sizeof(gSceneDirty));
+}
+
+bool Dialog_IsSceneDirty(const char* npc, const char* scene)
+{
+    unsigned index = 0;
+    return FindScene(npc, gArea, scene, &index) && gSceneDirty[index] != 0;
+}
+
+void Dialog_SetSceneProgress(const char* npc, const char* scene, int id)
+{
+    unsigned index = 0;
+    if (FindScene(npc, gArea, scene, &index))
     {
-        return;
+        gSceneLine[index] = static_cast<uint8_t>(id);
     }
+}
+
+static bool AllocObjBlocks()
+{
     for (int o = 0; o < kObjCount; o++)
     {
         gObjBlock[o] = gVram->alloc((o < 3 ? 32 : 8) * ObjVramAllocator::BlockSize);
@@ -624,11 +808,69 @@ void Dialog_Open(const char* text, bool top, bool intro)
             {
                 gVram->free(gObjBlock[p]);
             }
+            return false;
+        }
+    }
+    return true;
+}
+
+namespace
+{
+// DialogueState's constructor: a fresh box typing `text`.
+void StartBox(const char* text, bool top, bool intro)
+{
+    gTop = top;
+    gIntro = intro;
+    gOpenedNew = true;
+    gNormalSpeed = 30;
+    gSpeedScale = intro ? 4 : 2;
+    ResetWriter(text);
+    gW.mSpeed = gNormalSpeed;
+    memcpy(gCanvas, gBoxImage, sizeof(gCanvas));
+    Upload();
+    PlaceObjs();
+
+    gBase = Base::Waiting;
+    EnterWriting();
+    gBumpCurrent = 0.0f;
+    gBumpNext = 0.1f;
+    gHalfBumps = 0;
+    gLinesBumped = 0;
+    gBlinkyTimer = 24;
+    gBlinkyOn = false;
+    gBlinkyDrawn = false;
+    gBlinkyEnabled = true;
+}
+} // namespace
+
+void Dialog_Open(const char* text, bool top, bool intro)
+{
+    if (!gVram)
+    {
+        return;
+    }
+    if (gOpen)
+    {
+        // A second DialogueState over the open one (only two at a time here).
+        if (gHasUnder)
+        {
+            return;
+        }
+        SaveBox(gUnder);
+        gHasUnder = true;
+        StartBox(text, top, intro);
+        return;
+    }
+    Dialog_HideLabels();
+    if (!AllocObjBlocks())
+    {
+        // (the sprite frame cache can leave OBJ VRAM too scattered for the box: drop it and try again)
+        Ecs_FlushFrameCache();
+        if (!AllocObjBlocks())
+        {
             return;
         }
     }
-    gTop = top;
-    gIntro = intro;
     gOpen = true;
     gDialogueOpen = 1;
 
@@ -645,24 +887,180 @@ void Dialog_Open(const char* text, bool top, bool intro)
     gSavedBldAlpha = REG_BLDALPHA;
     REG_BLDCNT = (BLD_BG0 | BLD_BG1 | BLD_BG2 | BLD_BG3 | BLD_OBJ | BLD_BACKDROP) << 8;
     REG_BLDALPHA = BLDA_BUILD(13, 3);
+    StartBox(text, top, intro);
+}
 
-    gNormalSpeed = 30;
-    gSpeedScale = intro ? 4 : 2;
-    ResetWriter(text);
-    gW.mSpeed = gNormalSpeed;
-    memcpy(gCanvas, gBoxImage, sizeof(gCanvas));
-    Upload();
-    PlaceObjs();
+void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
+                       int selectorY, bool white)
+{
+    if (!gVram || gOpen)
+    {
+        return;
+    }
+    if (!gLabels)
+    {
+        for (int o = 0; o < kObjCount; o++)
+        {
+            gObjBlock[o] = gVram->alloc((o < 3 ? 32 : 8) * ObjVramAllocator::BlockSize);
+            if (gObjBlock[o] < 0)
+            {
+                for (int p = 0; p < o; p++)
+                {
+                    gVram->free(gObjBlock[p]);
+                }
+                return;
+            }
+        }
+        gLabels = true;
+    }
+    pal_obj_mem[kPalBank * 16 + 0] = 0;
+    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    pal_obj_mem[kPalBank * 16 + kWhite] = RGB15(31, 31, 31);
+    const uint32_t ink = white ? kWhite : kBlack;
+    // The same labels as last time, still in the OBJs' tiles (menus ask every frame): just the OBJs.
+    uint32_t hash = 2166136261u;
+    auto mix = [&hash](uint32_t v)
+    {
+        hash = (hash ^ v) * 16777619u;
+    };
+    for (int i = 0; i < count; i++)
+    {
+        for (const char* c = lines[i]; *c; c++)
+        {
+            mix(static_cast<uint8_t>(*c));
+        }
+        mix(0x100u + static_cast<uint32_t>(xs[i]));
+        mix(static_cast<uint32_t>(ys[i]));
+    }
+    mix(static_cast<uint32_t>(count));
+    mix(static_cast<uint32_t>(top));
+    mix(static_cast<uint32_t>(selectorX));
+    mix(static_cast<uint32_t>(selectorY));
+    mix(ink);
+    const bool same = hash == gLabelsHash && gLabelsUpload == gUploads;
+    if (!same)
+    {
+        memset(gCanvas, 0, sizeof(gCanvas));
+        for (int i = 0; i < count; i++)
+        {
+            int x = xs[i];
+            for (const char* c = lines[i]; *c; c++)
+            {
+                if (HasGlyph(*c) && *c != ' ')
+                {
+                    DrawGlyph(*c, x, ys[i] - top, ink, white);
+                }
+                x += kCharW;
+            }
+        }
+        if (selectorY >= 0)
+        {
+            // MenuSelector: a small arrow pointing right.
+            for (int r = 0; r < 5; r++)
+            {
+                const int len = r < 3 ? r + 1 : 5 - r;
+                for (int c = 0; c < len; c++)
+                {
+                    SetPixel(gCanvas, selectorX + c, selectorY - top + r, ink);
+                }
+            }
+        }
+        Upload();
+        gLabelsHash = hash;
+        gLabelsUpload = gUploads;
+    }
+    if (gObjOam != (gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam))
+    {
+        HideObjs();
+        gObjOam = gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam;
+    }
+    for (int o = 0; o < kObjCount; o++)
+    {
+        const int px = o < 3 ? 40 + o * 64 : 40 + (o - 3) * 32;
+        const int py = o < 3 ? top : top + 32;
+        const uint16_t a1 = o < 3 ? ATTR1_SIZE_64 : ATTR1_SIZE_32;
+        obj_set_attr(&oam_mem[gObjOam + o], ATTR0_Y(py) | ATTR0_4BPP | ATTR0_WIDE, ATTR1_X(px) | a1,
+                     ATTR2_ID(gObjBlock[o]) | ATTR2_PRIO(0) | ATTR2_PALBANK(kPalBank));
+    }
+}
 
-    gBase = Base::Waiting;
-    EnterWriting();
-    gBumpTimer = 0;
-    gHalfBumps = 0;
-    gLinesBumped = 0;
-    gBlinkyTimer = 24;
-    gBlinkyOn = false;
-    gBlinkyDrawn = false;
-    gBlinkyEnabled = true;
+void Dialog_HideLabels()
+{
+    if (!gLabels)
+    {
+        return;
+    }
+    HideObjs();
+    gObjOam = kFirstOam;
+    for (int o = 0; o < kObjCount; o++)
+    {
+        gVram->free(gObjBlock[o]);
+    }
+    gLabels = false;
+    gLabelsHash = 0;
+}
+
+void Dialog_ShowPanel(int x, int y, int w, int h)
+{
+    if (!gVram || gOpen)
+    {
+        return;
+    }
+    if (gPanelBlock < 0)
+    {
+        gPanelBlock = gVram->alloc(9 * kPanelTiles * ObjVramAllocator::BlockSize);
+        if (gPanelBlock < 0)
+        {
+            return;
+        }
+        uint32_t tiles[kPanelTiles * 8];
+        for (int k = 0; k < 9; k++)
+        {
+            BuildPanelTiles(tiles, k % 3, k / 3);
+            memcpy32(gVram->ptr(gPanelBlock + k * kPanelTiles), tiles, kPanelTiles * 8);
+        }
+    }
+    pal_obj_mem[kPalBank * 16 + kFill] = RGB15(5, 5, 6);
+    pal_obj_mem[kPalBank * 16 + kBlack] = RGB15(0, 0, 0);
+    // 32x32 OBJs across and down, the last column and row overlapping the one before to end at the edge
+    const int cols = (w + 31) / 32;
+    const int rows = (h + 31) / 32;
+    int o = 0;
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols && o < kPanelObjs; c++, o++)
+        {
+            const int px = 40 + x + (c == cols - 1 ? w - 32 : c * 32);
+            const int py = y + (r == rows - 1 ? h - 32 : r * 32);
+            const int kind = (r == 0 ? 0 : (r == rows - 1 ? 2 : 1)) * 3 + (c == 0 ? 0 : (c == cols - 1 ? 2 : 1));
+            obj_set_attr(&oam_mem[kPanelFirstOam + o], ATTR0_Y(py & 255) | ATTR0_4BPP | ATTR0_SQUARE,
+                         ATTR1_X(px) | ATTR1_SIZE_32,
+                         ATTR2_ID(gPanelBlock + kind * kPanelTiles) | ATTR2_PRIO(0) | ATTR2_PALBANK(kPalBank));
+        }
+    }
+    for (; o < kPanelObjs; o++)
+    {
+        obj_hide(&oam_mem[kPanelFirstOam + o]);
+    }
+}
+
+void Dialog_HidePanel()
+{
+    if (gPanelBlock < 0)
+    {
+        return;
+    }
+    for (int o = 0; o < kPanelObjs; o++)
+    {
+        obj_hide(&oam_mem[kPanelFirstOam + o]);
+    }
+    gVram->free(gPanelBlock);
+    gPanelBlock = -1;
+}
+
+int Dialog_FirstReservedOam()
+{
+    return gPanelBlock >= 0 ? kPanelLabelOam : kFirstOam;
 }
 
 bool Dialog_IsOpen()
@@ -684,16 +1082,15 @@ void Dialog_Close()
     REG_BLDCNT = gSavedBldCnt;
     REG_BLDALPHA = gSavedBldAlpha;
     gOpen = false;
+    gHasUnder = false;
     gDialogueOpen = 0;
 }
 
-bool Dialog_Update()
+namespace
 {
-    if (!gOpen)
-    {
-        return false;
-    }
-
+// DialogueState.Update for the box in the globals. Returns true once it is Done.
+bool UpdateBox()
+{
     // DialogueState.Update: hold Accept/Cancel to type faster.
     gW.mSpeed = AcceptOrCancelHeld() ? gNormalSpeed * gSpeedScale : gNormalSpeed;
 
@@ -755,9 +1152,10 @@ bool Dialog_Update()
     }
     else if (gBase == Base::Bump)
     {
-        if (++gBumpTimer >= 6)
+        gBumpCurrent += kUiDeltaTime;
+        while (gBumpNext <= gBumpCurrent)
         {
-            gBumpTimer = 0;
+            gBumpNext = gBumpCurrent + 0.1f;
             DoBump();
         }
     }
@@ -778,8 +1176,7 @@ bool Dialog_Update()
                 gBlinkyOn = false;
                 gLinesBumped = 0;
                 gHalfBumps = 0;
-                gBumpTimer = 0;
-                DoBump(); // the first doBump fires as the state is entered
+                DoBump(); // the first doBump fires as the state is entered (its timer runs on)
             }
             else
             {
@@ -792,14 +1189,71 @@ bool Dialog_Update()
         gBlinkyEnabled = true;
     }
 
-    if (gUploadNeeded)
+    if (gUploadNeeded && !gHidden)
     {
         Upload();
     }
     if (gBase == Base::Done)
     {
-        Dialog_Close();
+        gFinishedCount++;
+        return true;
+    }
+    return false;
+}
+} // namespace
+
+bool Dialog_Update()
+{
+    if (!gOpen)
+    {
         return false;
     }
-    return true;
+    // (PlayState updates its child states oldest first: the box underneath types first)
+    if (gHasUnder)
+    {
+        SaveBox(gSwap);
+        LoadBox(gUnder);
+        gHidden = true;
+        const bool done = UpdateBox();
+        gHidden = false;
+        if (!done)
+        {
+            SaveBox(gUnder);
+        }
+        gHasUnder = !done;
+        LoadBox(gSwap);
+    }
+    if (!UpdateBox())
+    {
+        return true;
+    }
+    if (gHasUnder)
+    {
+        // The shown box is done: the one underneath shows again.
+        LoadBox(gUnder);
+        gHasUnder = false;
+        RedrawText();
+        gBlinkyDrawn = gBlinkyOn;
+        if (gBlinkyOn)
+        {
+            DrawBlinky(true);
+        }
+        PlaceObjs();
+        Upload();
+        return true;
+    }
+    Dialog_Close();
+    return false;
+}
+
+int Dialog_FinishedCount()
+{
+    return gFinishedCount;
+}
+
+bool Dialog_TakeOpened()
+{
+    const bool opened = gOpenedNew;
+    gOpenedNew = false;
+    return opened;
 }

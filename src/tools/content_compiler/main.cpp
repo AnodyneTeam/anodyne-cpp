@@ -6,7 +6,10 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include "dialog_compiler.hpp"
 #include "map_compiler.hpp"
@@ -16,7 +19,11 @@
 #include "sprite_compiler.hpp"
 #include "collision_compiler.hpp"
 #include "door_compiler.hpp"
+#include "lodepng.h"
 #include "entity_compiler.hpp"
+#include "ending_compiler.hpp"
+#include "menu_compiler.hpp"
+#include "hud_compiler.hpp"
 #include "title_compiler.hpp"
 #include "lz77.hpp"
 
@@ -265,7 +272,36 @@ static uint16_t ToScreenEntry(uint32_t packed)
 // The map is stored as up to three 16x16-tile layers (BG, BG2, FG; each BIOS-LZ77 packed little-endian u16 tile
 // indices, same indices as the AnodyneSharp CSVs) plus one table giving each 16x16 tile's four 8x8 screen entries.
 // The GBA builds BG screen entries from that table as the camera scrolls. Index 0 is "empty" in every layer.
-void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerName, const MapCompileResult& map)
+// The animated tiles: per tile its 16x16 tile index, four VRAM slots, frame count, fps and first frame (8 u16s), and
+// the frames' 8bpp pixels (four 8x8 tiles each).
+static void SaveTileAnimsGBA(FILE* f, const MapCompileResult& map, const std::vector<uint16_t>& palette)
+{
+    fprintf(f, "const unsigned int gTileAnimCount = %zu;\n", map.anims.size());
+    fprintf(f, "const unsigned short gTileAnims[%zu] = {", map.anims.empty() ? 1 : map.anims.size() * 8);
+    for (const TileAnimOut& a : map.anims)
+    {
+        fprintf(f, "\n    %u, %u, %u, %u, %u, %u, %d, %u,", a.tile, a.slots[0], a.slots[1], a.slots[2], a.slots[3],
+                a.frameCount, a.fps, a.firstFrame);
+    }
+    fprintf(f, "%s\n};\n", map.anims.empty() ? " 0" : "");
+    const size_t bytes = map.animFrameTiles.size() * 64;
+    fprintf(f, "alignas(4) const unsigned char gTileAnimFrames[%zu] = {", bytes ? bytes : 4);
+    size_t n = 0;
+    for (const RGBATile& tile : map.animFrameTiles)
+    {
+        for (uint32_t y = 0; y < 8; ++y)
+        {
+            for (uint32_t x = 0; x < 8; ++x)
+            {
+                fprintf(f, "%s0x%02X,", (n++ % 32 == 0) ? "\n    " : "", FindPaletteIndex8BPP(tile.mData.Get(x, y), palette));
+            }
+        }
+    }
+    fprintf(f, "%s\n};\n", bytes ? "" : " 0");
+}
+
+void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerName, const MapCompileResult& map,
+                      const std::vector<uint16_t>& palette)
 {
     FILE* f = fopen(headerName.c_str(), "w");
     if (!f)
@@ -329,12 +365,13 @@ void SaveMapLayersGBA(const std::string& nameSpace, const std::string& headerNam
         }
         fprintf(f, "\n};\n");
     }
-    fprintf(f, "const unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
+    fprintf(f, "constexpr unsigned short gLayerWidth[3] = { %u, %u, %u };\n", map.layers[0].Width(), map.layers[1].Width(),
             map.layers[2].Width());
-    fprintf(f, "const unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
+    fprintf(f, "constexpr unsigned short gLayerHeight[3] = { %u, %u, %u };\n", map.layers[0].Height(),
             map.layers[1].Height(), map.layers[2].Height());
-    fprintf(f, "const unsigned int gLayerUnpackedSize[3] = { %zu, %zu, %zu };\n", unpackedTotal[0], unpackedTotal[1],
+    fprintf(f, "constexpr unsigned int gLayerUnpackedSize[3] = { %zu, %zu, %zu };\n", unpackedTotal[0], unpackedTotal[1],
             unpackedTotal[2]);
+    SaveTileAnimsGBA(f, map, palette);
     fprintf(f, "}\n");
     fclose(f);
 
@@ -374,6 +411,56 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
         return;
     }
 
+    // TileData.GetAnimData: Maps/<MAP>/TileAnims/<texture>.dat, lines of "tile<TAB>fps<TAB>frame,frame,..."
+    std::vector<TileAnimSpec> anims;
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::path(contentPaths.GetMapTileDataPath(mapName)).parent_path() / "TileAnims";
+        std::vector<fs::path> files;
+        if (fs::is_directory(dir))
+        {
+            for (const auto& entry : fs::directory_iterator(dir))
+            {
+                if (entry.path().extension() == ".dat")
+                {
+                    files.push_back(entry.path());
+                }
+            }
+        }
+        std::sort(files.begin(), files.end());
+        for (const auto& file : files)
+        {
+            std::ifstream in(file);
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.size() >= 3 && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+                {
+                    line.erase(0, 3); // (StreamReader drops the BOM)
+                }
+                std::stringstream ss(line);
+                std::string tile;
+                std::string fps;
+                std::string frames;
+                if (!std::getline(ss, tile, '\t') || !std::getline(ss, fps, '\t') || !std::getline(ss, frames, '\t'))
+                {
+                    continue;
+                }
+                TileAnimSpec spec;
+                spec.tile = static_cast<uint32_t>(std::atoi(tile.c_str()));
+                spec.fps = std::atoi(fps.c_str());
+                std::stringstream fs2(frames);
+                std::string frame;
+                while (std::getline(fs2, frame, ','))
+                {
+                    spec.frames.push_back(std::atoi(frame.c_str()));
+                }
+                spec.texturePath = contentPaths.FindTexturePath(file.stem().string());
+                anims.push_back(spec);
+            }
+        }
+    }
+
     MapCompiler mc;
     const MapScrollSpec* scrollSpec = FindMapScrollSpec(mapName);
     const std::string scrollPath = scrollSpec ? contentPaths.FindTexturePath(scrollSpec->texture) : std::string();
@@ -382,20 +469,27 @@ static void CompileMap(ContentPaths& contentPaths, const std::string& mapName)
                        contentPaths.GetMapLayerCSVPath(mapName, "BG2"),
                        contentPaths.GetMapLayerCSVPath(mapName, "FG"),
                        mapTilesetPath,
-                       scrollPath);
+                       scrollPath,
+                       anims);
 
     if (!ret.success)
     {
         return;
     }
 
-    auto palette = ExtractPaletteFromTileSet(ret.tiles8x8);
+    // (the animated tiles' frames share the palette)
+    TileSet paletteTiles = ret.tiles8x8;
+    if (!ret.animFrameTiles.empty())
+    {
+        paletteTiles.AppendTilesToRow(ret.animFrameTiles);
+    }
+    auto palette = ExtractPaletteFromTileSet(paletteTiles);
     SavePaletteGBA(mapName, palHeader, palette);
 
     auto tiles = ConvertTileSetTo8BPP(ret.tiles8x8, palette);
     SaveTileSetGBA(mapName, tilesHeader, tiles);
 
-    SaveMapLayersGBA(mapName, mapHeader, ret);
+    SaveMapLayersGBA(mapName, mapHeader, ret, palette);
 
     printf("Map compilation complete: %s\n", mapName.c_str());
 }
@@ -499,6 +593,127 @@ static const std::vector<MapAudioSpec>& GetMapAudioSpecs()
     return kSpecs;
 }
 
+// ------------------------------------------------------------
+// MAP DARKNESS SETTINGS
+// The darkness settings from old/Content/Maps/<MAP>/Settings.json: DarknessAlpha (alpha -1 = not set there),
+// PlayerLight, the Darkness texture ("" = not set; the all-clear ones, which only lights would show, are left out) and
+// ReplaceTiles (nullptr = not set), for the map, its areas and its events.
+// ------------------------------------------------------------
+struct MapDarkArea final
+{
+    int x, y, w, h;
+    float alpha;
+    int playerLight; // -1 = not set
+    const char* texture = "";
+    const char* replace = nullptr;
+};
+
+struct MapDarkEvent final
+{
+    const char* event;
+    float alpha;
+    const char* texture;
+    const char* replace;
+};
+
+struct MapDarkSpec final
+{
+    const char* map;
+    float alpha;
+    bool playerLight;
+    std::vector<MapDarkArea> areas;
+    const char* texture = "";
+    std::vector<MapDarkEvent> events = {};
+};
+
+static const std::vector<MapDarkSpec>& GetMapDarkSpecs()
+{
+    static const std::vector<MapDarkSpec> kSpecs = {
+        { "BEACH", -1, false, {}, "beach_hardlight" },
+        { "BEDROOM", 0, false, {
+            { 320, 0, 160, 160, 0.2f, -1 },
+            { 640, 0, 160, 320, 0.2f, -1 },
+            { 800, 320, 320, 480, 0.8f, -1 },
+            { 640, 480, 160, 320, 1.0f, -1 },
+            { 640, 320, 160, 160, 0.8f, -1 },
+            { 320, 640, 160, 160, 0.2f, -1 },
+            { 160, 480, 160, 160, 0.8f, -1 },
+        } },
+        { "BLUE", -1, false, {}, "blue_overlay" },
+        { "CIRCUS", 0, false, { { 1280, 160, 160, 160, 0.8f, -1 } } },
+        { "CLIFF", -1, false, {}, "cliff_overlay" },
+        { "DRAWER", 0, true, {
+            { 0, 0, 320, 160, 1.0f, -1 },
+            { 0, 160, 160, 640, 1.0f, -1 },
+            { 0, 800, 960, 960, 1.0f, -1 },
+        } },
+        { "GO", -1, false, { { 320, 0, 160, 160, -1, -1, "ending_hardlight" } }, "go_hardlight" },
+        { "HAPPY", -1, false, { { 320, 320, 480, 160, 0.0f, -1, "", "" } }, "",
+          { { "HappyStarted", -1, "happy_hardlight", "20-21;30-31" } } },
+        { "NEXUS", -1, false, {}, "nexus_overlay" },
+        { "REDCAVE", -1, false, {}, "redcave_overlay" },
+        { "REDSEA", -1, false, {}, "redsea_hardlight" },
+        { "SPACE", -1, false, {}, "space_overlay" },
+        { "STREET", 0, false, { { 160, 320, 160, 160, 0.6f, -1 }, { 160, 960, 160, 160, 0.6f, -1 } } },
+        { "SUBURB", 0, false, {
+            { 0, 800, 320, 160, 0.91f, 1 },
+            { 0, 1120, 320, 160, 0.91f, 1 },
+            { 160, 960, 160, 160, 0.91f, 1 },
+        } },
+        { "TERMINAL", -1, false, {}, "terminal_overlay" },
+        { "WINDMILL", -1, false, {}, "windmill_overlay" },
+    };
+    return kSpecs;
+}
+
+// Darkness.Render with a texture: each 8px band of the 160x160 playfield as one colour and alpha (the texture's
+// pixels averaged, weighted by their alpha), what the GBA swaps the palettes by down the screen.
+constexpr int kDarkBands = 20;
+
+static bool DarkTextureBands(const ContentPaths& contentPaths, const std::string& name, std::string& out)
+{
+    const std::string path = contentPaths.FindTexturePath(name);
+    std::vector<uint8_t> px;
+    unsigned w = 0;
+    unsigned h = 0;
+    if (path.empty() || lodepng::decode(px, w, h, path, LCT_RGBA, 8) || w != 160 || h < 160)
+    {
+        printf("ERROR: darkness texture %s not found/readable\n", name.c_str());
+        return false;
+    }
+    const bool hardLight = name.size() >= 9 && name.compare(name.size() - 9, 9, "hardlight") == 0;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "    { %d, {", hardLight ? 1 : 0);
+    out += buf;
+    for (int band = 0; band < kDarkBands; band++)
+    {
+        double sum[3] = { 0, 0, 0 };
+        double alpha = 0;
+        for (unsigned y = band * 8; y < band * 8 + 8u; y++)
+        {
+            for (unsigned x = 0; x < w; x++)
+            {
+                const uint8_t* p = &px[(y * w + x) * 4];
+                for (int c = 0; c < 3; c++)
+                {
+                    sum[c] += p[c] * (p[3] / 255.0);
+                }
+                alpha += p[3] / 255.0;
+            }
+        }
+        int rgba[4] = { 0, 0, 0, 0 };
+        for (int c = 0; c < 3 && alpha > 0; c++)
+        {
+            rgba[c] = static_cast<int>(sum[c] / alpha + 0.5);
+        }
+        rgba[3] = static_cast<int>(alpha * 255 / (w * 8) + 0.5);
+        snprintf(buf, sizeof(buf), " { %d, %d, %d, %d },", rgba[0], rgba[1], rgba[2], rgba[3]);
+        out += buf;
+    }
+    out += " } },\n";
+    return true;
+}
+
 void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::string>& mapNames)
 {
     FILE* f = fopen("map_registry.h", "w");
@@ -516,7 +731,7 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     }
 
     // Registry array
-    fprintf(f, "static const MapEntry kMaps[] =\n{\n");
+    fprintf(f, "static constexpr MapEntry kMaps[] =\n{\n");
 
     for (const auto& name : mapNames)
     {
@@ -528,14 +743,18 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
             "          { { %s::gLayerWidth[0], %s::gLayerHeight[0], %s::gLayerUnpackedSize[0], %s::gLayer0Packed },\n"
             "            { %s::gLayerWidth[1], %s::gLayerHeight[1], %s::gLayerUnpackedSize[1], %s::gLayer1Packed },\n"
             "            { %s::gLayerWidth[2], %s::gLayerHeight[2], %s::gLayerUnpackedSize[2], %s::gLayer2Packed } } },\n"
-            "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked }\n"
+            "        { %s::gColWidth, %s::gColHeight, %s::gColClassCount, %s::gColUnpackedSize, %s::gColClasses, %s::gColPacked,\n"
+            "          %s::gColTileCount, %s::gColTiles },\n"
+            "        { %s::gTileAnimCount, %s::gTileAnims, %s::gTileAnimFrames }\n"
             "    },\n",
             name.c_str(), name.c_str(),                                                            // palette (2)
             name.c_str(), name.c_str(),                                                            // tileset (2)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // tile16 + layer 0 (6)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 1 (4)
             name.c_str(), name.c_str(), name.c_str(), name.c_str(),                                // layer 2 (4)
-            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str()     // collision (6)
+            name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(), name.c_str(),    // collision (6)
+            name.c_str(), name.c_str(),                                                            // tile collision (2)
+            name.c_str(), name.c_str(), name.c_str()                                               // tile anims (3)
         );
     }
 
@@ -593,6 +812,85 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
         }
     }
     fprintf(f, "};\n\n");
+    // Darkness: the textures, then one MapDarkData per map (alpha in 1/256ths, -1 = not set; texture -1 = not set).
+    std::vector<std::string> textures;
+    auto textureId = [&](const char* name) {
+        if (!name || !*name)
+        {
+            return -1;
+        }
+        for (size_t i = 0; i < textures.size(); i++)
+        {
+            if (textures[i] == name)
+            {
+                return static_cast<int>(i);
+            }
+        }
+        textures.push_back(name);
+        return static_cast<int>(textures.size() - 1);
+    };
+    auto alpha256 = [](float a) { return a < 0 ? -1 : static_cast<int>(a * 256 + 0.5f); };
+    auto quoted = [](const char* str) { return str ? "\"" + std::string(str) + "\"" : std::string("nullptr"); };
+    for (const auto& name : mapNames)
+    {
+        for (const auto& spec : GetMapDarkSpecs())
+        {
+            if (name != spec.map)
+            {
+                continue;
+            }
+            if (!spec.areas.empty())
+            {
+                fprintf(f, "static const MapDarkArea kMapDarkAreas_%s[] = {\n", name.c_str());
+                for (const auto& area : spec.areas)
+                {
+                    fprintf(f, "    { %d, %d, %d, %d, %d, %d, %d, %s },\n", area.x, area.y, area.w, area.h,
+                            alpha256(area.alpha), area.playerLight, textureId(area.texture), quoted(area.replace).c_str());
+                }
+                fprintf(f, "};\n");
+            }
+            if (!spec.events.empty())
+            {
+                fprintf(f, "static const MapDarkEvent kMapDarkEvents_%s[] = {\n", name.c_str());
+                for (const auto& ev : spec.events)
+                {
+                    fprintf(f, "    { \"%s\", %d, %d, %s },\n", ev.event, alpha256(ev.alpha), textureId(ev.texture),
+                            quoted(ev.replace).c_str());
+                }
+                fprintf(f, "};\n");
+            }
+        }
+    }
+    fprintf(f, "static const MapDarkData kMapDark[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        const MapDarkSpec* spec = nullptr;
+        for (const auto& candidate : GetMapDarkSpecs())
+        {
+            if (name == candidate.map)
+            {
+                spec = &candidate;
+            }
+        }
+        if (spec)
+        {
+            const std::string areas = spec->areas.empty() ? "nullptr" : "kMapDarkAreas_" + name;
+            const std::string events = spec->events.empty() ? "nullptr" : "kMapDarkEvents_" + name;
+            fprintf(f, "    { %d, %d, %d, %zu, %s, %zu, %s },\n", alpha256(spec->alpha), spec->playerLight ? 1 : 0,
+                    textureId(spec->texture), spec->areas.size(), areas.c_str(), spec->events.size(), events.c_str());
+        }
+        else
+        {
+            fprintf(f, "    { 0, 0, -1, 0, nullptr, 0, nullptr },\n");
+        }
+    }
+    fprintf(f, "};\n\n");
+    std::string bands = "static const DarkTexture kDarkTextures[] =\n{\n";
+    for (const std::string& texture : textures)
+    {
+        DarkTextureBands(contentPaths, texture, bands);
+    }
+    fprintf(f, "%s};\n\n", bands.c_str());
     // Scrolling backgrounds, one entry per map (null pattern = none).
     fprintf(f, "static const MapScrollData kMapScroll[] =\n{\n");
     for (const auto& name : mapNames)
@@ -610,6 +908,73 @@ void WriteMapRegistry(const ContentPaths& contentPaths, const std::vector<std::s
     }
     fprintf(f, "};\n\n");
     fputs(BuildDoorTables(contentPaths, mapNames).c_str(), f);
+    // SwapperControl: each map's Swapper.dat (tab-separated: state, x, y, width, height)
+    std::unordered_set<std::string> swapperMaps;
+    for (const auto& name : mapNames)
+    {
+        std::ifstream in(std::filesystem::path(contentPaths.GetBasePath()) / "Maps" / name / "Swapper.dat");
+        std::string line;
+        std::string rows;
+        bool first = true;
+        while (std::getline(in, line))
+        {
+            if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+            {
+                line.erase(0, 3); // (StreamReader skips the BOM)
+            }
+            first = false;
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+            std::vector<std::string> fields;
+            std::stringstream ss(line);
+            std::string field;
+            while (std::getline(ss, field, '\t'))
+            {
+                fields.push_back(field);
+            }
+            if (fields.size() != 5)
+            {
+                continue;
+            }
+            static const char* const kStates[] = { "Default", "Allow", "Disallow", "DisallowSilently" };
+            int state = -1;
+            for (int s = 0; s < 4; s++)
+            {
+                state = fields[0] == kStates[s] ? s : state;
+            }
+            if (state < 0)
+            {
+                fprintf(stderr, "%s/Swapper.dat: unknown state %s\n", name.c_str(), fields[0].c_str());
+                continue;
+            }
+            char row[96];
+            snprintf(row, sizeof(row), "    { %d, %d, %d, %d, %d },\n", state, static_cast<int>(std::stof(fields[1])),
+                     static_cast<int>(std::stof(fields[2])), static_cast<int>(std::stof(fields[3])),
+                     static_cast<int>(std::stof(fields[4])));
+            rows += row;
+        }
+        if (!rows.empty())
+        {
+            swapperMaps.insert(name);
+            fprintf(f, "static const MapSwapRegion kSwapRegions_%s[] =\n{\n%s};\n", name.c_str(), rows.c_str());
+        }
+    }
+    fprintf(f, "static const MapSwapperList kMapSwapper[] =\n{\n");
+    for (const auto& name : mapNames)
+    {
+        if (swapperMaps.count(name) != 0)
+        {
+            fprintf(f, "    { sizeof(kSwapRegions_%s) / sizeof(kSwapRegions_%s[0]), kSwapRegions_%s },\n", name.c_str(),
+                    name.c_str(), name.c_str());
+        }
+        else
+        {
+            fprintf(f, "    { 0, nullptr },\n");
+        }
+    }
+    fprintf(f, "};\n\n");
     fputs(BuildEntityTables(contentPaths, mapNames).c_str(), f);
     fprintf(f, "\n");
     fprintf(f, "static const uint32_t kMapCount = sizeof(kMaps) / sizeof(kMaps[0]);\n");
@@ -658,12 +1023,26 @@ static void WriteAudioTrackArray(const char* arrayName, const char* varPrefix,
     for (size_t i = 0; i < tracks.size(); i++)
     {
         const CompiledAudioTrack& t = tracks[i];
-        fprintf(f, "    { \"%s\", %uu, %uu, %zuu, %u, %uu, %s_%zu_Frames },\n", EscapeCString(t.name).c_str(),
-                t.sampleRate, t.totalSamples, t.frames.size(), t.loopEnabled ? 1 : 0, t.loopStartFrame, varPrefix,
-                i);
+        fprintf(f, "    { \"%s\", %uu, %uu, %zuu, %u, %uu, %s_%zu_Frames, %u, %u },\n",
+                EscapeCString(t.name).c_str(), t.sampleRate, t.totalSamples, t.frames.size(), t.loopEnabled ? 1 : 0,
+                t.loopStartFrame, varPrefix, i, t.pcm8 ? 1 : 0, t.pcmShift);
     }
     fprintf(f, "};\n");
-    fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n\n", arrayName, arrayName, arrayName);
+    fprintf(f, "static const uint32_t %sCount = sizeof(%s) / sizeof(%s[0]);\n", arrayName, arrayName, arrayName);
+    // The indices in strcmp order of their names (ties by index), so a lookup by name is a binary search.
+    std::vector<uint16_t> byName(tracks.size());
+    for (size_t i = 0; i < tracks.size(); i++)
+    {
+        byName[i] = static_cast<uint16_t>(i);
+    }
+    std::stable_sort(byName.begin(), byName.end(), [&](uint16_t a, uint16_t b)
+                     { return strcmp(tracks[a].name.c_str(), tracks[b].name.c_str()) < 0; });
+    fprintf(f, "static const uint16_t %sByName[] = {", arrayName);
+    for (size_t i = 0; i < byName.size(); i++)
+    {
+        fprintf(f, "%s%u", i == 0 ? "\n    " : (i % 16 ? ", " : ",\n    "), byName[i]);
+    }
+    fprintf(f, "%s};\n\n", byName.empty() ? " 0 " : "\n");
 }
 
 static void WriteAudioRegistry(uint32_t outputSampleRate, const std::vector<CompiledAudioTrack>& bgm,
@@ -771,6 +1150,8 @@ static void CompileAllAudio(ContentPaths& contentPaths, const AudioCliOptions& c
     // not by frame size.) See AUDIO_MAX_FRAME_SAMPLES in audio_manager.h,
     // must match.
     options.frameLenSamples = 1280;
+    // PCM8 SFX (see AudioCompilerOptions): every clip up to bubble_loop's length, about +0.6MB of ROM.
+    options.sfxPcmMaxSamples = 26000;
 
     // Per-track loop-start overrides (in samples at the track's own encode
     // rate) - no original AnodyneSharp loop-point metadata exists anywhere in
@@ -937,7 +1318,7 @@ int main(int argc, char **argv)
     if (!cliOptions.audioOnly && !cliOptions.spritesOnly)
     {
         // Bump when SaveMapLayersGBA's output format changes so headers from older builds get regenerated.
-        const std::string kMapFormatVersion = "4-scroll";
+        const std::string kMapFormatVersion = "9-constexpr";
         {
             std::string existing;
             if (FILE* v = fopen("map_format_version.txt", "rb"))
@@ -966,6 +1347,9 @@ int main(int argc, char **argv)
         SpriteCompiler spriteCompiler;
         spriteCompiler.WriteHeaders(spriteCompiler.CompileAll(contentPaths));
         CompileTitle(contentPaths);
+        CompileEnding(contentPaths);
+        CompileMenu(contentPaths);
+        CompileHud(contentPaths);
     }
 
     if (!cliOptions.mapsOnly && !cliOptions.spritesOnly)

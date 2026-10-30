@@ -2,6 +2,7 @@
 #include "audio_manager.h"
 #include "audio_decode_core.hpp"
 #include "soft_mosaic.hpp"
+#include "world.h"
 
 #include "tonc.h"
 
@@ -10,7 +11,7 @@
 // relying on AudioTrackData/AudioFrameRef already being defined (via
 // audio_manager.h, pulled in by audio_decode_core.hpp above - same
 // convention map_registry.h uses for MapEntry).
-#include "../build/tools/audio_registry.h"
+#include "audio_registry.h"
 
 // The linked-in audio_blob.bin pool (see anodyne/CMakeLists.txt's
 // AudioBlobObj custom command: `arm-none-eabi-ld -r -b binary audio_blob.bin`
@@ -54,8 +55,8 @@ static DecodeCursor sSfxCursors[AUDIO_MAX_SFX_SLOTS] EWRAM_BSS;
 // stay in sample lockstep. +32 bytes of slack per half: the FIFO DMA
 // fetches in 16-byte bursts and can run slightly ahead.
 static int32_t sMixAccumBuf[AUDIO_WORKBUF_SAMPLES];
-static int8_t sFifoABuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
-static int8_t sFifoBBuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
+alignas(4) static int8_t sFifoABuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS; // (word aligned: DMA reads words)
+alignas(4) static int8_t sFifoBBuf[2][AUDIO_WORKBUF_SAMPLES + 32] EWRAM_BSS;
 static uint32_t sPlayHalf = 0;  // half to hand to both DMAs at the next VBlank
 static bool sHalfReady = false; // are sFifoABuf/sFifoBBuf[sPlayHalf] filled?
 
@@ -107,12 +108,18 @@ static uint32_t ReadCycleCounter()
     return (hi << 16) | lo;
 }
 
+uint32_t AudioManager_Cycles(void)
+{
+    return ReadCycleCounter();
+}
+
 static void RearmFifoDma(volatile u32* dmaCnt, volatile u32* dmaSad, volatile u32* dmaDad, const int8_t* src,
                          volatile u32* fifo)
 {
     *dmaCnt = 0;
-    *dmaSad = (u32)src;
-    *dmaDad = (u32)fifo;
+    // Bus addresses are 32 bit (the simulator maps everything below 4GB too).
+    *dmaSad = static_cast<u32>(reinterpret_cast<uintptr_t>(src));
+    *dmaDad = static_cast<u32>(reinterpret_cast<uintptr_t>(fifo));
     *dmaCnt = DMA_DST_FIXED | DMA_REPEAT | DMA_32 | DMA_AT_FIFO | DMA_ENABLE;
 }
 
@@ -150,6 +157,7 @@ static void AudioManager_OnVBlank()
     // The pixelate effect's per-frame register/palette writes have to land inside VBlank, which the (late) main loop
     // can't promise while sound effects are decoding; this is a few hundred cycles.
     Mosaic_OnVBlank();
+    Screen_WaveOnVBlank();
 
     // --- 2. Mix every active stream for the next VBlank ---
     sAccumulatorQ16 += sSamplesPerVBlankQ16;
@@ -191,6 +199,49 @@ static void AudioManager_OnVBlank()
         sIsrCyclesMax = cycles;
     }
 }
+
+#ifdef ANODYNE_PERF
+// qoa_run.s against the C++ loop it replaces, over the start of every sound in chunks of changing sizes (crossing
+// slices, words and frames at different points): the samples that differ, and how many were compared.
+static void CheckTracks(const AudioTrackData* tracks, uint32_t count, uint32_t& bad, uint32_t& samples)
+{
+    // (on the stack, which is ~4KB: this runs once at boot, before the stack is painted, and EWRAM has no room to spare)
+    int32_t sA[256];
+    int32_t sB[256];
+    for (uint32_t t = 0; t < count; t++)
+    {
+        DecodeCursor a;
+        DecodeCursor b;
+        DecodeCursor_Start(&a, &tracks[t], true);
+        DecodeCursor_Start(&b, &tracks[t], true);
+        const bool up2 = tracks[t].sampleRate != AUDIO_SAMPLE_RATE;
+        for (uint32_t chunk = 0; chunk < 40 && (a.active || b.active); chunk++)
+        {
+            const uint32_t n = 2 + ((chunk * 74) % 240); // (even)
+            memset(sA, 0, sizeof(sA));
+            memset(sB, 0, sizeof(sB));
+            const uint32_t gotA = up2 ? DecodeCursor_Mix16Up2(&a, sA, n) : DecodeCursor_Mix16(&a, sA, n);
+            const uint32_t gotB = up2 ? DecodeCursor_Mix16Up2Ref(&b, sB, n) : DecodeCursor_Mix16Ref(&b, sB, n);
+            bad += gotA != gotB ? 1 : 0;
+            for (uint32_t i = 0; i < n; i++)
+            {
+                bad += sA[i] != sB[i] ? 1 : 0;
+            }
+            samples += n;
+        }
+    }
+}
+
+void AudioManager_SelfTest(uint32_t* bad, uint32_t* samples)
+{
+    *bad = 0;
+    *samples = 0;
+    g_AudioBlobBase = _binary_audio_blob_bin_start; // (before AudioManager_Init)
+    CheckTracks(kBgmTracks, kBgmTracksCount, *bad, *samples);
+    CheckTracks(kAmbienceTracks, kAmbienceTracksCount, *bad, *samples);
+    CheckTracks(kSfxClips, kSfxClipsCount, *bad, *samples);
+}
+#endif
 
 void AudioManager_Init()
 {
@@ -256,24 +307,60 @@ const char* AudioManager_GetSfxName(uint32_t sfxId)
     return (sfxId < kSfxClipsCount) ? kSfxClips[sfxId].name : "";
 }
 
-static int32_t FindTrack(const AudioTrackData* tracks, uint32_t count, const char* name)
+// A binary search of the names in order (byName, from the content compiler); the first track of that name.
+static int32_t FindTrack(const AudioTrackData* tracks, const uint16_t* byName, uint32_t count, const char* name)
 {
-    for (uint32_t i = 0; i < count; i++)
+    uint32_t lo = 0;
+    uint32_t hi = count;
+    while (lo < hi)
     {
-        if (strcmp(tracks[i].name, name) == 0)
+        const uint32_t mid = (lo + hi) / 2;
+        if (strcmp(tracks[byName[mid]].name, name) < 0)
         {
-            return (int32_t)i;
+            lo = mid + 1;
+        }
+        else
+        {
+            hi = mid;
         }
     }
-    return -1;
+    return lo < count && strcmp(tracks[byName[lo]].name, name) == 0 ? static_cast<int32_t>(byName[lo]) : -1;
 }
 
-int32_t AudioManager_FindBgm(const char* name) { return FindTrack(kBgmTracks, kBgmTracksCount, name); }
+int32_t AudioManager_FindBgm(const char* name) { return FindTrack(kBgmTracks, kBgmTracksByName, kBgmTracksCount, name); }
 int32_t AudioManager_FindAmbience(const char* name)
 {
-    return FindTrack(kAmbienceTracks, kAmbienceTracksCount, name);
+    return FindTrack(kAmbienceTracks, kAmbienceTracksByName, kAmbienceTracksCount, name);
 }
-int32_t AudioManager_FindSfx(const char* name) { return FindTrack(kSfxClips, kSfxClipsCount, name); }
+int32_t AudioManager_FindSfx(const char* name)
+{
+    // Entities ask by name every time they play one (a strcmp down the whole list): remember the last few names
+    // that are ROM constants, whose text can't change under the same pointer.
+    constexpr int kCacheSize = 8;
+    static const char* sNames[kCacheSize];
+    static int32_t sIds[kCacheSize];
+    static int sNext = 0;
+    const uintptr_t addr = reinterpret_cast<uintptr_t>(name);
+    const bool rom = addr >= 0x08000000u && addr < 0x0A000000u;
+    if (rom)
+    {
+        for (int i = 0; i < kCacheSize; i++)
+        {
+            if (sNames[i] == name)
+            {
+                return sIds[i];
+            }
+        }
+    }
+    const int32_t id = FindTrack(kSfxClips, kSfxClipsByName, kSfxClipsCount, name);
+    if (rom)
+    {
+        sNames[sNext] = name;
+        sIds[sNext] = id;
+        sNext = (sNext + 1) % kCacheSize;
+    }
+    return id;
+}
 
 void AudioManager_Update()
 {

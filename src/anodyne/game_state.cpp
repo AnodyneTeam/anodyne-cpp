@@ -1,0 +1,450 @@
+#include "game_state.h"
+
+#include <string.h>
+
+#include "audio_manager.h"
+#include "dialog.h"
+#include "ecs.h"
+#include "pause.h"
+#include "save.h"
+
+
+GameState gGame;
+uint8_t gMinimap[kMinimapCells] __attribute__((section(".sbss")));
+bool gFuckItMode = false;
+Settings gSettings;
+
+namespace
+{
+constexpr unsigned kPresetWords = (kMaxPresets + 31) / 32;
+uint32_t gDead[kPresetWords] __attribute__((section(".sbss")));      // !Alive
+uint32_t gActivated[kPresetWords] __attribute__((section(".sbss"))); // Activated
+
+bool GetBit(const uint32_t* bits, unsigned i)
+{
+    return i < kMaxPresets && (bits[i >> 5] >> (i & 31)) & 1;
+}
+
+void SetBit(uint32_t* bits, unsigned i, bool on)
+{
+    if (i >= kMaxPresets)
+    {
+        return;
+    }
+    if (on)
+    {
+        bits[i >> 5] |= 1u << (i & 31);
+    }
+    else
+    {
+        bits[i >> 5] &= ~(1u << (i & 31));
+    }
+}
+
+// EventRegister: a small table of names (ROM strings or copied) and counters.
+constexpr int kMaxEvents = 64;
+constexpr int kEventNameLen = 24;
+struct EventSlot final
+{
+    char mName[kEventNameLen];
+    int mValue;
+};
+EventSlot gEvents[kMaxEvents] __attribute__((section(".sbss")));
+int gEventCount = 0;
+
+EventSlot* FindEvent(const char* name, bool create)
+{
+    for (int i = 0; i < gEventCount; i++)
+    {
+        if (strcmp(gEvents[i].mName, name) == 0)
+        {
+            return &gEvents[i];
+        }
+    }
+    if (!create || gEventCount == kMaxEvents)
+    {
+        return nullptr;
+    }
+    EventSlot& e = gEvents[gEventCount++];
+    strncpy(e.mName, name, kEventNameLen - 1);
+    e.mName[kEventNameLen - 1] = '\0';
+    e.mValue = 0;
+    return &e;
+}
+
+bool gDialogueFinished = true;
+bool gCutsceneDialogue = false;
+bool gTitleRequest = false; // GameState.SetState<TitleState>
+int gFinishedAtOpen = 0; // Dialog_FinishedCount when the last line was set
+} // namespace
+
+void GameState_Reset()
+{
+    memset(&gGame, 0, sizeof(gGame));
+    memset(gMinimap, 0, sizeof(gMinimap));
+    gGame.mMaxHealth = 6;
+    gGame.mCurHealth = 6;
+    gGame.mCheckpointMap = -1;
+    gGame.mReturnMap = -1;
+    memset(gDead, 0, sizeof(gDead));
+    memset(gActivated, 0, sizeof(gActivated));
+    gEventCount = 0;
+    gDialogueFinished = true;
+    Pause_Reset();
+}
+
+void GameState_Save(SaveWriter& w)
+{
+    // (the whole struct: a save is only read back by the ROM that wrote it)
+    GameState g = gGame;
+    g.mModeName = nullptr;
+    g.mMapName = nullptr;
+    w.Put(&g, sizeof(g));
+    w.Put(gMinimap, sizeof(gMinimap));
+    w.Put(gDead, sizeof(gDead));
+    w.Put(gActivated, sizeof(gActivated));
+    w.Put(&gEventCount, sizeof(gEventCount));
+    w.Put(gEvents, static_cast<int>(sizeof(EventSlot)) * gEventCount);
+}
+
+void GameState_Load(SaveReader& r)
+{
+    GameState g;
+    r.Get(&g, sizeof(g));
+    r.Get(gMinimap, sizeof(gMinimap));
+    // What the play state sets up afresh stays as it is.
+    g.mModeName = gGame.mModeName;
+    g.mMapName = gGame.mMapName;
+    g.mCurrentMap = gGame.mCurrentMap;
+    g.mGridX = gGame.mGridX;
+    g.mGridY = gGame.mGridY;
+    g.mPuzzlesSolved = 0;
+    g.mEnemiesKilled = 0;
+    g.mDisableMenu = false;
+    g.mInDeathRoom = false;
+    g.mEquippedBroomChanged = true;
+    g.mGameMode = GAME_MODE_NORMAL;
+    g.mAlwaysCellGraphics = false;
+    gGame = g;
+    r.Get(gDead, sizeof(gDead));
+    r.Get(gActivated, sizeof(gActivated));
+    r.Get(&gEventCount, sizeof(gEventCount));
+    gEventCount = gEventCount < 0 ? 0 : (gEventCount > kMaxEvents ? kMaxEvents : gEventCount);
+    r.Get(gEvents, static_cast<int>(sizeof(EventSlot)) * gEventCount);
+    gDialogueFinished = true;
+}
+
+void GameState_SetHealth(int health)
+{
+    gGame.mCurHealth = health < 0 ? 0 : (health > gGame.mMaxHealth ? gGame.mMaxHealth : health);
+}
+
+void GameState_SetMaxHealth(int maxHealth)
+{
+    gGame.mMaxHealth = maxHealth > 16 ? 16 : maxHealth;
+}
+
+namespace
+{
+bool MapBit(uint32_t bits, const char* map)
+{
+    const int i = Game_MapIndex(map);
+    return i >= 0 && ((bits >> i) & 1) != 0;
+}
+} // namespace
+
+bool Game_Visited(const char* map)
+{
+    return MapBit(gGame.mVisitedMaps, map);
+}
+
+bool Game_BossDefeated(const char* map)
+{
+    return MapBit(gGame.mBossDefeated, map);
+}
+
+bool Game_LeftAfterBoss(const char* map)
+{
+    return MapBit(gGame.mLeftAfterBoss, map);
+}
+
+void Game_SetBossDefeated(const char* map)
+{
+    const int i = Game_MapIndex(map);
+    if (i >= 0)
+    {
+        gGame.mBossDefeated |= 1u << i;
+    }
+}
+
+bool Game_IsDungeon()
+{
+    static const char* const kDungeons[] = { "BEDROOM", "REDCAVE", "CROWD", "APARTMENT", "HOTEL", "CIRCUS" };
+    for (const char* d : kDungeons)
+    {
+        if (gGame.mMapName && strcmp(gGame.mMapName, d) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+int Inventory_MapKeys()
+{
+    return (gGame.mCurrentMap >= 0 && gGame.mCurrentMap < kMaxMaps) ? gGame.mMapKeys[gGame.mCurrentMap] : 0;
+}
+
+void Inventory_AddMapKey()
+{
+    if (gGame.mCurrentMap >= 0 && gGame.mCurrentMap < kMaxMaps)
+    {
+        gGame.mMapKeys[gGame.mCurrentMap]++;
+    }
+}
+
+void Inventory_RemoveMapKey()
+{
+    if (Inventory_MapKeys() > 0)
+    {
+        gGame.mMapKeys[gGame.mCurrentMap]--;
+    }
+}
+
+int Inventory_CardCount()
+{
+    int n = 0;
+    for (uint8_t c : gGame.mCardStatus)
+    {
+        n += c ? 1 : 0;
+    }
+    return n;
+}
+
+bool Game_IsCell()
+{
+    return gGame.mAlwaysCellGraphics || (gGame.mMapName && strcmp(gGame.mMapName, "CELL") == 0);
+}
+
+bool Game_CanChangeBroom()
+{
+    const char* map = gGame.mMapName ? gGame.mMapName : "";
+    return !gGame.mInDeathRoom && strcmp(map, "CELL") != 0 && strcmp(map, "SUBURB") != 0;
+}
+
+bool Inventory_HasBroomType(uint8_t type)
+{
+    return type != BROOM_NONE && type < BROOM_TYPE_COUNT && gGame.mHasBroom[type];
+}
+
+bool Inventory_HasAnyBroom()
+{
+    return gGame.mHasBroom[BROOM_NORMAL] || gGame.mHasBroom[BROOM_LONG] || gGame.mHasBroom[BROOM_WIDE] ||
+           gGame.mHasBroom[BROOM_TRANSFORMER];
+}
+
+uint8_t Inventory_EquippedBroom()
+{
+    const uint8_t b = gGame.mEquippedBroom;
+    if (!Game_CanChangeBroom() && b != BROOM_TRANSFORMER && b != BROOM_NONE)
+    {
+        return BROOM_NORMAL;
+    }
+    return b;
+}
+
+void Inventory_SetEquippedBroom(uint8_t type)
+{
+    if (!Inventory_HasBroomType(type))
+    {
+        return;
+    }
+    const uint8_t old = gGame.mEquippedBroom;
+    gGame.mEquippedBroom = (!Game_CanChangeBroom() && type != BROOM_TRANSFORMER) ? BROOM_NORMAL : type;
+    gGame.mEquippedBroomChanged = gGame.mEquippedBroom != old;
+}
+
+bool Preset_Alive(const MapEntity& preset)
+{
+    return !GetBit(gDead, preset.mGlobalId);
+}
+
+void Preset_SetAlive(const MapEntity& preset, bool alive)
+{
+    SetBit(gDead, preset.mGlobalId, !alive);
+}
+
+bool Preset_Activated(const MapEntity& preset)
+{
+    return GetBit(gActivated, preset.mGlobalId);
+}
+
+void Preset_SetActivated(const MapEntity& preset, bool activated)
+{
+    SetBit(gActivated, preset.mGlobalId, activated);
+}
+
+void Preset_ReviveMap(const MapEntityList& list)
+{
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        if (list.mEntities[i].mPermanence != PERM_GLOBAL)
+        {
+            Preset_SetAlive(list.mEntities[i], true);
+        }
+    }
+}
+
+bool Preset_OnGrid(const MapEntity& preset, int gx, int gy)
+{
+    // Positions are never negative in Entities.xml, so division is the floor. (x / 160 as a multiply: exact for the
+    // int16 range, and Thumb has no divide)
+    const auto screen = [](int v) { return static_cast<int>((static_cast<uint32_t>(v) * 52429u) >> 23); };
+    return screen(preset.mX) == gx && screen(preset.mY) == gy;
+}
+
+void Preset_ReviveGrid(const MapEntityList& list, int gx, int gy)
+{
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        const MapEntity& p = list.mEntities[i];
+        if (p.mPermanence == PERM_GRID_LOCAL && Preset_OnGrid(p, gx, gy))
+        {
+            Preset_SetAlive(p, true);
+        }
+    }
+}
+
+int Event_Get(const char* name)
+{
+    if (!name)
+    {
+        return 0; // (GetEvent(null) is 0)
+    }
+    const EventSlot* e = FindEvent(name, false);
+    return e ? e->mValue : 0;
+}
+
+void Event_Set(const char* name, int value)
+{
+    EventSlot* e = FindEvent(name, true);
+    if (e)
+    {
+        e->mValue = value;
+    }
+}
+
+void Event_Inc(const char* name)
+{
+    Event_Set(name, Event_Get(name) + 1);
+}
+
+void Game_ShowDialogue(const char* npc, const char* scene, int id)
+{
+    bool top = false;
+    const char* text = Dialog_Get(npc, scene, id, &top);
+    if (text && text[0])
+    {
+        Dialog_Open(text, top, false);
+        gDialogueFinished = false;
+        gFinishedAtOpen = Dialog_FinishedCount();
+        gCutsceneDialogue = false;
+    }
+}
+
+void Game_ShowRandomDialogue(const char* npc, const char* scene)
+{
+    const int length = Dialog_SceneLength(npc, scene);
+    if (length < 0)
+    {
+        Game_ShowText("No text available.");
+        return;
+    }
+    Game_ShowDialogue(npc, scene, Rng_Range(0, length));
+}
+
+void Game_ShowCutsceneDialogue(const char* npc, const char* scene, int id)
+{
+    Game_ShowDialogue(npc, scene, id);
+    gCutsceneDialogue = true;
+}
+
+void Game_ShowCutsceneDialogueFor(const char* npc, const char* area, const char* scene, int id)
+{
+    Game_ShowDialogueFor(npc, area, scene, id);
+    gCutsceneDialogue = true;
+}
+
+bool Game_DialogueIsCutscene()
+{
+    return gCutsceneDialogue;
+}
+
+void Game_ShowDialogueFor(const char* npc, const char* area, const char* scene, int id)
+{
+    bool top = false;
+    const char* text = Dialog_GetFor(npc, area, scene, id, &top);
+    if (text && text[0])
+    {
+        Dialog_Open(text, top, false);
+        gDialogueFinished = false;
+        gFinishedAtOpen = Dialog_FinishedCount();
+        gCutsceneDialogue = false;
+    }
+}
+
+void Game_ShowText(const char* text)
+{
+    // Dialog_Open keeps the pointer: copy, so callers can build the text on the stack (two buffers: a second box can
+    // open over the first).
+    static char sText[2][512] __attribute__((section(".sbss"))); // (EWRAM)
+    static int sNext = 0;
+    char* buf = sText[sNext];
+    sNext ^= 1;
+    strncpy(buf, text, sizeof(sText[0]) - 1);
+    buf[sizeof(sText[0]) - 1] = '\0';
+    Dialog_Open(buf, false, false);
+    gCutsceneDialogue = false;
+    gDialogueFinished = false;
+    gFinishedAtOpen = Dialog_FinishedCount();
+}
+
+bool Game_DialogueFinished()
+{
+    // (any box finishing sets GlobalState.Dialogue = "", even one under a newer box)
+    if (!gDialogueFinished && (!Dialog_IsOpen() || Dialog_FinishedCount() != gFinishedAtOpen))
+    {
+        gDialogueFinished = true;
+    }
+    return gDialogueFinished;
+}
+
+void Game_PlaySfxOneOf(const char* const* names, int count)
+{
+    // (every name is one of the game's sfx: the C# drops the missing ones before picking)
+    const int32_t id = AudioManager_FindSfx(names[Rng_Range(0, count)]);
+    if (id >= 0)
+    {
+        AudioManager_PlaySFX(static_cast<uint32_t>(id));
+    }
+}
+
+void Game_PlaySfx(const char* name)
+{
+    if (AudioManager_FindSfx(name) >= 0)
+    {
+        Game_PlaySfxOneOf(&name, 1);
+    }
+}
+
+void Game_RequestTitle()
+{
+    gTitleRequest = true;
+}
+
+bool Game_TakeTitleRequest()
+{
+    const bool r = gTitleRequest;
+    gTitleRequest = false;
+    return r;
+}

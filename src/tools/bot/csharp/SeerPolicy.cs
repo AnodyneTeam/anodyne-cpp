@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+﻿using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -59,7 +59,7 @@ namespace AnodyneSharp.Recording
         public static PKey[] Decide(SeerCtx c, SeerMem m)
         {
             m.Frame++;
-            var sc = new Vector2(c.Seer.Center.X, c.Seer.Center.Y);
+            var sc = new Vector2(c.Seer.Center.ToXna().X, c.Seer.Center.ToXna().Y);
             if (m.PrevSeer.HasValue)
             {
                 m.SeerVel = m.SeerVel * 0.6f + (sc - m.PrevSeer.Value) * 0.4f;
@@ -82,7 +82,7 @@ namespace AnodyneSharp.Recording
             }
             m.PrevOrbs = orbC;
             Vector2 wv = Vector2.Zero;
-            Vector2? wc = c.Wave.HasValue ? new Vector2(c.Wave.Value.Center.X, c.Wave.Value.Center.Y) : null;
+            Vector2? wc = c.Wave.HasValue ? new Vector2(c.Wave.Value.Center.ToXna().X, c.Wave.Value.Center.ToXna().Y) : null;
             if (wc.HasValue && m.PrevWave.HasValue)
             {
                 m.WaveVel = wc.Value - m.PrevWave.Value;
@@ -166,10 +166,10 @@ namespace AnodyneSharp.Recording
             // where to be
             var cands = new List<(Vector2 pos, PFacing face)>
             {
-                (new Vector2(seerAt8.Center.X - 5, seerAt8.Bottom + 7), PFacing.Up),
-                (new Vector2(seerAt8.Right + 7, seerAt8.Center.Y - 6), PFacing.Left),
-                (new Vector2(seerAt8.Left - 17, seerAt8.Center.Y - 6), PFacing.Right),
-                (new Vector2(seerAt8.Center.X - 5, seerAt8.Top - 19), PFacing.Down),
+                (new Vector2(seerAt8.Center.ToXna().X - 5, seerAt8.Bottom + 7), PFacing.Up),
+                (new Vector2(seerAt8.Right + 7, seerAt8.Center.ToXna().Y - 6), PFacing.Left),
+                (new Vector2(seerAt8.Left - 17, seerAt8.Center.ToXna().Y - 6), PFacing.Right),
+                (new Vector2(seerAt8.Center.ToXna().X - 5, seerAt8.Top - 19), PFacing.Down),
             };
             if (stage2)
             {

@@ -28,6 +28,14 @@ const SpriteSheetEntry* Sprite_FindSheet(const char* name, int frameW = 0, int f
 // Enumerates the compiled sheets (the registry lives in sprite.cpp only).
 uint32_t Sprite_SheetCount();
 const SpriteSheetEntry* Sprite_SheetAt(uint32_t index);
+// Chaos mode's texture swaps (ResourceManager.ReloadRandomizableTextures), roughly: the C# points each texture at a
+// random other one, which the GBA's pre-cut sheets can't do, so each sheet is swapped for one with the same frame size
+// instead, picked by the reload's own RNG draws (one each, 0-1). Sprite_ChaosOff puts them all back.
+void Sprite_ChaosShuffle(const float* draws, int count);
+void Sprite_ChaosOff();
+// The sheet drawn for `sheet` (itself unless chaos swapped it).
+const SpriteSheetEntry& Sprite_ChaosSheet(const SpriteSheetEntry& sheet);
+
 // True if the sheet can be passed to Sprite_Create (any frame size works; big frames use several OBJs).
 bool Sprite_IsDrawable(const SpriteSheetEntry& sheet);
 

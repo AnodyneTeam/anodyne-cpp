@@ -1,0 +1,174 @@
+﻿using AnodyneSharp.Entities;
+using AnodyneSharp.MapData;
+using AnodyneSharp.MapData.Tiles;
+using AnodyneSharp.Registry;
+using System.Collections.Generic;
+using System.Linq;
+using Microsoft.Xna.Framework;
+
+namespace AnodyneSharp.Recording
+{
+    /// <summary>The C# game itself.</summary>
+    public sealed class AnodyneGameView : IGameView
+    {
+        public string Map => GlobalState.CURRENT_MAP_NAME;
+        public Point Grid => GlobalState.CurrentMapGrid;
+        public bool ScreenTransition => GlobalState.ScreenTransition;
+        public int Health => GlobalState.CUR_HEALTH;
+        public long RngCalls => GlobalState.RNG is CountingRandom c ? c.Calls : -1;
+        public string PlayerRaw => BotRunner.GamePlayer is { } p ? $"{p.Position.X.Raw},{p.Position.Y.Raw}" : "-";
+        public int MaxHealth => GlobalState.MAX_HEALTH;
+        public string Dialogue => GlobalState.Dialogue;
+        public bool LastDialogueFinished => GlobalState.LastDialogueFinished;
+        public bool CanJump => GlobalState.inventory.CanJump;
+        public bool HasBroom => GlobalState.inventory.HasBroom;
+        public int CardCount => GlobalState.inventory.CardCount;
+        public int MapKeys => GlobalState.inventory.GetCurrentMapKeys();
+        public int PuzzlesSolved => GlobalState.PUZZLES_SOLVED;
+        public int EnemiesKilled => GlobalState.ENEMIES_KILLED;
+
+        public IEnumerable<Entity> SubEntities(Entity e) => e.SubEntities();
+
+        public string FsmPath(Entity e)
+        {
+            const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var abs = typeof(AnodyneSharp.FSM.TimerState).BaseType;
+            var names = new List<string>();
+            object st = e.GetType().GetField("_state", F)?.GetValueF(e);
+            for (int k = 0; st != null && abs != null && k < 4; k++)
+            {
+                st = (abs.GetField("activeChildren", F)?.GetValueF(st) as System.Collections.IEnumerable)?.Cast<object>().FirstOrDefault();
+                if (st != null)
+                {
+                    names.Add(st.GetType().GetProperty("Name")?.GetValueF(st) as string ?? st.GetType().Name);
+                }
+            }
+            return string.Join("/", names);
+        }
+
+        private MapView _map;
+        public IMapView CurrentMap
+        {
+            get
+            {
+                if (GlobalState.Map is not Map m)
+                {
+                    return null;
+                }
+                if (_map == null || _map.Native != m)
+                {
+                    _map = new MapView(m);
+                }
+                return _map;
+            }
+        }
+
+        private PlayerView _player;
+        public IPlayerView Player
+        {
+            get
+            {
+                var p = BotRunner.GamePlayer;
+                if (p == null)
+                {
+                    return null;
+                }
+                if (_player == null || _player.Native != p)
+                {
+                    _player = new PlayerView(p);
+                }
+                return _player;
+            }
+        }
+    }
+
+    /// <summary>The C# game's map, read straight through.</summary>
+    public sealed class MapView : IMapView
+    {
+        public MapView(Map map)
+        {
+            Native = map;
+        }
+
+        public Map Native { get; }
+        public int WidthInTiles => Native.WidthInTiles;
+        public int HeightInTiles => Native.HeightInTiles;
+        public (Touching, CollisionEventType) GetTileClass(Point p) => Native.GetTileClass(p);
+        public int GetTile(Layer layer, Point p) => Native.GetTile(layer, p);
+
+        private static readonly System.Reflection.FieldInfo TileObjectsField =
+            typeof(Map).GetField("_tileObjects", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        public Touching GetTileDirection(Point p)
+        {
+            var tiles = TileObjectsField?.GetValueF(Native) as Tile[];
+            int id = Native.GetTile(Layer.BG, p);
+            return tiles != null && id >= 0 && id < tiles.Length && tiles[id] != null ? tiles[id].direction : Touching.NONE;
+        }
+    }
+
+    /// <summary>The C# game's player, read straight through.</summary>
+    public sealed class PlayerView : IPlayerView, IBroomView
+    {
+        public PlayerView(AnodyneSharp.Entities.Player p)
+        {
+            Native = p;
+        }
+
+        public AnodyneSharp.Entities.Player Native { get; }
+        public Vector2 Position => Native.Position.ToXna();
+        public Rectangle Hitbox => Native.Hitbox;
+        public Vector2 Center => Native.Center.ToXna();
+        public Vector2 VisualCenter => Native.VisualCenter.ToXna();
+        public Vector2 velocity => Native.velocity.ToXna();
+        public Vector2 additionalVel => Native.additionalVel.ToXna();
+        public Facing facing => Native.facing;
+        public PlayerState state => Native.state;
+        public PlayerAnimState ANIM_STATE => Native.ANIM_STATE;
+        public Touching touching => Native.touching;
+        public string CurAnimName => Native.CurAnimName;
+        public bool exists => Native.exists;
+        public bool dontMove => Native.dontMove;
+        public bool reversed => Native.reversed;
+        public bool ON_CONVEYOR => Native.ON_CONVEYOR;
+        public float y_push => (float)Native.y_push;
+        public int slowTicks => Native.slowTicks;
+        public float slowMul => (float)Native.slowMul;
+        public IBroomView broom => Native.broom == null ? null : this;
+        public Entity raft => Native.raft;
+
+        bool IBroomView.exists => Native.broom.exists;
+        Rectangle IBroomView.Hitbox => Native.broom.Hitbox;
+        Entity IBroomView.dust => Native.broom.dust;
+        bool IBroomView.just_released_dust => Native.broom.just_released_dust;
+    }
+
+    public static class EntityViewExtensions
+    {
+        /// <summary>The entity's sub-entities in the game the bot is playing.</summary>
+        public static IEnumerable<Entity> Subs(this Entity e) => Gs.View.SubEntities(e);
+    }
+
+    /// <summary>The game the bot is playing: AnodyneGameView by default.</summary>
+    public static class Gs
+    {
+        public static IGameView View = new AnodyneGameView();
+
+        public static string Map => View.Map;
+        public static Point Grid => View.Grid;
+        public static bool ScreenTransition => View.ScreenTransition;
+        public static int Health => View.Health;
+        public static int MaxHealth => View.MaxHealth;
+        public static string Dialogue => View.Dialogue;
+        public static bool LastDialogueFinished => View.LastDialogueFinished;
+        public static bool CanJump => View.CanJump;
+        public static bool HasBroom => View.HasBroom;
+        public static int CardCount => View.CardCount;
+        public static int MapKeys => View.MapKeys;
+        public static int PuzzlesSolved => View.PuzzlesSolved;
+        public static int EnemiesKilled => View.EnemiesKilled;
+        public static IPlayerView Player => View.Player;
+        /// <summary>The current screen's world rectangle (GlobalState.ScreenHitbox).</summary>
+        public static Rectangle ScreenHitbox => new(Grid.X * 160, Grid.Y * 160, 160, 160);
+    }
+}

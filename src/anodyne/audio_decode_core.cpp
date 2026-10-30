@@ -2,11 +2,19 @@
 
 const uint8_t* g_AudioBlobBase = nullptr;
 
+#if defined(__arm__)
+// platform/gba/sys/qoa_run.s: the inner loop below by hand (history[4] then weights[4] at lms).
+extern "C" AUDIO_DECODE_IWRAM_DECL uint32_t QoaRun(int32_t* out, int32_t* end, const int32_t* row, uint32_t bits,
+                                                   int32_t* lms);
+extern "C" AUDIO_DECODE_IWRAM_DECL uint32_t QoaRunUp2(int32_t* out, int32_t* end, const int32_t* row, uint32_t bits,
+                                                      int32_t* lms);
+#endif
+
 namespace
 {
     // Copy of qoa.h's qoa_dequant_tab (private to its QOA_IMPLEMENTATION
-    // block) - every value fits int16, halving the table vs. qoa.h's ints.
-    const int16_t kQoaDequant[16][8] = {
+    // block). In IWRAM on the GBA, where the decoder reads it every sample.
+    AUDIO_DECODE_IWRAM_DATA const int32_t kQoaDequant[16][8] = {
         {1, -1, 3, -3, 5, -5, 7, -7},
         {5, -5, 18, -18, 32, -32, 49, -49},
         {16, -16, 53, -53, 95, -95, 147, -147},
@@ -68,13 +76,16 @@ namespace
         return true;
     }
 
-    // Loads the next 8-byte slice: 4-bit scalefactor + 20 3-bit residuals.
+    // Loads the next 8-byte slice: 4-bit scalefactor + 20 3-bit residuals. The residuals go to two words (0-9 and
+    // 10-19, each from the top), so the hot loop shifts one 32-bit word rather than a 64-bit one.
     inline __attribute__((always_inline)) void BeginNextSlice(DecodeCursor* c)
     {
         uint64_t slice = (static_cast<uint64_t>(ReadU32BE(c->slicePtr)) << 32) | ReadU32BE(c->slicePtr + 4);
         c->slicePtr += 8;
         c->dequantRow = kQoaDequant[slice >> 60];
-        c->sliceBits = slice << 4;
+        c->sliceWords[0] = static_cast<uint32_t>(slice >> 30) << 2;
+        c->sliceWords[1] = static_cast<uint32_t>(slice) << 2;
+        c->sliceUsed = 0;
         c->sliceSamplesLeft = (c->frameSamplesLeft < kQoaSliceLen) ? c->frameSamplesLeft : kQoaSliceLen;
         c->frameSamplesLeft -= c->sliceSamplesLeft;
     }
@@ -83,9 +94,67 @@ namespace
     // and adds them into accum - one output per sample, or (kUp2) two, the
     // first linearly interpolated from the previous sample. always_inline so
     // each IWRAM entry point gets its own branch-free copy of the hot loop.
+    // kAsm: the GBA's hand-written loop (qoa_run.s) where it can (the 2x one needs the last sample to be the
+    // history's newest, which only a new frame's header breaks).
+    // MixImpl for a PCM8 track: the samples are there to add (the first of each 2x pair halfway from the previous
+    // one, as below).
     template <bool kUp2>
+    inline __attribute__((always_inline)) uint32_t MixPcm(DecodeCursor* c, int32_t* accum, uint32_t count)
+    {
+        const uint32_t shift = 8u - c->track->pcmShift;
+        int32_t last = c->lastSample;
+        uint32_t written = 0;
+        while (written < count && c->active)
+        {
+            if (c->pcmLeft == 0)
+            {
+                const uint32_t start = c->track->loopStartFrame;
+                if (!c->loop || start >= c->track->totalSamples)
+                {
+                    c->active = 0;
+                    break;
+                }
+                c->pcm = reinterpret_cast<const int8_t*>(g_AudioBlobBase + c->track->frames[0].offset) + start;
+                c->pcmLeft = c->track->totalSamples - start;
+            }
+            uint32_t n = count - written;
+            if (n > c->pcmLeft)
+            {
+                n = c->pcmLeft;
+            }
+            const int8_t* p = c->pcm;
+            const int8_t* const pEnd = p + n;
+            int32_t* out = accum + (kUp2 ? written * 2 : written);
+            while (p != pEnd)
+            {
+                const int32_t s = static_cast<int32_t>(*p++) << shift;
+                if (kUp2)
+                {
+                    out[0] += (last + s) >> 1;
+                    out[1] += s;
+                    out += 2;
+                }
+                else
+                {
+                    *out++ += s;
+                }
+                last = s;
+            }
+            c->pcm = pEnd;
+            c->pcmLeft -= n;
+            written += n;
+        }
+        c->lastSample = last;
+        return written;
+    }
+
+    template <bool kUp2, bool kAsm>
     inline __attribute__((always_inline)) uint32_t MixImpl(DecodeCursor* c, int32_t* accum, uint32_t count)
     {
+        if (c->track->pcm8)
+        {
+            return MixPcm<kUp2>(c, accum, count);
+        }
         uint32_t written = 0;
         while (written < count && c->active)
         {
@@ -104,25 +173,45 @@ namespace
 
             // Inner loop on locals (spilling the LMS state back to the cursor
             // only once per run) - this is the ISR's hot path.
+            // (a run stays within one of the slice's two residual words)
+            const uint32_t half = c->sliceUsed >= 10 ? 1 : 0;
             uint32_t n = count - written;
             if (n > c->sliceSamplesLeft)
             {
                 n = c->sliceSamplesLeft;
             }
+            if (n > 10 * (half + 1) - c->sliceUsed)
+            {
+                n = 10 * (half + 1) - c->sliceUsed;
+            }
             c->sliceSamplesLeft -= n;
+            c->sliceUsed += n;
+#if defined(__arm__)
+            if (kAsm && (!kUp2 || c->lastSample == c->history[3]))
+            {
+                int32_t* const runOut = accum + (kUp2 ? written * 2 : written);
+                int32_t* const runEnd = runOut + (kUp2 ? n * 2 : n);
+                c->sliceWords[half] = (kUp2 ? QoaRunUp2 : QoaRun)(runOut, runEnd, c->dequantRow, c->sliceWords[half],
+                                                                  c->history);
+                c->lastSample = c->history[3];
+                written += n;
+                continue;
+            }
+#endif
 
             int32_t h0 = c->history[0], h1 = c->history[1], h2 = c->history[2], h3 = c->history[3];
             int32_t w0 = c->weights[0], w1 = c->weights[1], w2 = c->weights[2], w3 = c->weights[3];
-            uint64_t bits = c->sliceBits;
-            const int16_t* row = c->dequantRow;
+            uint32_t bits = c->sliceWords[half];
+            const int32_t* row = c->dequantRow;
             int32_t* out = accum + (kUp2 ? written * 2 : written);
+            int32_t* const end = out + (kUp2 ? n * 2 : n);
             int32_t last = c->lastSample;
 
             // Same math as qoa.h's qoa_decode_frame/qoa_lms_predict/qoa_lms_update.
-            for (uint32_t i = 0; i < n; i++)
+            while (out != end)
             {
                 int32_t predicted = (w0 * h0 + w1 * h1 + w2 * h2 + w3 * h3) >> 13;
-                int32_t dequantized = row[static_cast<uint32_t>(bits >> 61)];
+                int32_t dequantized = row[bits >> 29];
                 bits <<= 3;
                 int32_t reconstructed = predicted + dequantized;
                 if (reconstructed > 32767)
@@ -134,7 +223,7 @@ namespace
                     reconstructed = -32768;
                 }
 
-                int32_t delta = dequantized >> 4;
+                const int32_t delta = dequantized >> 4;
                 w0 += (h0 < 0) ? -delta : delta;
                 w1 += (h1 < 0) ? -delta : delta;
                 w2 += (h2 < 0) ? -delta : delta;
@@ -146,12 +235,13 @@ namespace
 
                 if (kUp2)
                 {
-                    out[i * 2] += (last + reconstructed) >> 1;
-                    out[i * 2 + 1] += reconstructed;
+                    out[0] += (last + reconstructed) >> 1;
+                    out[1] += reconstructed;
+                    out += 2;
                 }
                 else
                 {
-                    out[i] += reconstructed;
+                    *out++ += reconstructed;
                 }
                 last = reconstructed;
             }
@@ -166,7 +256,7 @@ namespace
             c->weights[1] = w1;
             c->weights[2] = w2;
             c->weights[3] = w3;
-            c->sliceBits = bits;
+            c->sliceWords[half] = bits;
             written += n;
         }
         return written;
@@ -179,24 +269,41 @@ void DecodeCursor_Start(DecodeCursor* c, const AudioTrackData* track, bool loop)
     c->track = track;
     c->loop = loop ? 1 : 0;
     c->active = (track != nullptr && track->frameCount > 0) ? 1 : 0;
+    if (c->active && track->pcm8)
+    {
+        c->pcm = reinterpret_cast<const int8_t*>(g_AudioBlobBase + track->frames[0].offset);
+        c->pcmLeft = track->totalSamples;
+    }
 }
 
 
 AUDIO_DECODE_IWRAM_DEF uint32_t DecodeCursor_Mix16(DecodeCursor* c, int32_t* accum, uint32_t count)
 {
-    return MixImpl<false>(c, accum, count);
+    return MixImpl<false, true>(c, accum, count);
 }
 
 AUDIO_DECODE_IWRAM_DEF uint32_t DecodeCursor_Mix16Up2(DecodeCursor* c, int32_t* accum, uint32_t outCount)
 {
-    return MixImpl<true>(c, accum, outCount / 2) * 2;
+    return MixImpl<true, true>(c, accum, outCount / 2) * 2;
 }
 
-AUDIO_DECODE_IWRAM_DEF void AudioMix_SplitTo9Bit(const int32_t* accum, int8_t* outA, int8_t* outB, uint32_t count)
+#ifdef ANODYNE_PERF
+uint32_t DecodeCursor_Mix16Ref(DecodeCursor* c, int32_t* accum, uint32_t count)
 {
-    for (uint32_t i = 0; i < count; i++)
+    return MixImpl<false, false>(c, accum, count);
+}
+
+uint32_t DecodeCursor_Mix16Up2Ref(DecodeCursor* c, int32_t* accum, uint32_t outCount)
+{
+    return MixImpl<true, false>(c, accum, outCount / 2) * 2;
+}
+#endif
+
+namespace
+{
+    inline __attribute__((always_inline)) int32_t To9Bit(int32_t accum)
     {
-        int32_t v = accum[i] >> 7; // 16-bit scale -> 9-bit
+        int32_t v = accum >> 7; // 16-bit scale -> 9-bit
         if (v > 255)
         {
             v = 255;
@@ -205,6 +312,33 @@ AUDIO_DECODE_IWRAM_DEF void AudioMix_SplitTo9Bit(const int32_t* accum, int8_t* o
         {
             v = -256;
         }
+        return v;
+    }
+}
+
+AUDIO_DECODE_IWRAM_DEF void AudioMix_SplitTo9Bit(const int32_t* accum, int8_t* outA, int8_t* outB, uint32_t count)
+{
+    uint32_t i = 0;
+    // Four samples to a word where the buffers allow: a byte store to EWRAM costs as much as a word one.
+    if (((reinterpret_cast<uintptr_t>(outA) | reinterpret_cast<uintptr_t>(outB)) & 3) == 0)
+    {
+        for (; i + 4 <= count; i += 4)
+        {
+            uint32_t a = 0;
+            uint32_t b = 0;
+            for (uint32_t k = 0; k < 4; k++)
+            {
+                const int32_t v = To9Bit(accum[i + k]);
+                a |= static_cast<uint32_t>(static_cast<uint8_t>(v >> 1)) << (8 * k);
+                b |= static_cast<uint32_t>(v & 1) << (8 * k);
+            }
+            *reinterpret_cast<uint32_t*>(outA + i) = a; // (little-endian: sample i in the low byte)
+            *reinterpret_cast<uint32_t*>(outB + i) = b;
+        }
+    }
+    for (; i < count; i++)
+    {
+        const int32_t v = To9Bit(accum[i]);
         outA[i] = static_cast<int8_t>(v >> 1);
         outB[i] = static_cast<int8_t>(v & 1);
     }

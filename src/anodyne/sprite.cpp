@@ -4,7 +4,7 @@
 
 #include "tonc.h"
 
-#include "../build/tools/sprite_registry.h"
+#include "sprite_registry.h"
 
 namespace
 {
@@ -25,6 +25,43 @@ void Upload(Sprite& sprite, int frame)
     sprite.mLoadedFrame = frame;
 }
 
+// Chaos: each sheet's swap (an index into kSpriteSheets), and the sheets grouped by frame size.
+uint16_t gChaosSwap[kSpriteSheetCount] __attribute__((section(".sbss")));
+uint16_t gBySize[kSpriteSheetCount] __attribute__((section(".sbss")));
+bool gChaosOn = false;
+bool gBySizeMade = false;
+
+bool SameSize(const SpriteSheetEntry& a, const SpriteSheetEntry& b)
+{
+    return a.mFrameWidth == b.mFrameWidth && a.mFrameHeight == b.mFrameHeight && !a.mFrameParts == !b.mFrameParts;
+}
+
+// gBySize: the sheet indices with each frame size's together, in registry order within it.
+void MakeBySize()
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < kSpriteSheetCount; i++)
+    {
+        bool seen = false;
+        for (uint32_t j = 0; j < i && !seen; j++)
+        {
+            seen = SameSize(kSpriteSheets[i], kSpriteSheets[j]);
+        }
+        if (seen)
+        {
+            continue;
+        }
+        for (uint32_t j = i; j < kSpriteSheetCount; j++)
+        {
+            if (SameSize(kSpriteSheets[i], kSpriteSheets[j]))
+            {
+                gBySize[n++] = static_cast<uint16_t>(j);
+            }
+        }
+    }
+    gBySizeMade = true;
+}
+
 int CurrentFrame(const Sprite& sprite)
 {
     if (sprite.mAnim < 0)
@@ -35,6 +72,50 @@ int CurrentFrame(const Sprite& sprite)
     return anim.mFrameCount ? anim.mFrames[sprite.mAnimIndex] : 0;
 }
 } // namespace
+
+void Sprite_ChaosShuffle(const float* draws, int count)
+{
+    if (count <= 0)
+    {
+        return;
+    }
+    if (!gBySizeMade)
+    {
+        MakeBySize();
+    }
+    for (uint32_t i = 0; i < kSpriteSheetCount;)
+    {
+        // a run of one frame size
+        uint32_t end = i + 1;
+        while (end < kSpriteSheetCount && SameSize(kSpriteSheets[gBySize[i]], kSpriteSheets[gBySize[end]]))
+        {
+            end++;
+        }
+        const uint32_t size = end - i;
+        for (uint32_t k = i; k < end; k++)
+        {
+            const uint32_t sheet = gBySize[k];
+            const uint32_t pick = static_cast<uint32_t>(draws[sheet % count] * size);
+            gChaosSwap[sheet] = gBySize[i + (pick < size ? pick : size - 1)];
+        }
+        i = end;
+    }
+    gChaosOn = true;
+}
+
+void Sprite_ChaosOff()
+{
+    gChaosOn = false;
+}
+
+const SpriteSheetEntry& Sprite_ChaosSheet(const SpriteSheetEntry& sheet)
+{
+    if (!gChaosOn)
+    {
+        return sheet;
+    }
+    return kSpriteSheets[gChaosSwap[&sheet - kSpriteSheets]];
+}
 
 uint32_t Sprite_SheetCount()
 {
@@ -49,14 +130,45 @@ const SpriteSheetEntry* Sprite_SheetAt(uint32_t index)
 bool Sprite_IsDrawable(const SpriteSheetEntry& sheet)
 {
     // Any frame size works (big frames use several OBJs); only the 128 OAM entries and 32KB of OBJ VRAM limit it.
-    return sheet.mPartCount > 0 && sheet.mPartCount <= 128 && FrameBytes(sheet) <= 16 * 1024;
+    // (Sparse sheets' frames are each their own size: only the entity renderer draws those.)
+    return !sheet.mFrameParts && sheet.mPartCount > 0 && sheet.mPartCount <= 128 && FrameBytes(sheet) <= 16 * 1024;
 }
+
+namespace
+{
+// Sheets by name hash (every spawn looks its sheet up by name): chains in table order, so the first match is the
+// first in kSpriteSheets, as a straight search finds it.
+constexpr uint32_t kHashBuckets = 256;
+uint16_t gHashHead[kHashBuckets] __attribute__((section(".sbss"))); // index + 1, 0 = none
+uint16_t gHashNext[kSpriteSheetCount] __attribute__((section(".sbss")));
+bool gHashBuilt = false;
+
+uint32_t NameHash(const char* name)
+{
+    uint32_t h = 2166136261u; // FNV-1a
+    for (; *name; name++)
+    {
+        h = (h ^ static_cast<uint8_t>(*name)) * 16777619u;
+    }
+    return h % kHashBuckets;
+}
+} // namespace
 
 const SpriteSheetEntry* Sprite_FindSheet(const char* name, int frameW, int frameH)
 {
-    for (uint32_t i = 0; i < kSpriteSheetCount; i++)
+    if (!gHashBuilt)
     {
-        const SpriteSheetEntry& s = kSpriteSheets[i];
+        for (uint32_t i = kSpriteSheetCount; i-- > 0;)
+        {
+            const uint32_t b = NameHash(kSpriteSheets[i].mName);
+            gHashNext[i] = gHashHead[b];
+            gHashHead[b] = static_cast<uint16_t>(i + 1);
+        }
+        gHashBuilt = true;
+    }
+    for (uint32_t i = gHashHead[NameHash(name)]; i != 0; i = gHashNext[i - 1])
+    {
+        const SpriteSheetEntry& s = kSpriteSheets[i - 1];
         if (strcmp(s.mName, name) == 0 && (frameW == 0 || s.mFrameWidth == frameW) &&
             (frameH == 0 || s.mFrameHeight == frameH))
         {

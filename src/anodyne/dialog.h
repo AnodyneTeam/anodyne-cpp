@@ -19,16 +19,50 @@ void Dialog_SetArea(const char* mapName);
 // scene wants the box at the top of the screen. The area defaults to the one from Dialog_SetArea.
 const char* Dialog_Get(const char* npc, const char* scene, int id = -1, bool* top = nullptr);
 const char* Dialog_GetFor(const char* npc, const char* area, const char* scene, int id = -1, bool* top = nullptr);
+// A line as it is, with no progress kept (the menus' labels); "" if there's none.
+const char* Dialog_Peek(const char* npc, const char* area, const char* scene, int id);
+// DialogueManager.IsSceneDirty (a line of it has been fetched) and SetSceneProgress, in the current area.
+bool Dialog_IsSceneDirty(const char* npc, const char* scene);
+// DialogueScene.Length in the current area, -1 if there's no such scene.
+int Dialog_SceneLength(const char* npc, const char* scene);
+bool Dialog_IsSceneFinished(const char* npc, const char* scene);
+void Dialog_SetSceneProgress(const char* npc, const char* scene, int id);
+
+// DialogueManager.SceneTree in a save: each scene's progress.
+struct SaveWriter;
+struct SaveReader;
+void Dialog_SaveState(SaveWriter& w);
+void Dialog_LoadState(SaveReader& r);
+// A new game: every scene from its start.
+void Dialog_ResetProgress();
 
 // Opens the box and starts typing `text` (must stay valid while open: ROM strings are). `intro` = IntroState's
 // box: 4x speed-up and a red button prompt instead of the blinking arrow. Needs OBJ VRAM; does nothing if it is
-// full. Only one dialogue at a time.
+// full. Opened while a box is open, the new box shows over it and both type (PlayState's two DialogueStates); a
+// third is dropped.
 void Dialog_Open(const char* text, bool top = false, bool intro = false);
 
 bool Dialog_IsOpen();
+// How many boxes have finished so far (each sets GlobalState.Dialogue = "").
+int Dialog_FinishedCount();
+// Whether a box opened since the last call (GlobalState.SetDialogueMode).
+bool Dialog_TakeOpened();
 
 // Per frame while open (also on the frame it closes). Returns true while the box is still open afterwards.
 bool Dialog_Update();
+
+// Plain text on the screen with no box (the death screen's "Continue?" menu): `count` lines of black text, line i at
+// (xs[i], ys[i]) of the playfield (ys within 0-40 of `top`, the y of the text block), and a selector arrow at
+// (selectorX, selectorY) of the playfield unless selectorY < 0. Uses the box's OBJs, so not while it is open.
+// white: white text with a shadow (UILabel over a menu panel) instead of black.
+void Dialog_ShowLabels(const char* const* lines, const int* xs, const int* ys, int count, int top, int selectorX,
+                       int selectorY, bool white = false);
+void Dialog_HideLabels();
+// A menu's panel (pop_menu) at (x, y) of the playfield, under the labels; at most 160x128.
+void Dialog_ShowPanel(int x, int y, int w, int h);
+void Dialog_HidePanel();
+// The first OAM entry the box, labels and panel may use: the entities draw below it.
+int Dialog_FirstReservedOam();
 
 // Closes the box immediately (hides the OBJs, frees the VRAM, restores the blend registers).
 void Dialog_Close();

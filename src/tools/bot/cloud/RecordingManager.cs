@@ -26,6 +26,10 @@ namespace AnodyneSharp.Recording
 
         public static bool Deterministic => Fast || BotPath != null || TracePath != null;
 
+        /// <summary>DateTime.Now for game logic (Slime's move timer): in deterministic runs the frame count at 60 a second,
+        /// so the timers follow game time rather than the wall clock.</summary>
+        public static DateTime Now => Deterministic ? new DateTime(_frameNumber * TimeSpan.TicksPerSecond / 60) : DateTime.Now;
+
         public static void ParseCommandLine(string[] args)
         {
             foreach (var arg in args)
@@ -62,7 +66,7 @@ namespace AnodyneSharp.Recording
         {
             if (Deterministic)
             {
-                Registry.GlobalState.RNG = new Random(DeterministicSeed);
+                Registry.GlobalState.RNG = new CountingRandom(DeterministicSeed);
             }
             if (TracePath != null)
             {

@@ -26,6 +26,10 @@ struct AudioCompilerOptions final
     // boosting them would just clip the mix more.
     double bgmNormalizePeakDb = -0.5;
     double bgmMaxNormalizeGainDb = 9.0;
+    // SFX up to this many samples are stored as plain 8-bit samples (PCM8) rather than QOA: ~2.5x the ROM, but
+    // the GBA mixes them with an add rather than a decode (~60 cycles a sample), and a screen can have all four
+    // SFX slots busy (Red Cave's bubbles). 0: none.
+    uint32_t sfxPcmMaxSamples = 0;
 };
 
 // One BGM/ambience/SFX item to compile. `sourcePath` points at the original
@@ -51,8 +55,10 @@ struct CompiledAudioTrack final
     uint32_t sampleRate = 0;
     uint32_t totalSamples = 0;
     bool loopEnabled = false;
-    uint32_t loopStartFrame = 0;
-    std::vector<std::pair<uint32_t, uint32_t>> frames; // {offset, length} into the shared blob
+    uint32_t loopStartFrame = 0; // PCM8: the loop's first sample
+    std::vector<std::pair<uint32_t, uint32_t>> frames; // {offset, length} into the shared blob (PCM8: one, the samples)
+    bool pcm8 = false;
+    uint8_t pcmShift = 0; // PCM8: sample = byte << (8 - pcmShift), the clip's peak scaled up to fill the byte
 };
 
 // Encodes every AudioItemSpec to QOA (via a per-track on-disk cache, skipped

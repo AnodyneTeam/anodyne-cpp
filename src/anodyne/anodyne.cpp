@@ -2,10 +2,14 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
+#include "credits.h"
+#include "save.h"
 #include "dialog.h"
+#include "hud.h"
 #include "tonc.h"
 
 #include "obj_vram_allocator.hpp"
@@ -14,12 +18,22 @@
 #include "soft_mosaic.hpp"
 #include "sprite.h"
 #include "map_data.h"
+#include "tex_dark.h"
 #include "world.h"
 #include "entities.h"
+#include "pause.h"
 #include "title.h"
 #include "pixelate_test.hpp"
 
-#include "../build/tools/map_registry.h"
+#include "map_registry.h"
+#include "game_state.h"
+#include "game_probe.h"
+#ifdef ANODYNE_LINK
+#include "link_ipc.h"
+#endif
+
+static_assert(kEntityPresetCount <= kMaxPresets, "more entity presets than game_state.h has room for");
+static_assert(kMapCount <= static_cast<uint32_t>(kMaxMaps), "more maps than game_state.h has room for");
 
 // kMapCount is provided from map_registry_.h
 static uint32_t gCurrentMap = 0;
@@ -64,7 +78,8 @@ enum class AppMode
     MapViewer,
     Title,
     Intro, // IntroState: black screen, the sage's opening text, then the new game starts in BLANK
-    PixelateTest
+    PixelateTest,
+    Credits // CreditsState: after the ending, back to the title
 };
 
 static void EnterAudioTestMode()
@@ -92,11 +107,94 @@ static void ScreenBlack(bool on)
     ScreenDarken(on ? 16 : 0);
 }
 
-static void LoadWorldMap()
+int Game_MapIndex(const char* name)
 {
-    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap]);
-    Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]));
+    for (uint32_t i = 0; i < kMapCount; i++)
+    {
+        if (strcmp(kMapNames[i], name) == 0)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// PlayState.Warp: GlobalState.ReturnTarget = the Nexus door of this map's Nexus pad (EntityManager.
+// GetNexusGateForCurrentMap), else, once the Nexus has been visited, its dungeon entrance; else none.
+static void SetReturnTargetToNexus()
+{
+    const MapDoorList& doors = kMapDoors[gCurrentMap];
+    const MapDoor* pad = nullptr;
+    int pads = 0;
+    for (uint32_t i = 0; i < doors.mCount; i++)
+    {
+        if (doors.mDoors[i].mType == 16) // NexusPad
+        {
+            pad = &doors.mDoors[i];
+            pads++;
+        }
+    }
+    if (pads == 1)
+    {
+        // (the pad's trigger warps to its linked door + (10, 34), the offset the menu's warp adds back)
+        gGame.mReturnMap = pad->mDestMap;
+        gGame.mReturnX = pad->mDestX - 10;
+        gGame.mReturnY = pad->mDestY - 34;
+        return;
+    }
+    gGame.mReturnMap = -1;
+    const int nexus = Game_MapIndex("NEXUS");
+    if (nexus < 0 || !((gGame.mVisitedMaps >> nexus) & 1))
+    {
+        return;
+    }
+    const MapEntityList& list = kMapEntities[nexus];
+    for (uint32_t i = 0; i < list.mCount; i++)
+    {
+        if (list.mEntities[i].mType == EPT_DungeonEntrance)
+        {
+            gGame.mReturnMap = nexus;
+            gGame.mReturnX = list.mEntities[i].mX;
+            gGame.mReturnY = list.mEntities[i].mY;
+            return;
+        }
+    }
+}
+
+// placedAfter: the caller puts the player somewhere with World_PlaceAt straight after (which loads that screen).
+static void LoadWorldMap(bool placedAfter = false)
+{
+    // PlayState.Warp: leaving a map whose boss is beaten.
+    if (gGame.mMapName && gGame.mCurrentMap != static_cast<int>(gCurrentMap) &&
+        ((gGame.mBossDefeated >> gGame.mCurrentMap) & 1))
+    {
+        gGame.mLeftAfterBoss |= 1u << gGame.mCurrentMap;
+    }
+    gGame.mCurrentMap = gCurrentMap;
+    gGame.mMapName = kMapNames[gCurrentMap];
+    gGame.mVisitedMaps |= 1u << gCurrentMap;
+    if (gGame.mReturnMap != static_cast<int>(gCurrentMap) || strcmp(gGame.mMapName, "NEXUS") == 0)
+    {
+        SetReturnTargetToNexus();
+    }
+    // Entities first: World_Load places the player and loads the screen's entities.
+    Entities_SetMap(kMapEntities[gCurrentMap], kEntitySheets, sizeof(kEntitySheets) / sizeof(kEntitySheets[0]),
+                    kEntityTypeValues, sizeof(kEntityTypeValues) / sizeof(kEntityTypeValues[0]));
+    World_Load(kMaps[gCurrentMap], kMapNames[gCurrentMap], kMapAudio[gCurrentMap], kMapScroll[gCurrentMap], kMapDoors[gCurrentMap],
+               kMapDark[gCurrentMap], !placedAfter);
+    World_SetSwapper(kMapSwapper[gCurrentMap]);
     Dialog_SetArea(kMapNames[gCurrentMap]);
+}
+
+// PlayState.Warp's map load, for the world's warps.
+static void LoadWarpMap(uint8_t map)
+{
+    Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
+    if (map != gCurrentMap)
+    {
+        gCurrentMap = map;
+        LoadWorldMap(true);
+    }
 }
 
 static void EnterMapViewerMode()
@@ -243,16 +341,114 @@ static void GalleryUpdateAndDraw()
     }
 }
 
+#ifdef ANODYNE_PERF
+// The perf build's probe (tools/perf: an mGBA harness reads and writes it): each frame's CPU time, and warps on request.
+struct PerfProbe final
+{
+    uint32_t mMagic;      // 'PERF'
+    uint32_t mFrames;     // main loop frames
+    uint32_t mLastWork;   // cycles from the VBlank to the loop's end, last frame
+    uint32_t mMaxWork;    // the most since the harness last cleared it
+    uint32_t mLagFrames;  // frames over one display frame (280896 cycles) since then
+    uint32_t mMode;       // AppMode
+    uint32_t mCellsW;     // the current map's size in 16x16 cells
+    uint32_t mCellsH;
+    uint32_t mMapCount;
+    volatile uint32_t mCmdSeq; // the harness bumps it to warp to mCmdMap at (mCmdX, mCmdY)
+    volatile int32_t mCmdMap;
+    volatile int32_t mCmdX;
+    volatile int32_t mCmdY;
+    uint32_t mAckSeq;
+    int32_t mMap; // where the game is now (a kMaps index), to check warps land
+    uint32_t mEntities;
+    uint32_t mAudioBad;     // AudioManager_SelfTest at boot: samples where qoa_run.s and the C++ loop differ
+    uint32_t mAudioSamples; // and how many were compared
+    uint32_t mFxDivBad;     // CheckFxDiv at boot: divisions where fx_div_arm.s and libgcc's differ
+    uint32_t mFxDivChecks;  // and how many were compared
+};
+extern "C" PerfProbe gPerfProbe;
+PerfProbe gPerfProbe __attribute__((section(".sbss")));
+extern "C" uint32_t __IWRAM_END__[];
+
+// Fills the free user stack with a pattern, so the harness can find the deepest it ever got.
+__attribute__((noinline)) void PaintStack()
+{
+    uint32_t* const top = static_cast<uint32_t*>(__builtin_frame_address(0)) - 16;
+    for (uint32_t* p = __IWRAM_END__; p < top; p++)
+    {
+        *p = 0x5354434B; // 'STCK'
+    }
+}
+
+extern "C" int32_t FxDivRaw(int32_t a, int32_t b);
+extern "C" int32_t FxDivSlow(int32_t a, int32_t b);
+
+// FxDivRaw (fx_div_arm.s) against libgcc's 64-bit divide: the edges, then random pairs of all sizes.
+void CheckFxDiv()
+{
+    static const int32_t kEdges[] = { 0,      1,         -1,        2,         -2,         0x7FFF,
+                                      0x8000, -0x8000,   0xFFFF,    0x10000,   -0x10000,   0x7FFF0000,
+                                      INT32_MAX, INT32_MIN, INT32_MIN + 1, -0x7FFF0000, 12345, -98765 };
+    uint32_t bad = 0;
+    uint32_t checks = 0;
+    for (int32_t a : kEdges)
+    {
+        for (int32_t b : kEdges)
+        {
+            if (b != 0)
+            {
+                bad += FxDivRaw(a, b) != FxDivSlow(a, b) ? 1 : 0;
+                checks++;
+            }
+        }
+    }
+    uint32_t x = 2463534242u;
+    for (int i = 0; i < 20000; i++)
+    {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        const int32_t a = static_cast<int32_t>(x) >> (x & 31);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        const int32_t b = static_cast<int32_t>(x) >> (x & 31);
+        if (b != 0)
+        {
+            bad += FxDivRaw(a, b) != FxDivSlow(a, b) ? 1 : 0;
+            checks++;
+        }
+    }
+    gPerfProbe.mFxDivBad = bad;
+    gPerfProbe.mFxDivChecks = checks;
+}
+#endif
+
 int main()
 {
     // Standard cart ROM timing (3/1 waitstates + prefetch) instead of the
     // power-on 4/2 with no prefetch - everything still running from ROM
     // (Thumb code, const data, the audio blob) gets substantially faster.
     REG_WAITCNT = WS_STANDARD;
+#ifdef ANODYNE_LINK
+    Link_Init();
+#endif
+#ifdef ANODYNE_PERF
+    {
+        uint32_t bad = 0;
+        uint32_t samples = 0;
+        AudioManager_SelfTest(&bad, &samples);
+        gPerfProbe.mAudioBad = bad;
+        gPerfProbe.mAudioSamples = samples;
+    }
+    CheckFxDiv();
+    PaintStack(); // (after the checks, which use a lot of stack once)
+#endif
     REG_DISPCNT = DCNT_MODE0; // no layers yet; keep the setup below black until the title takes over
     ScreenBlack(true);
 
     AudioManager_Init();
+    TexDark_Init(); // (after the IRQ setup)
     // (The world starts the map's music itself, see World_Load.)
 
     // Start in the map viewer (audio is muted for now); START+SELECT still toggles to the audio test HUD.
@@ -262,22 +458,8 @@ int main()
     int introPhase = 0;  // 0 wait, 1 dialogue, 2 wait
     int introTimer = 0;
 
-    // Door/teleporter warps (PlayState S_MAP_EXIT / S_MAP_ENTER): the world freezes while the screen pixelates and
-    // fades to black, the map swaps, then it pixelates back in and fades up.
-    enum class WarpPhase
-    {
-        None,
-        Exit,
-        Enter
-    };
-    WarpPhase warpPhase = WarpPhase::None;
-    int warpPix = 256;  // C# Pixelation, 8.8
-    int warpDark = 0;   // C# black_overlay alpha, 16.16
-    int warpExitStep = 0;
-    uint8_t warpMap = 0;
-    uint8_t warpFacing = 0;
-    int warpX = 0;
-    int warpY = 0;
+    // Door/teleporter warps (PlayState S_MAP_EXIT / S_MAP_ENTER) run in World_Update; the screen shows their fade.
+    bool warpShown = false;
 
     // --- Audio test state ---
     uint32_t debugBgmIndex = 0;
@@ -291,8 +473,13 @@ int main()
     // The world (map + player, ported from the C#) owns OAM slot 0 / OBJ palette bank 0; the sprite gallery test
     // uses the rest. A toggles between them in the map viewer.
     ObjVramAllocator objVram;
+    GameState_Reset();
     World_Init(objVram);
+    World_SetMapLoader(LoadWarpMap);
+    World_SetMapTable(kMaps, kMapCount);
+    World_SetDarkTextures(kDarkTextures);
     Dialog_Init(objVram);
+    Hud_Init(objVram);
     LoadWorldMap(); // again: the map's overlay sprites need the VRAM allocator
     bool galleryOn = false;
     int galleryPage = 0;
@@ -318,7 +505,40 @@ int main()
         // BIOS's REG_IFBIOS flag, which tonc's irq_init/master dispatcher
         // already does) throttles this loop to once per real 60Hz frame.
         VBlankIntrWait();
+#ifdef ANODYNE_PERF
+        const uint32_t perfStart = AudioManager_Cycles();
+        if (mode == AppMode::MapViewer && gPerfProbe.mCmdSeq != gPerfProbe.mAckSeq)
+        {
+            gPerfProbe.mAckSeq = gPerfProbe.mCmdSeq;
+            gSettings.mInvincible = true;
+            GameProbe_Heal();
+            World_DropChildStates();
+            GameProbe_Warp(kMapNames[gPerfProbe.mCmdMap % kMapCount], gPerfProbe.mCmdX, gPerfProbe.mCmdY);
+        }
+#endif
+#ifdef ANODYNE_LINK
+        // Driven over the link port: the host's keys, each frame they're held a fresh press (as the C# game sees the
+        // bot's keys, and as the simulator gives them below).
+        Link_OnFrame();
         key_poll();
+        __key_curr = Link_Keys();
+        __key_prev = 0;
+#else
+        key_poll();
+#endif
+#ifdef ANODYNE_SIM
+        // Driven by the C# bot (SimHost): every frame a key is held is a fresh press, as the C# game sees the bot's keys.
+        static const bool sKeyRepeat = getenv("ANODYNE_SIM_KEY_REPEAT") != nullptr;
+        if (sKeyRepeat)
+        {
+            __key_prev = 0;
+        }
+#endif
+        Game_CountFrame();
+        {
+            static const char* const kModeNames[] = { "audio_test", "play", "title", "intro", "pixelate_test", "credits" };
+            gGame.mModeName = kModeNames[static_cast<int>(mode)];
+        }
 
         // ------------------------------------------------------------
         // MODE SWITCH (hold START+SELECT together)
@@ -406,8 +626,33 @@ int main()
         else if (mode == AppMode::Title)
         {
             int slot = 0;
-            if (Title_Update(&slot))
+            const bool chosen = Title_Update(&slot);
+            if (chosen && Save_Exists(slot))
             {
+                // MainMenuState: a file with a save goes back to its checkpoint (GlobalState.LoadSave).
+                ScreenBlack(true);
+                Title_Exit(objVram);
+                oam_init(oam_mem, 128);
+                blackFrames = 2;
+                GameState_Reset();
+                Dialog_ResetProgress();
+                Save_SetSlot(slot);
+                Save_Read(slot);
+                World_NewPlayState();
+                gCurrentMap = gGame.mCheckpointMap >= 0 ? static_cast<uint32_t>(gGame.mCheckpointMap) : 0;
+                mode = AppMode::MapViewer;
+                EnterMapViewerMode();
+                galleryOn = false;
+                LoadWorldMap(true);
+                World_PlaceAt(gGame.mCheckpointX, gGame.mCheckpointY, 0);
+            }
+            else if (chosen)
+            {
+                // A new game in this file.
+                GameState_Reset();
+                World_NewPlayState();
+                Dialog_ResetProgress();
+                Save_SetSlot(slot);
                 ScreenBlack(true);
                 Title_Exit(objVram);
                 oam_init(oam_mem, 128);
@@ -421,6 +666,17 @@ int main()
                 mode = AppMode::Intro;
                 introPhase = 0;
                 introTimer = 90;
+            }
+        }
+        else if (mode == AppMode::Credits)
+        {
+            if (Credits_Update())
+            {
+                Credits_Exit();
+                oam_init(oam_mem, 128);
+                mode = AppMode::Title;
+                TexDark_Off();
+                Title_Enter(objVram);
             }
         }
         else if (mode == AppMode::Intro)
@@ -461,24 +717,21 @@ int main()
                 mode = AppMode::MapViewer;
                 EnterMapViewerMode();
                 galleryOn = false;
-                LoadWorldMap();
+                LoadWorldMap(true);
                 World_PlaceAt(77, 87, 0); // IntroState: the new game starts in BLANK at (77, 87)
+                const int street = Game_MapIndex("STREET");
+                if (street >= 0)
+                {
+                    gGame.mNexusPortals |= 1u << street; // ActivatedNexusPortals.Add("STREET")
+                }
             }
         }
         else
         {
             // ------------------------------------------------------------
-            // MAP CYCLING (START/SELECT alone - the combo above is caught
-            // before key_hit() would see either as a single press)
+            // MAP CYCLING (SELECT alone - the combo above is caught before
+            // key_hit() would see it as a single press; START is the pause menu)
             // ------------------------------------------------------------
-            if (key_hit(KEY_START) && !modeComboDown)
-            {
-                gCurrentMap = (gCurrentMap + 1) % kMapCount;
-                ScreenBlack(true);
-                LoadWorldMap();
-                blackFrames = 2;
-            }
-
             if (key_hit(KEY_SELECT) && !modeComboDown)
             {
                 gCurrentMap = (gCurrentMap == 0) ? (kMapCount - 1) : (gCurrentMap - 1);
@@ -540,60 +793,69 @@ int main()
             }
             else
             {
-                if (warpPhase == WarpPhase::None)
+                World_Update();
+                int warpDark = 0;
+                int warpPix = 256;
+                bool swapped = false; // (the loader gave back the old screen's mosaic blocks)
+                if (World_GetWarpFade(warpDark, warpPix, swapped))
                 {
-                    World_Update();
-                    if (World_TakeWarp(warpMap, warpX, warpY, warpFacing))
-                    {
-                        warpPhase = WarpPhase::Exit;
-                        warpPix = 256;
-                        warpDark = 0;
-                        // transition_out: 1.568s leaving BLANK, 0.785s elsewhere
-                        warpExitStep = strcmp(kMapNames[gCurrentMap], "BLANK") == 0 ? 65536 * 1000 / 1568 / 60 : 65536 * 1000 / 785 / 60;
-                    }
-                }
-                else if (warpPhase == WarpPhase::Exit)
-                {
-                    warpPix += 30 * 256 / 60;
-                    warpDark += warpExitStep;
-                    if (warpDark >= 65536)
-                    {
-                        warpDark = 65536;
-                        ScreenDarken(16);
-                        Mosaic_End(); // the old screen is gone: give back what the software blocks borrowed
-                        if (warpMap != gCurrentMap)
-                        {
-                            gCurrentMap = warpMap;
-                            LoadWorldMap();
-                        }
-                        World_PlaceAt(warpX, warpY, warpFacing);
-                        World_Update(); // draw the new screen while it is still black
-                        warpPhase = WarpPhase::Enter;
-                        warpPix = 10 * 256;
-                    }
-                }
-                else
-                {
-                    warpPix -= 30 * 256 / 60;
-                    warpDark -= 65536 * 10 / 8 / 60; // transition_in 0.8s
-                    if (warpPix < 256)
-                    {
-                        warpPix = 256;
-                    }
-                    if (warpDark <= 0)
-                    {
-                        warpDark = 0;
-                        warpPhase = WarpPhase::None;
-                        Mosaic_End();
-                        ScreenDarken(0);
-                    }
-                }
-                if (warpPhase != WarpPhase::None)
-                {
-                    ScreenDarken((warpDark * 16) >> 16);
+                    World_ScreenDarken((warpDark * 16) >> 16);
                     MosaicBgOffsets offsets;
                     World_GetBgOffsets(offsets.x, offsets.y);
                     Mosaic_Apply(warpPix, offsets);
+                    warpShown = true;
+                }
+                else if (warpShown)
+                {
+                    warpShown = false;
+                    Mosaic_End();
+                    World_ScreenDarken(0);
+                }
+                if (Credits_TakeRequest())
+                {
+                    warpShown = false;
+                    mode = AppMode::Credits;
+                    TexDark_Off();
+                    Credits_Enter(objVram);
+                }
+                else if (World_TakeQuickLoad())
+                {
+                    // PlayState.QuickLoad: the quick save's progress, a new play state where it was made
+                    int map = 0;
+                    int x = 0;
+                    int y = 0;
+                    Pause_Close();
+                    Dialog_Close();
+                    GameState_Reset();
+                    Dialog_ResetProgress();
+                    Save_QuickRead(map, x, y);
+                    World_NewPlayState();
+                    warpShown = false;
+                    Mosaic_End();
+                    ScreenBlack(true);
+                    blackFrames = 2;
+                    gCurrentMap = static_cast<uint32_t>(map);
+                    LoadWorldMap(true);
+                    World_PlaceAt(x, y, 0);
+                }
+                else if (Game_TakeTitleRequest())
+                {
+                    // GameState.SetState<TitleState>: every effect is deactivated
+                    Pause_Close();
+                    Dialog_Close();
+                    warpShown = false;
+                    Ecs_FlushRenderCaches();
+                    Mosaic_End();
+                    Screen_StopWave();
+                    Screen_EndEnding();
+                    Screen_SetFadeWhite(false);
+                    Screen_SetFade(0);
+                    REG_BLDCNT = 0;
+                    REG_BLDY = 0;
+                    oam_init(oam_mem, 128);
+                    mode = AppMode::Title;
+                    TexDark_Off();
+                    Title_Enter(objVram);
                 }
             }
         }
@@ -604,5 +866,21 @@ int main()
         }
 
         AudioManager_Update();
+#ifdef ANODYNE_PERF
+        {
+            PerfProbe& p = gPerfProbe;
+            p.mMagic = 0x46524550;
+            p.mFrames++;
+            p.mLastWork = AudioManager_Cycles() - perfStart;
+            p.mMaxWork = p.mLastWork > p.mMaxWork ? p.mLastWork : p.mMaxWork;
+            p.mLagFrames += p.mLastWork > 280896 ? 1 : 0;
+            p.mMode = static_cast<uint32_t>(mode);
+            p.mCellsW = World_CellsW();
+            p.mCellsH = World_CellsH();
+            p.mMapCount = kMapCount;
+            p.mMap = gGame.mCurrentMap;
+            p.mEntities = static_cast<uint32_t>(Ecs_Count());
+        }
+#endif
     }
 }

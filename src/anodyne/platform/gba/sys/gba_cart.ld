@@ -184,6 +184,8 @@ SECTIONS
         *(.iwram*)
         *iwram.*(.text*)
         *iwram.*(.data*)
+        /* (soft float stays in ROM: since Fix16 only menus and the HUD use it, and IWRAM is better spent on the
+           draw loop) */
         . = ALIGN(4);
         __IWRAM_END__ = .;
     } > IWRAM AT> ROM
