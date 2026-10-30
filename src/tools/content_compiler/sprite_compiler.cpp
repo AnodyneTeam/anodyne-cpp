@@ -351,16 +351,20 @@ bool CompileSheet(const std::string& pngPath, const SpriteSheetSpec& spec, Compi
     {
         image[i] = { raw[i * 4], raw[i * 4 + 1], raw[i * 4 + 2], raw[i * 4 + 3] };
     }
-    // Lights only ever draw as OBJ-window shapes (Darkness), so their soft glow becomes a hard disc: everything a
-    // quarter bright or more is lit.
+    // Lights only ever draw as OBJ-window shapes (Darkness), lit or not, so their soft glow is dithered: a pixel is
+    // lit when its alpha beats its spot in a 4x4 ordered (Bayer) pattern, the fewer lit the fainter the glow.
     static const char* const kLightSheets[] = { "glow-light", "player-light", "5-frame-glow", "5-frame-glow-bright" };
+    static const int kBayer[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
     for (const char* light : kLightSheets)
     {
         if (strcmp(spec.mTexture, light) == 0)
         {
-            for (Pixel& p : image)
+            for (size_t i = 0; i < image.size(); i++)
             {
-                p.a = p.a >= 64 ? 255 : 0;
+                const int x = static_cast<int>(i % pngW);
+                const int y = static_cast<int>(i / pngW);
+                Pixel& p = image[i];
+                p.a = p.a * 16 > (kBayer[y & 3][x & 3] * 2 + 1) * 255 / 2 ? 255 : 0;
             }
         }
     }

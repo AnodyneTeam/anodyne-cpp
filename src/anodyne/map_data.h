@@ -130,6 +130,7 @@ struct MapDarkData final
 // A darkness (Darkness.SetTex) or ExtraBlend (Blend.SetTex) texture: the 160x160 playfield's 8px bands, each one
 // colour and alpha (RGBA8), blended over the screen in the overlay or (mHardLight) hard light way.
 constexpr int kDarkBands = 20;
+constexpr uint8_t kTexMultiply = 2; // mHardLight: multiplied in (the player's light, tex_dark.h)
 struct DarkTexture final
 {
     uint8_t mHardLight;

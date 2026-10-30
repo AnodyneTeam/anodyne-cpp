@@ -730,6 +730,30 @@ const DarkTexture* ExtraBlend()
     return gDarkData && gDarkData->mExtraBlend >= 0 && gDarkTextures ? &gDarkTextures[gDarkData->mExtraBlend] : nullptr;
 }
 
+// The player's light (player-light.png: (111, 111, 214), fading out to its edge) multiplies the screen inside it, so
+// the C#'s lit circle is dim and blue. The GBA's palettes take that multiply, mixed in by the darkness's alpha, over
+// the whole screen; outside the light's (dithered) window shape the BLD darkens the rest of the way to 1 - alpha.
+constexpr int kPlayerLightGreen = 111;
+constexpr DarkTexture MakePlayerLightTex()
+{
+    DarkTexture t = {};
+    t.mHardLight = kTexMultiply;
+    for (auto& band : t.mBands)
+    {
+        band[0] = 111;
+        band[1] = kPlayerLightGreen;
+        band[2] = 214;
+        band[3] = 255;
+    }
+    return t;
+}
+constexpr DarkTexture kPlayerLightTex = MakePlayerLightTex();
+
+bool PlayerLightDim()
+{
+    return !gDarkTex && gPlayerLight && gPlayerLight->mExists && gDark.mAlpha > 0;
+}
+
 // The map's static turns the screen gray (GrayScale.Active), in TexDark's colours.
 bool Grayscale()
 {
@@ -739,7 +763,7 @@ bool Grayscale()
 // TexDark draws this frame: a darkness texture, the ExtraBlend, the FG_Blend or the grayscale.
 bool TexDarkOn()
 {
-    return (gDarkTex && gDark.mAlpha > 0) || ExtraBlend() || gFgBlendTex || Grayscale();
+    return (gDarkTex && gDark.mAlpha > 0) || ExtraBlend() || gFgBlendTex || Grayscale() || PlayerLightDim();
 }
 
 // Plain darkness under an ExtraBlend goes into TexDark's colours too: the overlay brightens the darkened screen (the
@@ -755,6 +779,14 @@ int DarkLevel()
     if (gDarkTex || PlainDarkInTexDark())
     {
         return 0; // (TexDark draws it)
+    }
+    if (PlayerLightDim())
+    {
+        // the palettes give 1 - alpha (1 - light): the rest of the way to 1 - alpha (green's)
+        const fx lit = kFxOne - FxMul(gDark.mAlpha, Fx(255 - kPlayerLightGreen) / 255);
+        const fx left = kFxOne - FxDiv(kFxOne - gDark.mAlpha, lit);
+        const int y = FxFloor(left * 16 + kFxOne / 2);
+        return y < 0 ? 0 : (y > 16 ? 16 : y);
     }
     const int y = FxFloor(gDark.mAlpha * 16 + kFxOne / 2);
     return y < 0 ? 0 : (y > 16 ? 16 : y);
@@ -2572,7 +2604,8 @@ void World_Update()
         {
             UntintPalettes(); // (from before the texture: TexDark takes the plain colours)
         }
-        TexDark_Frame(PlainDarkInTexDark() ? TexDark_Plain() : gDarkTex, FxFloor(gDark.mAlpha * 256 + kFxOne / 2),
+        TexDark_Frame(PlainDarkInTexDark() ? TexDark_Plain() : (PlayerLightDim() ? &kPlayerLightTex : gDarkTex),
+                      FxFloor(gDark.mAlpha * 256 + kFxOne / 2),
                       gTintLevel, gFlash.mColour, ExtraBlend(), gFgBlendTex, Grayscale());
     }
     gTintLevel = 0;

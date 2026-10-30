@@ -118,7 +118,9 @@ const DarkTexture kPlain = {};
 int TextureOver(const DarkTexture& texture, int band, int ch, int c)
 {
     const uint8_t* t = texture.mBands[band];
-    const int f = texture.mHardLight ? Overlay(t[ch], c) : Overlay(c, t[ch]);
+    const int f = texture.mHardLight == kTexMultiply ? Div255(c * t[ch])
+                  : texture.mHardLight                ? Overlay(t[ch], c)
+                                                      : Overlay(c, t[ch]);
     return Div255(f * t[3] + c * (255 - t[3]));
 }
 
